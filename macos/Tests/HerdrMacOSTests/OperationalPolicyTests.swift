@@ -169,6 +169,20 @@ import Testing
     window.orderOut(nil)
 }
 
+@Test @MainActor func backgroundWindowPresentationPreservesForegroundAndKeyWindow() {
+    let application = NSApplication.shared
+    let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let keyWindow = application.keyWindow
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 480, height: 320),
+                          styleMask: [.titled], backing: .buffered, defer: false)
+    MainWindowPresentation.present(window, application: application, background: true)
+    #expect(window.isVisible)
+    #expect(!window.isKeyWindow)
+    #expect(application.keyWindow === keyWindow)
+    #expect(NSWorkspace.shared.frontmostApplication?.processIdentifier == foreground)
+    window.orderOut(nil)
+}
+
 @Test func paneLessCheckoutSelectionRequestsAnAutomaticTerminal() {
     let checkout = CoreCheckoutSnapshot(
         id: "checkout-empty",

@@ -507,9 +507,12 @@ private struct PaneResizeCursorArea: NSViewRepresentable {
 
 struct PaneTerminalCell<Content: View>: View {
     let pane: CorePaneSnapshot
+    let lineagePath: [CoreLineageStep]
+    let agent: SidebarAgent?
     let status: String
     let statusMessage: String?
     let isFocused: Bool
+    let isKeyboardFocused: Bool
     let isZoomed: Bool
     let showsFork: Bool
     let activity: String
@@ -517,36 +520,46 @@ struct PaneTerminalCell<Content: View>: View {
     let onFocus: () -> Void
     let onReconnect: () -> Void
     let onClose: () -> Void
+    let onToggleZoom: () -> Void
     let onFork: () -> Void
     let onOpenPort: (UInt16) -> Void
     /// Whether the session is answering. A disconnected mark says so rather
     /// than repeating the last state it saw.
     let connected: Bool
+    let paneSelectionOperation: PaneSelectionOperation?
     let onSelectPane: (String) -> Void
     private let content: () -> Content
 
     init(
         pane: CorePaneSnapshot,
+        lineagePath: [CoreLineageStep]? = nil,
+        agent: SidebarAgent? = nil,
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
+        isKeyboardFocused: Bool? = nil,
         isZoomed: Bool = false,
         showsFork: Bool = false,
         activity: String = "",
         notice: String? = nil,
         connected: Bool = true,
+        paneSelectionOperation: PaneSelectionOperation? = nil,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
+        onToggleZoom: @escaping () -> Void = {},
         onFork: @escaping () -> Void = {},
         onOpenPort: @escaping (UInt16) -> Void = { _ in },
         onSelectPane: @escaping (String) -> Void = { _ in },
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.pane = pane
+        self.lineagePath = lineagePath ?? pane.lineagePath
+        self.agent = agent
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
+        self.isKeyboardFocused = isKeyboardFocused ?? isFocused
         self.isZoomed = isZoomed
         self.showsFork = showsFork
         self.activity = activity
@@ -554,9 +567,11 @@ struct PaneTerminalCell<Content: View>: View {
         self.onFocus = onFocus
         self.onReconnect = onReconnect
         self.onClose = onClose
+        self.onToggleZoom = onToggleZoom
         self.onFork = onFork
         self.onOpenPort = onOpenPort
         self.connected = connected
+        self.paneSelectionOperation = paneSelectionOperation
         self.onSelectPane = onSelectPane
         self.content = content
     }
@@ -566,26 +581,30 @@ struct PaneTerminalCell<Content: View>: View {
             paneID: pane.id,
             title: PaneHeaderPresentation.title(
                 herdrLabel: pane.herdrLabel,
-                agentSummary: pane.summary,
+                agentSummary: agent?.identityLabel ?? pane.summary,
                 terminalTitle: pane.terminalTitle,
                 workspaceLabel: pane.workspaceLabel,
                 paneID: pane.id
             ),
+            agent: agent,
             status: status,
             statusMessage: statusMessage,
             isFocused: isFocused,
+            isKeyboardFocused: isKeyboardFocused,
             isZoomed: isZoomed,
             forkedFrom: PaneHeaderControls.forkMark(pane.fork),
             showsFork: showsFork,
             activity: activity,
             notice: notice,
             ports: pane.ports,
-            lineagePath: pane.lineagePath,
+            lineagePath: lineagePath,
             children: pane.children,
             connected: connected,
+            paneSelectionOperation: paneSelectionOperation,
             onFocus: onFocus,
             onReconnect: onReconnect,
             onClose: onClose,
+            onToggleZoom: onToggleZoom,
             onFork: onFork,
             onOpenPort: onOpenPort,
             onSelectPane: onSelectPane,
@@ -598,8 +617,8 @@ enum PaneHeaderPresentation {
     /// The name a pane is shown by, most specific first.
     ///
     /// A Herdr label is a name the user chose for this pane, so it outranks
-    /// everything. The agent summary is the context label the sidebar already
-    /// shows for this agent, so the header and the sidebar name one pane the
+    /// everything. The core's agent identity is the task name the sidebar
+    /// already shows, so the header and the sidebar name one pane the
     /// same way. A terminal title is what the running program calls itself;
     /// Claude Code flips it between the session name and a status line such
     /// as "Claude is waiting for…", which is why it ranks below the summary.
@@ -630,9 +649,16 @@ struct HideTerminalPaneCard<Content: View>: View {
     let kind: String
     let closeHelp: String
     let title: String
+    /// The detected agent whose provider and canonical state identify this
+    /// terminal. Non-agent panes leave it absent and do not inherit agent-only
+    /// chrome (PRD B14, B17, B19).
+    let agent: SidebarAgent?
     let status: String
     let statusMessage: String?
     let isFocused: Bool
+    /// The actual terminal responder. Inspection can move elsewhere while the
+    /// shown-pane wash remains, so this owns only the outer hairline.
+    let isKeyboardFocused: Bool
     /// Herdr is showing only this pane; its siblings in the tab are hidden.
     let isZoomed: Bool
     /// The pane this one was forked from, when Herdr's lineage says so.
@@ -653,9 +679,11 @@ struct HideTerminalPaneCard<Content: View>: View {
     /// Absent means no agent here, which is why nothing is drawn (PRD B22).
     let children: CorePaneChildren?
     let connected: Bool
+    let paneSelectionOperation: PaneSelectionOperation?
     let onFocus: () -> Void
     let onReconnect: () -> Void
     let onClose: () -> Void
+    let onToggleZoom: () -> Void
     let onFork: () -> Void
     let onOpenPort: (UInt16) -> Void
     /// Replaces the screen with another pane in this lineage: a child chip, a
@@ -669,9 +697,11 @@ struct HideTerminalPaneCard<Content: View>: View {
         kind: String = "terminal",
         closeHelp: String = "Close this pane",
         title: String,
+        agent: SidebarAgent? = nil,
         status: String,
         statusMessage: String? = nil,
         isFocused: Bool,
+        isKeyboardFocused: Bool? = nil,
         isZoomed: Bool = false,
         forkedFrom: String? = nil,
         showsFork: Bool = false,
@@ -681,9 +711,11 @@ struct HideTerminalPaneCard<Content: View>: View {
         lineagePath: [CoreLineageStep] = [],
         children: CorePaneChildren? = nil,
         connected: Bool = true,
+        paneSelectionOperation: PaneSelectionOperation? = nil,
         onFocus: @escaping () -> Void,
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
+        onToggleZoom: @escaping () -> Void = {},
         onFork: @escaping () -> Void = {},
         onOpenPort: @escaping (UInt16) -> Void = { _ in },
         onSelectPane: @escaping (String) -> Void = { _ in },
@@ -693,9 +725,11 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.kind = kind
         self.closeHelp = closeHelp
         self.title = title
+        self.agent = agent
         self.status = status
         self.statusMessage = statusMessage
         self.isFocused = isFocused
+        self.isKeyboardFocused = isKeyboardFocused ?? isFocused
         self.isZoomed = isZoomed
         self.forkedFrom = forkedFrom
         self.showsFork = showsFork
@@ -705,9 +739,11 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.lineagePath = lineagePath
         self.children = children
         self.connected = connected
+        self.paneSelectionOperation = paneSelectionOperation
         self.onFocus = onFocus
         self.onReconnect = onReconnect
         self.onClose = onClose
+        self.onToggleZoom = onToggleZoom
         self.onFork = onFork
         self.onOpenPort = onOpenPort
         self.onSelectPane = onSelectPane
@@ -718,7 +754,27 @@ struct HideTerminalPaneCard<Content: View>: View {
         VStack(spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingXS) {
                 if !lineagePath.isEmpty {
-                    PaneBreadcrumb(steps: lineagePath, onSelect: onSelectPane)
+                    PaneParentReturn(
+                        steps: lineagePath,
+                        currentPaneID: paneID,
+                        operation: paneSelectionOperation,
+                        onSelect: onSelectPane
+                    )
+                }
+
+                if let agent {
+                    let agentStatus = AgentStatusPresentation(agent: agent, connected: connected)
+                    Text(agentStatus.symbol)
+                        .hideFont(size: HideTheme.Typography.micro, weight: .bold, design: .monospaced)
+                        .foregroundStyle(agentStatus.color)
+                        .frame(width: HideTheme.agentMarkWidth)
+                        .hideTooltip(agentStatus.label)
+                        .accessibilityLabel(agentStatus.label)
+                    AgentBadge(
+                        agentKind: agent.agentKind,
+                        stateColor: agentStatus.color,
+                        size: HideTheme.compactAgentBadgeSize
+                    )
                 }
 
                 Button(action: onFocus) {
@@ -731,46 +787,19 @@ struct HideTerminalPaneCard<Content: View>: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(HideInteractiveButtonStyle())
-                .accessibilityLabel("Focus \(kind) pane \(title) (\(paneID))")
+                .accessibilityLabel(
+                    ["Focus \(kind) pane \(title) (\(paneID))", agent.map { "\($0.agentKind), \($0.statusLabel)" }]
+                        .compactMap { $0 }
+                        .joined(separator: ", ")
+                )
 
-                if isZoomed {
-                    // A zoomed pane looks like a one-pane tab, so the state
-                    // has to be said here or the hidden siblings look lost.
-                    // Same pill as a port indicator, in chrome colors rather
-                    // than accent: it is state, not something to act on.
-                    HStack(spacing: HideTheme.spacingXXS) {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right")
-                            .hideFont(size: HideTheme.Typography.micro, weight: .bold)
-                        Text("Zoomed")
-                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                    }
-                    .foregroundStyle(HideTheme.secondary)
-                    .padding(.horizontal, HideTheme.spacingXS)
-                    .frame(height: HideTheme.Layout.panelCollapseControlSize)
-                    .background(
-                        RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
-                            .fill(HideTheme.elevated)
+                if PaneLineagePresentation.showsInstrumentationHelp(children),
+                    let reason = children?.uninstrumentedReason
+                {
+                    PaneInstrumentationHelp(
+                        reason: reason,
+                        accessibilityName: children?.uninstrumentedLabel ?? reason
                     )
-                    .hideTooltip("Zoomed: the other panes in this tab are hidden. Toggle zoom to bring them back.", command: .pane(.toggleZoom), paneID: paneID)
-                    .accessibilityLabel("Pane \(paneID) is zoomed")
-                }
-
-                ForEach(ports, id: \.self) { port in
-                    Button { onOpenPort(port) } label: {
-                        Text(":\(String(port))")
-                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                            .foregroundStyle(HideTheme.accent)
-                            .padding(.horizontal, HideTheme.spacingXS)
-                            .frame(height: HideTheme.Layout.panelCollapseControlSize)
-                            .background(
-                                RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
-                                    .fill(HideTheme.elevated)
-                            )
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(HideInteractiveButtonStyle())
-                    .hideTooltip("Open http://localhost:\(String(port))")
-                    .accessibilityLabel("Open port \(String(port)) for pane \(paneID)")
                 }
 
                 if let forkedFrom {
@@ -783,14 +812,43 @@ struct HideTerminalPaneCard<Content: View>: View {
                         .accessibilityLabel("Forked from pane \(forkedFrom)")
                 }
 
-                if showsFork {
-                    HideIconButton(
-                        systemImage: "arrow.triangle.branch",
-                        help: "Fork this agent into a sibling pane",
-                        accessibilityLabel: "Fork pane \(paneID)",
-                        variant: .toolbar,
-                        action: onFork
-                    )
+                HideIconButton(
+                    systemImage: isZoomed
+                        ? "arrow.down.right.and.arrow.up.left"
+                        : "arrow.up.left.and.arrow.down.right",
+                    help: isZoomed ? "Restore this pane's split layout" : "Zoom this pane",
+                    accessibilityLabel: isZoomed ? "Restore pane \(paneID)" : "Zoom pane \(paneID)",
+                    variant: .toolbar,
+                    command: .pane(.toggleZoom),
+                    paneID: paneID,
+                    action: onToggleZoom
+                )
+
+                if showsFork || !ports.isEmpty || (lineagePath.last?.siblings.isEmpty == false) {
+                    Menu {
+                        if showsFork {
+                            Button("Fork into sibling pane", action: onFork)
+                        }
+                        ForEach(ports, id: \.self) { port in
+                            Button("Open port :\(port)") { onOpenPort(port) }
+                        }
+                        if let parent = lineagePath.last {
+                            ForEach(parent.siblings) { sibling in
+                                Button("Show \(sibling.label)") { onSelectPane(sibling.paneID) }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(
+                                width: HideTheme.Layout.panelCollapseControlSize,
+                                height: HideTheme.Layout.panelCollapseControlSize
+                            )
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .hideTooltip("More pane actions")
+                    .accessibilityLabel("More actions for pane \(paneID)")
                 }
 
                 HideIconButton(
@@ -810,13 +868,20 @@ struct HideTerminalPaneCard<Content: View>: View {
                 maxHeight: HideTheme.Layout.paneHeaderHeight,
                 alignment: .leading
             )
+            .background(isFocused ? HideTheme.elevated : HideTheme.panel)
 
             Rectangle()
                 .fill(HideTheme.divider)
                 .frame(height: HideTheme.Layout.hairlineWidth)
 
             if let children, PaneLineagePresentation.showsChildRow(children) {
-                PaneChildRow(children: children, connected: connected, onSelect: onSelectPane)
+                PaneChildRow(
+                    paneID: paneID,
+                    children: children,
+                    connected: connected,
+                    operation: paneSelectionOperation,
+                    onSelect: onSelectPane
+                )
                     .background(HideTheme.elevated)
                     .accessibilityIdentifier("pane-children-\(paneID)")
 
@@ -869,7 +934,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         .overlay {
             RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall)
                 .stroke(
-                    isFocused ? HideTheme.accent : HideTheme.divider,
+                    isKeyboardFocused ? HideTheme.accent : HideTheme.divider,
                     lineWidth: HideTheme.Layout.hairlineWidth
                 )
         }

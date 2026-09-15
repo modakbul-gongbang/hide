@@ -5,8 +5,10 @@ struct BrowserPaneView: View {
     let pane: CorePaneSnapshot
     let binding: BrowserPaneBinding
     let isFocused: Bool
+    let isKeyboardFocused: Bool
     let isZoomed: Bool
     let onFocus: () -> Void
+    let onToggleZoom: () -> Void
     let onClose: () -> Void
     @Environment(\.hideCanvasVisible) private var visible
     @StateObject private var controller = BrowserPaneController()
@@ -29,10 +31,12 @@ struct BrowserPaneView: View {
             status: controller.notice == nil ? "ready" : "unavailable",
             statusMessage: controller.notice,
             isFocused: isFocused,
+            isKeyboardFocused: isKeyboardFocused,
             isZoomed: isZoomed,
             onFocus: onFocus,
             onReconnect: { reconnect += 1 },
-            onClose: onClose
+            onClose: onClose,
+            onToggleZoom: onToggleZoom
         ) {
             VStack(spacing: HideTheme.spacingNone) {
                 HStack(spacing: HideTheme.spacingSM) {

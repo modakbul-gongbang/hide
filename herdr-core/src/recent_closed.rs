@@ -183,7 +183,11 @@ impl ClosedLayoutNode {
                     return Some(PanePlacement {
                         neighbor_pane_id: first.first_pane_id(),
                         direction: *direction,
-                        ratio: 1.0 - *ratio,
+                        // Herdr's pane.split ratio always describes the first
+                        // child's share. The later swap restores which side the
+                        // reopened pane occupied, so complementing here would
+                        // invert the original geometry.
+                        ratio: *ratio,
                         target_was_first: false,
                     });
                 }
@@ -311,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn placement_preserves_neighbor_direction_ratio_and_side() {
+    fn placement_preserves_original_split_ratio_for_either_side() {
         let layout = ClosedLayoutNode::Split {
             direction: ClosedSplitDirection::Right,
             ratio: 0.35,
@@ -335,7 +339,7 @@ mod tests {
         let bottom = layout.placement_for("bottom").unwrap();
         assert_eq!(bottom.neighbor_pane_id.as_deref(), Some("top"));
         assert_eq!(bottom.direction, ClosedSplitDirection::Down);
-        assert!((bottom.ratio - 0.4).abs() < f32::EPSILON * 2.0);
+        assert!((bottom.ratio - 0.6).abs() < f32::EPSILON * 2.0);
         assert!(!bottom.target_was_first);
     }
 

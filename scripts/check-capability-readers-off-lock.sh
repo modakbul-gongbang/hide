@@ -46,8 +46,19 @@ for reader in "${readers[@]}"; do
 
     # 2. Only the coordinator drives the reader. A call from anywhere else
     #    would put a `git` fork back on an event or a snapshot pull.
-    callers="$(grep -rln "${reader}::.*Reader\|${reader}_reader" herdr-core/src \
-        --include='*.rs' | grep -v "^${module}$" | sort)"
+    # Inline test fixtures do not drive production readers. Apply the same
+    # test-module boundary as the subprocess check above; a test name alone
+    # must not be interpreted as a runtime call site.
+    callers="$(
+        while IFS= read -r source; do
+            [[ "$source" == "$module" ]] && continue
+            awk -v reader="$reader" '
+                /^#\[cfg\(test\)\]/ { exit }
+                $0 ~ reader "::.*Reader|" reader "_reader" { found = 1 }
+                END { if (found) print FILENAME }
+            ' "$source"
+        done < <(find herdr-core/src -name '*.rs' -type f | sort)
+    )"
     if [[ "$callers" != "herdr-core/src/session_sync.rs" ]]; then
         printf 'the %s reader is driven from outside the session-sync coordinator:\n%s\n' \
             "$reader" "$callers" >&2

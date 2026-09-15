@@ -566,7 +566,7 @@ pub fn apply_lineage(
         let spawn_parent = spawned_from
             .as_ref()
             .and_then(|pane| by_pane.get(pane))
-            .map(|parent| agents[*parent].id.clone());
+            .map(|parent| agent_identity_label(&agents[*parent]));
         let hint = spawned_from.as_ref().map(|_| match &spawn_parent {
             Some(name) => format!("↳ from {name}"),
             None => "↳ from an agent Hide can't see".to_owned(),
@@ -623,10 +623,7 @@ pub fn apply_lineage(
 pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapshot {
     crate::model::AgentChipSnapshot {
         pane_id: agent.pane_id.clone(),
-        // The name the operator gave the chat, when there is one; otherwise
-        // Herdr's own agent name. Never the missing-summary prompt, which is
-        // an instruction to the operator rather than a name for anything.
-        label: agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()),
+        label: agent_identity_label(agent),
         detail: if agent.summary == MISSING_SUMMARY {
             agent.status_label.clone()
         } else {
@@ -640,6 +637,24 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
         status_label: agent.status_label.clone(),
         delegated: agent.delegated,
     }
+}
+
+/// The stable, user-facing identity shared by lineage surfaces.
+///
+/// A pane id is a transport handle, not a name. Some report-only panes have
+/// no Herdr agent name, so their `id` falls back to that handle even while a
+/// chat title or useful task summary is available. Prefer those authoritative
+/// labels and use the workspace only when no task identity exists.
+fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
+    agent
+        .chat_title
+        .clone()
+        .or_else(|| {
+            (agent.summary != MISSING_SUMMARY && !agent.summary.trim().is_empty())
+                .then(|| agent.summary.clone())
+        })
+        .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
+        .unwrap_or_else(|| agent.workspace_label.clone())
 }
 
 /// What one pane's header says about the work its agent delegated.
@@ -877,7 +892,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
 
-    Ok(SidebarAgentSnapshot {
+    let mut projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         pane_id,
         workspace_label,
@@ -897,6 +912,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         emphasized: false,
         status_label: String::new(),
         requires_close_confirmation: false,
+        identity_label: String::new(),
         summary,
         elapsed,
         last_activity,
@@ -925,7 +941,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         raised_hint: None,
         spawn_origin_pane_id: None,
         lineage_collapsed: false,
-    })
+    };
+    projected.identity_label = agent_identity_label(&projected);
+    Ok(projected)
 }
 
 /// The prefix every pane id on a remote target carries. A pane id without it
@@ -1256,6 +1274,7 @@ mod tests {
             temporary: false,
             session_workspace_ids: vec![],
             last_activity_unix_ms: None,
+            inactive_checkouts: Default::default(),
         }];
         let mut agents = project_agents(payload(json!([
             {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},

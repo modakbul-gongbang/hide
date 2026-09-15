@@ -1,0 +1,45 @@
+"""The production-only reader boundary must reject real callers, not test names."""
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class CapabilityReaderGate(unittest.TestCase):
+    def run_gate(self, runtime_source):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scripts').mkdir()
+            sources = root / 'herdr-core' / 'src'
+            sources.mkdir(parents=True)
+            shutil.copy2(ROOT / 'scripts/check-capability-readers-off-lock.sh', root / 'scripts')
+            for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai'):
+                (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
+            requests = ('changes', 'worktrees', 'github', 'disk', 'ai')
+            (sources / 'session_sync.rs').write_text(
+                '\n'.join(f'let {r}_reader = {r}::Reader::new();' for r in (*requests, 'ports'))
+                + '\n' + '\n'.join(f'let Some(request) = read_{r}_request();' for r in requests)
+            )
+            (sources / 'runtime.rs').write_text(runtime_source)
+            (sources / 'files.rs').write_text('// no subprocess\n#[cfg(test)]\nmod tests {}\n')
+            return subprocess.run(['bash', 'scripts/check-capability-readers-off-lock.sh'],
+                                  cwd=root, capture_output=True, text=True)
+
+    def test_inline_tests_do_not_drive_production_readers(self):
+        result = self.run_gate('fn changes_request() {}\n#[cfg(test)]\nmod tests {\n'
+                               'fn explorer_keeps_changes_reader_alive() {}\n}\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_production_reader_outside_coordinator_is_rejected(self):
+        result = self.run_gate('fn dispatch() { let reader = changes::ChangesReader::new(); }\n'
+                               '#[cfg(test)]\nmod tests {}\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('herdr-core/src/runtime.rs', result.stderr)
+        self.assertIn('driven from outside', result.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main()

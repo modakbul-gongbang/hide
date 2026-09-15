@@ -50,6 +50,13 @@ enum SidebarGrouping {
     /// so a populated Workspace always has rows to reveal.
     static let raisedGroups: [AgentGroup] = [.needsYou, .done]
 
+    /// Uses the core's final ownership answer. Hard-escalated children and
+    /// lineage orphans have `delegated == false`, so neither disappears from
+    /// the operator's default view.
+    static func visibleAgents(_ agents: [SidebarAgent], scope: AgentListScope) -> [SidebarAgent] {
+        scope == .all ? agents : agents.filter { !$0.delegated }
+    }
+
     /// The rows of one group, in the order the core put them in.
     static func agents(_ agents: [SidebarAgent], in group: AgentGroup) -> [SidebarAgent] {
         agents.filter { AgentGroup(agent: $0) == group }

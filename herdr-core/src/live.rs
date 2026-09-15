@@ -1734,7 +1734,7 @@ pub(crate) fn install(
     notifier: ChangeNotifier,
     socket_path: &str,
     herdr_bin: Option<&str>,
-    home_path: Option<PathBuf>,
+    usage_paths: crate::usage::UsagePaths,
 ) -> Option<crate::session_sync::SessionSyncHandle> {
     let context = LiveContext {
         socket_path: PathBuf::from(socket_path),
@@ -1748,7 +1748,7 @@ pub(crate) fn install(
     }
     match crate::session_sync::spawn(
         crate::session_sync::SessionSyncContext::local(&context),
-        home_path,
+        Some(usage_paths),
     ) {
         Ok(handle) => Some(handle),
         Err(message) => {

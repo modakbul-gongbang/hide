@@ -26,8 +26,8 @@ struct LineageGuideView: View {
                 // Levels above this row whose sibling run is still open pass
                 // straight through, which is what keeps a nested branch from
                 // breaking the line of every level above it.
-                for level in guide.continuing where level < depth {
-                    let x = HideTheme.lineageTrunkX(depth: level)
+                for level in guide.continuing where level > 0 && level < depth {
+                    let x = HideTheme.lineageTrunkX(depth: level - 1)
                     path.move(to: CGPoint(x: x, y: 0))
                     path.addLine(to: CGPoint(x: x, y: height))
                 }
@@ -53,7 +53,7 @@ struct LineageGuideView: View {
                     // join onto. Without it the trunk began below the parent
                     // and connected to nothing above.
                     let x = HideTheme.lineageTrunkX(depth: depth)
-                    path.move(to: CGPoint(x: x, y: elbowY))
+                    path.move(to: CGPoint(x: x, y: elbowY + HideTheme.compactAgentBadgeSize / 2))
                     path.addLine(to: CGPoint(x: x, y: height))
                 }
             }

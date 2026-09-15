@@ -223,7 +223,7 @@ The reason is resolved once, by `hide_agent_hooks::diagnosis::instrumentation`, 
 The first match wins and nothing falls through to an empty value or an invented cause.
 Every projection carries the reason's stable code alongside its sentence, so no surface has to recognise its own operator-facing text.
 
-The mark appears in three places, and only on panes where an agent was detected: the pane header, the sidebar row, and the Overview worktree row's agent line.
+The mark appears in three places, and only on panes where an agent was detected: the pane header's 28pt identity row, the sidebar row, and the Overview worktree row's agent line.
 That third position exists because an empty agent line has to distinguish "nobody is working here" from "Hide cannot see into this worktree".
 A count Hide cannot read is reported as unknown and never as zero, because a zero is a claim that the agent is working alone.
 
@@ -237,7 +237,7 @@ Its refresh action reloads one repository; its external action opens the PR URL 
 
 The first appearance of a local Git project requests its GitHub status once for the runtime session.
 Repeated appearances are no-ops; explicit refresh advances that repository's generation.
-The existing Git section trigger, selected Overview project and sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
+The selected Overview project and explicit sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
 The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request additionally asks for `title` and `statusCheckRollup`; it retains the 200-PR limit and existing branch tie-breaking policy.
 Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
 The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
@@ -273,3 +273,10 @@ Its active-branch and draft counts describe the selected results, not every PR i
 The details state the reader's lookup window and offer the existing PR URL and scoped refresh actions.
 A failed or unrequested lookup never becomes a zero count.
 The workspace inspector uses the canonical representative agent and disconnected override; inspection itself never acknowledges an agent.
+
+## Task identity
+
+The core publishes `identity_label` separately from the compact activity `summary`.
+It resolves the composer chat title, then the available activity summary, then the named agent, then the workspace label.
+Projects, Agents, Overview, and lineage controls consume that identity; truncation belongs to each view and does not shorten tooltip text.
+Projection adds one bounded-by-metadata string per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.

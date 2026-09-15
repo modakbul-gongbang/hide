@@ -1,5 +1,76 @@
 import Foundation
 
+/// One Explorer row's fixed Git slot. The value is derived once from the
+/// root-scoped Changes snapshot, never from the lazily loaded outline nodes.
+struct WorkspaceGitDecoration: Equatable {
+    let badge: String
+    let title: String
+    let status: CoreChangedFileStatus
+}
+
+struct WorkspaceGitDecorations: Equatable {
+    let rootPath: String
+    let entries: [CoreChangedFile]
+    private let fileStatuses: [String: CoreChangedFileStatus]
+    private let directoryStatuses: [String: CoreChangedFileStatus]
+
+    init(rootPath: String, entries: [CoreChangedFile]) {
+        self.rootPath = rootPath
+        self.entries = entries
+
+        var fileStatuses: [String: CoreChangedFileStatus] = [:]
+        var directoryStatuses: [String: CoreChangedFileStatus] = [:]
+        for entry in entries {
+            fileStatuses[entry.relativePath] = Self.higherRisk(
+                fileStatuses[entry.relativePath],
+                entry.status
+            )
+
+            var parent = (entry.relativePath as NSString).deletingLastPathComponent
+            while !parent.isEmpty && parent != "." {
+                directoryStatuses[parent] = Self.higherRisk(
+                    directoryStatuses[parent],
+                    entry.status
+                )
+                parent = (parent as NSString).deletingLastPathComponent
+            }
+            directoryStatuses["."] = Self.higherRisk(directoryStatuses["."], entry.status)
+        }
+        self.fileStatuses = fileStatuses
+        self.directoryStatuses = directoryStatuses
+    }
+
+    func decoration(for path: String, isDirectory: Bool) -> WorkspaceGitDecoration? {
+        let relative = WorkspaceOutlinePathPresentation.relativePath(path, root: rootPath)
+        let status = isDirectory ? directoryStatuses[relative] : fileStatuses[relative]
+        guard let status else { return nil }
+        return WorkspaceGitDecoration(
+            badge: isDirectory ? "●" : status.badge,
+            title: isDirectory ? "Contains changed files; highest priority is \(status.title.lowercased())" : status.title,
+            status: status
+        )
+    }
+
+    private static func higherRisk(
+        _ current: CoreChangedFileStatus?,
+        _ candidate: CoreChangedFileStatus
+    ) -> CoreChangedFileStatus {
+        guard let current else { return candidate }
+        return priority(candidate) < priority(current) ? candidate : current
+    }
+
+    private static func priority(_ status: CoreChangedFileStatus) -> Int {
+        switch status {
+        case .conflict: 0
+        case .deleted: 1
+        case .renamed: 2
+        case .modified: 3
+        case .added: 4
+        case .untracked: 5
+        }
+    }
+}
+
 /// The core's most recent explorer filesystem change and how far it got.
 ///
 /// The tree reads `finished` to reload the parents of `path` and

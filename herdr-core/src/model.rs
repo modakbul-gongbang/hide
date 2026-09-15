@@ -142,11 +142,23 @@ pub struct NavigatorSnapshot {
     pub focused_checkout_id: Option<String>,
     pub devices: Vec<DeviceSnapshot>,
     pub workspaces: Vec<WorkspaceSnapshot>,
+    /// Project rows the core grouped at the bottom of each device's Projects
+    /// list. `workspaces` remains the one authoritative row collection so
+    /// search, focus, and project navigation never lose a folded project.
+    pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
     pub provider_usage: Vec<ProviderUsageSnapshot>,
     /// The one space that is not a project. Its own section, never a row in
     /// `workspaces` and never counted with them.
     pub scratch: ScratchSnapshot,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct InactiveProjectGroupSnapshot {
+    pub device_id: String,
+    pub expanded: bool,
+    /// IDs in the same recent-activity order as `NavigatorSnapshot.workspaces`.
+    pub project_ids: Vec<String>,
 }
 
 /// The Scratch node: one fixed folder, and the Herdr tabs living in it.
@@ -197,24 +209,42 @@ pub struct ProviderUsageSnapshot {
     pub resets_at_unix_seconds: Option<u64>,
     pub message: Option<String>,
     pub last_checked_at_unix_ms: Option<u64>,
+    pub last_success_at_unix_ms: Option<u64>,
+    pub last_error_kind: Option<String>,
+    pub buckets: Vec<ProviderUsageBucketSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProviderUsageBucketSnapshot {
+    pub label: String,
+    pub state: String,
+    pub used_percent: Option<f64>,
+    pub resets_at_unix_seconds: Option<u64>,
+    pub message: Option<String>,
 }
 
 impl ProviderUsageSnapshot {
     pub fn initial_rows() -> Vec<Self> {
         vec![
-            Self::unavailable(
-                "claude",
-                "Claude Code",
-                "Claude Code weekly usage has not been checked yet",
-                0,
-            ),
-            Self::unavailable(
-                "codex",
-                "Codex",
-                "Codex weekly usage has not been checked yet",
-                0,
-            ),
+            Self::loading("claude", "Claude Code"),
+            Self::loading("codex", "Codex"),
         ]
+    }
+
+    pub fn loading(provider: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            provider: provider.into(),
+            label: label.into(),
+            window_minutes: 10_080,
+            state: "loading".to_owned(),
+            used_percent: None,
+            resets_at_unix_seconds: None,
+            message: Some("Checking usage…".to_owned()),
+            last_checked_at_unix_ms: None,
+            last_success_at_unix_ms: None,
+            last_error_kind: None,
+            buckets: Vec::new(),
+        }
     }
 
     pub fn unavailable(
@@ -232,6 +262,9 @@ impl ProviderUsageSnapshot {
             resets_at_unix_seconds: None,
             message: Some(message.into()),
             last_checked_at_unix_ms: (checked_at_unix_ms > 0).then_some(checked_at_unix_ms),
+            last_success_at_unix_ms: None,
+            last_error_kind: None,
+            buckets: Vec::new(),
         }
     }
 }
@@ -286,6 +319,8 @@ pub struct SidebarAgentSnapshot {
     /// Derived: closing this pane would interrupt work or discard a result the
     /// operator has not read.
     pub requires_close_confirmation: bool,
+    /// Canonical task identity, distinct from the compact activity summary.
+    pub identity_label: String,
     pub summary: String,
     pub elapsed: String,
     /// The ordering key: the label plugin's activity timestamp when it has one,
@@ -400,6 +435,17 @@ pub struct WorkspaceSnapshot {
     #[serde(default)]
     pub last_activity_unix_ms: Option<u64>,
     pub checkouts: Vec<CheckoutSnapshot>,
+    /// Checkout rows grouped after the active rows in this project. The full
+    /// rows stay in `checkouts`, which remains the authority for focus,
+    /// search, tab state, and every non-sidebar consumer.
+    pub inactive_checkouts: InactiveCheckoutGroupSnapshot,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct InactiveCheckoutGroupSnapshot {
+    pub expanded: bool,
+    /// IDs in the same recent-activity order as `WorkspaceSnapshot.checkouts`.
+    pub checkout_ids: Vec<String>,
 }
 
 /// Agent counts and representative after Hide applies its pane-level read records.
@@ -958,24 +1004,23 @@ pub struct EditorDocumentSnapshot {
     pub conflict: Option<EditorConflictSnapshot>,
 }
 
-/// The right panel's four persisted sections.
+/// The right panel's three persisted sections.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
     #[default]
+    #[serde(alias = "git")]
     Overview,
     Explorer,
     Changes,
-    Git,
 }
 
 impl RightPanelSection {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "overview" => Some(Self::Overview),
+            "overview" | "git" => Some(Self::Overview),
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
-            "git" => Some(Self::Git),
             _ => None,
         }
     }
@@ -987,7 +1032,7 @@ pub struct UiStateSnapshot {
     pub left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
     pub right_panel_visible: bool,
-    /// Which of the right panel's two sections is showing. Persisted rather
+    /// Which of the right panel's three sections is showing. Persisted rather
     /// than held in the view, because hiding the panel tears the view down
     /// and the section has to come back the way it was left.
     #[serde(default)]
@@ -998,6 +1043,14 @@ pub struct UiStateSnapshot {
     /// Sidebar workspaces (checkout paths) whose agent rows are hidden.
     #[serde(default)]
     pub collapsed_checkout_ids: Vec<String>,
+    /// Projects whose Inactive checkout group the operator opened. Absence is
+    /// the default collapsed state, so old stores need no migration.
+    #[serde(default)]
+    pub expanded_inactive_checkout_project_paths: Vec<String>,
+    /// Device groups whose Inactive projects group the operator opened.
+    /// Absence is the default collapsed state.
+    #[serde(default)]
+    pub expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
     #[serde(default)]
@@ -1121,6 +1174,8 @@ impl Default for UiStateSnapshot {
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
             collapsed_checkout_ids: Vec::new(),
+            expanded_inactive_checkout_project_paths: Vec::new(),
+            expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
             collapsed_agent_pane_ids: Vec::new(),
             selected_path: None,
@@ -1231,6 +1286,8 @@ pub enum ChangedFileStatus {
     Added,
     Deleted,
     Untracked,
+    Renamed,
+    Conflict,
 }
 
 impl ChangedFileStatus {
@@ -1242,8 +1299,14 @@ impl ChangedFileStatus {
         let mut characters = code.chars();
         let index = characters.next().unwrap_or(' ');
         let worktree = characters.next().unwrap_or(' ');
-        if index == '?' || worktree == '?' {
+        if matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") {
+            return Self::Conflict;
+        }
+        if index == '?' && worktree == '?' {
             return Self::Untracked;
+        }
+        if index == 'R' || worktree == 'R' {
+            return Self::Renamed;
         }
         if index == 'D' || worktree == 'D' {
             return Self::Deleted;
@@ -1260,6 +1323,8 @@ impl ChangedFileStatus {
             Self::Added => "added",
             Self::Deleted => "deleted",
             Self::Untracked => "untracked",
+            Self::Renamed => "renamed",
+            Self::Conflict => "conflict",
         }
     }
 }
@@ -1270,6 +1335,10 @@ pub struct ChangedFileSnapshot {
     pub path: String,
     /// Relative to the checkout root, which is what the row shows.
     pub relative_path: String,
+    /// The source side of a rename, relative to the checkout root. Absent for
+    /// every other status. The destination remains `relative_path`, so
+    /// opening a row always addresses the file that exists now.
+    pub previous_relative_path: Option<String>,
     pub status: ChangedFileStatus,
     /// Lines added and removed in this file. Absent for a file git cannot
     /// count - an untracked file has no index side and a binary file has no
@@ -1648,6 +1717,21 @@ pub struct StatusSnapshot {
     pub background_ai: BackgroundAiSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
+    /// The core-owned outcome of the latest explicitly correlated pane-focus
+    /// request. Ordinary focus events have no request id and do not replace
+    /// this receipt, so a relationship control never mistakes another pane's
+    /// error or an older focused layout for its own answer.
+    pub pane_focus_request: Option<PaneFocusRequestSnapshot>,
+}
+
+/// One explicitly correlated pane-focus request and its core-owned outcome.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PaneFocusRequestSnapshot {
+    pub request_id: String,
+    pub target_pane_id: String,
+    pub phase: String,
+    pub message: Option<String>,
+    pub retryable: bool,
 }
 
 /// Which agent and model the background AI features use, and what each
@@ -1897,6 +1981,7 @@ impl Snapshot {
                     agent_count: 0,
                 }],
                 workspaces: Vec::new(),
+                inactive_projects: Vec::new(),
                 agents: Vec::new(),
                 provider_usage: ProviderUsageSnapshot::initial_rows(),
                 scratch: ScratchSnapshot {
@@ -1996,6 +2081,7 @@ impl Snapshot {
                 background_ai: BackgroundAiSnapshot::unread(),
                 diagnostics: Vec::new(),
                 last_error: None,
+                pane_focus_request: None,
             },
             pet: PetSnapshot::initial(),
             recent_closed: RecentClosedSnapshot::default(),

@@ -19,11 +19,11 @@ use crate::model::SidebarAgentSnapshot;
 use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
     EditorTabKind, EditorTabSnapshot, ExplorerOperationSnapshot, LastErrorSnapshot,
-    PANE_TEXT_SCALE_STEP, PaneFindSnapshot, PaneForkSnapshot, PaneLayoutSnapshot, PaneSnapshot,
-    PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
-    RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection, SCHEMA_VERSION, Snapshot,
-    StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk, TerminalPaneSnapshot,
-    UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
+    PANE_TEXT_SCALE_STEP, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
+    PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
+    RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
+    SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk,
+    TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
@@ -272,6 +272,10 @@ struct PendingViewFocus {
     scope_id: String,
     /// The tab or pane id Hide asked Herdr to focus.
     target_id: String,
+    /// Present only for an explicit relationship Open/Return request. The
+    /// core owns the outcome; the shell supplies this opaque correlation id
+    /// only so it can consume the answer to the action it initiated.
+    request_id: Option<String>,
     requested_at_unix_ms: u64,
 }
 
@@ -280,6 +284,16 @@ impl PendingViewFocus {
         Self {
             scope_id: scope_id.into(),
             target_id: target_id.into(),
+            request_id: None,
+            requested_at_unix_ms: unix_milliseconds(),
+        }
+    }
+
+    fn pane_request(target_id: impl Into<String>, request_id: String) -> Self {
+        Self {
+            scope_id: String::new(),
+            target_id: target_id.into(),
+            request_id: Some(request_id),
             requested_at_unix_ms: unix_milliseconds(),
         }
     }
@@ -417,12 +431,32 @@ impl HerdrTabView {
 
     /// Whether Herdr shows this tab in the workspace that owns it. That is
     /// what confirms a tab focus Hide asked for: which workspace Herdr's
-    /// keyboard is in does not decide it.
+    /// keyboard is in does not decide it. Older snapshots omit the active
+    /// tab for a workspace that has only one tab; that shape is unambiguous.
+    /// A multi-tab workspace without an active-tab verdict stays unknown so
+    /// an old focused layout cannot acknowledge a new pane-focus request.
     fn is_active_in_its_workspace(&self, tab_id: &str) -> bool {
+        let Some(workspace_id) = self.workspace_by_tab.get(tab_id) else {
+            return false;
+        };
+        match self.active_tab_by_workspace.get(workspace_id) {
+            Some(active_tab_id) => active_tab_id == tab_id,
+            None => {
+                self.workspace_by_tab
+                    .values()
+                    .filter(|candidate| *candidate == workspace_id)
+                    .count()
+                    == 1
+            }
+        }
+    }
+
+    fn active_tab_ids(&self) -> BTreeSet<String> {
         self.workspace_by_tab
-            .get(tab_id)
-            .and_then(|workspace_id| self.active_tab_by_workspace.get(workspace_id))
-            .is_some_and(|active_tab_id| active_tab_id == tab_id)
+            .keys()
+            .filter(|tab_id| self.is_active_in_its_workspace(tab_id))
+            .cloned()
+            .collect()
     }
 }
 
@@ -477,6 +511,8 @@ impl ViewFocusSlot {
 struct FocusPaneRequestPayload {
     pane_id: String,
     origin: PaneFocusOrigin,
+    #[serde(default)]
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -543,6 +579,16 @@ struct ReorderTabPayload {
 
 #[derive(Debug, Deserialize)]
 struct FocusDevicePayload {
+    device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InactiveCheckoutsTogglePayload {
+    project_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InactiveProjectsTogglePayload {
     device_id: String,
 }
 
@@ -615,6 +661,11 @@ struct PaneTargetPayload {
 struct RemoteControlPayload {
     target_id: String,
     request_id: String,
+    /// The request id always belongs to the remote transport and its dedupe
+    /// receipt. Only relationship Open/Return additionally projects that
+    /// receipt into B24's visible pane-focus outcome.
+    #[serde(default)]
+    report_pane_focus_outcome: bool,
     #[serde(flatten)]
     request: RemoteControlRequest,
 }
@@ -983,6 +1034,12 @@ struct UiStateUpdatePayload {
     last_agent_bypass: Option<bool>,
     #[serde(default)]
     scratch_expanded: Option<bool>,
+    /// Ephemeral observation hints for the core-owned provider usage timer.
+    /// They ride the existing UI-state event but are never persisted.
+    #[serde(default)]
+    usage_window_visible: Option<bool>,
+    #[serde(default)]
+    usage_popover_open: Option<bool>,
 }
 
 /// Which changed file the changes view is showing the diff for. `None`
@@ -1192,6 +1249,8 @@ enum ValidatedEvent {
     FocusTab(FocusTabPayload),
     ReorderTab(ReorderTabPayload),
     FocusDevice(FocusDevicePayload),
+    InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
+    InactiveProjectsToggle(InactiveProjectsTogglePayload),
     RemoveWorkspace(RemoveWorkspacePayload),
     RegisterDevice(RegisterDevicePayload),
     RemoveDevice(RemoveDevicePayload),
@@ -1374,6 +1433,9 @@ pub struct Runtime {
     /// What the providers last answered. Held beside the snapshot so a
     /// changed choice can restamp the rows without asking again.
     background_ai_providers: Vec<crate::model::BackgroundAiProviderSnapshot>,
+    usage_window_visible: bool,
+    usage_popover_open: bool,
+    usage_popover_open_generation: u64,
     recent_visible_tabs: Vec<String>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
     /// attach child ends before the `pane_closed` event arrives and the pane
@@ -1433,6 +1495,10 @@ pub struct Runtime {
     /// The pane focus Hide has told Herdr about and is still waiting to see
     /// confirmed.
     pending_pane_focus: Option<PendingViewFocus>,
+    /// The tabs Herdr most recently reported active in their own workspaces.
+    /// A pane layout remembers a focused pane even while its tab is hidden,
+    /// so the layout alone cannot confirm a pane-focus request.
+    herdr_active_tab_ids: BTreeSet<String>,
     /// First moment each currently-unseen pane became unseen. Memory only by
     /// decision (D-21): after a restart snapshot order decides instead.
     pet_unseen_observed: std::collections::BTreeMap<String, u64>,
@@ -1649,6 +1715,9 @@ impl Runtime {
             pending_ai_settings_save: None,
             ai_observing: false,
             background_ai_providers: Vec::new(),
+            usage_window_visible: false,
+            usage_popover_open: false,
+            usage_popover_open_generation: 0,
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             recent_closed: VecDeque::new(),
@@ -1672,6 +1741,7 @@ impl Runtime {
             pending_tab_focus: None,
             herdr_focused_tab_seen: None,
             pending_pane_focus: None,
+            herdr_active_tab_ids: BTreeSet::new(),
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
@@ -2232,13 +2302,31 @@ impl Runtime {
     fn request_remote_control(&mut self, payload: RemoteControlPayload) -> bool {
         let target_id = payload.target_id;
         let request_id = payload.request_id;
+        let pane_focus_target = match (&payload.request, payload.report_pane_focus_outcome) {
+            (RemoteControlRequest::FocusPane { pane_id }, true) => Some(pane_id.clone()),
+            _ => None,
+        };
+        macro_rules! fail_request {
+            ($kind:expr, $message:expr, $retryable:expr $(,)?) => {{
+                let message = $message;
+                if pane_focus_target.is_some() {
+                    self.finish_pane_focus_request_by_id(
+                        &request_id,
+                        "failed",
+                        Some(message.clone()),
+                        $retryable,
+                    );
+                }
+                self.set_error($kind, message, $retryable);
+                return true;
+            }};
+        }
         if target_id.trim().is_empty() || request_id.trim().is_empty() {
-            self.set_error(
+            fail_request!(
                 "remote.control.invalid_request",
-                "Remote control requires non-empty target_id and request_id",
+                "Remote control requires non-empty target_id and request_id".to_owned(),
                 false,
             );
-            return true;
         }
         if self
             .remote_control_requests
@@ -2251,13 +2339,21 @@ impl Runtime {
             );
             return true;
         }
+        if let Some(pane_id) = pane_focus_target.as_deref() {
+            self.snapshot.status.pane_focus_request = Some(PaneFocusRequestSnapshot {
+                request_id: request_id.clone(),
+                target_pane_id: pane_id.to_owned(),
+                phase: "pending".to_owned(),
+                message: None,
+                retryable: false,
+            });
+        }
         let Some(context) = self.remote_controls.get(&target_id).cloned() else {
-            self.set_error(
+            fail_request!(
                 "remote.control.unavailable",
                 format!("Remote control is unavailable for target {target_id}"),
                 true,
             );
-            return true;
         };
         let Some(remote) = self
             .snapshot
@@ -2266,15 +2362,14 @@ impl Runtime {
             .iter()
             .find(|remote| remote.target_id == target_id)
         else {
-            self.set_error(
+            fail_request!(
                 "remote.control.unknown_target",
                 format!("Remote target {target_id} is not configured"),
                 false,
             );
-            return true;
         };
         if remote.state != "connected" {
-            self.set_error(
+            fail_request!(
                 "remote.control.not_connected",
                 format!(
                     "Remote target {target_id} is {}; no command was sent",
@@ -2282,25 +2377,22 @@ impl Runtime {
                 ),
                 true,
             );
-            return true;
         }
         let Some(session) = remote.session.clone() else {
-            self.set_error(
+            fail_request!(
                 "remote.control.session_missing",
                 format!("Remote target {target_id} has no authoritative session projection"),
                 true,
             );
-            return true;
         };
         let mut source_pane_id = None;
         if let Some(pane_id) = payload.request.pane_id().map(str::to_owned) {
             if pane_id.trim().is_empty() {
-                self.set_error(
+                fail_request!(
                     "remote.control.invalid_pane",
-                    "Remote pane control requires a non-empty pane_id",
+                    "Remote pane control requires a non-empty pane_id".to_owned(),
                     false,
                 );
-                return true;
             }
             let pane_exists = session.workspaces.iter().any(|workspace| {
                 workspace.checkouts.iter().any(|checkout| {
@@ -2311,21 +2403,19 @@ impl Runtime {
                 })
             });
             if !pane_exists {
-                self.set_error(
+                fail_request!(
                     "remote.control.pane_not_found",
                     format!("Pane {pane_id} does not belong to remote target {target_id}"),
                     false,
                 );
-                return true;
             }
             source_pane_id = remote_pane_source_id(&target_id, &pane_id).map(str::to_owned);
             if source_pane_id.is_none() {
-                self.set_error(
+                fail_request!(
                     "remote.control.invalid_pane_scope",
                     format!("Pane {pane_id} is not scoped to remote target {target_id}"),
                     false,
                 );
-                return true;
             }
             let needs_confirmation =
                 matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
@@ -2523,9 +2613,18 @@ impl Runtime {
             "remote.control.requested",
             format!("Sending {} to {target_id}", action.kind()),
         );
+        let dispatched_request_id = request_id.clone();
         if let Err(message) = live::spawn_remote_control(context, request_id, action) {
             if let Some(key) = creation_key {
                 self.remote_tab_creations_in_flight.remove(&key);
+            }
+            if pane_focus_target.is_some() {
+                self.finish_pane_focus_request_by_id(
+                    &dispatched_request_id,
+                    "failed",
+                    Some(message.clone()),
+                    true,
+                );
             }
             self.set_error("remote.control.worker_failed", message, true);
         }
@@ -3593,12 +3692,25 @@ impl Runtime {
             if let Some(pending) = pending.as_ref()
                 && pending.expired_at(now_unix_ms)
             {
-                expired.push((slot.what(), pending.target_id.clone()));
+                expired.push((slot, pending.clone()));
                 *self.pending_view_focus_mut(slot) = None;
             }
         }
         let changed = !expired.is_empty();
-        for (what, target_id) in expired {
+        for (slot, pending) in expired {
+            let what = slot.what();
+            let target_id = pending.target_id;
+            if slot == ViewFocusSlot::Pane {
+                self.finish_pane_focus_request(
+                    pending.request_id.as_deref(),
+                    &target_id,
+                    "failed",
+                    Some(format!(
+                        "Herdr did not confirm pane focus within {VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS} ms."
+                    )),
+                    true,
+                );
+            }
             crate::diagnostic!(serde_json::json!({
                 "component": "view_state",
                 "kind": "view_focus.timed_out",
@@ -4000,6 +4112,23 @@ impl Runtime {
         // Doing it first lets this same update be read as an external focus
         // rather than as a late answer to a request that has gone quiet.
         let timed_out = self.expire_pending_view_focus(unix_milliseconds());
+        let session_confirms_pending_pane = fetched.as_ref().ok().is_some_and(|payload| {
+            let Some(pending) = self.pending_pane_focus.as_ref() else {
+                return false;
+            };
+            let herdr_tabs = HerdrTabView::from_payload(payload);
+            payload.layouts.iter().any(|layout| {
+                layout.focused_pane_id == pending.target_id
+                    && layout
+                        .panes
+                        .iter()
+                        .any(|pane| pane.pane_id == pending.target_id)
+                    && herdr_tabs.is_active_in_its_workspace(&layout.tab_id)
+            })
+        });
+        if let Ok(payload) = &fetched {
+            self.herdr_active_tab_ids = HerdrTabView::from_payload(payload).active_tab_ids();
+        }
         let previously_projected_pane = self
             .snapshot
             .terminal
@@ -4275,6 +4404,10 @@ impl Runtime {
                 let mut selection_changed = false;
                 if selected_pane_retired {
                     let retired_pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");
+                    self.fail_pending_pane_focus_for_target(
+                        retired_pane_id,
+                        format!("Pane {retired_pane_id} retired before Herdr confirmed focus."),
+                    );
                     self.clear_terminal_projection();
                     self.snapshot.terminal.pane_id = replacement_pane_id.clone();
                     self.snapshot.focused.pane_id = replacement_pane_id.clone();
@@ -4302,6 +4435,10 @@ impl Runtime {
                     selection_changed = true;
                 } else if selected_pane_missing || selected_pane_invalid_for_context {
                     let pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");
+                    self.fail_pending_pane_focus_for_target(
+                        pane_id,
+                        format!("Pane {pane_id} is no longer available in the selected checkout."),
+                    );
                     self.clear_terminal_projection();
                     self.set_error(
                         "pane.projection_unavailable",
@@ -4427,7 +4564,7 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(pane_id.clone());
                 self.snapshot.focused.pane_id = Some(pane_id);
             }
-            changed |= self.apply_pane_layout(layout);
+            changed |= self.apply_pane_layout(layout, session_confirms_pending_pane);
         }
         changed |= self.refresh_worktree_projection();
         changed |= self.align_visible_tab_with_selected_pane();
@@ -4445,6 +4582,8 @@ impl Runtime {
     pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
         let changes_list_visible = self.snapshot.ui_state.right_panel_visible
             && self.snapshot.ui_state.right_panel_section == RightPanelSection::Changes;
+        let explorer_visible = self.snapshot.ui_state.right_panel_visible
+            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Explorer;
         let active_diff = self
             .snapshot
             .editor
@@ -4457,7 +4596,7 @@ impl Runtime {
                     .iter()
                     .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::Diff)
             });
-        if !changes_list_visible && active_diff.is_none() {
+        if !changes_list_visible && !explorer_visible && active_diff.is_none() {
             return None;
         }
         let root_path = self.snapshot.navigator.root_path.as_ref()?;
@@ -4814,6 +4953,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        self.refresh_inactive_groups();
 
         let focused_project = self
             .snapshot
@@ -4870,10 +5010,9 @@ impl Runtime {
                 .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
                 .filter(|workspace| {
                     (self.github_lookup_requested()
-                        && (self.snapshot.ui_state.right_panel_section == RightPanelSection::Git
-                            || self
-                                .focused_local_checkout()
-                                .is_some_and(|(focused, _)| focused.path == workspace.path)))
+                        && self
+                            .focused_local_checkout()
+                            .is_some_and(|(focused, _)| focused.path == workspace.path))
                         || self.sidebar_github_projects.contains(&workspace.path)
                 })
                 .map(|workspace| crate::github::GithubProjectRequest {
@@ -4892,7 +5031,7 @@ impl Runtime {
         self.snapshot.ui_state.right_panel_visible
             && matches!(
                 self.snapshot.ui_state.right_panel_section,
-                RightPanelSection::Git | RightPanelSection::Overview
+                RightPanelSection::Overview
             )
     }
 
@@ -5246,7 +5385,7 @@ impl Runtime {
         let paths = if self.snapshot.ui_state.right_panel_visible
             && matches!(
                 self.snapshot.ui_state.right_panel_section,
-                RightPanelSection::Git | RightPanelSection::Overview
+                RightPanelSection::Overview
             ) {
             self.focused_local_checkout()
                 .and_then(|(workspace, _)| self.worktree_catalog.project(&workspace.path))
@@ -5450,6 +5589,13 @@ impl Runtime {
         true
     }
 
+    pub(crate) fn usage_activity(&self) -> crate::usage::UsageActivity {
+        crate::usage::UsageActivity {
+            window_visible: self.usage_window_visible,
+            popover_open_generation: self.usage_popover_open_generation,
+        }
+    }
+
     /// Recomputes the pet's pose, badge row, and attention queue from the
     /// current agent list and connection state. Idempotent: the same inputs
     /// produce the same snapshot and report no change.
@@ -5645,6 +5791,17 @@ impl Runtime {
         sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
     }
 
+    /// Recomputes the two inactive folds from current core facts. No row is
+    /// moved or copied: the full collections stay authoritative for search,
+    /// focus, and non-sidebar consumers.
+    fn refresh_inactive_groups(&mut self) -> bool {
+        crate::project_context::refresh_inactive_groups(
+            &mut self.snapshot.navigator,
+            &self.snapshot.ui_state,
+            unix_milliseconds(),
+        )
+    }
+
     /// Refills every pane's child summary and breadcrumb from the final agent
     /// list.
     ///
@@ -5774,7 +5931,7 @@ impl Runtime {
         if delegated_tabs_changed {
             self.rebuild_tab_strips();
         }
-        changed || delegated_tabs_changed
+        changed | delegated_tabs_changed | self.refresh_inactive_groups()
     }
 
     /// Whether a delegated child's clock should be running at all.
@@ -6330,7 +6487,42 @@ impl Runtime {
     /// follows. The record is raised here rather than when the resulting
     /// layout lands, so one click on a Done row clears that row inside the
     /// same dispatch. A focus that never reaches Herdr arms nothing.
-    fn focus_pane(&mut self, pane_id: String, origin: PaneFocusOrigin) {
+    fn focus_pane(&mut self, pane_id: String, origin: PaneFocusOrigin, request_id: Option<String>) {
+        let request_id = request_id.filter(|value| !value.trim().is_empty());
+        if let Some(request_id) = request_id.as_deref() {
+            if self
+                .snapshot
+                .status
+                .pane_focus_request
+                .as_ref()
+                .is_some_and(|request| request.request_id == request_id)
+            {
+                self.push_diagnostic(
+                    "pane.focus.duplicate_ignored",
+                    format!("Ignored duplicate pane focus request {request_id} for {pane_id}"),
+                );
+                return;
+            }
+            self.snapshot.status.pane_focus_request = Some(PaneFocusRequestSnapshot {
+                request_id: request_id.to_owned(),
+                target_pane_id: pane_id.clone(),
+                phase: "pending".to_owned(),
+                message: None,
+                retryable: false,
+            });
+            if !self.pane_exists_for_focus(&pane_id) {
+                let message = format!("Pane {pane_id} is no longer available.");
+                self.finish_pane_focus_request(
+                    Some(request_id),
+                    &pane_id,
+                    "failed",
+                    Some(message.clone()),
+                    true,
+                );
+                self.set_error("pane.focus_target_unavailable", message, true);
+                return;
+            }
+        }
         let already_focused = self.snapshot.focused.pane_id.as_deref() == Some(pane_id.as_str());
         self.snapshot.terminal.pane_id = Some(pane_id.clone());
         self.snapshot.focused.surface = Surface::Terminal;
@@ -6343,11 +6535,15 @@ impl Runtime {
         // A pane in a tab the checkout is not showing brings its tab forward.
         self.align_visible_tab_with_selected_pane();
         let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "pane.control_unavailable",
-                "Pane focus requires a live Herdr connection",
+            let message = "Pane focus requires a live Herdr connection".to_owned();
+            self.finish_pane_focus_request(
+                request_id.as_deref(),
+                &pane_id,
+                "failed",
+                Some(message.clone()),
                 true,
             );
+            self.set_error("pane.control_unavailable", message, true);
             return;
         };
         // Rule 11: focusing the pane that already has the keyboard, with
@@ -6356,13 +6552,22 @@ impl Runtime {
         // Settled means Herdr's own layout agrees too. A checkout coming
         // forward selects a pane locally without telling Herdr, and skipping
         // the notification then let Herdr's next layout take the focus back.
-        let herdr_agrees = self
-            .layout_holding_pane(&pane_id)
-            .is_none_or(|layout| layout.focused_pane_id == pane_id);
+        let herdr_agrees = self.layout_holding_pane(&pane_id).is_none_or(|layout| {
+            layout.focused_pane_id == pane_id && self.herdr_active_tab_ids.contains(&layout.tab_id)
+        });
         let notify = !already_focused
             || !herdr_agrees
             || !self.view_focus_settled_on(ViewFocusSlot::Pane, &pane_id);
         if notify {
+            if let Some(pending) = self.pending_pane_focus.take() {
+                self.finish_pane_focus_request(
+                    pending.request_id.as_deref(),
+                    &pending.target_id,
+                    "failed",
+                    Some("A newer pane focus replaced this request.".to_owned()),
+                    true,
+                );
+            }
             self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
             if let Err(message) = live::spawn_pane_control(
                 context,
@@ -6370,19 +6575,107 @@ impl Runtime {
                     pane_id: pane_id.clone(),
                 },
             ) {
+                self.finish_pane_focus_request(
+                    request_id.as_deref(),
+                    &pane_id,
+                    "failed",
+                    Some(message.clone()),
+                    true,
+                );
                 self.set_error("pane.focus_worker_failed", message, true);
                 return;
             }
             // Latest request wins, so a second click while the first is
             // unconfirmed cannot be pulled back by Herdr's answer to the
             // first.
-            self.pending_pane_focus = Some(PendingViewFocus::new(String::new(), pane_id.clone()));
+            self.pending_pane_focus = Some(match request_id {
+                Some(request_id) => PendingViewFocus::pane_request(pane_id.clone(), request_id),
+                None => PendingViewFocus::new(String::new(), pane_id.clone()),
+            });
+        } else {
+            self.finish_pane_focus_request(
+                request_id.as_deref(),
+                &pane_id,
+                "succeeded",
+                None,
+                false,
+            );
         }
         if origin == PaneFocusOrigin::Restore {
             return;
         }
         self.operator_focused_pane_id = Some(pane_id);
         self.refresh_pane_read_state();
+    }
+
+    fn pane_exists_for_focus(&self, pane_id: &str) -> bool {
+        self.snapshot
+            .pane_layouts
+            .iter()
+            .any(|layout| layout.pane_ids().contains(&pane_id))
+            || self
+                .snapshot
+                .terminal
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == pane_id)
+    }
+
+    fn finish_pane_focus_request(
+        &mut self,
+        request_id: Option<&str>,
+        target_pane_id: &str,
+        phase: &str,
+        message: Option<String>,
+        retryable: bool,
+    ) {
+        let Some(request_id) = request_id else { return };
+        let Some(request) = self.snapshot.status.pane_focus_request.as_mut() else {
+            return;
+        };
+        if request.request_id != request_id || request.target_pane_id != target_pane_id {
+            return;
+        }
+        request.phase = phase.to_owned();
+        request.message = message;
+        request.retryable = retryable;
+    }
+
+    fn finish_pane_focus_request_by_id(
+        &mut self,
+        request_id: &str,
+        phase: &str,
+        message: Option<String>,
+        retryable: bool,
+    ) {
+        let Some(request) = self.snapshot.status.pane_focus_request.as_mut() else {
+            return;
+        };
+        if request.request_id != request_id {
+            return;
+        }
+        request.phase = phase.to_owned();
+        request.message = message;
+        request.retryable = retryable;
+    }
+
+    fn fail_pending_pane_focus_for_target(&mut self, target_pane_id: &str, message: String) {
+        let Some(pending) = self
+            .pending_pane_focus
+            .as_ref()
+            .filter(|pending| pending.target_id == target_pane_id)
+            .cloned()
+        else {
+            return;
+        };
+        self.pending_pane_focus = None;
+        self.finish_pane_focus_request(
+            pending.request_id.as_deref(),
+            target_pane_id,
+            "failed",
+            Some(message),
+            true,
+        );
     }
 
     /// The layout of the tab that holds this pane. Every tab in the session
@@ -6419,7 +6712,11 @@ impl Runtime {
         true
     }
 
-    fn apply_pane_layout(&mut self, layout: PaneLayoutSnapshot) -> bool {
+    fn apply_pane_layout(
+        &mut self,
+        layout: PaneLayoutSnapshot,
+        session_confirms_pending_pane: bool,
+    ) -> bool {
         let pane_ids = layout
             .pane_ids()
             .into_iter()
@@ -6489,17 +6786,23 @@ impl Runtime {
         // focus is not, so the operator's click is not undone by the frame
         // that was already on its way.
         let previous_focus = self.snapshot.focused.pane_id.clone();
-        let pending_pane = self
-            .pending_pane_focus
-            .as_ref()
-            .map(|pending| pending.target_id.clone());
+        let pending_pane = self.pending_pane_focus.clone();
         let arriving_confirms_pending_tab = self
             .pending_tab_focus
             .as_ref()
             .is_some_and(|pending| pending.target_id == arriving_tab_id);
-        let adopt_focus = match pending_pane.as_deref() {
-            Some(pending) if pending == layout.focused_pane_id => {
+        let adopt_focus = match pending_pane.as_ref() {
+            Some(pending)
+                if pending.target_id == layout.focused_pane_id && session_confirms_pending_pane =>
+            {
                 self.pending_pane_focus = None;
+                self.finish_pane_focus_request(
+                    pending.request_id.as_deref(),
+                    &pending.target_id,
+                    "succeeded",
+                    None,
+                    false,
+                );
                 true
             }
             Some(_) => false,
@@ -6560,14 +6863,24 @@ impl Runtime {
     /// is left alone, so a late refusal for a tab the operator has already
     /// moved on from cannot end the wait on the current one.
     fn clear_refused_view_focus(&mut self, slot: ViewFocusSlot, target_id: &str, message: &str) {
-        if self
+        let Some(pending) = self
             .pending_view_focus(slot)
             .as_ref()
-            .is_none_or(|pending| pending.target_id != target_id)
-        {
+            .filter(|pending| pending.target_id == target_id)
+            .cloned()
+        else {
             return;
-        }
+        };
         *self.pending_view_focus_mut(slot) = None;
+        if slot == ViewFocusSlot::Pane {
+            self.finish_pane_focus_request(
+                pending.request_id.as_deref(),
+                target_id,
+                "failed",
+                Some(message.to_owned()),
+                true,
+            );
+        }
         let what = slot.what();
         crate::diagnostic!(serde_json::json!({
             "component": "view_state",
@@ -6658,7 +6971,7 @@ impl Runtime {
         self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain);
         let changed = before != agents;
         self.snapshot.navigator.agents = agents;
-        changed
+        changed | self.refresh_inactive_groups()
     }
 
     fn ensure_terminal_pane(&mut self, pane_id: &str) {
@@ -6929,7 +7242,7 @@ impl Runtime {
                     "pane_id": pane_id,
                     "duration_ms": elapsed_ms,
                 }));
-                self.apply_pane_layout(layout);
+                self.apply_pane_layout(layout, false);
                 true
             }
             (PaneControlAction::MoveToNewTab { pane_id, .. }, outcome) => {
@@ -7105,6 +7418,10 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         let action_kind = action.kind();
+        let is_pane_focus = matches!(
+            &action,
+            RemoteControlAction::Pane(PaneControlAction::Focus { .. })
+        );
         if let Some(key) = remote_tab_creation_key(target_id, &action) {
             self.remote_tab_creations_in_flight.remove(&key);
         }
@@ -7113,6 +7430,9 @@ impl Runtime {
                 created_tab_id,
                 created_pane_id,
             }) => {
+                if is_pane_focus {
+                    self.finish_pane_focus_request_by_id(request_id, "succeeded", None, false);
+                }
                 let mut receipt = String::new();
                 if let Some(tab_id) = created_tab_id.as_deref() {
                     receipt.push_str(&format!("; created tab {tab_id}"));
@@ -7140,6 +7460,16 @@ impl Runtime {
             // A remote target owns its tab order; `spawn_remote_control`
             // refuses the only action that reports one back.
             Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
+                if is_pane_focus {
+                    self.finish_pane_focus_request_by_id(
+                        request_id,
+                        "failed",
+                        Some(format!(
+                            "{action_kind} for {target_id} returned an invalid outcome"
+                        )),
+                        true,
+                    );
+                }
                 self.set_error(
                     "remote.control.failed",
                     format!("{action_kind} for {target_id} returned a tab order remotely"),
@@ -7147,6 +7477,14 @@ impl Runtime {
                 );
             }
             Err(message) => {
+                if is_pane_focus {
+                    self.finish_pane_focus_request_by_id(
+                        request_id,
+                        "failed",
+                        Some(message.clone()),
+                        true,
+                    );
+                }
                 self.set_error(
                     "remote.control.failed",
                     format!("{action_kind} for {target_id} failed: {message}"),
@@ -9246,6 +9584,7 @@ impl Runtime {
         self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
         self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
         self.snapshot.navigator.root_path = Some(checkout_path);
+        self.refresh_inactive_groups();
         // Selecting a checkout measures it, and selecting the one already
         // selected measures it again - that is the card's cheapest refresh
         // for a number that moves whenever a build runs (R8).
@@ -9508,7 +9847,7 @@ impl Runtime {
                 true
             }
             ValidatedEvent::FocusPane(payload) => {
-                self.focus_pane(payload.pane_id, payload.origin);
+                self.focus_pane(payload.pane_id, payload.origin, payload.request_id);
                 true
             }
             ValidatedEvent::ReconnectPane(payload) => {
@@ -9794,6 +10133,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id.clone());
                 self.snapshot.navigator.root_path = Some(checkout_path);
+                self.refresh_inactive_groups();
                 self.visible_tab_ids
                     .insert(payload.checkout_id.clone(), payload.tab_id.clone());
                 // Nothing is cleared here. The tab being selected already has
@@ -9884,6 +10224,72 @@ impl Runtime {
                 self.deactivate_editor_tab();
                 self.reconcile_remote_terminal_selection();
                 self.persist_current_ui_state();
+                true
+            }
+            ValidatedEvent::InactiveCheckoutsToggle(payload) => {
+                let Some(group) = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.path == payload.project_path)
+                    .map(|workspace| &workspace.inactive_checkouts)
+                else {
+                    self.set_error(
+                        "inactive_checkouts.unknown_project",
+                        format!("Project {} is not available", payload.project_path),
+                        false,
+                    );
+                    return true;
+                };
+                if group.checkout_ids.is_empty() {
+                    self.set_error(
+                        "inactive_checkouts.unavailable",
+                        format!("Project {} has no inactive checkouts", payload.project_path),
+                        false,
+                    );
+                    return true;
+                }
+                let expanded = &mut self
+                    .snapshot
+                    .ui_state
+                    .expanded_inactive_checkout_project_paths;
+                if expanded.contains(&payload.project_path) {
+                    expanded.retain(|path| path != &payload.project_path);
+                } else {
+                    expanded.push(payload.project_path);
+                    expanded.sort();
+                }
+                self.refresh_inactive_groups();
+                self.persist_ui_state();
+                true
+            }
+            ValidatedEvent::InactiveProjectsToggle(payload) => {
+                let available = self
+                    .snapshot
+                    .navigator
+                    .inactive_projects
+                    .iter()
+                    .any(|group| {
+                        group.device_id == payload.device_id && !group.project_ids.is_empty()
+                    });
+                if !available {
+                    self.set_error(
+                        "inactive_projects.unavailable",
+                        format!("Device {} has no inactive projects", payload.device_id),
+                        false,
+                    );
+                    return true;
+                }
+                let expanded = &mut self.snapshot.ui_state.expanded_inactive_project_device_ids;
+                if expanded.contains(&payload.device_id) {
+                    expanded.retain(|device_id| device_id != &payload.device_id);
+                } else {
+                    expanded.push(payload.device_id);
+                    expanded.sort();
+                }
+                self.refresh_inactive_groups();
+                self.persist_ui_state();
                 true
             }
             ValidatedEvent::RemoveWorkspace(payload) => {
@@ -11145,14 +11551,22 @@ impl Runtime {
                 true
             }
             ValidatedEvent::UiStateUpdate(payload) => {
+                if let Some(visible) = payload.usage_window_visible {
+                    self.usage_window_visible = visible;
+                }
+                if let Some(open) = payload.usage_popover_open {
+                    if open && !self.usage_popover_open {
+                        self.usage_popover_open_generation =
+                            self.usage_popover_open_generation.saturating_add(1);
+                    }
+                    self.usage_popover_open = open;
+                }
                 // Pet placement, visibility, and shortcut belong to the pet
                 // events; a navigator or keyboard save must not erase them.
                 let current = self.snapshot.ui_state.clone();
+                let previous_ui_state = current.clone();
                 let git_was_visible = current.right_panel_visible
-                    && matches!(
-                        current.right_panel_section,
-                        RightPanelSection::Git | RightPanelSection::Overview
-                    );
+                    && matches!(current.right_panel_section, RightPanelSection::Overview);
                 self.snapshot.ui_state = UiStateSnapshot {
                     left_sidebar_visible: payload
                         .left_sidebar_visible
@@ -11172,6 +11586,10 @@ impl Runtime {
                     collapsed_checkout_ids: payload
                         .collapsed_checkout_ids
                         .unwrap_or(current.collapsed_checkout_ids),
+                    expanded_inactive_checkout_project_paths: current
+                        .expanded_inactive_checkout_project_paths,
+                    expanded_inactive_project_device_ids: current
+                        .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
                     collapsed_agent_pane_ids: payload
                         .collapsed_agent_pane_ids
@@ -11208,12 +11626,21 @@ impl Runtime {
                         .unwrap_or(current.last_agent_bypass),
                     scratch_expanded: payload.scratch_expanded.unwrap_or(current.scratch_expanded),
                 };
+                // Visibility and popover activity wake the provider reader,
+                // but they are not durable preferences. The shell sends the
+                // current durable values with the shared UI-state event; if
+                // those values did not change, do not rewrite state.json or
+                // run unrelated catalog reconciliation.
+                if self.snapshot.ui_state == previous_ui_state {
+                    return true;
+                }
                 self.snapshot.navigator.scratch.expanded = self.snapshot.ui_state.scratch_expanded;
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
                     self.snapshot.ui_state.focused_device_id.clone();
                 self.snapshot.navigator.focused_checkout_id =
                     self.snapshot.ui_state.focused_checkout_id.clone();
+                self.refresh_inactive_groups();
                 self.reconcile_remote_terminal_selection();
                 Self::apply_workspace_expansion(
                     &mut self.snapshot.navigator.workspaces,
@@ -11223,7 +11650,7 @@ impl Runtime {
                 let git_is_visible = self.snapshot.ui_state.right_panel_visible
                     && matches!(
                         self.snapshot.ui_state.right_panel_section,
-                        RightPanelSection::Git | RightPanelSection::Overview
+                        RightPanelSection::Overview
                     );
                 if git_is_visible && !git_was_visible {
                     if let Some((workspace, _)) = self.focused_local_checkout() {
@@ -12032,6 +12459,12 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "focus_tab" => decode!(FocusTabPayload, FocusTab),
         "reorder_tab" => decode!(ReorderTabPayload, ReorderTab),
         "focus_device" => decode!(FocusDevicePayload, FocusDevice),
+        "inactive_checkouts_toggle" => {
+            decode!(InactiveCheckoutsTogglePayload, InactiveCheckoutsToggle)
+        }
+        "inactive_projects_toggle" => {
+            decode!(InactiveProjectsTogglePayload, InactiveProjectsToggle)
+        }
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
         "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
         "remove_device" => decode!(RemoveDevicePayload, RemoveDevice),
@@ -12578,10 +13011,10 @@ mod tests {
         assert_eq!(runtime.github_request().projects[0].generation, 1);
     }
 
-    /// Without sidebar requests, pull requests are absent until Git is visible.
-    /// Once visible, one request per project is stable until header refresh.
+    /// Overview reads its focused project; explicit sidebar requests remain
+    /// independent of the retired right-panel Git tab.
     #[test]
-    fn pull_requests_are_scoped_to_overview_and_visible_git_section() {
+    fn pull_requests_are_scoped_to_overview_and_explicit_sidebar_requests() {
         let mut runtime = runtime();
         let mut hide = workspace(
             "workspace-1",
@@ -12616,17 +13049,11 @@ mod tests {
         assert!(generations(&runtime).is_empty());
         assert!(!runtime.projected_card().github.loading);
         runtime.snapshot.ui_state.right_panel_visible = true;
-        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Git;
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Overview;
         assert!(runtime.projected_card().github.loading);
-        assert_eq!(
-            generations(&runtime),
-            vec![("/tmp/hide".to_owned(), 0), ("/tmp/other".to_owned(), 0)]
-        );
+        assert_eq!(generations(&runtime), vec![("/tmp/hide".to_owned(), 0)]);
         runtime.refresh_pull_requests("/tmp/hide");
-        assert_eq!(
-            generations(&runtime),
-            vec![("/tmp/hide".to_owned(), 1), ("/tmp/other".to_owned(), 0)]
-        );
+        assert_eq!(generations(&runtime), vec![("/tmp/hide".to_owned(), 1)]);
         runtime.refresh_card();
         assert!(runtime.snapshot.card.github.loading);
         let leave_git = serde_json::to_vec(&serde_json::json!({
@@ -12641,7 +13068,7 @@ mod tests {
         .expect("leave Git event");
         assert!(runtime.dispatch_json(&leave_git));
         assert!(!runtime.snapshot.card.github.loading);
-        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Git;
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Overview;
         runtime.snapshot.ui_state.right_panel_visible = false;
         assert!(!runtime.projected_card().github.loading);
     }
@@ -13117,6 +13544,7 @@ mod tests {
         assert!(runtime.request_remote_control(RemoteControlPayload {
             target_id: "mini".to_owned(),
             request_id: "request-2".to_owned(),
+            report_pane_focus_outcome: false,
             request: RemoteControlRequest::CreateTab {
                 workspace_id: projected_workspace_id.to_owned(),
                 cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
@@ -14616,6 +15044,8 @@ mod tests {
                 chromux_enabled: false,
                 herdr_socket_path_override: None,
                 home_path: None,
+                claude_config_dir: None,
+                codex_home: None,
             },
         )
     }
@@ -14934,6 +15364,7 @@ mod tests {
             session_workspace_ids: Vec::new(),
             last_activity_unix_ms: None,
             checkouts,
+            inactive_checkouts: Default::default(),
         }
     }
 
@@ -15005,6 +15436,129 @@ mod tests {
                 .ui_state
                 .collapsed_checkout_ids
                 .is_empty()
+        );
+    }
+
+    /// B5, B12. The two fold events own independent persisted keys and update
+    /// the snapshot immediately. Repeating each toggle converges back to the
+    /// default collapsed state without changing project disclosure.
+    #[test]
+    fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
+        let mut runtime = runtime();
+        let path = "/tmp/hide-runtime-inactive";
+        let settled = |id: &str, checkout_path: &str, is_worktree: bool| CheckoutSnapshot {
+            id: id.to_owned(),
+            workspace_id: "workspace-inactive".to_owned(),
+            label: id.to_owned(),
+            path: checkout_path.to_owned(),
+            is_worktree,
+            worktree: Some(crate::model::WorktreeSnapshot {
+                merged: Some(true),
+                ..Default::default()
+            }),
+            ..CheckoutSnapshot::default()
+        };
+        runtime.snapshot.navigator.workspaces = vec![workspace(
+            "workspace-inactive",
+            "Inactive",
+            path,
+            vec![
+                settled("primary", path, false),
+                settled("secondary", "/tmp/hide-runtime-inactive-secondary", true),
+            ],
+        )];
+        runtime.refresh_inactive_groups();
+        assert_eq!(
+            runtime.snapshot.navigator.workspaces[0]
+                .inactive_checkouts
+                .checkout_ids,
+            ["secondary"]
+        );
+        assert_eq!(runtime.snapshot.navigator.inactive_projects.len(), 1);
+
+        let checkout_toggle = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "inactive_checkouts_toggle",
+            "payload": { "project_path": path }
+        }))
+        .unwrap();
+        let project_toggle = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "inactive_projects_toggle",
+            "payload": { "device_id": "local" }
+        }))
+        .unwrap();
+
+        assert!(runtime.dispatch_json(&checkout_toggle));
+        assert!(
+            runtime.snapshot.navigator.workspaces[0]
+                .inactive_checkouts
+                .expanded
+        );
+        assert_eq!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_checkout_project_paths,
+            [path]
+        );
+        assert!(runtime.dispatch_json(&project_toggle));
+        assert!(runtime.snapshot.navigator.inactive_projects[0].expanded);
+        assert_eq!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_project_device_ids,
+            ["local"]
+        );
+
+        assert!(runtime.dispatch_json(&checkout_toggle));
+        assert!(runtime.dispatch_json(&project_toggle));
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_checkout_project_paths
+                .is_empty()
+        );
+        assert!(
+            runtime
+                .snapshot
+                .ui_state
+                .expanded_inactive_project_device_ids
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn usage_activity_hints_are_accepted_without_persisting_ui_state() {
+        let mut runtime = runtime();
+        let state_path = runtime.state_path.clone();
+        let _ = std::fs::remove_file(&state_path);
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "selected_path": null,
+                "selected_pane_id": null,
+                "usage_window_visible": true,
+                "usage_popover_open": true
+            }
+        }))
+        .expect("usage activity event");
+
+        assert!(runtime.dispatch_json(&event));
+        assert_eq!(
+            runtime.usage_activity(),
+            crate::usage::UsageActivity {
+                window_visible: true,
+                popover_open_generation: 1,
+            }
+        );
+        assert!(
+            !state_path.exists(),
+            "an observation hint must not create persistent UI state"
         );
     }
 
@@ -15414,7 +15968,7 @@ mod tests {
 
         // The geometry is the one already stored, so only the projection
         // moves. That move still has to be reported.
-        assert!(runtime.apply_pane_layout(second.clone()));
+        assert!(runtime.apply_pane_layout(second.clone(), false));
         assert_eq!(
             runtime.snapshot().terminal.pane_id.as_deref(),
             Some("w-order:t2:p")
@@ -15422,7 +15976,7 @@ mod tests {
 
         // The same layout over the same projection changes nothing, and
         // reports nothing, so the canvas is not redrawn for a repeat.
-        assert!(!runtime.apply_pane_layout(second));
+        assert!(!runtime.apply_pane_layout(second, false));
     }
 
     /// The shell used to draw an even grid of the tab's panes whenever it had
@@ -16009,6 +16563,19 @@ mod tests {
         .expect("focus tab event")
     }
 
+    fn correlated_pane_focus_event(pane_id: &str, request_id: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_pane",
+            "payload": {
+                "pane_id": pane_id,
+                "origin": "operator",
+                "request_id": request_id
+            }
+        }))
+        .expect("correlated pane focus event")
+    }
+
     fn diagnostic_count(runtime: &Runtime, kind: &str) -> usize {
         runtime
             .snapshot()
@@ -16017,6 +16584,377 @@ mod tests {
             .iter()
             .filter(|diagnostic| diagnostic.kind == kind)
             .count()
+    }
+
+    /// PRD B24. A relationship Open is completed only by the outcome carrying
+    /// its request id. An unrelated app-wide error and the already projected
+    /// layout cannot answer it while Herdr still reports the prior focus.
+    #[test]
+    fn pane_focus_request_waits_for_its_matching_authoritative_confirmation() {
+        let checkout_path = "/private/tmp/hide-pane-focus-request";
+        let (mut runtime, _) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        )));
+
+        assert!(runtime.dispatch_json(&correlated_pane_focus_event(
+            "w-order:t2:p",
+            "relationship-1",
+        )));
+        let request = runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .expect("the request is projected");
+        assert_eq!(request.phase, "pending");
+        assert_eq!(request.request_id, "relationship-1");
+
+        runtime.set_error("pane.focus_failed", "an unrelated pane failed", true);
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        )));
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .pane_focus_request
+                .as_ref()
+                .map(|request| request.phase.as_str()),
+            Some("pending"),
+            "neither global last_error nor the prior layout is this request's answer"
+        );
+
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t2",
+        )));
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .pane_focus_request
+                .as_ref()
+                .map(|request| request.phase.as_str()),
+            Some("succeeded")
+        );
+    }
+
+    /// PRD B24, engineering rule 11. Replaying one request id produces no
+    /// second pane-control effect. A retry receives a new id only after the
+    /// core-owned timeout has ended the first wait.
+    #[test]
+    fn pane_focus_request_blocks_duplicates_times_out_and_accepts_a_retry() {
+        let checkout_path = "/private/tmp/hide-pane-focus-timeout";
+        let (mut runtime, _) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        )));
+        let request = correlated_pane_focus_event("w-order:t2:p", "relationship-1");
+        assert!(runtime.dispatch_json(&request));
+        let requested_at = runtime
+            .pending_pane_focus
+            .as_ref()
+            .expect("one pane focus is in flight")
+            .requested_at_unix_ms;
+
+        assert!(runtime.dispatch_json(&request));
+        assert_eq!(
+            runtime
+                .pending_pane_focus
+                .as_ref()
+                .map(|pending| pending.requested_at_unix_ms),
+            Some(requested_at),
+            "the duplicate did not replace or repeat the request"
+        );
+        assert_eq!(
+            diagnostic_count(&runtime, "pane.focus.duplicate_ignored"),
+            1
+        );
+
+        assert!(
+            runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS)
+        );
+        let timed_out = runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .expect("the timeout is projected");
+        assert_eq!(timed_out.phase, "failed");
+        assert!(timed_out.retryable);
+        assert!(
+            timed_out
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("did not confirm"))
+        );
+
+        assert!(runtime.dispatch_json(&correlated_pane_focus_event(
+            "w-order:t2:p",
+            "relationship-2",
+        )));
+        let retry = runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .expect("the retry replaces the settled receipt");
+        assert_eq!(retry.request_id, "relationship-2");
+        assert_eq!(retry.phase, "pending");
+    }
+
+    #[test]
+    fn pane_focus_refusal_and_target_retirement_end_the_matching_request() {
+        let checkout_path = "/private/tmp/hide-pane-focus-retirement";
+        let (mut runtime, _) = live_tab_order_runtime(checkout_path);
+        let tabs = ["w-order:t1", "w-order:t2"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &tabs,
+            &tabs,
+            "w-order:t1",
+        )));
+        assert!(runtime.dispatch_json(&correlated_pane_focus_event(
+            "w-order:t2:p",
+            "relationship-refused",
+        )));
+        runtime.ingest_pane_control_result(
+            PaneControlAction::Focus {
+                pane_id: "w-order:t2:p".to_owned(),
+            },
+            Err("focus refused".to_owned()),
+            8,
+        );
+        let refusal = runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .expect("the refusal is projected");
+        assert_eq!(refusal.phase, "failed");
+        assert_eq!(refusal.message.as_deref(), Some("focus refused"));
+        assert!(refusal.retryable);
+
+        assert!(runtime.dispatch_json(&correlated_pane_focus_event(
+            "w-order:t2:p",
+            "relationship-retired",
+        )));
+        let remaining = ["w-order:t1"];
+        runtime.ingest_session(Ok(tab_order_payload(
+            checkout_path,
+            &remaining,
+            &remaining,
+            "w-order:t1",
+        )));
+        let retirement = runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .expect("retirement is projected");
+        assert_eq!(retirement.request_id, "relationship-retired");
+        assert_eq!(retirement.phase, "failed");
+        assert!(retirement.retryable);
+        assert!(
+            retirement
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("retired"))
+        );
+    }
+
+    /// PRD B24. Remote relationship navigation keeps the established remote
+    /// focus path, but its visible result is correlated to the existing
+    /// remote-control request receipt rather than the shell's optimistic
+    /// navigation projection.
+    #[test]
+    fn remote_pane_focus_uses_its_existing_request_outcome() {
+        let target_id = "mini";
+        let source_pane_id = "w1:p2";
+        let projected_pane_id = remote_pane_id_prefix(target_id) + source_pane_id;
+        let projected_workspace_id = "remote:mini:workspace:w1";
+        let projected_checkout_id = "remote:mini:checkout:w1";
+        let projected_tab_id = "remote:mini:tab:w1:t1";
+        let mut remote_checkout = checkout(
+            projected_workspace_id,
+            projected_checkout_id,
+            "/tmp/hide-remote-focus",
+            Some(pane(&projected_pane_id, "/tmp/hide-remote-focus")),
+        );
+        remote_checkout.tabs[0].id = Some(projected_tab_id.to_owned());
+        let mut remote_workspace = workspace(
+            projected_workspace_id,
+            "Remote",
+            "/tmp/hide-remote-focus",
+            vec![remote_checkout],
+        );
+        remote_workspace.remote_target_id = Some(target_id.to_owned());
+        remote_workspace.device_id = target_id.to_owned();
+
+        let mut runtime = runtime();
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: target_id.to_owned(),
+            state: "connected".to_owned(),
+            message: None,
+            session: Some(RemoteSessionSnapshot {
+                workspaces: vec![remote_workspace],
+                agents: Vec::new(),
+                active_tab_ids: Default::default(),
+                focused_workspace_id: Some(projected_workspace_id.to_owned()),
+                focused_checkout_id: Some(projected_checkout_id.to_owned()),
+                focused_tab_id: Some(projected_tab_id.to_owned()),
+                focused_pane_id: None,
+                pane_layouts: Vec::new(),
+            }),
+            files: RemoteFileListSnapshot::idle(),
+        });
+        let connector: Arc<dyn crate::herdr_api::ApiConnector> =
+            Arc::new(crate::herdr_api::UnixSocketConnector::new(
+                "/tmp/herdr-core-remote-focus-never-connect.sock",
+            ));
+        runtime.install_remote_control(RemoteControlContext::new(
+            target_id,
+            connector,
+            Weak::new(),
+            ChangeNotifier::noop(),
+        ));
+
+        let request_id = "relationship-remote-1";
+        assert!(runtime.request_remote_control(RemoteControlPayload {
+            target_id: target_id.to_owned(),
+            request_id: request_id.to_owned(),
+            report_pane_focus_outcome: true,
+            request: RemoteControlRequest::FocusPane {
+                pane_id: projected_pane_id.clone(),
+            },
+        }));
+        let pending = runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .expect("the remote focus request is projected");
+        assert_eq!(pending.request_id, request_id);
+        assert_eq!(pending.target_pane_id, projected_pane_id);
+        assert_eq!(pending.phase, "pending");
+
+        assert!(runtime.request_remote_control(RemoteControlPayload {
+            target_id: target_id.to_owned(),
+            request_id: "ordinary-remote-focus".to_owned(),
+            report_pane_focus_outcome: false,
+            request: RemoteControlRequest::FocusPane {
+                pane_id: projected_pane_id.clone(),
+            },
+        }));
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .pane_focus_request
+                .as_ref()
+                .map(|request| request.request_id.as_str()),
+            Some(request_id),
+            "ordinary remote focus keeps its transport receipt without replacing B24's outcome"
+        );
+
+        runtime.set_error("pane.focus_failed", "another pane failed", true);
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .pane_focus_request
+                .as_ref()
+                .map(|request| request.phase.as_str()),
+            Some("pending"),
+            "an unrelated error is not the remote request's outcome"
+        );
+
+        assert!(runtime.ingest_remote_control_result(
+            target_id,
+            request_id,
+            RemoteControlAction::Pane(PaneControlAction::Focus {
+                pane_id: source_pane_id.to_owned(),
+            }),
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id: None,
+                created_pane_id: None,
+            }),
+            7,
+        ));
+        let succeeded = runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .expect("the matching remote outcome is projected");
+        assert_eq!(succeeded.request_id, request_id);
+        assert_eq!(succeeded.phase, "succeeded");
+    }
+
+    /// PRD B24. Only the matching remote request can end the pending intent,
+    /// and an explicit remote failure remains retryable at the relationship
+    /// control without inventing a shell timeout or rollback event.
+    #[test]
+    fn remote_pane_focus_ignores_unrelated_results_and_surfaces_failure() {
+        let mut runtime = runtime();
+        runtime.snapshot.status.pane_focus_request = Some(PaneFocusRequestSnapshot {
+            request_id: "relationship-remote-2".to_owned(),
+            target_pane_id: "remote:mini:pane:w1:p2".to_owned(),
+            phase: "pending".to_owned(),
+            message: None,
+            retryable: false,
+        });
+        let action = RemoteControlAction::Pane(PaneControlAction::Focus {
+            pane_id: "w1:p2".to_owned(),
+        });
+
+        assert!(runtime.ingest_remote_control_result(
+            "mini",
+            "unrelated-request",
+            action.clone(),
+            Err("unrelated refusal".to_owned()),
+            4,
+        ));
+        assert_eq!(
+            runtime
+                .snapshot()
+                .status
+                .pane_focus_request
+                .as_ref()
+                .map(|request| request.phase.as_str()),
+            Some("pending")
+        );
+
+        assert!(runtime.ingest_remote_control_result(
+            "mini",
+            "relationship-remote-2",
+            action,
+            Err("remote pane refused focus".to_owned()),
+            5,
+        ));
+        let failed = runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .expect("the matching failure is projected");
+        assert_eq!(failed.phase, "failed");
+        assert_eq!(failed.message.as_deref(), Some("remote pane refused focus"));
+        assert!(failed.retryable);
     }
 
     /// AC1, SC1. The strip's active mark and the canvas are the same field, so
@@ -20988,6 +21926,7 @@ mod tests {
         runtime.snapshot.changes.entries = vec![crate::model::ChangedFileSnapshot {
             path: path.to_string_lossy().into_owned(),
             relative_path: "tracked.json".to_owned(),
+            previous_relative_path: None,
             status: crate::model::ChangedFileStatus::Modified,
             added_lines: Some(2),
             removed_lines: Some(1),
@@ -21040,6 +21979,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![EditorTabKind::Diff, EditorTabKind::File],
             "opening the source does not reuse its diff tab"
+        );
+    }
+
+    #[test]
+    fn explorer_visibility_keeps_one_checkout_scoped_changes_reader_alive() {
+        let (mut runtime, root, _checkout_id, _second, _second_id) = reveal_runtime();
+        runtime.snapshot.ui_state.right_panel_visible = true;
+        runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Explorer;
+
+        let request = runtime
+            .changes_request()
+            .expect("a visible Explorer requests Git decorations");
+        assert_eq!(request.root_path, root);
+        assert!(request.selected_path.is_none());
+
+        runtime.snapshot.ui_state.right_panel_visible = false;
+        assert!(
+            runtime.changes_request().is_none(),
+            "a hidden Explorer adds no background Git work"
         );
     }
 
