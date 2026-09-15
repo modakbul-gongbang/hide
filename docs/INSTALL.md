@@ -81,7 +81,7 @@ sudo /usr/bin/ditto --rsrc --extattr --qtn dist/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
 
-The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.8.2-preview.2026-09-06-13d8d0b99033 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
+The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.9.0-preview.2026-09-15-deefc5857a5c arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
 
 ## Verify the installed app
 
@@ -103,7 +103,7 @@ Also run `pgrep -fl HerdrMacOS` to rule out a second dev or worktree instance; m
 ## First launch
 
 hide runs the Herdr it bundles.
-On launch it verifies the bundled Herdr v0.8.2-preview.2026-09-06-13d8d0b99033 binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
+On launch it verifies the bundled Herdr v0.9.0-preview.2026-09-15-deefc5857a5c binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
 Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket; hide and every `herdr` process it starts follow the same value.
 
 A Herdr server that is already running on that socket is used as it is when it speaks the protocol revision hide was built against.
@@ -137,7 +137,7 @@ Quit only owned test instances, rebuild and reinstall when intended, then launch
 For QA, use the isolation and restoration procedure in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); do not stop the operator's Herdr server.
 
 <!-- herdr-provenance:start -->
-hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-06-13d8d0b99033), built from commit `13d8d0b99033`.
+hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-15-deefc5857a5c), built from commit `deefc5857a5c`.
 This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
 The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
 <!-- herdr-provenance:end -->
