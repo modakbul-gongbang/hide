@@ -9065,6 +9065,12 @@ impl Runtime {
         self.sync_recent_closed_snapshot();
     }
 
+    fn consume_recent_closed(&mut self, key: &str) {
+        if let Some(index) = self.recent_closed.iter().position(|item| item.key() == key) {
+            self.recent_closed.remove(index);
+        }
+    }
+
     fn set_reopen_notices(&mut self, notices: Vec<live::ReopenNotice>) {
         self.snapshot.recent_closed.notices = notices
             .into_iter()
@@ -9258,7 +9264,7 @@ impl Runtime {
                     .then(|| tab.id.clone())
             })
         {
-            self.recent_closed.pop_back();
+            self.consume_recent_closed(item.key());
             match self.focus_editor_tab_context(&tab_id) {
                 Ok(()) => self.snapshot.recent_closed.notices.clear(),
                 Err(message) => self.set_reopen_notices(vec![live::ReopenNotice {
@@ -9394,11 +9400,11 @@ impl Runtime {
                             } else {
                                 self.snapshot.recent_closed.notices.clear();
                             }
-                            self.recent_closed.pop_back();
+                            self.consume_recent_closed(key);
                         }
                     }
                     live::FileReopenResult::Missing => {
-                        self.recent_closed.pop_back();
+                        self.consume_recent_closed(key);
                         self.set_reopen_notices(vec![live::ReopenNotice {
                         pane_id: None,
                         message: "The file was deleted. Restore it from Finder Trash to open it again.".into(),
@@ -9416,7 +9422,7 @@ impl Runtime {
             }
             Ok(live::FileReopenResultOrHerdr::Herdr(outcome)) => {
                 if outcome.consumed {
-                    self.recent_closed.pop_back();
+                    self.consume_recent_closed(key);
                 }
                 if let Some(pane_id) = outcome.focused_pane_id {
                     self.snapshot.terminal.pane_id = Some(pane_id.clone());
@@ -22665,6 +22671,130 @@ mod tests {
             consumed.recent_closed.notices[0]
                 .message
                 .contains("Finder Trash")
+        );
+    }
+
+    /// A completed reopen consumes the item that started the request. A newer
+    /// close remains the visible LIFO top while that older request finishes.
+    #[test]
+    fn reopen_completion_preserves_a_newer_close() {
+        let mut runtime = runtime();
+        let first = closed_file("first", "/repo/first.rs");
+        runtime.push_recent_closed(first.clone());
+        runtime.reopen_in_flight = Some("first".to_owned());
+        runtime.push_recent_closed(closed_file("second", "/repo/second.rs"));
+        let request = live::ReopenRequest {
+            item: first,
+            workspace_exists: true,
+            tab_exists: true,
+            fallback_pane_id: None,
+        };
+
+        assert!(runtime.ingest_reopen_result(
+            &request,
+            Ok(live::FileReopenResultOrHerdr::Herdr(live::ReopenOutcome {
+                consumed: true,
+                focused_pane_id: None,
+                notices: vec![],
+            },)),
+        ));
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.recent_closed.count, 1);
+        assert_eq!(
+            snapshot.recent_closed.top_label.as_deref(),
+            Some("second.rs")
+        );
+        assert!(!snapshot.recent_closed.restoring);
+    }
+
+    #[test]
+    fn every_consuming_reopen_result_removes_only_its_request_key() {
+        let assert_newer_close_survives =
+            |result: live::FileReopenResultOrHerdr, first_path: &str| {
+                let mut runtime = runtime();
+                let first = closed_file("first", first_path);
+                runtime.push_recent_closed(first.clone());
+                runtime.reopen_in_flight = Some("first".to_owned());
+                runtime.push_recent_closed(closed_file("second", "/repo/second.rs"));
+                let request = live::ReopenRequest {
+                    item: first,
+                    workspace_exists: true,
+                    tab_exists: true,
+                    fallback_pane_id: None,
+                };
+                assert!(runtime.ingest_reopen_result(&request, Ok(result)));
+                assert_eq!(runtime.snapshot().recent_closed.count, 1);
+                assert_eq!(
+                    runtime.snapshot().recent_closed.top_label.as_deref(),
+                    Some("second.rs")
+                );
+            };
+
+        assert_newer_close_survives(
+            live::FileReopenResultOrHerdr::File(live::FileReopenResult::Missing),
+            "/repo/missing.rs",
+        );
+        assert_newer_close_survives(
+            live::FileReopenResultOrHerdr::Herdr(live::ReopenOutcome {
+                consumed: true,
+                focused_pane_id: None,
+                notices: vec![],
+            }),
+            "/repo/pane-placeholder.rs",
+        );
+
+        let root = Path::new("/tmp").join(format!(
+            "herdr-core-reopen-file-result-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("first.rs");
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        let document = crate::files::open(&path).unwrap();
+        assert_newer_close_survives(
+            live::FileReopenResultOrHerdr::File(live::FileReopenResult::Opened(document)),
+            path.to_str().unwrap(),
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn completion_is_safe_after_the_in_flight_item_was_evicted() {
+        let mut runtime = runtime();
+        let first = closed_file("first", "/repo/first.rs");
+        runtime.push_recent_closed(first.clone());
+        runtime.reopen_in_flight = Some("first".to_owned());
+        for index in 0..crate::recent_closed::RECENT_CLOSED_LIMIT {
+            runtime.push_recent_closed(closed_file(
+                &format!("newer-{index}"),
+                &format!("/repo/newer-{index}.rs"),
+            ));
+        }
+        let request = live::ReopenRequest {
+            item: first,
+            workspace_exists: true,
+            tab_exists: true,
+            fallback_pane_id: None,
+        };
+
+        assert!(runtime.ingest_reopen_result(
+            &request,
+            Ok(live::FileReopenResultOrHerdr::Herdr(live::ReopenOutcome {
+                consumed: true,
+                focused_pane_id: None,
+                notices: vec![],
+            },)),
+        ));
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.recent_closed.count,
+            crate::recent_closed::RECENT_CLOSED_LIMIT
+        );
+        assert_eq!(
+            snapshot.recent_closed.top_label.as_deref(),
+            Some("newer-19.rs")
         );
     }
     include!("runtime_lineage_tests.rs");

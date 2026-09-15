@@ -735,6 +735,144 @@ pub struct ReopenRequest {
     pub fallback_pane_id: Option<String>,
 }
 
+const REOPEN_INTENT_ENV: &str = "HIDE_REOPEN_INTENT";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReopenIntentStage {
+    Workspace,
+    Layout,
+    Pane,
+}
+
+fn reopen_intent_marker(key: &str, stage: ReopenIntentStage) -> String {
+    let stage = match stage {
+        ReopenIntentStage::Workspace => "workspace",
+        ReopenIntentStage::Layout => "layout",
+        ReopenIntentStage::Pane => "pane",
+    };
+    format!("{key}:{stage}")
+}
+
+fn reopen_intent_env(
+    key: &str,
+    stage: ReopenIntentStage,
+) -> std::collections::BTreeMap<String, String> {
+    [(
+        REOPEN_INTENT_ENV.to_owned(),
+        reopen_intent_marker(key, stage),
+    )]
+    .into_iter()
+    .collect()
+}
+
+fn tag_reopen_layout(
+    node: &ClosedLayoutNode,
+    key: &str,
+    stage: ReopenIntentStage,
+) -> ClosedLayoutNode {
+    match node {
+        ClosedLayoutNode::Pane {
+            pane_id,
+            label,
+            cwd,
+            command,
+            env,
+        } => {
+            let mut env = env.clone();
+            env.insert(
+                REOPEN_INTENT_ENV.to_owned(),
+                reopen_intent_marker(key, stage),
+            );
+            ClosedLayoutNode::Pane {
+                pane_id: pane_id.clone(),
+                label: label.clone(),
+                cwd: cwd.clone(),
+                command: command.clone(),
+                env,
+            }
+        }
+        ClosedLayoutNode::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } => ClosedLayoutNode::Split {
+            direction: *direction,
+            ratio: *ratio,
+            first: Box::new(tag_reopen_layout(first, key, stage)),
+            second: Box::new(tag_reopen_layout(second, key, stage)),
+        },
+    }
+}
+
+fn pane_ids_with_reopen_marker(node: &ClosedLayoutNode, marker: &str, output: &mut Vec<String>) {
+    match node {
+        ClosedLayoutNode::Pane { pane_id, env, .. } => {
+            if env
+                .get(REOPEN_INTENT_ENV)
+                .is_some_and(|value| value == marker)
+            {
+                output.extend(pane_id.iter().cloned());
+            }
+        }
+        ClosedLayoutNode::Split { first, second, .. } => {
+            pane_ids_with_reopen_marker(first, marker, output);
+            pane_ids_with_reopen_marker(second, marker, output);
+        }
+    }
+}
+
+fn layout_has_reopen_marker(layout: &crate::recent_closed::ClosedLayout, marker: &str) -> bool {
+    let mut pane_ids = Vec::new();
+    pane_ids_with_reopen_marker(&layout.root, marker, &mut pane_ids);
+    !pane_ids.is_empty()
+}
+
+fn export_reopen_layout(
+    connector: &dyn ApiConnector,
+    key: &str,
+    tab_id: &str,
+) -> Result<crate::recent_closed::ClosedLayout, String> {
+    let exported = reopen_request(
+        connector,
+        &format!("herdr-core:{key}:inspect:{tab_id}"),
+        "layout.export",
+        wire::layout_export_params(tab_id)?,
+    )?;
+    wire::exported_layout(exported)
+}
+
+fn restore_tab_position(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    layout: crate::recent_closed::ClosedLayout,
+    notices: &mut Vec<String>,
+) -> crate::recent_closed::ClosedLayout {
+    let params = match wire::tab_move_params(&layout.tab_id, context.tab_index) {
+        Ok(params) => params,
+        Err(message) => {
+            notices.push(format!(
+                "The tab reopened but its original position could not be restored: {message}"
+            ));
+            return layout;
+        }
+    };
+    let move_result = reopen_request(
+        connector,
+        &format!("herdr-core:{key}:tab-position"),
+        "tab.move",
+        params,
+    )
+    .and_then(wire::moved_tabs);
+    if let Err(message) = move_result {
+        notices.push(format!(
+            "The tab reopened but its original position could not be restored: {message}"
+        ));
+    }
+    layout
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReopenNotice {
     pub pane_id: Option<String>,
@@ -864,65 +1002,71 @@ fn ensure_workspace_and_tab(
         .workspaces
         .iter()
         .any(|workspace| workspace.workspace_id == context.workspace_id);
-    let recovered_workspaces = snapshot
-        .workspaces
-        .iter()
-        .filter(|workspace| {
-            !context
-                .workspace_ids_before_close
-                .contains(&workspace.workspace_id)
-                && workspace.label == context.workspace_label
-        })
-        .collect::<Vec<_>>();
-    if !original_workspace_exists && recovered_workspaces.len() > 1 {
+    let workspace_marker = reopen_intent_marker(key, ReopenIntentStage::Workspace);
+    let layout_marker = reopen_intent_marker(key, ReopenIntentStage::Layout);
+    let candidate_workspace_ids = if original_workspace_exists {
+        vec![context.workspace_id.clone()]
+    } else {
+        snapshot
+            .workspaces
+            .iter()
+            .filter(|workspace| {
+                !context
+                    .workspace_ids_before_close
+                    .contains(&workspace.workspace_id)
+            })
+            .map(|workspace| workspace.workspace_id.clone())
+            .collect()
+    };
+    let mut recovered_layouts = Vec::new();
+    let mut recovered_workspace_seeds = Vec::new();
+    for tab in snapshot.tabs.iter().filter(|tab| {
+        candidate_workspace_ids.contains(&tab.workspace_id)
+            && !context.tab_ids_before_close.contains(&tab.tab_id)
+    }) {
+        let layout = export_reopen_layout(connector, key, &tab.tab_id)?;
+        if layout_has_reopen_marker(&layout, &layout_marker) {
+            recovered_layouts.push(layout);
+        } else if layout_has_reopen_marker(&layout, &workspace_marker) {
+            recovered_workspace_seeds.push((tab.workspace_id.clone(), tab.tab_id.clone()));
+        }
+    }
+    if recovered_layouts.len() > 1 {
         return Err(format!(
-            "reopen retry found {} new workspaces named {}; refusing to create another",
-            recovered_workspaces.len(),
-            context.workspace_label
+            "reopen retry found {} layouts owned by {key}; refusing to choose one",
+            recovered_layouts.len()
+        ));
+    }
+    if let Some(layout) = recovered_layouts.pop() {
+        return Ok(restore_tab_position(
+            connector, key, context, layout, notices,
+        ));
+    }
+    if recovered_workspace_seeds.len() > 1 {
+        return Err(format!(
+            "reopen retry found {} workspace seeds owned by {key}; refusing to choose one",
+            recovered_workspace_seeds.len()
         ));
     }
     let (workspace_id, seed_tab_id) = if original_workspace_exists {
         (context.workspace_id.clone(), None)
-    } else if let Some(workspace) = recovered_workspaces.first() {
-        (
-            workspace.workspace_id.clone(),
-            workspace.active_tab_id.clone(),
-        )
+    } else if let Some(seed) = recovered_workspace_seeds.pop() {
+        (seed.0, Some(seed.1))
     } else {
         let created = reopen_request(
             connector,
             &format!("herdr-core:{key}:workspace"),
             "workspace.create",
-            wire::workspace_create_params(&context.checkout_path, &context.workspace_label)?,
+            wire::workspace_create_with_env_params(
+                &context.checkout_path,
+                &context.workspace_label,
+                reopen_intent_env(key, ReopenIntentStage::Workspace),
+            )?,
         )?;
         let (workspace_id, tab_id, _) = wire::created_workspace(created)?;
         (workspace_id, Some(tab_id))
     };
-    let recovered_tabs = snapshot
-        .tabs
-        .iter()
-        .filter(|tab| {
-            tab.workspace_id == workspace_id
-                && !context.tab_ids_before_close.contains(&tab.tab_id)
-                && tab.label == context.tab_label
-        })
-        .collect::<Vec<_>>();
-    if recovered_tabs.len() > 1 {
-        return Err(format!(
-            "reopen retry found {} new tabs named {}; refusing to create another",
-            recovered_tabs.len(),
-            context.tab_label
-        ));
-    }
-    if let Some(tab) = recovered_tabs.first() {
-        let exported = reopen_request(
-            connector,
-            &format!("herdr-core:{key}:recover-layout"),
-            "layout.export",
-            wire::layout_export_params(&tab.tab_id)?,
-        )?;
-        return wire::exported_layout(exported);
-    }
+    let tagged_root = tag_reopen_layout(root, key, ReopenIntentStage::Layout);
     let applied = reopen_request(
         connector,
         &format!("herdr-core:{key}:layout"),
@@ -931,23 +1075,13 @@ fn ensure_workspace_and_tab(
             &workspace_id,
             seed_tab_id.as_deref(),
             &context.tab_label,
-            root,
+            &tagged_root,
         )?,
     )?;
     let layout = wire::applied_layout(applied)?;
-    let move_result = reopen_request(
-        connector,
-        &format!("herdr-core:{key}:tab-position"),
-        "tab.move",
-        wire::tab_move_params(&layout.tab_id, context.tab_index)?,
-    )
-    .and_then(wire::moved_tabs);
-    if let Err(message) = move_result {
-        notices.push(format!(
-            "The tab reopened but its original position could not be restored: {message}"
-        ));
-    }
-    Ok(layout)
+    Ok(restore_tab_position(
+        connector, key, context, layout, notices,
+    ))
 }
 
 fn reopen_pane(
@@ -967,38 +1101,21 @@ fn reopen_pane(
             .filter(|id| request.fallback_pane_id.as_deref() == Some(id.as_str()))
             .or(request.fallback_pane_id.as_ref())
             .ok_or_else(|| "the original tab has no pane to split".to_owned())?;
-        let snapshot = fetch_session_with_connector(connector).map_err(|error| {
-            format!(
-                "session.snapshot before pane reopen failed: {}",
-                error.message()
-            )
-        })?;
-        let layout = snapshot
-            .layouts
-            .iter()
-            .find(|layout| layout.tab_id == context.tab_id);
-        let recovered_panes = layout
-            .into_iter()
-            .flat_map(|layout| layout.panes.iter())
-            .filter(|candidate| !context.pane_ids_before_close.contains(&candidate.pane_id))
-            .filter(|candidate| {
-                snapshot
-                    .panes
-                    .iter()
-                    .find(|pane| pane.pane_id == candidate.pane_id)
-                    .and_then(|pane| pane.cwd.as_deref())
-                    == Some(cwd.as_str())
-            })
-            .collect::<Vec<_>>();
+        let current_layout = export_reopen_layout(connector, key, &context.tab_id)?;
+        let marker = reopen_intent_marker(key, ReopenIntentStage::Pane);
+        let mut recovered_panes = Vec::new();
+        pane_ids_with_reopen_marker(&current_layout.root, &marker, &mut recovered_panes);
         if recovered_panes.len() > 1 {
             return Err(format!(
-                "reopen retry found {} new panes in {}; refusing to create another",
+                "reopen retry found {} panes owned by {key}; refusing to choose one",
                 recovered_panes.len(),
-                context.tab_label
             ));
         }
-        let new_pane_id = if let Some(pane) = recovered_panes.first() {
-            pane.pane_id.clone()
+        let (new_pane_id, current_target_was_first) = if let Some(pane_id) = recovered_panes.pop() {
+            let current = current_layout.root.placement_for(&pane_id).ok_or_else(|| {
+                format!("reopen retry could not locate owned pane {pane_id} in its layout")
+            })?;
+            (pane_id, current.target_was_first)
         } else {
             let value = reopen_request(
                 connector,
@@ -1009,11 +1126,12 @@ fn reopen_pane(
                     placement.direction,
                     &cwd,
                     placement.ratio,
+                    reopen_intent_env(key, ReopenIntentStage::Pane),
                 )?,
             )?;
-            wire::split_pane(value)?
+            (wire::split_pane(value)?, false)
         };
-        if placement.target_was_first
+        if current_target_was_first != placement.target_was_first
             && let Err(message) = reopen_request(
                 connector,
                 &format!("herdr-core:{key}:swap"),
@@ -2814,9 +2932,263 @@ pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use std::os::unix::net::UnixListener;
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn pane_reopen_ignores_an_unowned_same_cwd_pane() {
+        let root = std::path::PathBuf::from("/tmp").join(format!(
+            "herdr-core-reopen-owned-pane-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        listener
+            .set_nonblocking(true)
+            .expect("make fixture listener nonblocking");
+        let done = Arc::new(AtomicBool::new(false));
+        let server_done = Arc::clone(&done);
+        let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let server_requests = Arc::clone(&requests);
+        let server = std::thread::spawn(move || {
+            while !server_done.load(Ordering::Acquire) {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(error) => panic!("accept request: {error}"),
+                };
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: Value = serde_json::from_str(&line).expect("request JSON");
+                server_requests.lock().unwrap().push(request.clone());
+                let result = match request["method"].as_str().unwrap() {
+                    "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
+                        "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
+                        "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
+                        "workspaces":[], "tabs":[], "agents":[], "lineage":[],
+                        "panes":[{"pane_id":"w1:p3","workspace_id":"w1","tab_id":"w1:t1","cwd":"/tmp","focused":false,"agent_status":"idle","revision":0,"surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"unrelated-term"}}}],
+                        "layouts":[{"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,
+                            "area":{"x":0,"y":0,"width":80,"height":24}, "focused_pane_id":"w1:p1",
+                            "panes":[{"pane_id":"w1:p1","focused":true,"rect":{"x":0,"y":0,"width":40,"height":24}},
+                                     {"pane_id":"w1:p3","focused":false,"rect":{"x":40,"y":0,"width":40,"height":24}}],
+                            "splits":[] }]
+                    }}),
+                    "layout.export" => json!({
+                        "type": "layout_export",
+                        "layout": {
+                            "workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
+                            "focused_pane_id": "w1:p1",
+                            "root": {"type":"split", "direction":"right", "ratio":0.5,
+                                "first":{"type":"pane","pane_id":"w1:p1","cwd":"/tmp","env":{}},
+                                "second":{"type":"pane","pane_id":"w1:p3","cwd":"/tmp","env":{}}}
+                        }
+                    }),
+                    "pane.split" => json!({"type": "pane_info", "pane": {
+                        "pane_id": "w1:p4", "workspace_id": "w1", "tab_id": "w1:t1",
+                        "focused": true, "agent_status": "idle", "revision": 1,
+                        "surface": {"kind": "terminal", "attach": {
+                            "host": {"host_id": "fixture", "session_id": "fixture"},
+                            "transport": "herdr_client", "protocol": HERDR_PROTOCOL_REVISION,
+                            "terminal_id": "owned-term"
+                        }}
+                    }}),
+                    method => panic!("unexpected method {method}"),
+                };
+                writeln!(
+                    stream,
+                    "{}",
+                    wire::checked_response_fixture(&request["id"], result)
+                )
+                .expect("write response");
+            }
+        });
+        let context = ClosedContext {
+            workspace_id: "w1".into(),
+            workspace_label: "fixture".into(),
+            workspace_ids_before_close: vec!["w1".into()],
+            tab_ids_before_close: vec!["w1:t1".into()],
+            pane_ids_before_close: vec!["w1:p1".into(), "w1:p2".into()],
+            checkout_id: "checkout".into(),
+            checkout_path: "/tmp".into(),
+            tab_id: "w1:t1".into(),
+            tab_label: "tab".into(),
+            tab_index: 0,
+        };
+        let pane = ClosedPane {
+            pane_id: "w1:p2".into(),
+            label: None,
+            cwd: "/tmp".into(),
+            agent: None,
+            browser: false,
+        };
+        let placement = PanePlacement {
+            neighbor_pane_id: Some("w1:p1".into()),
+            direction: crate::recent_closed::ClosedSplitDirection::Right,
+            ratio: 0.5,
+            target_was_first: false,
+        };
+        let request = ReopenRequest {
+            item: ClosedItem::Pane {
+                key: "first-attempt".into(),
+                context: context.clone(),
+                pane: pane.clone(),
+                placement: placement.clone(),
+            },
+            workspace_exists: true,
+            tab_exists: true,
+            fallback_pane_id: Some("w1:p1".into()),
+        };
+
+        let outcome = reopen_pane(
+            &UnixSocketConnector::new(&socket_path),
+            "first-attempt",
+            &context,
+            &pane,
+            &placement,
+            &request,
+        )
+        .expect("fixture reopen succeeds");
+        done.store(true, Ordering::Release);
+        server.join().expect("fake server joins");
+
+        assert_eq!(outcome.focused_pane_id.as_deref(), Some("w1:p4"));
+        let requests = requests.lock().unwrap();
+        let split = requests
+            .iter()
+            .find(|request| request["method"] == "pane.split")
+            .expect("the reopen creates its own pane");
+        assert_eq!(
+            split["params"]["env"][REOPEN_INTENT_ENV],
+            reopen_intent_marker("first-attempt", ReopenIntentStage::Pane)
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|request| request["method"] != "pane.send_text")
+        );
+
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
+    }
+
+    #[test]
+    fn tab_reopen_ignores_unowned_same_label_workspace_and_tab() {
+        let root = std::path::PathBuf::from("/tmp").join(format!(
+            "herdr-core-reopen-owned-layout-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create socket directory");
+        let socket_path = root.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
+        let server = std::thread::spawn(move || {
+            for expected_method in [
+                "session.snapshot",
+                "layout.export",
+                "workspace.create",
+                "layout.apply",
+                "tab.move",
+            ] {
+                let (mut stream, _) = listener.accept().expect("accept request");
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().expect("clone stream"))
+                    .read_line(&mut line)
+                    .expect("read request");
+                let request: Value = serde_json::from_str(&line).expect("request JSON");
+                assert_eq!(request["method"], expected_method);
+                let result = match expected_method {
+                    "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
+                        "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
+                        "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
+                        "workspaces":[{"workspace_id":"w2","label":"Fixture","active_tab_id":"w2:t1","number":2,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
+                        "tabs":[{"workspace_id":"w2","tab_id":"w2:t1","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
+                        "panes":[], "layouts":[], "agents":[], "lineage":[]
+                    }}),
+                    "layout.export" => json!({"type":"layout_export","layout": {
+                        "workspace_id":"w2", "tab_id":"w2:t1", "zoomed":false,
+                        "focused_pane_id":"w2:p9",
+                        "root":{"type":"pane","pane_id":"w2:p9","cwd":"/tmp","env":{}}
+                    }}),
+                    "workspace.create" => {
+                        assert_eq!(
+                            request["params"]["env"][REOPEN_INTENT_ENV],
+                            reopen_intent_marker("layout-intent", ReopenIntentStage::Workspace)
+                        );
+                        json!({"type":"workspace_created",
+                            "workspace":{"workspace_id":"w3","number":3,"label":"Fixture","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w3:t1","agent_status":"idle"},
+                            "tab":{"tab_id":"w3:t1","workspace_id":"w3","number":1,"label":"1","focused":true,"pane_count":1,"agent_status":"idle"},
+                            "root_pane":{"pane_id":"w3:p3","surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"seed-term"}},"workspace_id":"w3","tab_id":"w3:t1","focused":true,"agent_status":"idle","revision":1}
+                        })
+                    }
+                    "layout.apply" => {
+                        assert_eq!(request["params"]["tab_id"], "w3:t1");
+                        assert!(request["params"].get("workspace_id").is_none());
+                        assert_eq!(
+                            request["params"]["root"]["env"][REOPEN_INTENT_ENV],
+                            reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                        );
+                        json!({"type":"layout_apply","layout": {
+                            "workspace_id":"w3", "tab_id":"w3:t1", "zoomed":false,
+                            "focused_pane_id":"w3:p3",
+                            "root":{"type":"pane","pane_id":"w3:p3","cwd":"/tmp","env":{
+                                (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                            }}
+                        }})
+                    }
+                    "tab.move" => json!({"type":"tab_list","tabs":[]}),
+                    _ => unreachable!(),
+                };
+                writeln!(
+                    stream,
+                    "{}",
+                    wire::checked_response_fixture(&request["id"], result)
+                )
+                .expect("write response");
+            }
+        });
+        let context = ClosedContext {
+            workspace_id: "w1".into(),
+            workspace_label: "Fixture".into(),
+            workspace_ids_before_close: vec!["w1".into()],
+            tab_ids_before_close: vec!["w1:t1".into()],
+            pane_ids_before_close: vec!["w1:p1".into()],
+            checkout_id: "checkout".into(),
+            checkout_path: "/tmp".into(),
+            tab_id: "w1:t1".into(),
+            tab_label: "Tab".into(),
+            tab_index: 0,
+        };
+        let restored = ensure_workspace_and_tab(
+            &UnixSocketConnector::new(&socket_path),
+            "layout-intent",
+            &context,
+            false,
+            &ClosedLayoutNode::Pane {
+                pane_id: None,
+                label: None,
+                cwd: Some("/tmp".into()),
+                command: None,
+                env: Default::default(),
+            },
+            &mut Vec::new(),
+        )
+        .expect("owned layout is created");
+
+        assert_eq!(restored.workspace_id, "w3");
+        assert_eq!(restored.tab_id, "w3:t1");
+        assert_eq!(restored.focused_pane_id, "w3:p3");
+        server.join().expect("fake server joins");
+        std::fs::remove_file(&socket_path).expect("remove socket");
+        std::fs::remove_dir(&root).expect("remove socket directory");
+    }
 
     struct ScrollSink {
         pending: Vec<u8>,

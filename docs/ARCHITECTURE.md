@@ -79,6 +79,9 @@ The snapshot exposes only the count, top label, in-flight state, and inline noti
 Recreation also runs outside `Mutex<Runtime>`.
 Pane restore uses the captured neighbor, split direction, ratio, and cwd, falling back to the tab's current pane and then the checkout root when the original facts no longer exist.
 Tab restore prunes Browser leaves, applies the remaining exported layout, restores its workspace position, and starts each captured agent in the new pane with the captured session id when the agent kind supports resume.
+The create, split, and applied-layout requests stamp their panes with a reserved `HIDE_REOPEN_INTENT` environment value containing the closed-item key and mutation stage.
+On a retry, the worker adopts only a pane or layout carrying that exact marker; a new id, matching cwd, or matching workspace or tab label is never ownership evidence, so an unrelated agent cannot be interrupted as part of restore.
+The pinned create and split mutations have no operation context, and the request envelope id is correlation only, so this marker is the topology evidence that makes an acknowledged-late mutation converge without guessing.
 The pinned Herdr can reuse a just-closed pane id while its old PTY still owns the agent process, so the restore worker interrupts that reused process before `agent.start` applies the explicit resume arguments.
 A failure before a pane or tab exists retains the same closed item for retry; once a tab exists, failed agent starts degrade to a shell or fresh session and publish a pane-local notice rather than offering a partial pane retry.
 File reads use the filesystem worker, and missing, unreadable, already-open, and successfully reopened files each have an explicit result.

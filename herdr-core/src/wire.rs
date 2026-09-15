@@ -613,11 +613,19 @@ pub(crate) fn empty_params() -> Value {
 }
 
 pub(crate) fn workspace_create_params(cwd: &str, label: &str) -> Result<Value, String> {
+    workspace_create_with_env_params(cwd, label, Default::default())
+}
+
+pub(crate) fn workspace_create_with_env_params(
+    cwd: &str,
+    label: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
     params(req::WorkspaceCreateParams {
         cwd: Some(cwd.into()),
         label: Some(label.into()),
         focus: true,
-        env: Default::default(),
+        env: env.into_iter().collect(),
     })
 }
 pub(crate) fn workspace_target_params(id: &str) -> Result<Value, String> {
@@ -766,6 +774,7 @@ pub(crate) fn pane_split_with_ratio_params(
     direction: ClosedSplitDirection,
     cwd: &str,
     ratio: f32,
+    env: std::collections::BTreeMap<String, String>,
 ) -> Result<Value, String> {
     params(req::PaneSplitParams {
         target_pane_id: Some(pane.into()),
@@ -775,7 +784,7 @@ pub(crate) fn pane_split_with_ratio_params(
         },
         cwd: Some(cwd.into()),
         focus: true,
-        env: Default::default(),
+        env: env.into_iter().collect(),
         ratio: Some(ratio),
         right_click: req::PaneRightClickTarget::Herdr,
         workspace_id: None,
@@ -800,7 +809,10 @@ pub(crate) fn layout_apply_params(
         root: request_layout_node(root),
         tab_id: tab_id.map(str::to_owned),
         tab_label: Some(tab_label.into()),
-        workspace_id: Some(workspace_id.into()),
+        // Herdr accepts either a concrete tab to replace or a workspace in
+        // which to create a tab. Sending both makes the pinned server reject
+        // an otherwise valid restore of workspace.create's seed tab.
+        workspace_id: tab_id.is_none().then(|| workspace_id.into()),
     })
 }
 
