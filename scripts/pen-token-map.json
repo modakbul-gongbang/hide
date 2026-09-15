@@ -51,6 +51,8 @@
     "--spacing-xl": "spacingXL",
     "--spacing-xxl": "spacingXXL",
     "--spacing-xxxl": "spacingXXXL",
+    "--size-sidebar-hierarchy-grandchild": "sidebarHierarchyGrandchildInset",
+    "--size-sidebar-hierarchy-great-grandchild": "sidebarHierarchyGreatGrandchildInset",
 
     "--radius-xs": "radiusExtraSmall",
     "--radius-sm": "radiusSmall",
@@ -144,6 +146,7 @@
     "--size-terminal-min": "Layout.terminalMinWidth",
     "--size-terminal-ideal": "Layout.terminalIdealWidth",
     "--size-pr-popover": "Layout.pullRequestPopoverWidth",
+    "--size-relationship-list-max": "Layout.relationshipListMaxHeight",
     "--text-git-row": "gitRowFontSize",
     "--text-git-detail": "gitDetailFontSize",
     "--size-search-sheet-w": "searchSheetSize.width",

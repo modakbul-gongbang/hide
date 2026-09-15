@@ -44,6 +44,17 @@ enum SidebarContent: String, CaseIterable, Hashable, Identifiable {
     }
 }
 
+/// The Agents list is intentionally narrower than global search and project
+/// overview. It is session-local: every launch starts with the work the
+/// operator currently owns, while All remains one reversible click away.
+enum AgentListScope: String, CaseIterable, Hashable, Identifiable {
+    case mine
+    case all
+
+    var id: String { rawValue }
+    var title: String { self == .mine ? "My Work" : "All" }
+}
+
 enum PaneSplitDirection: String, Decodable, Equatable, Sendable {
     case right
     case down
@@ -194,20 +205,23 @@ enum ShellTabStrip {
                 else { return nil }
                 let pane = tab.panes.first { $0.id == focusedPaneIDsByTab[entry.sourceID] }
                 let agent = pane.flatMap { agentsByPane[$0.id] }
-                let title = pane.map {
+                let paneTitle = pane.map {
                     PaneHeaderPresentation.title(
-                        herdrLabel: $0.herdrLabel, agentSummary: agent?.summary ?? $0.summary,
+                        herdrLabel: $0.herdrLabel, agentSummary: agent?.identityLabel ?? $0.summary,
                         terminalTitle: $0.terminalTitle, workspaceLabel: $0.workspaceLabel, paneID: $0.id
                     )
                 } ?? entry.label
                 return ShellTabItem(
                     id: entry.id,
-                    label: title,
+                    // The strip names the stable layout. The pane header names
+                    // the currently focused work, so split layouts do not
+                    // repeat one pane's changing title in both places (B14).
+                    label: entry.label,
                     dirty: false,
                     active: activeFileTabID == nil && entry.sourceID == activeHerdrTabID,
                     kind: .herdr(tab),
                     focusedAgent: agent,
-                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(title)" }
+                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(paneTitle)" }
                 )
             case .file:
                 guard let tab = editorByID[entry.sourceID]
@@ -321,10 +335,114 @@ enum HerdrStatusPresentation {
     }
 }
 
+/// The one relationship navigation intent currently awaiting Herdr.
+///
+/// It belongs to the shell model rather than an individual sheet so a sheet,
+/// a parent Return control, and the retained source canvas cannot disagree
+/// after the visible tab starts moving (PRD B24).
+struct PaneSelectionOperation: Equatable {
+    enum Phase: Equatable {
+        case pending
+        case failed(reason: String, retryable: Bool)
+    }
+
+    let requestID: String
+    let sourcePaneID: String
+    let targetPaneID: String
+    let targetLabel: String
+    let phase: Phase
+
+    var isPending: Bool { phase == .pending }
+
+    func isFor(sourcePaneID: String, targetPaneID: String) -> Bool {
+        self.sourcePaneID == sourcePaneID && self.targetPaneID == targetPaneID
+    }
+}
+
+enum PaneSelectionStart: Equatable {
+    case unchanged(PaneSelectionOperation)
+    case dispatch(PaneSelectionOperation)
+    case failed(PaneSelectionOperation)
+}
+
+enum PaneSelectionResolution: Equatable {
+    case pending
+    case succeeded
+    case failed(reason: String, retryable: Bool)
+}
+
+/// Pure decisions for the B24 pending, unavailable, failure, and retry states.
+/// The shell performs the returned effect; the policy never dispatches one.
+enum PaneSelectionPolicy {
+    static func start(
+        current: PaneSelectionOperation?,
+        sourcePaneID: String,
+        targetPaneID: String,
+        targetLabel: String,
+        availablePaneIDs: Set<String>
+    ) -> PaneSelectionStart {
+        if let current, current.isPending {
+            return .unchanged(current)
+        }
+        guard availablePaneIDs.contains(targetPaneID) else {
+            return .failed(PaneSelectionOperation(
+                requestID: UUID().uuidString,
+                sourcePaneID: sourcePaneID,
+                targetPaneID: targetPaneID,
+                targetLabel: targetLabel,
+                phase: .failed(
+                    reason: "\(targetLabel) is no longer available.",
+                    retryable: true
+                )
+            ))
+        }
+        return .dispatch(PaneSelectionOperation(
+            requestID: UUID().uuidString,
+            sourcePaneID: sourcePaneID,
+            targetPaneID: targetPaneID,
+            targetLabel: targetLabel,
+            phase: .pending
+        ))
+    }
+
+    static func resolve(
+        _ operation: PaneSelectionOperation,
+        outcome: CorePaneFocusRequest?
+    ) -> PaneSelectionResolution {
+        guard operation.isPending else { return .pending }
+        guard let outcome, outcome.requestID == operation.requestID else {
+            return .pending
+        }
+        guard outcome.targetPaneID == operation.targetPaneID else {
+            return .failed(
+                reason: "Hide received a pane-focus result for a different target.",
+                retryable: false
+            )
+        }
+        switch outcome.phase {
+        case "pending":
+            return .pending
+        case "succeeded":
+            return .succeeded
+        case "failed":
+            return .failed(
+                reason: outcome.message ?? "Could not open \(operation.targetLabel).",
+                retryable: outcome.retryable
+            )
+        default:
+            return .failed(
+                reason: "Hide received an unknown pane-focus outcome: \(outcome.phase).",
+                retryable: false
+            )
+        }
+    }
+}
+
 @MainActor
 final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
     @Published private(set) var sidebarContent: SidebarContent = .projects
+    @Published var agentListScope: AgentListScope = .mine
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
     @Published var showComposer = false { didSet { refreshHintSheetState() } }
@@ -362,6 +480,11 @@ final class ShellModel: ObservableObject {
     /// Panes with a fork in flight, which is what puts "forking…" in the
     /// header and what a failure is attributed to.
     @Published private(set) var panesForking: Set<String> = []
+
+    /// Relationship Open and parent Return share this target-scoped outcome.
+    /// Generic bridge errors remain available to the status bar, but are not
+    /// used as the control's pending/failure contract (PRD B24).
+    @Published private(set) var paneSelectionOperation: PaneSelectionOperation?
 
     /// A failure that belongs to one pane, keyed by that pane.
     @Published private(set) var paneNotices: [String: String] = [:]
@@ -427,6 +550,7 @@ final class ShellModel: ObservableObject {
             self.observeTaskOperation(in: snapshot)
             self.observeForkFailure(in: snapshot)
             self.observeRecentClosed(in: snapshot)
+            self.settlePaneSelection(in: snapshot)
             self.remote.ingest(snapshot?.status.remote ?? [])
             self.observeNavigation(in: snapshot)
             self.settleCheckoutStart()
@@ -543,6 +667,42 @@ final class ShellModel: ObservableObject {
         return core.snapshot?.navigator.workspaces ?? []
     }
 
+    /// Core-owned project folds that have rows in the current navigation
+    /// context. Remote navigation remains unchanged until its wire exposes the
+    /// same metadata.
+    var inactiveProjectGroups: [CoreInactiveProjectGroupSnapshot] {
+        guard !isRemoteContext else { return [] }
+        let available = Set(workspaces.map(\.id))
+        return (core.snapshot?.navigator.inactiveProjects ?? []).filter { group in
+            group.projectIDs.contains(where: available.contains)
+        }
+    }
+
+    var sidebarProjectRows: [SidebarProjectRow] {
+        SidebarInactiveProjection.projectRows(workspaces, groups: inactiveProjectGroups)
+    }
+
+    /// Project rows in exactly the order the Projects view draws them.
+    var sidebarVisibleWorkspaces: [CoreWorkspaceSnapshot] {
+        sidebarProjectRows.compactMap { row in
+            guard case .workspace(let workspace, _) = row else { return nil }
+            return workspace
+        }
+    }
+
+    func activeCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        SidebarInactiveProjection.activeCheckouts(in: workspace)
+    }
+
+    func inactiveCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        SidebarInactiveProjection.inactiveCheckouts(in: workspace)
+    }
+
+    func sidebarVisibleCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        activeCheckouts(in: workspace)
+            + (workspace.inactiveCheckouts.expanded ? inactiveCheckouts(in: workspace) : [])
+    }
+
     var devices: [CoreDeviceSnapshot] {
         core.snapshot?.navigator.devices ?? []
     }
@@ -573,6 +733,10 @@ final class ShellModel: ObservableObject {
         return core.snapshot?.navigator.agents ?? []
     }
 
+    var visibleAgentList: [SidebarAgent] {
+        SidebarGrouping.visibleAgents(agents, scope: agentListScope)
+    }
+
     /// The Needs You and Done sections the Projects view draws above the tree.
     var raisedAgentSections: [AgentGroupSection] {
         SidebarGrouping.raised(agents)
@@ -580,7 +744,7 @@ final class ShellModel: ObservableObject {
 
     /// Every non-empty group in group order, for the Agents view.
     var agentSections: [AgentGroupSection] {
-        SidebarGrouping.sections(agents)
+        SidebarGrouping.sections(visibleAgentList)
     }
 
     /// The rows the Projects view has already drawn at the top, so the tree
@@ -790,6 +954,28 @@ final class ShellModel: ObservableObject {
             ?? scratchPane(paneID)
     }
 
+    /// The canonical pane name already used by the focused header. Lineage
+    /// payloads can carry a stale agent spawn name, while this snapshot carries
+    /// the live user-facing pane label. Relationship surfaces resolve through
+    /// this one ladder so Return always names the pane it will actually select.
+    func paneIdentity(for paneID: String) -> String? {
+        guard let pane = paneMetadata(for: paneID) else { return nil }
+        let agent = agents.first { $0.paneID == paneID }
+        return PaneHeaderPresentation.title(
+            herdrLabel: pane.herdrLabel,
+            agentSummary: agent?.identityLabel ?? pane.summary,
+            terminalTitle: pane.terminalTitle,
+            workspaceLabel: pane.workspaceLabel,
+            paneID: pane.id
+        )
+    }
+
+    func resolvedLineagePath(for pane: CorePaneSnapshot) -> [CoreLineageStep] {
+        PaneLineagePresentation.resolvingLivePaneLabels(in: pane.lineagePath) {
+            paneIdentity(for: $0)
+        }
+    }
+
     /// The Scratch pane with this id, if Scratch is the one that owns it.
     func scratchPane(_ paneID: String) -> CorePaneSnapshot? {
         scratch.tabs.lazy.flatMap(\.panes).first(where: { $0.id == paneID })
@@ -864,6 +1050,114 @@ final class ShellModel: ObservableObject {
             HideLaunchTrace.mark("pane.selection", detail: "local_\(paneID)")
         }
         focus(.terminal)
+    }
+
+    /// Opens one pane from an explicit relationship action.
+    ///
+    /// Row selection remains inspection-only. This method is called only by
+    /// child Open/Return intents, owns their pending state, and waits for the
+    /// Herdr layout to confirm focus instead of treating the core's immediate
+    /// projection as success (PRD B23, B24).
+    func requestPaneSelection(from sourcePaneID: String, to targetPaneID: String) {
+        let availablePaneIDs = Set(allPaneMetadata().map(\.id))
+        let targetLabel = paneIdentity(for: targetPaneID) ?? targetPaneID
+        let decision = PaneSelectionPolicy.start(
+            current: paneSelectionOperation,
+            sourcePaneID: sourcePaneID,
+            targetPaneID: targetPaneID,
+            targetLabel: targetLabel,
+            availablePaneIDs: availablePaneIDs
+        )
+        switch decision {
+        case .unchanged:
+            return
+        case .failed(let operation):
+            paneSelectionOperation = operation
+            return
+        case .dispatch(let operation):
+            paneSelectionOperation = operation
+        }
+        guard let operation = paneSelectionOperation else { return }
+
+        if isRemoteContext {
+            guard let workspace = focusedWorkspace,
+                  let checkout = focusedCheckout,
+                  let targetID = remote.navigation?.deviceID
+            else {
+                failPaneSelection(
+                    "The remote pane cannot be opened because its workspace selection is unavailable."
+                )
+                return
+            }
+            remote.focus(
+                workspaceID: workspace.id,
+                checkoutID: checkout.id,
+                paneID: targetPaneID
+            )
+            switch core.focusRemotePane(
+                targetID: targetID,
+                paneID: targetPaneID,
+                requestID: operation.requestID
+            ) {
+            case .accepted:
+                focus(.terminal)
+            case .rejected(let reason):
+                failPaneSelection("Could not open \(targetLabel): \(reason)")
+            }
+            return
+        }
+
+        switch core.focusPane(
+            targetPaneID,
+            origin: .operatorChoice,
+            requestID: operation.requestID
+        ) {
+        case .accepted:
+            focus(.terminal)
+        case .rejected(let reason):
+            failPaneSelection("Could not open \(targetLabel): \(reason)")
+        }
+    }
+
+    private func settlePaneSelection(in snapshot: CoreSnapshot?) {
+        guard let operation = paneSelectionOperation, operation.isPending else { return }
+        switch PaneSelectionPolicy.resolve(
+            operation,
+            outcome: snapshot?.status.paneFocusRequest
+        ) {
+        case .pending:
+            return
+        case .succeeded:
+            paneSelectionOperation = nil
+        case .failed(let reason, let retryable):
+            failPaneSelection(reason, retryable: retryable)
+        }
+    }
+
+    private func failPaneSelection(_ reason: String, retryable: Bool = true) {
+        guard let current = paneSelectionOperation else { return }
+        paneSelectionOperation = PaneSelectionOperation(
+            requestID: current.requestID,
+            sourcePaneID: current.sourcePaneID,
+            targetPaneID: current.targetPaneID,
+            targetLabel: current.targetLabel,
+            phase: .failed(reason: reason, retryable: retryable)
+        )
+    }
+
+    func retryPaneSelection() {
+        guard let operation = paneSelectionOperation,
+              case .failed(_, let retryable) = operation.phase,
+              retryable
+        else { return }
+        requestPaneSelection(
+            from: operation.sourcePaneID,
+            to: operation.targetPaneID
+        )
+    }
+
+    private func allPaneMetadata() -> [CorePaneSnapshot] {
+        workspaces.lazy.flatMap(\.checkouts).flatMap(\.tabs).flatMap(\.panes) + scratch.tabs.flatMap(\.panes)
     }
 
     func openTerminalLink(_ rawValue: String, paneID: String) {
@@ -1118,13 +1412,15 @@ final class ShellModel: ObservableObject {
     /// them: the whole agent list in the Agents view, the raised rows and expanded
     /// lineage trees in the Projects view.
     var shortcutAgents: [SidebarAgent] {
-        AgentShortcutNumbering.candidates(
+        let expandedWorkspaces = sidebarVisibleWorkspaces.filter(\.expanded)
+        let visibleCheckouts = expandedWorkspaces.flatMap { sidebarVisibleCheckouts(in: $0) }
+        return AgentShortcutNumbering.candidates(
             for: sidebarContent,
-            agents: agents,
-            visibleCheckoutIDs: workspaces.filter(\.expanded).flatMap(\.checkouts).map(\.id),
+            agents: sidebarContent == .agents ? visibleAgentList : agents,
+            visibleCheckoutIDs: visibleCheckouts.map(\.id),
             collapsedCheckoutIDs: Set(core.snapshot?.uiState.collapsedCheckoutIDs ?? []),
             ownedPaneIDsByCheckout: Dictionary(uniqueKeysWithValues:
-                workspaces.filter(\.expanded).flatMap(\.checkouts).map {
+                visibleCheckouts.map {
                     ($0.id, Set($0.tabs.flatMap(\.panes).map(\.id)))
                 })
         )
@@ -1415,6 +1711,14 @@ final class ShellModel: ObservableObject {
             collapsed.remove(workspace.id)
         }
         core.persistUIState(collapsedWorkspaceIDs: collapsed.sorted())
+    }
+
+    func toggleInactiveCheckouts(in workspace: CoreWorkspaceSnapshot) {
+        core.toggleInactiveCheckouts(projectPath: workspace.path)
+    }
+
+    func toggleInactiveProjects(in group: CoreInactiveProjectGroupSnapshot) {
+        core.toggleInactiveProjects(deviceID: group.deviceID)
     }
 
     func isCheckoutExpanded(_ checkout: CoreCheckoutSnapshot) -> Bool {
@@ -2350,6 +2654,11 @@ final class ShellModel: ObservableObject {
 
     private func toggleCurrentPaneZoom() {
         core.toggleCurrentPaneZoom()
+        focus(.terminal)
+    }
+
+    func togglePaneZoom(_ paneID: String) {
+        core.togglePaneZoom(paneID)
         focus(.terminal)
     }
 

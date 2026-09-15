@@ -43,31 +43,170 @@ private func presentationCheckout(
 }
 
 private func presentationWorkspace(
+    id: String = "workspace-1",
+    deviceID: String = "local",
     checkouts: [CoreCheckoutSnapshot],
-    lastActivityUnixMS: UInt64? = nil
+    lastActivityUnixMS: UInt64? = nil,
+    inactiveCheckoutIDs: [String] = [],
+    inactiveExpanded: Bool = false
 ) -> CoreWorkspaceSnapshot {
     CoreWorkspaceSnapshot(
-        id: "workspace-1",
+        id: id,
         label: "hide",
         path: "/tmp/hide",
         remoteTargetID: nil,
         expanded: true,
-        deviceID: "local",
+        deviceID: deviceID,
         repoName: "hide",
         isGit: true,
         defaultBranch: "main",
         registered: true,
         temporary: false,
         lastActivityUnixMS: lastActivityUnixMS,
-        checkouts: checkouts
+        checkouts: checkouts,
+        inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot(
+            expanded: inactiveExpanded,
+            checkoutIDs: inactiveCheckoutIDs
+        )
     )
+}
+
+/// B1, B4, B11, B12, B17. The shell maps the core's ordered IDs to the same
+/// existing rows, keeping active rows first and revealing inactive rows in the
+/// exact order the core supplied.
+@Test func inactiveProjectionPreservesRowsAndCoreOrder() throws {
+    let main = presentationCheckout(id: "main", path: "/tmp/hide")
+    let active = presentationCheckout(id: "active", path: "/tmp/hide-active", isWorktree: true)
+    let inactiveOne = presentationCheckout(
+        id: "old-one",
+        path: "/tmp/hide-old-one",
+        isWorktree: true
+    )
+    let inactiveTwo = presentationCheckout(
+        id: "old-two",
+        path: "/tmp/hide-old-two",
+        isWorktree: true
+    )
+    let foldedProject = presentationWorkspace(
+        checkouts: [main, active, inactiveOne, inactiveTwo],
+        inactiveCheckoutIDs: ["old-two", "old-one"],
+        inactiveExpanded: true
+    )
+    let visibleProject = CoreWorkspaceSnapshot(
+        id: "workspace-visible",
+        label: "visible",
+        path: "/tmp/visible",
+        remoteTargetID: nil,
+        expanded: true,
+        deviceID: "local",
+        repoName: "visible",
+        isGit: true,
+        defaultBranch: "main",
+        registered: true,
+        temporary: false,
+        checkouts: []
+    )
+    let group = try JSONDecoder().decode(
+        CoreInactiveProjectGroupSnapshot.self,
+        from: Data(
+            #"{"device_id":"local","expanded":false,"project_ids":["workspace-1"]}"#.utf8
+        )
+    )
+
+    let remoteActive = presentationWorkspace(
+        id: "remote-active",
+        deviceID: "mini",
+        checkouts: []
+    )
+    let remoteInactive = presentationWorkspace(
+        id: "remote-inactive",
+        deviceID: "mini",
+        checkouts: []
+    )
+    let remoteGroup = try JSONDecoder().decode(
+        CoreInactiveProjectGroupSnapshot.self,
+        from: Data(
+            #"{"device_id":"mini","expanded":true,"project_ids":["remote-inactive"]}"#.utf8
+        )
+    )
+    let rows = SidebarInactiveProjection.projectRows(
+        [visibleProject, foldedProject, remoteActive, remoteInactive],
+        groups: [group, remoteGroup]
+    )
+    #expect(rows.map(\.id) == [
+        "workspace:workspace-visible",
+        "inactive-projects:local",
+        "workspace:remote-active",
+        "inactive-projects:mini",
+        "workspace:remote-inactive",
+    ])
+    let workspaceLevels = rows.compactMap { row -> (String, SidebarHierarchyLevel)? in
+        guard case .workspace(let workspace, let level) = row else { return nil }
+        return (workspace.id, level)
+    }
+    #expect(workspaceLevels.map(\.0) == [
+        "workspace-visible",
+        "remote-active",
+        "remote-inactive",
+    ])
+    #expect(workspaceLevels.map(\.1) == [.root, .root, .child])
+    #expect(
+        SidebarInactiveProjection.activeCheckouts(in: foldedProject).map(\.id)
+            == ["main", "active"]
+    )
+    #expect(
+        SidebarInactiveProjection.inactiveCheckouts(in: foldedProject).map(\.id)
+            == ["old-two", "old-one"]
+    )
+}
+
+/// Human review asked for a visible hierarchy ladder. The policy keeps every
+/// content edge distinct and starts selection behind that edge, so a selected
+/// checkout still reads as a child rather than a full-width top-level row.
+@Test func sidebarHierarchyKeepsNestedContentAndSelectionDistinct() {
+    let levels: [SidebarHierarchyLevel] = [.root, .child, .grandchild, .greatGrandchild]
+    let contentInsets = levels.map(\.contentLeadingInset)
+
+    #expect(contentInsets == [
+        HideTheme.spacingMD,
+        HideTheme.spacingXL,
+        HideTheme.sidebarHierarchyGrandchildInset,
+        HideTheme.sidebarHierarchyGreatGrandchildInset,
+    ])
+    #expect(zip(contentInsets, contentInsets.dropFirst()).allSatisfy { $0 < $1 })
+    #expect(levels.allSatisfy {
+        $0.selectionLeadingInset + HideTheme.spacingSM == $0.contentLeadingInset
+    })
+    #expect(SidebarHierarchyLevel.root.childLevel == .child)
+    #expect(SidebarHierarchyLevel.child.childLevel == .grandchild)
+    #expect(SidebarHierarchyLevel.grandchild.childLevel == .greatGrandchild)
+}
+
+/// Additive wire fields default to closed and empty, so an older snapshot
+/// cannot erase the sidebar or accidentally open a fold.
+@Test func inactiveProjectionWireDefaultsClosedAndEmpty() throws {
+    let workspace = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(
+            #"{"id":"legacy","label":"legacy","path":"/tmp/legacy","checkouts":[]}"#.utf8
+        )
+    )
+    let state = try JSONDecoder().decode(
+        CoreUIStateSnapshot.self,
+        from: Data(#"{"expanded_paths":[]}"#.utf8)
+    )
+
+    #expect(workspace.inactiveCheckouts == .empty)
+    #expect(state.expandedInactiveCheckoutProjectPaths.isEmpty)
+    #expect(state.expandedInactiveProjectDeviceIDs.isEmpty)
 }
 
 private func presentationAgent(
     id: String,
     paneID: String,
     group: String,
-    demand: String = "none"
+    demand: String = "none",
+    identityLabel: String? = nil
 ) -> SidebarAgent {
     SidebarAgent(
         id: id,
@@ -80,6 +219,7 @@ private func presentationAgent(
         group: group,
         symbol: "\u{25cf}",
         summary: "Agent \(id)",
+        identityLabel: identityLabel,
         elapsed: "1m",
         lastActivity: "0000000000001",
         ambient: nil
@@ -106,6 +246,52 @@ private func presentationAgent(
     #expect(presentation.status?.color == HideTheme.agentWorking)
     #expect(presentation.detailTooltip.hasPrefix("Working: 1"))
     #expect(presentation.isPrimary)
+}
+
+@Test func agentsScopeUsesTheCoresFinalDelegatedAnswer() {
+    let own = presentationAgent(id: "own", paneID: "pane-own", group: "working")
+    var delegated = presentationAgent(id: "delegated", paneID: "pane-child", group: "working")
+    delegated.delegated = true
+    let all = [own, delegated]
+
+    #expect(SidebarGrouping.visibleAgents(all, scope: .mine).map(\.id) == ["own"])
+    #expect(SidebarGrouping.visibleAgents(all, scope: .all).map(\.id) == ["own", "delegated"])
+    #expect(SidebarGrouping.sections(SidebarGrouping.visibleAgents(all, scope: .mine)).flatMap(\.agents).map(\.id) == ["own"])
+}
+
+@Test func projectTaskForestCrossesCheckoutsAndSearchKeepsAncestors() {
+    var parent = presentationAgent(id: "parent", paneID: "pane-parent", group: "working")
+    var child = presentationAgent(id: "child", paneID: "pane-child", group: "working")
+    var grandchild = presentationAgent(id: "grandchild", paneID: "pane-grandchild", group: "working", identityLabel: "구성 검토")
+    parent.lineageChildPaneIDs = ["pane-child"]
+    child.lineageDepth = 1
+    child.lineageChildPaneIDs = ["pane-grandchild"]
+    grandchild.lineageDepth = 2
+    let checkouts = [
+        presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-parent"]),
+        presentationCheckout(id: "feature", path: "/tmp/hide.feature", paneIDs: ["pane-child", "pane-grandchild"]),
+    ]
+
+    let rows = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts
+    )
+    #expect(rows.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
+    #expect(rows.map(\.depth) == [0, 1, 2])
+    #expect(rows.map(\.checkoutLabel) == ["main", "feature", "feature"])
+
+    let search = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts,
+        query: "grandchild"
+    )
+    #expect(search.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
+    let titleSearch = ProjectTaskForestPresentation.rows(
+        agents: [grandchild, child, parent],
+        checkouts: checkouts,
+        query: "구성 검토"
+    )
+    #expect(titleSearch.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
 }
 
 @Test func checkoutSummaryFallsBackToPanesAndKeepsMissingExplicit() {
@@ -376,4 +562,17 @@ private func presentationAgent(
         symbol: "×", label: "Error", connected: true)
     #expect(readError.symbol == "×")
     #expect(readError.color == HideTheme.danger.opacity(HideTheme.readStatusOpacity))
+}
+
+@Test func sidebarIdentityUsesTheCanonicalTaskInsteadOfTheActivitySummary() {
+    let agent = SidebarAgent(
+        id: "transport-child", paneID: "w1:p2", workspaceLabel: "Project",
+        agentKind: "codex", symbol: "●", summary: "A shorter activity summary",
+        identityLabel: "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름",
+        elapsed: "0s", lastActivity: "", ambient: nil
+    )
+    let compact = AgentRowPresentation(agent: agent, density: .compact, connected: true)
+    let prominent = AgentRowPresentation(agent: agent, density: .prominent, connected: true)
+    #expect(compact.title == "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름")
+    #expect(prominent.detail == compact.title)
 }

@@ -5,7 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-git grep -qF -- 'Button("Set as base branch")' macos/Sources/HerdrMacOS/GitWorktreesView.swift
-git grep -qF -- 'if let branch = worktree.branch' macos/Sources/HerdrMacOS/GitWorktreesView.swift
+git grep -qF -- 'Button(WorktreeMenuPolicy.setBaseBranch' macos/Sources/HerdrMacOS/HideUI.swift
+git grep -qF -- 'if let branch = checkout.branch' macos/Sources/HerdrMacOS/HideUI.swift
 
 echo "The worktree row still offers base selection and still excludes detached rows"

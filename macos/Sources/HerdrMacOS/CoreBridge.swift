@@ -384,6 +384,7 @@ struct CoreNavigatorSnapshot: Decodable {
     let focusedCheckoutID: String?
     let devices: [CoreDeviceSnapshot]
     let workspaces: [CoreWorkspaceSnapshot]
+    let inactiveProjects: [CoreInactiveProjectGroupSnapshot]
     let agents: [SidebarAgent]
     let providerUsage: [CoreProviderUsageSnapshot]
     /// The one space that is not a project.
@@ -397,6 +398,7 @@ struct CoreNavigatorSnapshot: Decodable {
         case focusedCheckoutID = "focused_checkout_id"
         case devices
         case workspaces
+        case inactiveProjects = "inactive_projects"
         case agents
         case providerUsage = "provider_usage"
     }
@@ -409,6 +411,10 @@ struct CoreNavigatorSnapshot: Decodable {
         focusedCheckoutID = try container.decodeIfPresent(String.self, forKey: .focusedCheckoutID)
         devices = try container.decodeIfPresent([CoreDeviceSnapshot].self, forKey: .devices) ?? []
         workspaces = try container.decodeIfPresent([CoreWorkspaceSnapshot].self, forKey: .workspaces) ?? []
+        inactiveProjects = try container.decodeIfPresent(
+            [CoreInactiveProjectGroupSnapshot].self,
+            forKey: .inactiveProjects
+        ) ?? []
         agents = try container.decodeIfPresent([SidebarAgent].self, forKey: .agents) ?? []
         providerUsage = try container.decodeIfPresent(
             [CoreProviderUsageSnapshot].self,
@@ -416,6 +422,19 @@ struct CoreNavigatorSnapshot: Decodable {
         ) ?? []
         scratch = try container.decodeIfPresent(CoreScratchSnapshot.self, forKey: .scratch)
             ?? CoreScratchSnapshot.empty
+    }
+}
+
+struct CoreInactiveProjectGroupSnapshot: Decodable, Identifiable {
+    var id: String { deviceID }
+    let deviceID: String
+    let expanded: Bool
+    let projectIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case deviceID = "device_id"
+        case expanded
+        case projectIDs = "project_ids"
     }
 }
 
@@ -499,6 +518,9 @@ struct CoreProviderUsageSnapshot: Decodable, Identifiable {
     let resetsAtUnixSeconds: UInt64?
     let message: String?
     let lastCheckedAtUnixMilliseconds: UInt64?
+    let lastSuccessAtUnixMilliseconds: UInt64?
+    let lastErrorKind: String?
+    let buckets: [CoreProviderUsageBucketSnapshot]
 
     enum CodingKeys: String, CodingKey {
         case provider
@@ -509,6 +531,41 @@ struct CoreProviderUsageSnapshot: Decodable, Identifiable {
         case resetsAtUnixSeconds = "resets_at_unix_seconds"
         case message
         case lastCheckedAtUnixMilliseconds = "last_checked_at_unix_ms"
+        case lastSuccessAtUnixMilliseconds = "last_success_at_unix_ms"
+        case lastErrorKind = "last_error_kind"
+        case buckets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try container.decode(String.self, forKey: .provider)
+        label = try container.decode(String.self, forKey: .label)
+        windowMinutes = try container.decode(UInt64.self, forKey: .windowMinutes)
+        state = try container.decode(String.self, forKey: .state)
+        usedPercent = try container.decodeIfPresent(Double.self, forKey: .usedPercent)
+        resetsAtUnixSeconds = try container.decodeIfPresent(UInt64.self, forKey: .resetsAtUnixSeconds)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        lastCheckedAtUnixMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .lastCheckedAtUnixMilliseconds)
+        lastSuccessAtUnixMilliseconds = try container.decodeIfPresent(UInt64.self, forKey: .lastSuccessAtUnixMilliseconds)
+        lastErrorKind = try container.decodeIfPresent(String.self, forKey: .lastErrorKind)
+        buckets = try container.decodeIfPresent([CoreProviderUsageBucketSnapshot].self, forKey: .buckets) ?? []
+    }
+}
+
+struct CoreProviderUsageBucketSnapshot: Decodable, Identifiable {
+    var id: String { "\(label)-\(resetsAtUnixSeconds ?? 0)" }
+    let label: String
+    let state: String
+    let usedPercent: Double?
+    let resetsAtUnixSeconds: UInt64?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case label
+        case state
+        case usedPercent = "used_percent"
+        case resetsAtUnixSeconds = "resets_at_unix_seconds"
+        case message
     }
 }
 
@@ -548,6 +605,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     /// neither, which is what lets the row leave its time blank.
     let lastActivityUnixMS: UInt64?
     let checkouts: [CoreCheckoutSnapshot]
+    let inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -564,6 +622,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         case temporary
         case lastActivityUnixMS = "last_activity_unix_ms"
         case checkouts
+        case inactiveCheckouts = "inactive_checkouts"
     }
 
     init(
@@ -580,7 +639,8 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         registered: Bool,
         temporary: Bool,
         lastActivityUnixMS: UInt64? = nil,
-        checkouts: [CoreCheckoutSnapshot]
+        checkouts: [CoreCheckoutSnapshot],
+        inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot = .empty
     ) {
         self.id = id
         self.label = label
@@ -596,6 +656,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         self.temporary = temporary
         self.lastActivityUnixMS = lastActivityUnixMS
         self.checkouts = checkouts
+        self.inactiveCheckouts = inactiveCheckouts
     }
 
     init(from decoder: Decoder) throws {
@@ -614,6 +675,22 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
         lastActivityUnixMS = try container.decodeIfPresent(UInt64.self, forKey: .lastActivityUnixMS)
         checkouts = try container.decodeIfPresent([CoreCheckoutSnapshot].self, forKey: .checkouts) ?? []
+        inactiveCheckouts = try container.decodeIfPresent(
+            CoreInactiveCheckoutGroupSnapshot.self,
+            forKey: .inactiveCheckouts
+        ) ?? .empty
+    }
+}
+
+struct CoreInactiveCheckoutGroupSnapshot: Decodable, Equatable {
+    let expanded: Bool
+    let checkoutIDs: [String]
+
+    static let empty = CoreInactiveCheckoutGroupSnapshot(expanded: false, checkoutIDs: [])
+
+    enum CodingKeys: String, CodingKey {
+        case expanded
+        case checkoutIDs = "checkout_ids"
     }
 }
 
@@ -1345,6 +1422,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let statusLabel: String
     /// Whether closing this pane needs confirmation first.
     let requiresCloseConfirmation: Bool
+    let identityLabel: String
     let summary: String
     let elapsed: String
     let lastActivity: String
@@ -1386,6 +1464,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusLabel: String = "Idle",
         requiresCloseConfirmation: Bool = false,
         summary: String,
+        identityLabel: String? = nil,
         elapsed: String,
         lastActivity: String,
         ambient: CoreAmbientSignal?
@@ -1404,6 +1483,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.emphasized = emphasized
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
+        self.identityLabel = identityLabel ?? summary
         self.summary = summary
         self.elapsed = elapsed
         self.lastActivity = lastActivity
@@ -1427,6 +1507,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusLabel = try container.decode(String.self, forKey: .statusLabel)
         requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
         summary = try container.decode(String.self, forKey: .summary)
+        identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel) ?? summary
         elapsed = try container.decode(String.self, forKey: .elapsed)
         lastActivity = try container.decode(String.self, forKey: .lastActivity)
         ambient = try container.decodeIfPresent(CoreAmbientSignal.self, forKey: .ambient)
@@ -1459,6 +1540,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case emphasized
         case statusLabel = "status_label"
         case requiresCloseConfirmation = "requires_close_confirmation"
+        case identityLabel = "identity_label"
         case summary
         case elapsed
         case lastActivity = "last_activity"
@@ -1660,6 +1742,8 @@ struct CoreUIStateSnapshot: Decodable {
     let expandedPaths: [String]
     let collapsedWorkspaceIDs: [String]
     let collapsedCheckoutIDs: [String]
+    let expandedInactiveCheckoutProjectPaths: [String]
+    let expandedInactiveProjectDeviceIDs: [String]
     let selectedPath: String?
     let selectedPaneID: String?
     let shortcutBindings: [String: String]
@@ -1697,6 +1781,8 @@ struct CoreUIStateSnapshot: Decodable {
         case expandedPaths = "expanded_paths"
         case collapsedWorkspaceIDs = "collapsed_workspace_ids"
         case collapsedCheckoutIDs = "collapsed_checkout_ids"
+        case expandedInactiveCheckoutProjectPaths = "expanded_inactive_checkout_project_paths"
+        case expandedInactiveProjectDeviceIDs = "expanded_inactive_project_device_ids"
         case selectedPath = "selected_path"
         case selectedPaneID = "selected_pane_id"
         case shortcutBindings = "shortcut_bindings"
@@ -1728,6 +1814,14 @@ struct CoreUIStateSnapshot: Decodable {
         collapsedCheckoutIDs = try container.decodeIfPresent(
             [String].self,
             forKey: .collapsedCheckoutIDs
+        ) ?? []
+        expandedInactiveCheckoutProjectPaths = try container.decodeIfPresent(
+            [String].self,
+            forKey: .expandedInactiveCheckoutProjectPaths
+        ) ?? []
+        expandedInactiveProjectDeviceIDs = try container.decodeIfPresent(
+            [String].self,
+            forKey: .expandedInactiveProjectDeviceIDs
         ) ?? []
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
@@ -1795,13 +1889,23 @@ struct CoreEditorConflict: Decodable {
     }
 }
 
-/// The right panel's four sections. The core owns which one is showing, so the
+/// The right panel's three sections. The core owns which one is showing, so the
 /// choice survives hiding and reopening the panel.
 enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
     case overview
     case explorer
     case changes
-    case git
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        // A saved retired tab opens the existing project Overview.
+        if value == "git" { self = .overview; return }
+        guard let section = Self(rawValue: value) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown right panel section: \(value)")
+        }
+        self = section
+    }
 
     var id: String { rawValue }
 
@@ -1810,7 +1914,6 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .explorer: "Explorer"
         case .changes: "Changes"
-        case .git: "Git"
         }
     }
 
@@ -1819,7 +1922,6 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         case .overview: "info.circle"
         case .explorer: "doc.text.magnifyingglass"
         case .changes: "arrow.triangle.branch"
-        case .git: HideTheme.gitSectionIcon
         }
     }
 }
@@ -1901,6 +2003,7 @@ struct CoreChangesSnapshot: Decodable {
 struct CoreChangedFile: Decodable, Identifiable, Equatable {
     let path: String
     let relativePath: String
+    let previousRelativePath: String?
     let status: CoreChangedFileStatus
     /// Absent for a file git cannot count - an untracked one has no index side
     /// and a binary one has no lines - so the row shows no numbers rather than
@@ -1929,6 +2032,7 @@ struct CoreChangedFile: Decodable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case path
         case relativePath = "relative_path"
+        case previousRelativePath = "previous_relative_path"
         case status
         case addedLines = "added_lines"
         case removedLines = "removed_lines"
@@ -1937,12 +2041,14 @@ struct CoreChangedFile: Decodable, Identifiable, Equatable {
     init(
         path: String,
         relativePath: String,
+        previousRelativePath: String? = nil,
         status: CoreChangedFileStatus,
         addedLines: Int? = nil,
         removedLines: Int? = nil
     ) {
         self.path = path
         self.relativePath = relativePath
+        self.previousRelativePath = previousRelativePath
         self.status = status
         self.addedLines = addedLines
         self.removedLines = removedLines
@@ -1954,6 +2060,8 @@ enum CoreChangedFileStatus: String, Decodable, Equatable {
     case added
     case deleted
     case untracked
+    case renamed
+    case conflict
 
     /// The single letter the row shows, which is how Git itself names these.
     var badge: String {
@@ -1962,6 +2070,19 @@ enum CoreChangedFileStatus: String, Decodable, Equatable {
         case .added: "A"
         case .deleted: "D"
         case .untracked: "U"
+        case .renamed: "R"
+        case .conflict: "!"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .modified: "Modified"
+        case .added: "Added"
+        case .deleted: "Deleted"
+        case .untracked: "Untracked"
+        case .renamed: "Renamed"
+        case .conflict: "Conflict"
         }
     }
 }
@@ -1990,6 +2111,7 @@ struct CoreStatusSnapshot: Decodable {
     let backgroundAI: CoreBackgroundAI
     let diagnostics: [CoreDiagnostic]
     let lastError: CoreLastError?
+    let paneFocusRequest: CorePaneFocusRequest?
 
     enum CodingKeys: String, CodingKey {
         case herdr
@@ -2000,6 +2122,7 @@ struct CoreStatusSnapshot: Decodable {
         case backgroundAI = "background_ai"
         case diagnostics
         case lastError = "last_error"
+        case paneFocusRequest = "pane_focus_request"
     }
 
     init(from decoder: Decoder) throws {
@@ -2014,6 +2137,23 @@ struct CoreStatusSnapshot: Decodable {
             ?? CoreBackgroundAI()
         diagnostics = try container.decodeIfPresent([CoreDiagnostic].self, forKey: .diagnostics) ?? []
         lastError = try container.decodeIfPresent(CoreLastError.self, forKey: .lastError)
+        paneFocusRequest = try container.decodeIfPresent(CorePaneFocusRequest.self, forKey: .paneFocusRequest)
+    }
+}
+
+struct CorePaneFocusRequest: Decodable, Equatable {
+    let requestID: String
+    let targetPaneID: String
+    let phase: String
+    let message: String?
+    let retryable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
+        case targetPaneID = "target_pane_id"
+        case phase
+        case message
+        case retryable
     }
 }
 
@@ -2374,6 +2514,17 @@ struct CoreDispatchRoutingPolicy {
     }
 }
 
+/// Whether a typed core event entered the runtime.
+///
+/// Most callers only need fire-and-forget dispatch. Pane relationship Open is
+/// different: B24 keeps its pending control on screen when the event could not
+/// even enter the core, so that caller needs the synchronous admission answer
+/// without scraping the app-wide `bridgeError` string.
+enum CoreDispatchOutcome: Equatable {
+    case accepted
+    case rejected(String)
+}
+
 @MainActor
 final class CoreBridge: ObservableObject, @unchecked Sendable {
     @Published private(set) var snapshot: CoreSnapshot?
@@ -2415,6 +2566,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     private var commandDevice = CommandDevice.local
     private var routingError: String?
     private let remoteTargets: [[String: String]]
+    var runtimeReadyHandler: (() -> Void)?
 
     private struct CommandDevice {
         let id: String
@@ -2631,6 +2783,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
         startupDiagnostic = nil
         refreshSnapshot()
+        runtimeReadyHandler?()
         return true
     }
 
@@ -2717,11 +2870,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         case restore
     }
 
-    func focusPane(_ paneID: String, origin: PaneFocusOrigin) {
-        dispatch(
-            kind: "focus_pane",
-            payload: ["pane_id": paneID, "origin": origin.rawValue]
-        )
+    @discardableResult
+    func focusPane(
+        _ paneID: String,
+        origin: PaneFocusOrigin,
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
+        var payload: [String: Any] = ["pane_id": paneID, "origin": origin.rawValue]
+        if let requestID {
+            payload["request_id"] = requestID
+        }
+        return dispatch(kind: "focus_pane", payload: payload)
     }
 
     /// The core owns the ladder and its bounds, so the shell sends a direction
@@ -2799,6 +2958,20 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "workspace_id": workspaceID,
             "checkout_id": checkoutID,
         ])
+    }
+
+    func toggleInactiveCheckouts(projectPath: String) {
+        dispatch(
+            kind: "inactive_checkouts_toggle",
+            payload: ["project_path": projectPath]
+        )
+    }
+
+    func toggleInactiveProjects(deviceID: String) {
+        dispatch(
+            kind: "inactive_projects_toggle",
+            payload: ["device_id": deviceID]
+        )
     }
 
     func reconnectPane(_ paneID: String) {
@@ -3055,6 +3228,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             bridgeError = "pane.no_current_pane: Select a terminal pane before toggling zoom"
             return
         }
+        togglePaneZoom(paneID)
+    }
+
+    func togglePaneZoom(_ paneID: String) {
         dispatch(kind: "toggle_zoom", payload: ["pane_id": paneID])
     }
 
@@ -3078,11 +3255,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "fork_pane", payload: ["pane_id": paneID])
     }
 
-    func focusRemotePane(targetID: String, paneID: String) {
+    @discardableResult
+    func focusRemotePane(
+        targetID: String,
+        paneID: String,
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
         dispatchRemoteControl(
             targetID: targetID,
             action: "focus_pane",
-            extra: ["pane_id": paneID]
+            extra: ["pane_id": paneID],
+            requestID: requestID
         )
     }
 
@@ -3160,20 +3343,26 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
     }
 
+    @discardableResult
     private func dispatchRemoteControl(
         targetID: String,
         action: String,
-        extra: [String: Any] = [:]
-    ) {
+        extra: [String: Any] = [:],
+        requestID: String? = nil
+    ) -> CoreDispatchOutcome {
+        let reportsPaneFocusOutcome = requestID != nil
         var payload: [String: Any] = [
             "target_id": targetID,
-            "request_id": UUID().uuidString,
+            "request_id": requestID ?? UUID().uuidString,
             "action": action,
         ]
+        if reportsPaneFocusOutcome {
+            payload["report_pane_focus_outcome"] = true
+        }
         for (key, value) in extra {
             payload[key] = value
         }
-        dispatch(kind: "remote_control", payload: payload)
+        return dispatch(kind: "remote_control", payload: payload)
     }
 
     func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {
@@ -3323,7 +3512,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         fontSize: Double? = nil,
         lastAgentKind: String? = nil,
         lastAgentBypass: Bool? = nil,
-        scratchExpanded: Bool? = nil
+        scratchExpanded: Bool? = nil,
+        usageWindowVisible: Bool? = nil,
+        usagePopoverOpen: Bool? = nil
     ) {
         let current = snapshot?.uiState
         let effectivePath = selectedPath ?? current?.selectedPath
@@ -3365,6 +3556,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         if let scratchExpanded {
             payload["scratch_expanded"] = scratchExpanded
         }
+        if let usageWindowVisible {
+            payload["usage_window_visible"] = usageWindowVisible
+        }
+        if let usagePopoverOpen {
+            payload["usage_popover_open"] = usagePopoverOpen
+        }
         if selectedPaneID != nil || focusedCheckoutID != nil {
             HideLaunchTrace.mark(
                 "core.dispatch.anchor",
@@ -3372,6 +3569,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             )
         }
         dispatch(kind: "ui_state_update", payload: payload)
+    }
+
+    func setUsageWindowVisible(_ visible: Bool) {
+        persistUIState(usageWindowVisible: visible)
+    }
+
+    func setUsagePopoverOpen(_ open: Bool) {
+        persistUIState(usagePopoverOpen: open)
     }
 
     /// Selects the changed file whose diff the changes view shows, or clears
@@ -3398,7 +3603,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "card_measure_disk", payload: [:])
     }
 
-    func dispatch(kind: String, payload: [String: Any]) {
+    @discardableResult
+    func dispatch(kind: String, payload: [String: Any]) -> CoreDispatchOutcome {
         if CoreDispatchRoutingPolicy.blocks(
             kind: kind,
             whenDeviceIsRemote: commandDevice.isRemote
@@ -3410,11 +3616,12 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 "core.dispatch.blocked",
                 detail: "kind=\(kind) device_id=\(commandDevice.id)"
             )
-            return
+            return .rejected(message)
         }
         guard let core else {
-            bridgeError = "Hide is still starting. Try again when the Herdr status is available."
-            return
+            let message = "Hide is still starting. Try again when the Herdr status is available."
+            bridgeError = message
+            return .rejected(message)
         }
         if let detail = dispatchTraceDetail(kind: kind, payload: payload) {
             HideLaunchTrace.mark("core.dispatch", detail: detail)
@@ -3425,12 +3632,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "payload": payload,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: envelope) else {
-            bridgeError = "Could not encode \(kind) event"
-            return
+            let message = "Could not encode \(kind) event"
+            bridgeError = message
+            return .rejected(message)
         }
         data.withUnsafeBytes { buffer in
             herdr_core_dispatch(core, buffer.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
+        return .accepted
     }
 
     private func dispatchTraceDetail(kind: String, payload: [String: Any]) -> String? {

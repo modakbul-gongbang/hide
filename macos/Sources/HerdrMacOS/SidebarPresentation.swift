@@ -1,5 +1,93 @@
 import Foundation
 
+enum SidebarProjectRow: Identifiable {
+    case workspace(CoreWorkspaceSnapshot, level: SidebarHierarchyLevel)
+    case inactiveProjects(CoreInactiveProjectGroupSnapshot, [CoreWorkspaceSnapshot])
+
+    var id: String {
+        switch self {
+        case .workspace(let workspace, _):
+            "workspace:\(workspace.id)"
+        case .inactiveProjects(let group, _):
+            "inactive-projects:\(group.deviceID)"
+        }
+    }
+}
+
+/// The project tree's semantic indentation ladder. Each level advances on
+/// the same spacing rhythm, while the selected-row surface begins one small
+/// inset before its content so the background keeps the child relationship.
+enum SidebarHierarchyLevel: Equatable {
+    case root
+    case child
+    case grandchild
+    case greatGrandchild
+
+    var childLevel: SidebarHierarchyLevel {
+        switch self {
+        case .root: .child
+        case .child: .grandchild
+        case .grandchild, .greatGrandchild: .greatGrandchild
+        }
+    }
+
+    var contentLeadingInset: CGFloat {
+        switch self {
+        case .root: HideTheme.spacingMD
+        case .child: HideTheme.spacingXL
+        case .grandchild: HideTheme.sidebarHierarchyGrandchildInset
+        case .greatGrandchild: HideTheme.sidebarHierarchyGreatGrandchildInset
+        }
+    }
+
+    var selectionLeadingInset: CGFloat {
+        contentLeadingInset - HideTheme.spacingSM
+    }
+}
+
+/// Maps core-owned inactive group IDs back to the authoritative rows. This is
+/// presentation only: no merge, age, or exception rule is repeated here.
+enum SidebarInactiveProjection {
+    static func projectRows(
+        _ workspaces: [CoreWorkspaceSnapshot],
+        groups: [CoreInactiveProjectGroupSnapshot]
+    ) -> [SidebarProjectRow] {
+        let byID = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
+        let groupsByDevice = Dictionary(uniqueKeysWithValues: groups.map { ($0.deviceID, $0) })
+        var deviceIDs: [String] = []
+        var seenDevices = Set<String>()
+        for workspace in workspaces where seenDevices.insert(workspace.deviceID).inserted {
+            deviceIDs.append(workspace.deviceID)
+        }
+
+        return deviceIDs.flatMap { deviceID -> [SidebarProjectRow] in
+            let group = groupsByDevice[deviceID]
+            let inactiveIDs = Set(group?.projectIDs ?? [])
+            var rows = workspaces
+                .filter { $0.deviceID == deviceID && !inactiveIDs.contains($0.id) }
+                .map { SidebarProjectRow.workspace($0, level: .root) }
+            guard let group else { return rows }
+            let inactive = group.projectIDs.compactMap { byID[$0] }
+            guard !inactive.isEmpty else { return rows }
+            rows.append(.inactiveProjects(group, inactive))
+            if group.expanded {
+                rows.append(contentsOf: inactive.map { SidebarProjectRow.workspace($0, level: .child) })
+            }
+            return rows
+        }
+    }
+
+    static func activeCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        let inactive = Set(workspace.inactiveCheckouts.checkoutIDs)
+        return workspace.checkouts.filter { !inactive.contains($0.id) }
+    }
+
+    static func inactiveCheckouts(in workspace: CoreWorkspaceSnapshot) -> [CoreCheckoutSnapshot] {
+        let byID = Dictionary(uniqueKeysWithValues: workspace.checkouts.map { ($0.id, $0) })
+        return workspace.inactiveCheckouts.checkoutIDs.compactMap { byID[$0] }
+    }
+}
+
 struct SidebarCheckoutPresentation: Equatable {
     let agentCount: Int
     let isPrimary: Bool

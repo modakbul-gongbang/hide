@@ -5,7 +5,7 @@
 //! thread, never while the runtime mutex is held and never on a per-event
 //! path: [`ChangesReader::read_if_due`] recomputes only when the request
 //! changes or the refresh window lapses, and it produces nothing at all while
-//! the changes view is not the visible section.
+//! neither Changes nor Explorer is visible and no diff tab needs it.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,8 +26,9 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_DIFF_BYTES: usize = 256 * 1024;
 
 /// What the runtime wants read: the checkout to describe and the file whose
-/// diff to fetch. Absent while the changes view is not showing, which is what
-/// keeps the reader from forking anything in the common case.
+/// diff to fetch. Absent while neither Changes nor Explorer is showing and no
+/// diff tab is active, which keeps the reader out of the common hidden-panel
+/// path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangesRequest {
     pub root_path: PathBuf,
@@ -160,7 +161,7 @@ fn read_committed(toplevel: &Path, base: &str) -> Option<Vec<ChangedFileSnapshot
     let range = format!("{base_ref}...HEAD");
     let statuses = git_text(
         toplevel,
-        &["diff", "--name-status", "-z", "--no-renames", &range],
+        &["diff", "--name-status", "-z", "--find-renames", &range],
     )
     .ok()?;
     let mut entries = parse_name_status(&statuses, toplevel);
@@ -195,12 +196,35 @@ fn resolvable_base(toplevel: &Path, base: &str) -> Option<String> {
 /// Splits `--name-status -z` output. Records alternate status and path, both
 /// NUL-terminated, so a path with a space or a newline survives intact.
 pub fn parse_name_status(output: &str, toplevel: &Path) -> Vec<ChangedFileSnapshot> {
-    let mut fields = output.split('\0').filter(|field| !field.is_empty());
+    let fields = output.split('\0').collect::<Vec<_>>();
     let mut entries = Vec::new();
-    while let (Some(code), Some(relative_path)) = (fields.next(), fields.next()) {
+    let mut index = 0;
+    while index < fields.len() {
+        let code = fields[index];
+        if code.is_empty() || index + 1 >= fields.len() {
+            break;
+        }
+        index += 1;
+        let (previous_relative_path, relative_path) = if code.starts_with('R') {
+            if index + 1 >= fields.len() {
+                break;
+            }
+            let previous = fields[index].to_owned();
+            let current = fields[index + 1];
+            index += 2;
+            (Some(previous), current)
+        } else {
+            let current = fields[index];
+            index += 1;
+            (None, current)
+        };
+        if relative_path.is_empty() {
+            continue;
+        }
         entries.push(ChangedFileSnapshot {
             path: toplevel.join(relative_path).to_string_lossy().into_owned(),
             relative_path: relative_path.to_owned(),
+            previous_relative_path,
             // `--name-status` reports one letter where porcelain reports two.
             status: ChangedFileStatus::from_porcelain(&format!("{code} ")),
             added_lines: None,
@@ -214,17 +238,31 @@ pub fn parse_name_status(output: &str, toplevel: &Path) -> Vec<ChangedFileSnapsh
 /// Splits `--numstat -z` output into per-path line counts. A binary file is
 /// reported as `-\t-`, which stays absent rather than becoming a zero.
 pub fn parse_numstat(output: &str) -> Vec<(String, Option<u32>, Option<u32>)> {
-    output
-        .split('\0')
-        .filter(|record| !record.is_empty())
-        .filter_map(|record| {
-            let mut fields = record.split('\t');
-            let added = fields.next()?.parse().ok();
-            let removed = fields.next()?.parse().ok();
-            let path = fields.next()?.to_owned();
-            Some((path, added, removed))
-        })
-        .collect()
+    let fields = output.split('\0').collect::<Vec<_>>();
+    let mut counts = Vec::new();
+    let mut index = 0;
+    while index < fields.len() {
+        let record = fields[index];
+        if record.is_empty() {
+            index += 1;
+            continue;
+        }
+        let mut columns = record.splitn(3, '\t');
+        let added = columns.next().and_then(|value| value.parse().ok());
+        let removed = columns.next().and_then(|value| value.parse().ok());
+        let Some(path) = columns.next() else {
+            index += 1;
+            continue;
+        };
+        if path.is_empty() && index + 2 < fields.len() {
+            counts.push((fields[index + 2].to_owned(), added, removed));
+            index += 3;
+        } else {
+            counts.push((path.to_owned(), added, removed));
+            index += 1;
+        }
+    }
+    counts
 }
 
 fn apply_line_counts(entries: &mut [ChangedFileSnapshot], counts: &str) {
@@ -272,6 +310,10 @@ fn read_committed_diff(
             "diff",
             &format!("{base}...HEAD"),
             "--",
+            entry
+                .previous_relative_path
+                .as_deref()
+                .unwrap_or(&entry.relative_path),
             &entry.relative_path,
         ],
     ) {
@@ -306,7 +348,7 @@ fn git_status(toplevel: &Path) -> Result<String, String> {
             "status",
             "--porcelain=v1",
             "-z",
-            "--no-renames",
+            "--find-renames",
             "--untracked-files=all",
         ],
     )?;
@@ -335,7 +377,20 @@ fn read_diff(toplevel: &Path, entry: &ChangedFileSnapshot) -> ChangedFileDiffSna
                 git_error_text(&output.stderr)
             )),
         }),
-        _ => run_git(toplevel, &["diff", "HEAD", "--", &entry.relative_path]).and_then(|output| {
+        _ => run_git(
+            toplevel,
+            &[
+                "diff",
+                "HEAD",
+                "--",
+                entry
+                    .previous_relative_path
+                    .as_deref()
+                    .unwrap_or(&entry.relative_path),
+                &entry.relative_path,
+            ],
+        )
+        .and_then(|output| {
             if output.status.success() {
                 Ok(String::from_utf8_lossy(&output.stdout).into_owned())
             } else {
@@ -379,21 +434,41 @@ fn git_error_text(stderr: &[u8]) -> String {
 /// and each is `XY<space><path>`, so no quoting or escaping applies and a path
 /// containing a space or a newline survives intact.
 pub fn parse_status(output: &str, toplevel: &Path) -> Vec<ChangedFileSnapshot> {
-    let mut entries: Vec<ChangedFileSnapshot> = output
-        .split('\0')
-        .filter(|record| record.len() > 3)
-        .map(|record| {
-            let (code, rest) = record.split_at(2);
-            let relative_path = rest.trim_start_matches(' ').to_owned();
-            ChangedFileSnapshot {
-                path: toplevel.join(&relative_path).to_string_lossy().into_owned(),
-                relative_path,
-                status: ChangedFileStatus::from_porcelain(code),
-                added_lines: None,
-                removed_lines: None,
+    let fields = output.split('\0').collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index < fields.len() {
+        let record = fields[index];
+        index += 1;
+        if record.len() <= 3 {
+            continue;
+        }
+        let Some(code) = record.get(0..2) else {
+            continue;
+        };
+        let relative_path = record.get(3..).unwrap_or_default().to_owned();
+        let previous_relative_path = if code.contains('R') || code.contains('C') {
+            let previous = fields
+                .get(index)
+                .copied()
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned);
+            if previous.is_some() {
+                index += 1;
             }
-        })
-        .collect();
+            previous
+        } else {
+            None
+        };
+        entries.push(ChangedFileSnapshot {
+            path: toplevel.join(&relative_path).to_string_lossy().into_owned(),
+            relative_path,
+            previous_relative_path,
+            status: ChangedFileStatus::from_porcelain(code),
+            added_lines: None,
+            removed_lines: None,
+        });
+    }
     entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     entries
 }
@@ -426,8 +501,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn porcelain_records_project_the_four_presented_statuses() {
-        let output = " M src/lib.rs\0A  src/new.rs\0 D src/gone.rs\0?? notes.txt\0";
+    fn porcelain_records_project_the_presented_statuses() {
+        let output = " M src/lib.rs\0A  src/new.rs\0 D src/gone.rs\0?? notes.txt\0UU src/conflict.rs\0R  src/새 이름.rs\0src/old name.rs\0";
         let entries = parse_status(output, Path::new("/checkout"));
         assert_eq!(
             entries
@@ -436,12 +511,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 ("notes.txt", "untracked"),
+                ("src/conflict.rs", "conflict"),
                 ("src/gone.rs", "deleted"),
                 ("src/lib.rs", "modified"),
                 ("src/new.rs", "added"),
+                ("src/새 이름.rs", "renamed"),
             ]
         );
         assert_eq!(entries[0].path, "/checkout/notes.txt");
+        let renamed = entries
+            .iter()
+            .find(|entry| entry.status == ChangedFileStatus::Renamed)
+            .unwrap();
+        assert_eq!(
+            renamed.previous_relative_path.as_deref(),
+            Some("src/old name.rs")
+        );
     }
 
     #[test]
@@ -456,7 +541,11 @@ mod tests {
         );
         assert_eq!(
             ChangedFileStatus::from_porcelain("R "),
-            ChangedFileStatus::Modified
+            ChangedFileStatus::Renamed
+        );
+        assert_eq!(
+            ChangedFileStatus::from_porcelain("UU"),
+            ChangedFileStatus::Conflict
         );
     }
 
@@ -469,7 +558,7 @@ mod tests {
     #[test]
     fn name_status_records_project_the_committed_group() {
         let entries = parse_name_status(
-            "M\0src/lib.rs\0A\0src/new.rs\0D\0src/gone.rs\0",
+            "M\0src/lib.rs\0A\0src/new.rs\0D\0src/gone.rs\0R100\0src/old name.rs\0src/새 이름.rs\0",
             Path::new("/checkout"),
         );
         assert_eq!(
@@ -481,9 +570,14 @@ mod tests {
                 ("src/gone.rs", "deleted"),
                 ("src/lib.rs", "modified"),
                 ("src/new.rs", "added"),
+                ("src/새 이름.rs", "renamed"),
             ]
         );
         assert_eq!(entries[0].path, "/checkout/src/gone.rs");
+        assert_eq!(
+            entries.last().unwrap().previous_relative_path.as_deref(),
+            Some("src/old name.rs")
+        );
     }
 
     #[test]
@@ -502,6 +596,17 @@ mod tests {
             .find(|e| e.relative_path == "src/other.rs")
             .unwrap();
         assert_eq!((other.added_lines, other.removed_lines), (None, None));
+    }
+
+    #[test]
+    fn nul_numstat_rename_counts_land_on_the_destination() {
+        let mut entries =
+            parse_name_status("R100\0src/old name.rs\0src/새 이름.rs\0", Path::new("/c"));
+        apply_line_counts(&mut entries, "7\t2\t\0src/old name.rs\0src/새 이름.rs\0");
+        assert_eq!(
+            (entries[0].added_lines, entries[0].removed_lines),
+            (Some(7), Some(2))
+        );
     }
 
     /// A file with no numstat record - an untracked one, which has no index

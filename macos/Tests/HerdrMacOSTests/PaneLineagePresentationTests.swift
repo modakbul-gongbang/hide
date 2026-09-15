@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import Testing
 
 @testable import HerdrMacOS
@@ -7,32 +9,190 @@ private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
     CoreAgentChip(paneID: paneID, label: label, detail: "running tests")
 }
 
+private func focusOutcome(
+    requestID: String,
+    targetPaneID: String = "w1:p2",
+    phase: String,
+    message: String? = nil,
+    retryable: Bool = false
+) -> CorePaneFocusRequest {
+    CorePaneFocusRequest(
+        requestID: requestID,
+        targetPaneID: targetPaneID,
+        phase: phase,
+        message: message,
+        retryable: retryable
+    )
+}
+
+/// PRD B24: one relationship intent stays pending until the core publishes
+/// that exact request's outcome, and duplicate Open does not dispatch again.
+@Test func relationshipOpenBlocksDuplicatesUntilHerdrConfirmsTheTarget() {
+    let first = PaneSelectionPolicy.start(
+        current: nil,
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Child task",
+        availablePaneIDs: ["w1:p1", "w1:p2"]
+    )
+    guard case .dispatch(let pending) = first else {
+        Issue.record("the first Open must dispatch")
+        return
+    }
+    #expect(pending.isPending)
+    #expect(PaneSelectionPolicy.start(
+        current: pending,
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Child task",
+        availablePaneIDs: ["w1:p1", "w1:p2"]
+    ) == .unchanged(pending))
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: focusOutcome(requestID: "unrelated-request", phase: "failed", message: "other pane failed")
+    ) == .pending, "an unrelated pane error cannot resolve this request")
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: nil
+    ) == .pending, "an older focused layout is not a request outcome")
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: focusOutcome(requestID: pending.requestID, phase: "pending")
+    ) == .pending)
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: focusOutcome(requestID: pending.requestID, phase: "succeeded")
+    ) == .succeeded)
+}
+
+/// PRD B24: unavailable targets never dispatch, and a typed focus refusal
+/// keeps a scoped reason with a retryable operation without a second focus.
+@Test func relationshipOpenKeepsUnavailableAndFailedOutcomesAtTheControl() {
+    let unavailable = PaneSelectionPolicy.start(
+        current: nil,
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Child task",
+        availablePaneIDs: ["w1:p1"]
+    )
+    guard case .failed(let unavailableOperation) = unavailable else {
+        Issue.record("an unavailable target must not dispatch")
+        return
+    }
+    #expect(unavailableOperation.phase == .failed(
+        reason: "Child task is no longer available.",
+        retryable: true
+    ))
+
+    let retry = PaneSelectionPolicy.start(
+        current: unavailableOperation,
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Child task",
+        availablePaneIDs: ["w1:p1", "w1:p2"]
+    )
+    guard case .dispatch(let pending) = retry else {
+        Issue.record("Retry must dispatch after the target returns")
+        return
+    }
+    #expect(PaneSelectionPolicy.resolve(
+        pending,
+        outcome: focusOutcome(
+            requestID: pending.requestID,
+            phase: "failed",
+            message: "pane refused focus",
+            retryable: true
+        )
+    ) == .failed(reason: "pane refused focus", retryable: true))
+}
+
+/// PRD B24. The operation notice is hosted above the retained canvas rather
+/// than inside the source pane, so both the pending state and its failure
+/// remain renderable after relationship navigation removes that pane from the
+/// visible tab. This is presentation evidence only; core outcome semantics
+/// are covered by the request-correlation tests above and in Rust.
+@Test @MainActor func relationshipOutcomeRemainsRenderableWithoutItsSourcePane() throws {
+    var retries = 0
+    let pending = PaneSelectionOperation(
+        requestID: "relationship-hosted-pending",
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Hide design QA",
+        phase: .pending
+    )
+    let pendingHost = NSHostingView(rootView: PaneSelectionOutcomeNotice(
+        operation: pending,
+        onRetry: { retries += 1 }
+    ))
+    pendingHost.frame = NSRect(x: 0, y: 0, width: 420, height: 96)
+    pendingHost.layoutSubtreeIfNeeded()
+    #expect(pendingHost.fittingSize.width > 0)
+    #expect(pendingHost.fittingSize.height > 0)
+
+    let failed = PaneSelectionOperation(
+        requestID: "relationship-hosted-failed",
+        sourcePaneID: "w1:p1",
+        targetPaneID: "w1:p2",
+        targetLabel: "Hide design QA",
+        phase: .failed(reason: "The target pane is unavailable.", retryable: true)
+    )
+    let failedHost = NSHostingView(rootView: PaneSelectionOutcomeNotice(
+        operation: failed,
+        onRetry: { retries += 1 }
+    ))
+    failedHost.frame = NSRect(x: 0, y: 0, width: 420, height: 120)
+    failedHost.layoutSubtreeIfNeeded()
+    #expect(failedHost.fittingSize.width > 0)
+    #expect(failedHost.fittingSize.height > 0)
+    let bitmap = try #require(failedHost.bitmapImageRepForCachingDisplay(in: failedHost.bounds))
+    failedHost.cacheDisplay(in: failedHost.bounds, to: bitmap)
+    #expect(bitmap.pixelsWide > 0)
+    #expect(bitmap.pixelsHigh > 0)
+    #expect(retries == 0, "rendering outcome state never retries by itself")
+}
+
+@Test func directParentExcludesTheCurrentBreadcrumbLayer() {
+    let root = CoreLineageStep(paneID: "w1:p1", label: "Project coordinator")
+    let child = CoreLineageStep(paneID: "w1:p2", label: "QA child")
+
+    #expect(
+        PaneLineagePresentation.directParent(in: [root, child], currentPaneID: "w1:p2") == root
+    )
+    #expect(PaneLineagePresentation.directParent(in: [child], currentPaneID: "w1:p2") == nil)
+    #expect(
+        PaneLineagePresentation.directParent(in: [root], currentPaneID: "w1:p2") == root,
+        "an ancestor-only legacy payload still names its parent"
+    )
+}
+
+@Test func livePaneIdentityReplacesAStaleLineageLabelWithoutChangingTheRelationship() {
+    let root = CoreLineageStep(
+        paneID: "w1:p1",
+        label: "qa-lineage-child",
+        siblings: [chip("w1:p1", "Fixture root")]
+    )
+    let child = CoreLineageStep(paneID: "w1:p2", label: "Hide design QA")
+
+    let resolved = PaneLineagePresentation.resolvingLivePaneLabels(in: [root, child]) { paneID in
+        paneID == "w1:p1" ? "프로젝트 전체 작업 조율" : nil
+    }
+
+    #expect(resolved.map(\.paneID) == ["w1:p1", "w1:p2"])
+    #expect(resolved.map(\.label) == ["프로젝트 전체 작업 조율", "Hide design QA"])
+    #expect(resolved[0].siblings == root.siblings)
+}
+
 /// PRD B6, D-20: overflow folds into the same `+N` the Workspace summary
 /// chip uses, and the number it shows is honest.
 @Test func chipsBeyondTheRowFoldIntoAnHonestOverflowCount() {
     let five = (1...5).map { chip("w1:p\($0)", "Child \($0)") }
 
-    let fits = PaneLineagePresentation.chipRow(five, limit: 5)
-    #expect(fits.visible.count == 5)
-    #expect(fits.overflow == 0, "nothing is folded when everything fits")
-
-    // One slot pays for the `+N` itself, so three chips are drawn and the
-    // count names the two that were not.
-    let folded = PaneLineagePresentation.chipRow(five, limit: 4)
-    #expect(folded.visible.map(\.label) == ["Child 1", "Child 2", "Child 3"])
-    #expect(folded.overflow == 2)
-    #expect(folded.visible.count + folded.overflow == five.count)
-
-    let none = PaneLineagePresentation.chipRow(five, limit: 0)
-    #expect(none.visible.isEmpty)
-    #expect(none.overflow == 5, "a row with no room still says how many there are")
-}
-
-@Test func theChipLimitFollowsTheWidthTheRowWasGiven() {
-    #expect(PaneLineagePresentation.chipLimit(width: 0) == 1, "a row always offers one slot")
-    let slot = HideTheme.Layout.paneChildChipMaxWidth + HideTheme.spacingXS
-    #expect(PaneLineagePresentation.chipLimit(width: slot * 3) == 3)
-    #expect(PaneLineagePresentation.chipLimit(width: slot * 3 - 1) == 2)
+    for count in [0, 1, 2, 5] {
+        let row = PaneLineagePresentation.chipRow(Array(five.prefix(count)))
+        #expect(row.visible.map(\.label) == (count == 0 ? [] : ["Child 1"]))
+        #expect(row.overflow == max(0, count - 1))
+        #expect(row.visible.count + row.overflow == count)
+    }
 }
 
 /// PRD B24, B32, D-53: unknown is drawn as unknown, never as a zero.
@@ -83,7 +243,7 @@ private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
         "in-process subagents are worth a row even with no pane children"
     )
     #expect(
-        PaneLineagePresentation.showsChildRow(
+        !PaneLineagePresentation.showsChildRow(
             CorePaneChildren(
                 instrumented: false,
                 uninstrumentedReason: "This runtime's Hide hook is not installed.",
@@ -91,8 +251,19 @@ private func chip(_ paneID: String, _ label: String) -> CoreAgentChip {
                 uninstrumentedCode: "hooks_not_installed"
             )
         ),
-        "not knowing is a thing to say, and it says it here"
+        "instrumentation uncertainty stays on the 28pt identity row"
     )
+    #expect(
+        PaneLineagePresentation.showsInstrumentationHelp(
+            CorePaneChildren(
+                instrumented: false,
+                uninstrumentedReason: "This runtime's Hide hook is not installed.",
+                uninstrumentedLabel: "Children unknown: the hook is not installed",
+                uninstrumentedCode: "hooks_not_installed"
+            )
+        )
+    )
+    #expect(!PaneLineagePresentation.showsInstrumentationHelp(CorePaneChildren(instrumented: true)))
 }
 
 private func row(

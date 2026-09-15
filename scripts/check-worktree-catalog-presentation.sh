@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Searches use `git grep`, never `rg`: ripgrep is not on the CI runner.
-
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$root"
-
-git grep -qF -- 'HideBadge(label: "main worktree"' macos/Sources/HerdrMacOS/GitWorktreesView.swift
-git grep -qF -- 'notice("No linked worktrees yet")' macos/Sources/HerdrMacOS/GitWorktreesView.swift
-
-echo "The worktree catalog still marks the main worktree and still names the empty state"
+# git is available in CI; these assertions follow the retained Overview owner.
+cd "$(dirname "$0")/.."
+git grep -qF -- 'row.isMain ? "Main checkout" : row.label' macos/Sources/HerdrMacOS/CheckoutOverview.swift
+git grep -qF -- 'No commits yet' macos/Sources/HerdrMacOS/OverviewGitTree.swift
+echo "Overview retains the main-checkout identity and empty Git history state"
