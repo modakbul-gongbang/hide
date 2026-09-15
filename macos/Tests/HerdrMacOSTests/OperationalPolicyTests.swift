@@ -310,6 +310,10 @@ import Testing
     #expect(details.receivedProtocol == 22)
     #expect(details.expectedVersion == "0.9.0-preview.fixture")
     #expect(details.receivedVersion == "0.9.0")
+    #expect(details.recovery == .restartBundledHerdr)
+    #expect(details.title == "Restart Herdr when your work is safe")
+    #expect(details.primaryActionLabel == "Open Restart Guide")
+    #expect(details.message.contains("stop the Herdr session and reopen Hide"))
     #expect(details.diagnostics.contains("Error code: protocol_mismatch"))
     #expect(!details.diagnostics.contains("{"))
 
@@ -327,6 +331,32 @@ import Testing
         startupDiagnostic: nil,
         hideVersion: "1.0"
     ) == .connected)
+}
+
+@Test func protocolMismatchRecoveryPointsAtTheOlderComponent() {
+    let updateHide = HerdrProtocolMismatchDetails(
+        expectedProtocol: 23,
+        receivedProtocol: 24,
+        expectedVersion: "hide-herdr",
+        receivedVersion: "server-herdr",
+        hideVersion: "1.0"
+    )
+    #expect(updateHide.recovery == .updateHide)
+    #expect(updateHide.title == "Hide needs an update")
+    #expect(updateHide.primaryActionLabel == "Open Hide Releases")
+    #expect(updateHide.message.contains("Update Hide"))
+
+    let unknown = HerdrProtocolMismatchDetails(
+        expectedProtocol: nil,
+        receivedProtocol: nil,
+        expectedVersion: "hide-herdr",
+        receivedVersion: nil,
+        hideVersion: "1.0"
+    )
+    #expect(unknown.recovery == .reviewDiagnostics)
+    #expect(unknown.title == "Hide and Herdr aren’t compatible")
+    #expect(unknown.primaryActionLabel == nil)
+    #expect(unknown.message.contains("Copy the diagnostics"))
 }
 
 @Test func coreRemoteSessionCarriesContextAndPaneCwd() throws {
@@ -650,6 +680,10 @@ private extension Process {
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "LANG": "C",
+            "LC_ALL": "C",
+        ]) { _, testValue in testValue }
         process.standardOutput = pipe
         try process.run()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()

@@ -1003,8 +1003,9 @@ Search retains `HideSearchKeyboard` as its only focus owner; address, form and c
 Its optional semantic emphasis colors the heading and icon for warnings and failures while keeping the explanation readable.
 Standalone Pet/dashboard content and operating-system menu/alert presentation retain their explicit platform exceptions.
 The protocol mismatch state uses that native alert exception rather than introducing a shell component.
-Its title is `Hide and Herdr aren’t compatible`, and its message says that the running server uses a different protocol, that Hide should be updated, and that no workspace or agent was created.
-The actions are `Open Hide Releases`, `Copy Diagnostics`, and `OK`; none of them stops, replaces, or mutates the running Herdr server.
+Its copy identifies the older side from the two protocol numbers instead of asking the operator to infer it.
+An older running Herdr uses `Restart Herdr when your work is safe` with `Open Restart Guide`; a newer running Herdr uses `Hide needs an update` with `Open Hide Releases`; an unknown comparison uses `Hide and Herdr aren’t compatible` without a potentially wrong update link.
+Every state also offers `Copy Diagnostics` and `OK`, says that no workspace or agent was created, and none of its actions stops, replaces, reinstalls, or mutates the running Herdr server.
 The alert is presented only from the core's typed `protocol_mismatch` readiness state, so raw CLI JSON never becomes its copy.
 
 `HideTheme.Control` owns compactHeight 24, regularHeight 36, checkboxSize 16 and tabIndicatorHeight 2.

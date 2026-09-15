@@ -23,8 +23,8 @@ Hide가 정확히 검증한 최신 Herdr 포크와 호환될 때는 기존 세�
   Hide가 사용자의 공용 Herdr 세션을 보여주는 현재 제품 구조를 유지한다.
 - 실행 중인 Herdr 서버를 Hide가 자동 종료하거나 교체하지 않는다.
   현재 터미널이 종료될 수 있는 동작은 별도의 명시적 사용자 승인 없이는 수행하지 않는다.
-- 앱 내부 자동 업데이트 시스템을 새로 만들지 않는다.
-  현재 릴리스 페이지를 여는 복구 동작을 제공하고, 실제 updater가 도입될 때 버튼을 교체한다.
+- 앱 내부 자동 업데이트나 자동 서버 재시작 시스템을 새로 만들지 않는다.
+  실행 중인 서버가 오래된 경우에는 안전한 수동 재시작 안내를 열고, Hide가 오래된 경우에는 Hide 릴리스 페이지를 연다.
 - 전체 Herdr API를 capability 기반 degraded mode로 재설계하지 않는다.
   이번 변경은 정확한 계약 핀과 사전 호환성 차단을 완성하며, 안정 endpoint가 Hide의 필수 capability를 제공할 때 재검토한다.
 
@@ -37,7 +37,7 @@ Hide가 정확히 검증한 최신 Herdr 포크와 호환될 때는 기존 세�
 | D-03 | Hide는 새 preview 바이너리와 그 바이너리가 출력한 스키마를 `scripts/bump-herdr.sh`로 함께 핀한다. | 사용자 승인과 `docs/ARCHITECTURE.md`의 단일 핀 계약. |
 | D-04 | Rust core가 제공하는 구조화된 Herdr 상태를 단일 readiness 근거로 삼고, `connected` 전에는 로컬 Herdr 변경 명령을 보내지 않는다. | 사용자 승인과 기존 `status.herdr.state` 구현. |
 | D-05 | 프로토콜 불일치는 전용 네이티브 alert로 설명하고 raw JSON은 표시하지 않는다. | 사용자 결정: "친절한 오류 문구로 해야겠네". |
-| D-06 | 복구 동작은 `Open Hide Releases`, `Copy Diagnostics`, `OK`로 제공하고 Herdr 종료는 자동화하지 않는다. | 사용자 승인: 직전 제안에 대한 "ㅇㅇ"과 디자인 원칙 6의 파괴적 동작 확인 요구. |
+| D-06 | protocol 숫자를 비교해 오래된 구성요소를 안내한다. 실행 중인 Herdr가 오래되면 `Open Restart Guide`, Hide가 오래되면 `Open Hide Releases`를 제공하고, 판별할 수 없으면 진단 복사만 제공한다. 어느 상태에서도 Herdr 종료나 재설치를 자동화하지 않는다. | 전체 작업 위임 범위 안의 에이전트 소유 가정: 번들 런타임은 Hide가 소유하고, 사용자 질문 "그러면 herdr reinstall 하라고 시키는게 낫나? 어떤 게 나은것같아?"에 대해 파괴적 자동 교체 없이 오래된 구성요소만 정확히 지목하는 방향을 선택했다. |
 | D-07 | 기존 generic CLI 실패도 JSON envelope의 message를 추출하고 파싱 불가한 경우에만 원문으로 되돌아간다. | 에이전트 가정: 기존 `HerdrErrorEnvelope` 재사용으로 같은 raw JSON 실패 유형을 막는 가역적 구현 선택. |
 | D-08 | 아직 원격에 없는 packaged resource 접근 수정도 함께 포함해 머지된 최신 main 빌드가 실제 설치 경로에서 실행되게 한다. | 사용자의 이전 "해결해" 승인과 현재 `origin/main`의 재현된 `Bundle.module` 크래시. |
 | D-09 | PR을 만들고 필수 CI와 리뷰에 문제가 없을 때 squash merge한 뒤 최신 main을 다시 빌드하고 설치한다. | 사용자 결정: "PR 올려서 문제없으면 머지하고 최신상태로 빌드까지 다 해줘". |
@@ -52,8 +52,8 @@ Hide가 정확히 검증한 최신 Herdr 포크와 호환될 때는 기존 세�
 | B3 | 같은 protocol 23과 필수 계약을 가진 Herdr 서버가 이미 실행 중이면 Hide는 그 서버와 기존 세션에 연결한다. | D-01, D-02, D-04 |
 | B4 | 서버가 없거나 아직 연결을 확인하지 못한 시작 구간에는 터미널, 채팅, 에이전트 생성 요청이 실행되지 않고 초기화 상태를 유지한다. | D-04 |
 | B5 | protocol 또는 필수 계약이 맞지 않으면 Hide는 workspace, terminal, chat, agent 생성 명령을 보내지 않고 마지막 정상 화면을 보존한다. | D-02, D-04 |
-| B6 | 프로토콜 불일치 alert 제목은 `Hide and Herdr aren’t compatible`이며, 실행 중인 Herdr가 이 Hide보다 새롭거나 다름과 작업을 만들지 않았음을 사람이 읽을 수 있는 문장으로 설명한다. | D-05 |
-| B7 | 프로토콜 불일치 alert에는 `Open Hide Releases`, `Copy Diagnostics`, `OK`가 제공되고 각 동작이 이름 그대로 수행된다. | D-06 |
+| B6 | 프로토콜 불일치 alert는 protocol 숫자를 비교해 `Restart Herdr when your work is safe`, `Hide needs an update`, 또는 판별 불가용 `Hide and Herdr aren’t compatible` 제목과 해당 설명을 표시하며 작업을 만들지 않았음을 사람이 읽을 수 있는 문장으로 설명한다. | D-05, D-06 |
+| B7 | 실행 중인 Herdr가 오래되면 `Open Restart Guide`, Hide가 오래되면 `Open Hide Releases`, 어느 경우에도 `Copy Diagnostics`와 `OK`가 제공되고 각 동작이 이름 그대로 수행된다. 판별 불가 상태에는 잘못된 업데이트 링크를 제공하지 않는다. | D-06 |
 | B8 | 복사되는 진단 정보에는 오류 code, Hide가 요구하는 protocol, 서버 protocol, Hide와 Herdr 버전처럼 실제로 확인된 값만 포함하며 개인 콘텐츠나 비밀은 포함하지 않는다. | D-05, D-06, D-10 |
 | B9 | 프로토콜 불일치 alert와 상태 표시에는 CLI JSON envelope 또는 중괄호로 감싼 raw payload가 노출되지 않는다. | D-05, D-07 |
 | B10 | 프로토콜 이외의 CLI 오류는 기존 흐름을 유지하되 envelope의 사람이 읽을 수 있는 message만 alert에 표시한다. | D-07 |

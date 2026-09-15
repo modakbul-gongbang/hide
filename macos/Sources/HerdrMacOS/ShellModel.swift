@@ -2144,6 +2144,30 @@ final class ShellModel: ObservableObject {
         }
     }
 
+    func openHerdrRestartGuide() {
+        herdrProtocolMismatch = nil
+        guard let url = URL(
+            string: "https://github.com/modakbul-gongbang/hide/blob/main/docs/INSTALL.md#hide-says-the-running-herdr-speaks-another-protocol"
+        ) else {
+            interactionNotice = "Hide could not form the restart guide address."
+            return
+        }
+        ExternalBrowser.open(url) { [weak self] message in
+            self?.interactionNotice = message
+        }
+    }
+
+    func openHerdrProtocolRecovery(_ details: HerdrProtocolMismatchDetails) {
+        switch details.recovery {
+        case .restartBundledHerdr:
+            openHerdrRestartGuide()
+        case .updateHide:
+            openHideReleases()
+        case .reviewDiagnostics:
+            break
+        }
+    }
+
     func copyHerdrProtocolDiagnostics(_ details: HerdrProtocolMismatchDetails) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(details.diagnostics, forType: .string)

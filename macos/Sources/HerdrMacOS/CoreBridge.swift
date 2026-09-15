@@ -2405,6 +2405,12 @@ struct CoreHerdrStatus: Decodable {
 }
 
 struct HerdrProtocolMismatchDetails: Equatable, Identifiable {
+    enum Recovery: Equatable {
+        case restartBundledHerdr
+        case updateHide
+        case reviewDiagnostics
+    }
+
     let expectedProtocol: UInt64?
     let receivedProtocol: UInt64?
     let expectedVersion: String?
@@ -2417,8 +2423,53 @@ struct HerdrProtocolMismatchDetails: Equatable, Identifiable {
             .joined(separator: ":")
     }
 
-    static let title = "Hide and Herdr aren’t compatible"
-    static let message = "The running Herdr uses a different protocol than this version of Hide. Update Hide, then try again. No workspace or agent was created."
+    var recovery: Recovery {
+        guard let expectedProtocol, let receivedProtocol else { return .reviewDiagnostics }
+        if receivedProtocol < expectedProtocol { return .restartBundledHerdr }
+        if receivedProtocol > expectedProtocol { return .updateHide }
+        return .reviewDiagnostics
+    }
+
+    var title: String {
+        switch recovery {
+        case .restartBundledHerdr:
+            "Restart Herdr when your work is safe"
+        case .updateHide:
+            "Hide needs an update"
+        case .reviewDiagnostics:
+            "Hide and Herdr aren’t compatible"
+        }
+    }
+
+    var message: String {
+        switch recovery {
+        case .restartBundledHerdr:
+            if let expectedProtocol, let receivedProtocol {
+                "The running Herdr uses protocol \(receivedProtocol), but Hide requires protocol \(expectedProtocol). When your current work is safe, stop the Herdr session and reopen Hide. Hide will start its compatible bundled Herdr. No workspace or agent was created."
+            } else {
+                "When your current work is safe, stop the Herdr session and reopen Hide. Hide will start its compatible bundled Herdr. No workspace or agent was created."
+            }
+        case .updateHide:
+            if let expectedProtocol, let receivedProtocol {
+                "The running Herdr uses protocol \(receivedProtocol), but this Hide supports protocol \(expectedProtocol). Update Hide to a compatible release, then try again. No workspace or agent was created."
+            } else {
+                "The running Herdr is newer than this version of Hide. Update Hide to a compatible release, then try again. No workspace or agent was created."
+            }
+        case .reviewDiagnostics:
+            "Hide and the running Herdr use incompatible protocols. Copy the diagnostics before reporting the issue. No workspace or agent was created."
+        }
+    }
+
+    var primaryActionLabel: String? {
+        switch recovery {
+        case .restartBundledHerdr:
+            "Open Restart Guide"
+        case .updateHide:
+            "Open Hide Releases"
+        case .reviewDiagnostics:
+            nil
+        }
+    }
 
     var diagnostics: String {
         var lines = ["Error code: protocol_mismatch"]
@@ -2453,8 +2504,8 @@ enum LocalHerdrMutationReadiness: Equatable {
             "Connected to Herdr"
         case .initializing(let message), .unavailable(let message):
             message
-        case .protocolMismatch:
-            HerdrProtocolMismatchDetails.message
+        case .protocolMismatch(let details):
+            details.message
         }
     }
 }

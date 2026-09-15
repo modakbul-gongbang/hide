@@ -108,7 +108,8 @@ Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another sock
 
 A Herdr server that is already running on that socket is used as it is when it speaks the protocol revision hide was built against.
 When it does not, hide stays disconnected and blocks workspace, terminal, chat, and agent creation before any command is sent.
-The compatibility alert can open the hide Releases page or copy version and protocol diagnostics, but it never stops or replaces the running server.
+The compatibility alert compares the protocol numbers and points to the older component: it opens the safe restart guide for an older running Herdr, or the hide Releases page for an older hide.
+It can also copy version and protocol diagnostics, but it never stops or replaces the running server.
 
 A separate Herdr installation is not required.
 The bundled binary is at `hide.app/Contents/Resources/herdr-runtime/herdr` if you want the matching CLI on your `PATH`.
@@ -151,9 +152,15 @@ Reinstall hide from a release archive whose checksum verified, or rebuild it; th
 ### hide says the running Herdr speaks another protocol
 
 A Herdr server started outside hide (an installed CLI, an older hide) owns the socket and was built against a different protocol revision.
-Choose `Open Hide Releases` and install a hide build compatible with that server, or choose `Copy Diagnostics` when reporting the mismatch.
-No workspace or agent was created, and hide leaves the running server and its panes untouched.
-If you intentionally want hide to start its bundled server instead, first coordinate with anyone using the current Herdr session and stop it from a terminal only when its panes are safe to interrupt.
+The alert compares the required and running protocol numbers so it does not tell you to update the wrong component.
+
+If the running Herdr is older, finish or save the work in its panes first.
+Then stop that session from a terminal with `herdr session stop default`, or use `herdr server stop` for an explicitly supervised server, and reopen hide.
+Hide will start the compatible Herdr bundled inside the app, so a separate install or `herdr update` is not required.
+
+If the running Herdr is newer, choose `Open Hide Releases` and install a compatible hide release.
+If either protocol number is unavailable, choose `Copy Diagnostics` and include the result in the issue report instead of guessing which component to replace.
+No workspace or agent was created, and hide leaves the running server and its panes untouched until you deliberately perform the safe recovery step.
 
 ### An agent cannot start
 
