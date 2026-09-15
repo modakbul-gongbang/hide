@@ -5,7 +5,13 @@ import Testing
 @Suite("Core dispatch routing policy")
 struct CoreDispatchRoutingPolicyTests {
     @Test func remoteTerminalEventsReachTheTargetScopedCoreSession() {
-        for kind in ["key", "terminal_resize", "terminal_scroll"] {
+        for kind in [
+            "key",
+            "terminal_click",
+            "terminal_resize",
+            "terminal_scroll",
+            "terminal_viewport",
+        ] {
             #expect(
                 !CoreDispatchRoutingPolicy.blocks(
                     kind: kind,
