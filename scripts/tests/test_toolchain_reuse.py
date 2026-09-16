@@ -15,10 +15,10 @@ Because the exit code is 0, nothing downstream notices. Every run directory
 under `agents/runs/` had grown its own copy: 1.3 GB of `.rustup` plus 128 MB of
 `.cargo` per run, 9.1 GB across eleven runs.
 
-`rust-test.sh` and `swift-test.sh` had both already diagnosed this, and both
-workarounds were unreachable for the same reason: they were guarded by a cargo
-invocation failing, which the auto-install prevents. Resolution now lives once,
-in `toolchain-env.sh`. This test is what keeps the next cargo-running script
+Two earlier test scripts had both already diagnosed this, and both workarounds
+were unreachable for the same reason: they were guarded by a cargo invocation
+failing, which the auto-install prevents. Resolution now lives once, in
+`toolchain-env.sh`. This test is what keeps the next cargo-running script
 from rediscovering the problem rather than sourcing it.
 """
 import re
@@ -30,12 +30,10 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 RESOLVER = 'scripts/toolchain-env.sh'
 
 # The resolver is sourced, so it does not invoke cargo itself and is not a
-# caller. `build-scratch.sh` only names target directories; it runs nothing.
-# `bump-herdr.sh` and `install-local-runtime.sh` are operator commands run from
+# caller. `bump-herdr.sh` and `install-local-runtime.sh` are operator commands run from
 # a login shell, never under a verification HOME.
 EXEMPT = {
     RESOLVER,
-    'scripts/build-scratch.sh',
     'scripts/bump-herdr.sh',
     'scripts/install-local-runtime.sh',
 }

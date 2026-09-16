@@ -36,8 +36,9 @@ They once did: an evidence tree reached 123 MB and carried a browser profile wit
 `docs/BUILD.md` owns the reasons; these are the rules.
 
 - No build directory is ever shared between worktrees: cargo names artifacts by workspace-relative path, so two checkouts sharing one read each other's build as fresh, and its lock serializes the parallel builds worktrees exist for.
-- The release archive is `target/release/libherdr_core.a` inside the worktree that built it; `build_dev_app.sh`, `build-app.sh` and `swift-test.sh` read that fixed path, so never redirect a release build with `CARGO_TARGET_DIR`, `--target-dir` or `--build-path`.
-- A check that judges the working tree sends its *test* build to the scratch directory `scripts/build-scratch.sh` names; source it rather than writing a path.
+- The release archive is `target/release/libherdr_core.a` inside the worktree that built it; `build_dev_app.sh`, `build-app.sh` and `verify-swift.sh` read that fixed path, so never redirect a release build with `CARGO_TARGET_DIR`, `--target-dir` or `--build-path`.
+- Every build lands inside the worktree, cargo in `target/` and SwiftPM in `macos/.build/`, both ignored; `git worktree remove` is the whole cleanup, and nothing under `/tmp` belongs to a checkout.
+- `scripts/verify-cargo.sh` and `scripts/verify-swift.sh` are the only Rust and Swift verification entrypoints; a check script calls them rather than cargo or swift directly.
 - Every script that calls cargo sources `scripts/toolchain-env.sh`, so an isolated HOME reuses the machine's toolchain; without it rustup installs a private 1.4 GB copy and exits 0.
 - The PRD harness binds `scripts/verify-cargo.sh`, because a verify command runs with no shell and an `ENV=value cargo ...` binding fails with ENOENT at verify time.
 - `[profile.dev] incremental = false` is deliberate: an agent worktree is built a few times and discarded, which never repays an incremental cache.

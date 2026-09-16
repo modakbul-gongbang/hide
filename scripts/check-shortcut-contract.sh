@@ -10,7 +10,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-bash scripts/swift-test.sh ShellMenuCommandTests
+bash scripts/verify-swift.sh test --filter ShellMenuCommandTests
 
 if git grep -q '⌘⌥B' -- macos/Sources macos/Tests; then
     printf 'the retired ⌘⌥B chord is still advertised:\n' >&2

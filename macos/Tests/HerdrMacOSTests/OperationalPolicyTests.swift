@@ -4,20 +4,38 @@ import Foundation
 import Testing
 @testable import HerdrMacOS
 
-@Test func loginShellPathIsTheChildToolPATH() {
-    let loginPath = HideRuntimeEnvironment.loginShellPath()
-    let childEnvironment = HideRuntimeEnvironment.childEnvironment()
+// The login-shell probe itself is not exercised here: it runs a real `zsh -l`
+// under a two-second bound, so a test that demanded its success failed
+// whenever the machine was busy building. What a child tool observes is the
+// contract, and both outcomes of the probe are pinned below.
+@Test func theLoginShellPATHReplacesTheInheritedOne() {
+    let environment = HideRuntimeEnvironment.childEnvironment(
+        inherited: ["HOME": "/tmp/hide-login", "USER": "tester", "PATH": "/usr/bin:/bin"],
+        loginPath: "/opt/homebrew/bin:/usr/bin:/bin"
+    )
 
-    #expect(loginPath != nil)
-    #expect(childEnvironment["PATH"] == loginPath)
+    #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/bin:/bin")
 }
 
 @Test func childToolEnvironmentHasOnlyNonSecretRoutingValues() {
     let allowedKeys = Set(
         HideRuntimeEnvironment.substitutedKeys + HideRuntimeEnvironment.forwardedRoutingKeys
     )
+    let environment = HideRuntimeEnvironment.childEnvironment(
+        inherited: [
+            "HOME": "/tmp/hide-secrets",
+            "USER": "tester",
+            "PATH": "/usr/bin:/bin",
+            "SSH_AUTH_SOCK": "/private/tmp/agent.sock",
+            "GITHUB_TOKEN": "ghp_not_forwarded",
+            "AWS_SECRET_ACCESS_KEY": "not_forwarded",
+        ],
+        loginPath: "/usr/bin:/bin"
+    )
 
-    #expect(Set(HideRuntimeEnvironment.childEnvironment().keys).isSubset(of: allowedKeys))
+    #expect(Set(environment.keys).isSubset(of: allowedKeys))
+    #expect(environment["SSH_AUTH_SOCK"] == "/private/tmp/agent.sock")
+    #expect(environment["GITHUB_TOKEN"] == nil)
 }
 
 @Test func finderLikeEnvironmentUsesAVisibleSafePATHFallback() {
