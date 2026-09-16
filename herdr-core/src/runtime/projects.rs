@@ -1,0 +1,1074 @@
+use super::*;
+
+impl Runtime {
+    pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
+        let changes_list_visible = self.snapshot.ui_state.right_panel_visible
+            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Changes;
+        let explorer_visible = self.snapshot.ui_state.right_panel_visible
+            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Explorer;
+        let active_diff = self
+            .snapshot
+            .editor
+            .active_tab_id
+            .as_deref()
+            .and_then(|tab_id| {
+                self.snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::Diff)
+            });
+        if !changes_list_visible && !explorer_visible && active_diff.is_none() {
+            return None;
+        }
+        let root_path = self.snapshot.navigator.root_path.as_ref()?;
+        let selected_path = active_diff
+            .map(|tab| tab.path.clone())
+            .or_else(|| self.snapshot.changes.selected_path.clone());
+        let selected_committed = active_diff
+            .and_then(|tab| tab.diff_committed)
+            .unwrap_or(self.snapshot.changes.selected_committed);
+        Some(crate::changes::ChangesRequest {
+            root_path: PathBuf::from(root_path),
+            selected_path,
+            selected_committed,
+            // The base comes from the checkout row, so the committed group and
+            // the card's `↑A ↓B` are measured against the same branch.
+            base_branch: self
+                .focused_local_checkout()
+                .and_then(|(_, checkout)| checkout.base_branch.clone()),
+        })
+    }
+
+    pub fn worktrees_request(&self) -> crate::worktrees::WorktreeRequest {
+        let projects = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
+            .map(|workspace| crate::worktrees::WorktreeProjectRequest {
+                root_path: PathBuf::from(&workspace.path),
+                base_override: self
+                    .snapshot
+                    .ui_state
+                    .project_base_branches
+                    .get(&workspace.path)
+                    .cloned(),
+                bases: self
+                    .github
+                    .project(&workspace.path)
+                    .map(|project| {
+                        project
+                            .pull_requests
+                            .iter()
+                            .map(|pull_request| {
+                                (
+                                    pull_request.head_branch.clone(),
+                                    pull_request.base_branch.clone(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect();
+        crate::worktrees::WorktreeRequest {
+            overview_root: (self.snapshot.ui_state.right_panel_visible
+                && self.snapshot.ui_state.right_panel_section == RightPanelSection::Overview)
+                .then(|| {
+                    self.focused_local_checkout()
+                        .map(|(w, _)| PathBuf::from(&w.path))
+                })
+                .flatten(),
+            projects,
+            generation: self.worktree_generation,
+        }
+    }
+
+    pub fn ingest_worktrees(&mut self, catalog: crate::model::WorktreeCatalogSnapshot) -> bool {
+        let changed = self.worktree_catalog != catalog || self.snapshot.git_worktrees_loading;
+        self.worktree_catalog = catalog;
+        self.snapshot.git_worktrees_loading = false;
+        self.refresh_worktree_projection();
+        changed
+    }
+
+    pub(crate) fn cleanup_current_path(&self) -> Option<String> {
+        self.focused_local_checkout()
+            .map(|(_, checkout)| checkout.path.clone())
+    }
+
+    pub(crate) fn ingest_cleanup(&mut self, answer: live::cleanup::CleanupSnapshot) -> bool {
+        if self
+            .cleanup
+            .as_ref()
+            .is_none_or(|current| current.id != answer.id)
+        {
+            return false;
+        }
+        let removed = answer
+            .rows
+            .iter()
+            .any(|row| row.result.as_deref() == Some("removed"));
+        self.cleanup = Some(answer);
+        if removed {
+            self.refresh_worktrees();
+            self.remeasure_disk();
+        }
+        self.refresh_worktree_projection();
+        true
+    }
+
+    pub(super) fn review_cleanup(&mut self) -> bool {
+        if self
+            .cleanup
+            .as_ref()
+            .is_some_and(|r| matches!(r.phase.as_str(), "loading" | "removing"))
+        {
+            return false;
+        }
+        let Some((workspace, checkout)) = self.focused_local_checkout() else {
+            return false;
+        };
+        let root = workspace.path.clone();
+        let current = checkout.path.clone();
+        self.next_cleanup_id = self.next_cleanup_id.wrapping_add(1).max(1);
+        let mut review = live::cleanup::CleanupSnapshot {
+            id: self.next_cleanup_id,
+            repository_root: root,
+            phase: "loading".into(),
+            ..Default::default()
+        };
+        self.cleanup = Some(review.clone());
+        let started = self.live.clone().ok_or_else(|| "A live Herdr connection is required to verify worktree usage. Connect and review again.".into())
+            .and_then(|context| live::cleanup::spawn(context, review.clone(), None, current));
+        if let Err(message) = started {
+            review.phase = "failed".into();
+            review.message = Some(message);
+            self.cleanup = Some(review);
+        }
+        self.refresh_worktree_projection();
+        true
+    }
+
+    pub(super) fn confirm_cleanup(&mut self, payload: CleanupConfirmPayload) -> bool {
+        let Some(review) = self
+            .cleanup
+            .clone()
+            .filter(|r| r.id == payload.id && r.phase == "review")
+        else {
+            return false;
+        };
+        let paths: Vec<_> = payload
+            .paths
+            .into_iter()
+            .filter(|path| {
+                review
+                    .rows
+                    .iter()
+                    .any(|row| row.path == *path && row.exclusion.is_none())
+            })
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        if paths.is_empty() {
+            return false;
+        }
+        let Some(current) = self.cleanup_current_path() else {
+            return false;
+        };
+        self.cleanup.as_mut().unwrap().phase = "removing".into();
+        let started = self
+            .live
+            .clone()
+            .ok_or_else(|| {
+                "The Herdr connection is unavailable. Reconnect and review again.".into()
+            })
+            .and_then(|context| {
+                live::cleanup::spawn(context, review.clone(), Some(paths), current)
+            });
+        if let Err(message) = started {
+            let active = self.cleanup.as_mut().unwrap();
+            active.phase = "failed".into();
+            active.message = Some(message);
+        }
+        self.refresh_worktree_projection();
+        true
+    }
+
+    pub(super) fn refresh_worktree_projection(&mut self) -> bool {
+        let before_catalog = self.worktree_catalog.clone();
+        let before_navigator = self.snapshot.navigator.clone();
+        let before_git = self.snapshot.git_worktrees.clone();
+        let before_remote = self.snapshot.git_worktrees_remote;
+
+        let pane_rows = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .map(|checkout| {
+                (
+                    checkout.path.clone(),
+                    checkout
+                        .tabs
+                        .iter()
+                        .flat_map(|tab| tab.panes.iter())
+                        .map(|pane| pane.id.clone())
+                        .collect::<HashSet<_>>(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let running = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .filter(|agent| agent.activity == "working")
+            .map(|agent| agent.pane_id.as_str())
+            .collect::<HashSet<_>>();
+        // The agent line reads the rows the sidebar already projected and the
+        // instrumentation the pane header already resolved, so Overview
+        // repeats neither judgement (PRD B34, B35, engineering rule 7).
+        let agent_chips = self
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .map(|agent| (agent.pane_id.clone(), crate::sidebar::agent_chip(agent)))
+            .collect::<HashMap<_, _>>();
+        let pane_instrumentation = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .filter_map(|pane| Some((pane.id.clone(), pane.children.clone()?)))
+            .collect::<HashMap<_, _>>();
+        let requested_github: HashSet<_> = self
+            .github_request()
+            .projects
+            .iter()
+            .map(|p| p.root.to_string_lossy().into_owned())
+            .collect();
+        let github = self.github.clone();
+        let disk_usage = self.disk_usage.clone();
+
+        for project in &mut self.worktree_catalog.projects {
+            let github_project = github.project(&project.root_path);
+            project.github = github_project.map(|g| g.status.clone()).unwrap_or_else(|| {
+                crate::model::GithubStatusSnapshot {
+                    loading: requested_github.contains(&project.root_path),
+                    ..Default::default()
+                }
+            });
+            project.pull_requests = github_project
+                .map(|g| g.pull_requests.clone())
+                .unwrap_or_default();
+            project.pull_request_window = crate::github::PULL_REQUEST_LIMIT.into();
+            for worktree in &mut project.worktrees {
+                let panes = pane_rows.get(&worktree.path);
+                worktree.pane_count = panes.map_or(0, HashSet::len);
+                worktree.running_agent_count = panes.map_or(0, |pane_ids| {
+                    pane_ids
+                        .iter()
+                        .filter(|pane_id| running.contains(pane_id.as_str()))
+                        .count()
+                });
+                worktree.agent_line = worktree_agent_line(
+                    panes,
+                    &agent_chips,
+                    &pane_instrumentation,
+                    &self.snapshot.navigator.agents,
+                );
+                worktree.disk = disk_usage
+                    .iter()
+                    .find(|disk| disk.path.as_deref() == Some(worktree.path.as_str()))
+                    .cloned()
+                    .unwrap_or_default();
+                worktree.github = github_project
+                    .map(|project| project.status.clone())
+                    .unwrap_or_default();
+                worktree.pull_request = worktree.branch.as_deref().and_then(|branch| {
+                    github_project?
+                        .pull_requests
+                        .iter()
+                        .find(|pull_request| pull_request.head_branch == branch)
+                        .cloned()
+                });
+                worktree.deletion_gate = crate::worktrees::deletion_gate(
+                    worktree,
+                    worktree.branch == project.base_branch && project.base_branch.is_some(),
+                    false,
+                    worktree.pane_count,
+                    worktree.running_agent_count,
+                );
+            }
+            project.shared_git_disk = disk_usage
+                .iter()
+                .find(|d| d.path.is_some() && d.path == project.shared_git_path)
+                .cloned()
+                .unwrap_or_default();
+            let components: Vec<_> = project
+                .worktrees
+                .iter()
+                .map(|w| &w.disk)
+                .chain(std::iter::once(&project.shared_git_disk))
+                .collect();
+            project.disk_total_bytes = project
+                .shared_git_path
+                .as_ref()
+                .and_then(|_| components.iter().map(|d| d.total_bytes).sum());
+            let confirmed: Vec<_> = components.iter().filter_map(|d| d.total_bytes).collect();
+            project.disk_confirmed_bytes = (!confirmed.is_empty()).then(|| confirmed.iter().sum());
+            project.linked_disk_bytes = project
+                .worktrees
+                .iter()
+                .filter(|w| !w.is_main)
+                .map(|w| w.disk.total_bytes)
+                .sum();
+            project.disk_unavailable_reason = components
+                .iter()
+                .find_map(|d| d.unavailable_reason.clone())
+                .or_else(|| {
+                    project
+                        .shared_git_path
+                        .is_none()
+                        .then(|| "Shared Git directory is unavailable. Refresh Overview.".into())
+                });
+            project.worktrees.sort_by(|left, right| {
+                right
+                    .is_main
+                    .cmp(&left.is_main)
+                    .then_with(|| (right.pane_count > 0).cmp(&(left.pane_count > 0)))
+                    .then_with(|| {
+                        right
+                            .last_commit_unix_seconds
+                            .unwrap_or(0)
+                            .cmp(&left.last_commit_unix_seconds.unwrap_or(0))
+                    })
+                    .then_with(|| left.path.cmp(&right.path))
+            });
+        }
+
+        for workspace in &mut self.snapshot.navigator.workspaces {
+            if workspace.remote_target_id.is_some() {
+                continue;
+            }
+            workspace::apply_worktrees(workspace, &self.worktree_catalog);
+        }
+        crate::project_context::sort_projects(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+        );
+        self.refresh_inactive_groups();
+
+        let focused_project = self
+            .snapshot
+            .navigator
+            .focused_checkout_id
+            .as_deref()
+            .and_then(|focused_id| {
+                self.snapshot.navigator.workspaces.iter().find(|workspace| {
+                    workspace
+                        .checkouts
+                        .iter()
+                        .any(|checkout| checkout.id == focused_id)
+                })
+            });
+        self.snapshot.git_worktrees_remote =
+            focused_project.is_some_and(|workspace| workspace.remote_target_id.is_some());
+        self.snapshot.git_worktrees = focused_project
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .and_then(|workspace| self.worktree_catalog.project(&workspace.path))
+            .cloned();
+        if let Some(project) = self.snapshot.git_worktrees.as_mut() {
+            project.cleanup = self
+                .cleanup
+                .as_ref()
+                .filter(|review| review.repository_root == project.root_path)
+                .cloned();
+        }
+        self.refresh_card();
+        before_catalog != self.worktree_catalog
+            || before_navigator != self.snapshot.navigator
+            || before_git != self.snapshot.git_worktrees
+            || before_remote != self.snapshot.git_worktrees_remote
+    }
+
+    pub fn worktree_catalog(&self) -> crate::model::WorktreeCatalogSnapshot {
+        self.worktree_catalog.clone()
+    }
+
+    pub fn github_request(&self) -> crate::github::GithubRequest {
+        if !self.github_lookup_requested() && self.sidebar_github_projects.is_empty() {
+            return crate::github::GithubRequest::default();
+        }
+        crate::github::GithubRequest {
+            projects: self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
+                .filter(|workspace| {
+                    (self.github_lookup_requested()
+                        && self
+                            .focused_local_checkout()
+                            .is_some_and(|(focused, _)| focused.path == workspace.path))
+                        || self.sidebar_github_projects.contains(&workspace.path)
+                })
+                .map(|workspace| crate::github::GithubProjectRequest {
+                    root: PathBuf::from(&workspace.path),
+                    generation: self
+                        .github_generations
+                        .get(&workspace.path)
+                        .copied()
+                        .unwrap_or(0),
+                })
+                .collect(),
+        }
+    }
+
+    pub(super) fn github_lookup_requested(&self) -> bool {
+        self.snapshot.ui_state.right_panel_visible
+            && matches!(
+                self.snapshot.ui_state.right_panel_section,
+                RightPanelSection::Overview
+            )
+    }
+
+    pub fn ingest_github(&mut self, github: crate::model::GithubSnapshot) -> bool {
+        // A failed lookup must not erase the answer it failed to replace: the
+        // card shows the previous pull requests with `as of` beside them, so a
+        // stale project keeps its results and only its status changes.
+        let mut merged = github;
+        for project in &mut merged.projects {
+            if (project.status.stale || project.status.unavailable_reason.is_some())
+                && let Some(previous) = self.github.project(&project.root_path)
+                && !previous.pull_requests.is_empty()
+            {
+                project.status.stale = true;
+                project.pull_requests = previous.pull_requests.clone();
+                project.status.last_success_at_unix_ms = previous.status.last_success_at_unix_ms;
+            }
+        }
+        if self.github == merged {
+            return false;
+        }
+        self.github = merged;
+        self.apply_pull_requests();
+        self.refresh_worktree_projection();
+        true
+    }
+
+    pub fn refresh_pull_requests(&mut self, project_path: &str) {
+        let generation = self
+            .github_generations
+            .entry(project_path.to_owned())
+            .or_insert(0);
+        *generation = generation.wrapping_add(1);
+        if let Some(cached) = self
+            .github
+            .projects
+            .iter_mut()
+            .find(|p| p.root_path == project_path)
+        {
+            cached.status.loading = true;
+        }
+    }
+
+    pub fn refresh_worktrees(&mut self) {
+        self.worktree_generation = self.worktree_generation.wrapping_add(1);
+        self.snapshot.git_worktrees_loading = true;
+    }
+
+    pub(super) fn open_git_worktree(&mut self, checkout_path: String) -> bool {
+        let target = self.worktree_catalog.projects.iter().find_map(|project| {
+            project
+                .worktrees
+                .iter()
+                .find(|worktree| worktree.path == checkout_path)
+                .map(|worktree| (project.root_path.clone(), worktree.clone()))
+        });
+        let Some((repository_root, worktree)) = target else {
+            self.set_error(
+                "worktree.open_unknown",
+                format!("Worktree is no longer listed: {checkout_path}"),
+                true,
+            );
+            self.refresh_worktrees();
+            return true;
+        };
+        if worktree.missing {
+            self.ingest_worktree_open_result(
+                checkout_path,
+                Err("Worktree is missing on disk".to_owned()),
+            );
+            return true;
+        }
+        let newest_pane = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .filter(|checkout| checkout.path == checkout_path)
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .max_by_key(|pane| pane.activity_at_unix_ms.unwrap_or(0))
+            .map(|pane| pane.id.clone());
+        let Some(context) = self.live.as_ref().cloned() else {
+            self.ingest_worktree_open_result(
+                checkout_path,
+                Err("Opening a worktree needs a live Herdr connection".to_owned()),
+            );
+            return true;
+        };
+        if let Err(message) =
+            live::spawn_worktree_open(context, checkout_path.clone(), repository_root, newest_pane)
+        {
+            self.ingest_worktree_open_result(checkout_path, Err(message));
+        }
+        true
+    }
+
+    pub(super) fn set_git_worktree_base(&mut self, project_path: String, branch: String) -> bool {
+        let listed = self
+            .worktree_catalog
+            .project(&project_path)
+            .is_some_and(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .any(|worktree| worktree.branch.as_deref() == Some(branch.as_str()))
+            });
+        if !listed {
+            self.set_error(
+                "worktree.base_unavailable",
+                format!("Branch {branch} is no longer checked out in this repository"),
+                true,
+            );
+            self.refresh_worktrees();
+            return true;
+        }
+        if self
+            .snapshot
+            .ui_state
+            .project_base_branches
+            .insert(project_path, branch)
+            .is_some()
+        {
+            // Replacing and inserting both persist below; the return value is
+            // deliberately not used as the change detector because the same
+            // branch is an idempotent no-op at the reader boundary.
+        }
+        self.persist_ui_state();
+        self.refresh_worktrees();
+        true
+    }
+
+    pub(super) fn remove_git_worktree(&mut self, payload: RemoveWorktreePayload) -> bool {
+        if let Some(removal) = self.snapshot.worktree_removal.as_ref()
+            && matches!(removal.phase.as_str(), "closing" | "ready")
+        {
+            if removal.checkout_path == payload.checkout_path {
+                return false;
+            }
+            self.set_error(
+                "worktree.remove_busy",
+                format!(
+                    "Finish removing {} before deleting another worktree",
+                    removal.checkout_path
+                ),
+                true,
+            );
+            return true;
+        }
+        let target = self.worktree_catalog.projects.iter().find_map(|project| {
+            project
+                .worktrees
+                .iter()
+                .find(|worktree| worktree.path == payload.checkout_path)
+                .map(|worktree| {
+                    (
+                        project.root_path.clone(),
+                        project.base_branch.clone(),
+                        worktree.clone(),
+                    )
+                })
+        });
+        let Some((repository_root, protected_base_branch, worktree)) = target else {
+            self.set_error(
+                "worktree.remove_unknown",
+                format!("Worktree is no longer listed: {}", payload.checkout_path),
+                true,
+            );
+            self.refresh_worktrees();
+            return true;
+        };
+        if let Some(reason) = worktree.deletion_gate.blocked_reason.as_ref() {
+            self.set_error("worktree.remove_blocked", reason.clone(), true);
+            return true;
+        }
+        let pane_ids = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .filter(|checkout| checkout.path == payload.checkout_path)
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .map(|pane| pane.id.clone())
+            .collect::<Vec<_>>();
+        self.next_worktree_removal_id = self.next_worktree_removal_id.wrapping_add(1).max(1);
+        let id = self.next_worktree_removal_id;
+        self.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+            id,
+            repository_root,
+            checkout_path: payload.checkout_path.clone(),
+            expected_head_sha: worktree.head_sha.clone(),
+            expected_branch: worktree.branch.clone(),
+            protected_base_branch,
+            branch: worktree.branch,
+            delete_branch: payload.delete_branch && worktree.deletion_gate.can_delete_branch,
+            phase: "closing".to_owned(),
+            message: None,
+        });
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component":"worktree_removal",
+                "stage":"close_requested",
+                "id":id,
+                "path":payload.checkout_path,
+                "pane_ids":pane_ids,
+            })
+        );
+        let Some(context) = self.live.as_ref().cloned() else {
+            return self.ingest_worktree_close_result(
+                id,
+                Err("Deleting a worktree needs a live Herdr connection".to_owned()),
+            );
+        };
+        if let Err(message) =
+            live::spawn_worktree_close(context, id, payload.checkout_path, pane_ids)
+        {
+            self.ingest_worktree_close_result(id, Err(message));
+        }
+        true
+    }
+
+    pub fn ingest_worktree_close_result(&mut self, id: u64, result: Result<(), String>) -> bool {
+        let Some(active) = self.snapshot.worktree_removal.as_ref() else {
+            return false;
+        };
+        if active.id != id || active.phase != "closing" {
+            return false;
+        }
+        let mut result = result;
+        if result.is_ok() {
+            let current = self
+                .worktree_catalog
+                .projects
+                .iter()
+                .flat_map(|project| &project.worktrees)
+                .find(|worktree| worktree.path == active.checkout_path);
+            let identity_changed = current.is_none_or(|worktree| {
+                worktree.head_sha != active.expected_head_sha
+                    || worktree.branch != active.expected_branch
+                    || worktree.deletion_gate.blocked_reason.is_some()
+            });
+            let pane_reappeared = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.checkouts)
+                .any(|checkout| checkout.path == active.checkout_path && checkout.has_panes);
+            if identity_changed || pane_reappeared {
+                result = Err(if pane_reappeared {
+                    "A pane appeared in the worktree while deletion was being confirmed".to_owned()
+                } else {
+                    "The worktree identity or deletion gate changed while panes were closing"
+                        .to_owned()
+                });
+            }
+        }
+        let removal = self.snapshot.worktree_removal.as_mut().unwrap();
+        match result {
+            Ok(()) => {
+                removal.phase = "ready".to_owned();
+                removal.message = None;
+            }
+            Err(message) => {
+                removal.phase = "failed".to_owned();
+                removal.message = Some(message);
+            }
+        }
+        true
+    }
+
+    pub fn ingest_worktree_open_result(
+        &mut self,
+        checkout_path: String,
+        result: Result<(), String>,
+    ) -> bool {
+        let message = result.err();
+        let mut changed = false;
+        for project in &mut self.worktree_catalog.projects {
+            if let Some(worktree) = project
+                .worktrees
+                .iter_mut()
+                .find(|worktree| worktree.path == checkout_path)
+                && worktree.open_error != message
+            {
+                worktree.open_error = message.clone();
+                changed = true;
+            }
+        }
+        for workspace in &mut self.snapshot.navigator.workspaces {
+            for checkout in &mut workspace.checkouts {
+                if checkout.path == checkout_path
+                    && let Some(worktree) = checkout.worktree.as_mut()
+                    && worktree.open_error != message
+                {
+                    worktree.open_error = message.clone();
+                    changed = true;
+                }
+            }
+        }
+        if message.is_some() {
+            self.refresh_worktrees();
+        }
+        changed
+    }
+
+    pub(super) fn finish_worktree_removal(
+        &mut self,
+        payload: WorktreeRemovalFinishedPayload,
+    ) -> bool {
+        let Some(removal) = self.snapshot.worktree_removal.as_mut() else {
+            self.set_error(
+                "worktree.remove_result_without_request",
+                "A worktree removal result arrived without an active request",
+                false,
+            );
+            return true;
+        };
+        if removal.id != payload.id || removal.phase != "ready" {
+            self.set_error(
+                "worktree.remove_result_stale",
+                format!(
+                    "Worktree removal result {} is not the active ready request",
+                    payload.id
+                ),
+                false,
+            );
+            return true;
+        }
+        removal.phase = if payload.removed {
+            "finished"
+        } else {
+            "failed"
+        }
+        .to_owned();
+        removal.message = Some(payload.message);
+        if payload.removed {
+            self.refresh_worktrees();
+        }
+        true
+    }
+
+    pub fn disk_request(&self) -> crate::disk::DiskRequest {
+        let paths = if self.snapshot.ui_state.right_panel_visible
+            && matches!(
+                self.snapshot.ui_state.right_panel_section,
+                RightPanelSection::Overview
+            ) {
+            self.focused_local_checkout()
+                .and_then(|(workspace, _)| self.worktree_catalog.project(&workspace.path))
+                .map(|project| {
+                    let mut paths: Vec<_> = project
+                        .worktrees
+                        .iter()
+                        .map(|w| PathBuf::from(&w.path))
+                        .collect();
+                    if let Some(shared) = &project.shared_git_path {
+                        paths.push(PathBuf::from(shared));
+                    }
+                    paths
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        crate::disk::DiskRequest {
+            paths,
+            generation: self.disk_generation,
+        }
+    }
+
+    pub fn ingest_disk_usage(&mut self, disk: Vec<crate::model::DiskUsageSnapshot>) -> bool {
+        if self.disk_usage == disk {
+            return false;
+        }
+        self.disk_usage = disk;
+        self.refresh_worktree_projection();
+        true
+    }
+
+    pub fn remeasure_disk(&mut self) {
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.refresh_card();
+    }
+
+    pub(super) fn focused_local_checkout(&self) -> Option<(&WorkspaceSnapshot, &CheckoutSnapshot)> {
+        let focused_checkout_id = self.snapshot.navigator.focused_checkout_id.as_deref()?;
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == focused_checkout_id)
+                    .map(|checkout| (workspace, checkout))
+            })
+    }
+
+    pub(super) fn apply_pull_requests(&mut self) -> bool {
+        let mut changed = false;
+        let github = self.github.clone();
+        let git_requested = self.github_lookup_requested();
+        for workspace in self.snapshot.navigator.workspaces.iter_mut() {
+            let project = github.project(&workspace.path);
+            let status = project
+                .map(|project| project.status.clone())
+                .unwrap_or_else(|| crate::model::GithubStatusSnapshot {
+                    loading: workspace.is_git
+                        && workspace.remote_target_id.is_none()
+                        && (self.sidebar_github_projects.contains(&workspace.path)
+                            || git_requested),
+                    ..Default::default()
+                });
+            for checkout in workspace.checkouts.iter_mut() {
+                if checkout.github != status {
+                    checkout.github = status.clone();
+                    changed = true;
+                }
+                let pull_request = checkout.branch.as_deref().and_then(|branch| {
+                    project?
+                        .pull_requests
+                        .iter()
+                        .find(|pull_request| pull_request.head_branch == branch)
+                        .cloned()
+                });
+                if checkout.pull_request != pull_request {
+                    checkout.pull_request = pull_request;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
+    pub fn refresh_card(&mut self) -> bool {
+        let card = self.projected_card();
+        if self.snapshot.card == card {
+            return false;
+        }
+        let retired = self
+            .snapshot
+            .card
+            .panes
+            .iter()
+            .filter(|old| {
+                !card.panes.iter().any(|new| {
+                    new.pane_id == old.pane_id && new.parent_pane_id == old.parent_pane_id
+                })
+            })
+            .count();
+        if retired > 0 {
+            crate::diagnostic!(serde_json::json!({
+                "component": "checkout_context", "kind": "context.retired", "count": retired,
+            }));
+        }
+        self.snapshot.card = card;
+        true
+    }
+
+    pub(super) fn projected_card(&self) -> crate::model::CheckoutCardSnapshot {
+        let Some((workspace, checkout)) = self.focused_local_checkout() else {
+            return crate::model::CheckoutCardSnapshot::default();
+        };
+        let github = if workspace.is_git {
+            self.github
+                .project(&workspace.path)
+                .map(|project| project.status.clone())
+                // An absent answer is loading only while the Git section
+                // requests it. Explorer also renders this card but starts
+                // no lookup, so absence there must not imply work in flight.
+                .unwrap_or(crate::model::GithubStatusSnapshot {
+                    loading: self.github_lookup_requested(),
+                    ..crate::model::GithubStatusSnapshot::default()
+                })
+        } else {
+            crate::model::GithubStatusSnapshot::default()
+        };
+        let disk = self
+            .disk_usage
+            .iter()
+            .find(|disk| disk.path.as_deref() == Some(checkout.path.as_str()))
+            .cloned()
+            .unwrap_or_default();
+        let disk_measuring = checkout.is_worktree && disk.path.is_none();
+        crate::model::CheckoutCardSnapshot {
+            inspected_checkout_path: self
+                .overview_selection
+                .as_ref()
+                .filter(|path| workspace.checkouts.iter().any(|c| &c.path == *path))
+                .cloned()
+                .or_else(|| Some(checkout.path.clone())),
+            checkout_id: Some(checkout.id.clone()),
+            panes: crate::project_context::checkout_panes(
+                checkout,
+                &self.snapshot.navigator.workspaces,
+                &self.snapshot.navigator.agents,
+            ),
+            github,
+            disk,
+            disk_measuring,
+            deletion_gate: checkout
+                .worktree
+                .as_ref()
+                .map(|worktree| worktree.deletion_gate.clone()),
+        }
+    }
+
+    pub(super) fn create_project_worktree(&mut self, payload: CreateWorktreePayload) -> bool {
+        let branch = payload.branch.trim().to_owned();
+        if branch.is_empty() {
+            self.set_error(
+                "worktree.create_invalid_branch",
+                "Branch is required",
+                false,
+            );
+            return true;
+        }
+        let has_branch = self
+            .worktree_catalog
+            .project(&payload.repository_root)
+            .is_some_and(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .any(|row| row.branch.is_some() && row.head_sha.is_some())
+            });
+        if !has_branch {
+            self.set_error(
+                "worktree.create_without_branches",
+                "Create the repository's first branch before creating a worktree",
+                true,
+            );
+            return true;
+        }
+        let id = match self.begin_task_operation(
+            "worktree_create",
+            Some(payload.repository_root.clone()),
+            Some(branch.clone()),
+            payload.base_branch.clone(),
+            payload.agent_kind.clone(),
+        ) {
+            Ok(id) => id,
+            Err(message) => {
+                self.set_error("task_operation.busy", message, true);
+                return true;
+            }
+        };
+        let request = live::WorktreeTaskRequest {
+            id,
+            repository_root: payload.repository_root,
+            branch,
+            base_branch: payload.base_branch,
+            agent_kind: payload.agent_kind,
+            focus: true,
+        };
+        let Some(context) = self.live.as_ref().cloned() else {
+            return self.ingest_task_operation_result(
+                id,
+                Err("create worktree: a live Herdr connection is required".into()),
+            );
+        };
+        if let Err(message) = live::spawn_worktree_create(context, request) {
+            return self.ingest_task_operation_result(id, Err(message));
+        }
+        true
+    }
+
+    pub(super) fn migrate_main_branch(&mut self, payload: MigrateMainBranchPayload) -> bool {
+        let Some(project) = self.worktree_catalog.project(&payload.repository_root) else {
+            self.set_error(
+                "branch_migrate.unknown_project",
+                "Repository status is unavailable",
+                true,
+            );
+            return true;
+        };
+        let Some(main) = project.worktrees.iter().find(|row| row.is_main) else {
+            self.set_error(
+                "branch_migrate.missing_main",
+                "The main worktree is unavailable",
+                true,
+            );
+            return true;
+        };
+        if main.dirty {
+            self.set_error(
+                "branch_migrate.dirty",
+                "Commit or discard uncommitted changes before moving the branch",
+                true,
+            );
+            return true;
+        }
+        let branch = main.branch.clone();
+        let id = match self.begin_task_operation(
+            "branch_migrate",
+            Some(payload.repository_root.clone()),
+            branch.clone(),
+            Some(payload.base_branch.clone()),
+            None,
+        ) {
+            Ok(id) => id,
+            Err(message) => {
+                self.set_error("task_operation.busy", message, true);
+                return true;
+            }
+        };
+        let request = live::WorktreeTaskRequest {
+            id,
+            repository_root: payload.repository_root,
+            branch: branch.unwrap_or_default(),
+            base_branch: Some(payload.base_branch),
+            agent_kind: None,
+            focus: false,
+        };
+        let Some(context) = self.live.as_ref().cloned() else {
+            return self.ingest_task_operation_result(
+                id,
+                Err("move branch: a live Herdr connection is required".into()),
+            );
+        };
+        if let Err(message) = live::spawn_branch_migration(context, request) {
+            return self.ingest_task_operation_result(id, Err(message));
+        }
+        true
+    }
+}
