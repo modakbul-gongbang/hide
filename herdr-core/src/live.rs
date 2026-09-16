@@ -3158,81 +3158,56 @@ pub fn decode_base64(value: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
-    use std::os::unix::net::UnixListener;
-
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     use serde_json::json;
 
     use super::*;
+    use crate::fake_herdr::FakeHerdr;
 
     #[test]
     fn nested_split_reopen_applies_the_original_outer_and_inner_geometry() {
-        let socket_root = std::path::PathBuf::from("/tmp").join(format!(
-            "herdr-core-reopen-nested-layout-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&socket_root).expect("create socket directory");
-        let socket_path = socket_root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            for expected_method in ["layout.export", "layout.apply"] {
-                let (mut stream, _) = listener.accept().expect("accept request");
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: Value = serde_json::from_str(&line).expect("request JSON");
-                assert_eq!(request["method"], expected_method);
-                let result = if expected_method == "layout.export" {
-                    json!({"type":"layout_export","layout": {
-                        "workspace_id":"w1", "tab_id":"w1:t1", "zoomed":false,
-                        "focused_pane_id":"outer-left",
-                        "root":{"type":"split", "direction":"right", "ratio":0.4,
-                            "first":{"type":"pane", "pane_id":"outer-left", "cwd":"/tmp", "env":{}},
+        let herdr = FakeHerdr::start("reopen-nested-layout", |method, params| match method {
+            "layout.export" => json!({"type":"layout_export","layout": {
+                "workspace_id":"w1", "tab_id":"w1:t1", "zoomed":false,
+                "focused_pane_id":"outer-left",
+                "root":{"type":"split", "direction":"right", "ratio":0.4,
+                    "first":{"type":"pane", "pane_id":"outer-left", "cwd":"/tmp", "env":{}},
+                    "second":{"type":"split", "direction":"right", "ratio":0.65,
+                        "first":{"type":"pane", "pane_id":"inner-left", "cwd":"/tmp", "env":{}},
+                        "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}
+            }}),
+            "layout.apply" => {
+                let root = &params["root"];
+                assert_eq!(root["direction"], "right");
+                assert!((root["ratio"].as_f64().unwrap() - 0.4).abs() < 0.000_001);
+                assert_eq!(root["first"]["pane_id"], "outer-left");
+                assert_eq!(root["second"]["direction"], "down");
+                assert!((root["second"]["ratio"].as_f64().unwrap() - 0.3).abs() < 0.000_001);
+                assert_eq!(
+                    root["second"]["first"]["env"][REOPEN_INTENT_ENV],
+                    reopen_intent_marker("nested-intent", ReopenIntentStage::Pane)
+                );
+                assert_eq!(root["second"]["second"]["direction"], "right");
+                assert!(
+                    (root["second"]["second"]["ratio"].as_f64().unwrap() - 0.65).abs() < 0.000_001
+                );
+                assert_eq!(root["second"]["second"]["first"]["pane_id"], "inner-left");
+                assert_eq!(root["second"]["second"]["second"]["pane_id"], "inner-right");
+                json!({"type":"layout_apply","layout": {
+                    "workspace_id":"w1", "tab_id":"w1:t1", "zoomed":false,
+                    "focused_pane_id":"reopened",
+                    "root":{"type":"split", "direction":"right", "ratio":0.4,
+                        "first":{"type":"pane", "pane_id":"outer-left", "cwd":"/tmp", "env":{}},
+                        "second":{"type":"split", "direction":"down", "ratio":0.3,
+                            "first":{"type":"pane", "pane_id":"reopened", "cwd":"/tmp", "env":{
+                                (REOPEN_INTENT_ENV): reopen_intent_marker("nested-intent", ReopenIntentStage::Pane)
+                            }},
                             "second":{"type":"split", "direction":"right", "ratio":0.65,
                                 "first":{"type":"pane", "pane_id":"inner-left", "cwd":"/tmp", "env":{}},
-                                "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}
-                    }})
-                } else {
-                    let root = &request["params"]["root"];
-                    assert_eq!(root["direction"], "right");
-                    assert!((root["ratio"].as_f64().unwrap() - 0.4).abs() < 0.000_001);
-                    assert_eq!(root["first"]["pane_id"], "outer-left");
-                    assert_eq!(root["second"]["direction"], "down");
-                    assert!((root["second"]["ratio"].as_f64().unwrap() - 0.3).abs() < 0.000_001);
-                    assert_eq!(
-                        root["second"]["first"]["env"][REOPEN_INTENT_ENV],
-                        reopen_intent_marker("nested-intent", ReopenIntentStage::Pane)
-                    );
-                    assert_eq!(root["second"]["second"]["direction"], "right");
-                    assert!(
-                        (root["second"]["second"]["ratio"].as_f64().unwrap() - 0.65).abs()
-                            < 0.000_001
-                    );
-                    assert_eq!(root["second"]["second"]["first"]["pane_id"], "inner-left");
-                    assert_eq!(root["second"]["second"]["second"]["pane_id"], "inner-right");
-                    json!({"type":"layout_apply","layout": {
-                        "workspace_id":"w1", "tab_id":"w1:t1", "zoomed":false,
-                        "focused_pane_id":"reopened",
-                        "root":{"type":"split", "direction":"right", "ratio":0.4,
-                            "first":{"type":"pane", "pane_id":"outer-left", "cwd":"/tmp", "env":{}},
-                            "second":{"type":"split", "direction":"down", "ratio":0.3,
-                                "first":{"type":"pane", "pane_id":"reopened", "cwd":"/tmp", "env":{
-                                    (REOPEN_INTENT_ENV): reopen_intent_marker("nested-intent", ReopenIntentStage::Pane)
-                                }},
-                                "second":{"type":"split", "direction":"right", "ratio":0.65,
-                                    "first":{"type":"pane", "pane_id":"inner-left", "cwd":"/tmp", "env":{}},
-                                    "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}}
-                    }})
-                };
-                writeln!(
-                    stream,
-                    "{}",
-                    wire::checked_response_fixture(&request["id"], result)
-                )
-                .expect("write response");
+                                "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}}
+                }})
             }
+            other => panic!("unexpected {other}"),
         });
         let context = ClosedContext {
             workspace_id: "w1".into(),
@@ -3278,7 +3253,7 @@ mod tests {
         };
 
         let outcome = reopen_pane(
-            &UnixSocketConnector::new(&socket_path),
+            &herdr.connector(),
             "nested-intent",
             &context,
             &pane,
@@ -3288,9 +3263,7 @@ mod tests {
         .expect("nested pane reopens through layout.apply");
 
         assert_eq!(outcome.focused_pane_id.as_deref(), Some("reopened"));
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&socket_root).expect("remove socket directory");
+        assert_eq!(herdr.methods(), ["layout.export", "layout.apply"]);
     }
 
     #[test]
@@ -3381,76 +3354,38 @@ mod tests {
 
     #[test]
     fn pane_reopen_ignores_an_unowned_same_cwd_pane() {
-        let root = std::path::PathBuf::from("/tmp").join(format!(
-            "herdr-core-reopen-owned-pane-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        listener
-            .set_nonblocking(true)
-            .expect("make fixture listener nonblocking");
-        let done = Arc::new(AtomicBool::new(false));
-        let server_done = Arc::clone(&done);
-        let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
-        let server_requests = Arc::clone(&requests);
-        let server = std::thread::spawn(move || {
-            while !server_done.load(Ordering::Acquire) {
-                let (mut stream, _) = match listener.accept() {
-                    Ok(connection) => connection,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(1));
-                        continue;
-                    }
-                    Err(error) => panic!("accept request: {error}"),
-                };
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: Value = serde_json::from_str(&line).expect("request JSON");
-                server_requests.lock().unwrap().push(request.clone());
-                let result = match request["method"].as_str().unwrap() {
-                    "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
-                        "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                        "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
-                        "workspaces":[], "tabs":[], "agents":[], "lineage":[],
-                        "panes":[{"pane_id":"w1:p3","workspace_id":"w1","tab_id":"w1:t1","cwd":"/tmp","focused":false,"agent_status":"idle","revision":0,"surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"unrelated-term"}}}],
-                        "layouts":[{"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,
-                            "area":{"x":0,"y":0,"width":80,"height":24}, "focused_pane_id":"w1:p1",
-                            "panes":[{"pane_id":"w1:p1","focused":true,"rect":{"x":0,"y":0,"width":40,"height":24}},
-                                     {"pane_id":"w1:p3","focused":false,"rect":{"x":40,"y":0,"width":40,"height":24}}],
-                            "splits":[] }]
-                    }}),
-                    "layout.export" => json!({
-                        "type": "layout_export",
-                        "layout": {
-                            "workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
-                            "focused_pane_id": "w1:p1",
-                            "root": {"type":"split", "direction":"right", "ratio":0.5,
-                                "first":{"type":"pane","pane_id":"w1:p1","cwd":"/tmp","env":{}},
-                                "second":{"type":"pane","pane_id":"w1:p3","cwd":"/tmp","env":{}}}
-                        }
-                    }),
-                    "pane.split" => json!({"type": "pane_info", "pane": {
-                        "pane_id": "w1:p4", "workspace_id": "w1", "tab_id": "w1:t1",
-                        "focused": true, "agent_status": "idle", "revision": 1,
-                        "surface": {"kind": "terminal", "attach": {
-                            "host": {"host_id": "fixture", "session_id": "fixture"},
-                            "transport": "herdr_client", "protocol": HERDR_PROTOCOL_REVISION,
-                            "terminal_id": "owned-term"
-                        }}
-                    }}),
-                    method => panic!("unexpected method {method}"),
-                };
-                writeln!(
-                    stream,
-                    "{}",
-                    wire::checked_response_fixture(&request["id"], result)
-                )
-                .expect("write response");
-            }
+        let herdr = FakeHerdr::start("reopen-owned-pane", |method, _| match method {
+            "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
+                "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
+                "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
+                "workspaces":[], "tabs":[], "agents":[], "lineage":[],
+                "panes":[{"pane_id":"w1:p3","workspace_id":"w1","tab_id":"w1:t1","cwd":"/tmp","focused":false,"agent_status":"idle","revision":0,"surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"unrelated-term"}}}],
+                "layouts":[{"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,
+                    "area":{"x":0,"y":0,"width":80,"height":24}, "focused_pane_id":"w1:p1",
+                    "panes":[{"pane_id":"w1:p1","focused":true,"rect":{"x":0,"y":0,"width":40,"height":24}},
+                             {"pane_id":"w1:p3","focused":false,"rect":{"x":40,"y":0,"width":40,"height":24}}],
+                    "splits":[] }]
+            }}),
+            "layout.export" => json!({
+                "type": "layout_export",
+                "layout": {
+                    "workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
+                    "focused_pane_id": "w1:p1",
+                    "root": {"type":"split", "direction":"right", "ratio":0.5,
+                        "first":{"type":"pane","pane_id":"w1:p1","cwd":"/tmp","env":{}},
+                        "second":{"type":"pane","pane_id":"w1:p3","cwd":"/tmp","env":{}}}
+                }
+            }),
+            "pane.split" => json!({"type": "pane_info", "pane": {
+                "pane_id": "w1:p4", "workspace_id": "w1", "tab_id": "w1:t1",
+                "focused": true, "agent_status": "idle", "revision": 1,
+                "surface": {"kind": "terminal", "attach": {
+                    "host": {"host_id": "fixture", "session_id": "fixture"},
+                    "transport": "herdr_client", "protocol": HERDR_PROTOCOL_REVISION,
+                    "terminal_id": "owned-term"
+                }}
+            }}),
+            method => panic!("unexpected method {method}"),
         });
         let context = ClosedContext {
             workspace_id: "w1".into(),
@@ -3491,7 +3426,7 @@ mod tests {
         };
 
         let outcome = reopen_pane(
-            &UnixSocketConnector::new(&socket_path),
+            &herdr.connector(),
             "first-attempt",
             &context,
             &pane,
@@ -3499,11 +3434,9 @@ mod tests {
             &request,
         )
         .expect("fixture reopen succeeds");
-        done.store(true, Ordering::Release);
-        server.join().expect("fake server joins");
 
         assert_eq!(outcome.focused_pane_id.as_deref(), Some("w1:p4"));
-        let requests = requests.lock().unwrap();
+        let requests = herdr.requests();
         let split = requests
             .iter()
             .find(|request| request["method"] == "pane.split")
@@ -3517,101 +3450,67 @@ mod tests {
                 .iter()
                 .all(|request| request["method"] != "pane.send_text")
         );
-
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
     }
 
     #[test]
     fn tab_reopen_ignores_unowned_same_label_workspace_and_tab() {
-        let root = std::path::PathBuf::from("/tmp").join(format!(
-            "herdr-core-reopen-owned-layout-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            let mut layout_apply_count = 0;
-            for expected_method in [
-                "session.snapshot",
-                "layout.export",
-                "workspace.create",
-                "layout.apply",
-                "layout.apply",
-                "tab.move",
-            ] {
-                let (mut stream, _) = listener.accept().expect("accept request");
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: Value = serde_json::from_str(&line).expect("request JSON");
-                assert_eq!(request["method"], expected_method);
-                let result = match expected_method {
-                    "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
-                        "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                        "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
-                        "workspaces":[{"workspace_id":"w2","label":"Fixture","active_tab_id":"w2:t1","number":2,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
-                        "tabs":[{"workspace_id":"w2","tab_id":"w2:t1","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
-                        "panes":[], "layouts":[], "agents":[], "lineage":[]
-                    }}),
-                    "layout.export" => json!({"type":"layout_export","layout": {
-                        "workspace_id":"w2", "tab_id":"w2:t1", "zoomed":false,
-                        "focused_pane_id":"w2:p9",
-                        "root":{"type":"pane","pane_id":"w2:p9","cwd":"/tmp","env":{}}
-                    }}),
-                    "workspace.create" => {
-                        assert_eq!(
-                            request["params"]["env"][REOPEN_INTENT_ENV],
-                            reopen_intent_marker("layout-intent", ReopenIntentStage::Workspace)
-                        );
-                        json!({"type":"workspace_created",
-                            "workspace":{"workspace_id":"w3","number":3,"label":"Fixture","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w3:t1","agent_status":"idle"},
-                            "tab":{"tab_id":"w3:t1","workspace_id":"w3","number":1,"label":"1","focused":true,"pane_count":1,"agent_status":"idle"},
-                            "root_pane":{"pane_id":"w3:p3","surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"seed-term"}},"workspace_id":"w3","tab_id":"w3:t1","focused":true,"agent_status":"idle","revision":1}
-                        })
-                    }
-                    "layout.apply" => {
-                        assert_eq!(request["params"]["tab_id"], "w3:t1");
-                        assert!(request["params"].get("workspace_id").is_none());
-                        assert_eq!(
-                            request["params"]["root"]["first"]["env"][REOPEN_INTENT_ENV],
-                            reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
-                        );
-                        layout_apply_count += 1;
-                        if layout_apply_count == 1 {
-                            json!({"type":"layout_apply","layout": {
-                                "workspace_id":"w3", "tab_id":"w3:t1", "zoomed":false,
-                                "focused_pane_id":"w3:p3",
-                                "root":{"type":"pane","pane_id":"w3:p3","cwd":"/tmp","env":{
-                                    (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
-                                }}
-                            }})
-                        } else {
-                            json!({"type":"layout_apply","layout": {
-                                "workspace_id":"w3", "tab_id":"w3:t1", "zoomed":false,
-                                "focused_pane_id":"w3:p3",
-                                "root":{"type":"split","direction":"right","ratio":0.6,
-                                    "first":{"type":"pane","pane_id":"w3:p3","cwd":"/tmp","env":{
-                                        (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
-                                    }},
-                                    "second":{"type":"pane","pane_id":"w3:p4","cwd":"/tmp","env":{
-                                        (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
-                                    }}}
-                            }})
-                        }
-                    }
-                    "tab.move" => json!({"type":"tab_list","tabs":[]}),
-                    _ => unreachable!(),
-                };
-                writeln!(
-                    stream,
-                    "{}",
-                    wire::checked_response_fixture(&request["id"], result)
-                )
-                .expect("write response");
+        let mut layout_apply_count = 0;
+        let herdr = FakeHerdr::start("reopen-owned-layout", move |method, params| match method {
+            "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
+                "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
+                "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
+                "workspaces":[{"workspace_id":"w2","label":"Fixture","active_tab_id":"w2:t1","number":2,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
+                "tabs":[{"workspace_id":"w2","tab_id":"w2:t1","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
+                "panes":[], "layouts":[], "agents":[], "lineage":[]
+            }}),
+            "layout.export" => json!({"type":"layout_export","layout": {
+                "workspace_id":"w2", "tab_id":"w2:t1", "zoomed":false,
+                "focused_pane_id":"w2:p9",
+                "root":{"type":"pane","pane_id":"w2:p9","cwd":"/tmp","env":{}}
+            }}),
+            "workspace.create" => {
+                assert_eq!(
+                    params["env"][REOPEN_INTENT_ENV],
+                    reopen_intent_marker("layout-intent", ReopenIntentStage::Workspace)
+                );
+                json!({"type":"workspace_created",
+                    "workspace":{"workspace_id":"w3","number":3,"label":"Fixture","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w3:t1","agent_status":"idle"},
+                    "tab":{"tab_id":"w3:t1","workspace_id":"w3","number":1,"label":"1","focused":true,"pane_count":1,"agent_status":"idle"},
+                    "root_pane":{"pane_id":"w3:p3","surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"seed-term"}},"workspace_id":"w3","tab_id":"w3:t1","focused":true,"agent_status":"idle","revision":1}
+                })
             }
+            "layout.apply" => {
+                assert_eq!(params["tab_id"], "w3:t1");
+                assert!(params.get("workspace_id").is_none());
+                assert_eq!(
+                    params["root"]["first"]["env"][REOPEN_INTENT_ENV],
+                    reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                );
+                layout_apply_count += 1;
+                if layout_apply_count == 1 {
+                    json!({"type":"layout_apply","layout": {
+                        "workspace_id":"w3", "tab_id":"w3:t1", "zoomed":false,
+                        "focused_pane_id":"w3:p3",
+                        "root":{"type":"pane","pane_id":"w3:p3","cwd":"/tmp","env":{
+                            (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                        }}
+                    }})
+                } else {
+                    json!({"type":"layout_apply","layout": {
+                        "workspace_id":"w3", "tab_id":"w3:t1", "zoomed":false,
+                        "focused_pane_id":"w3:p3",
+                        "root":{"type":"split","direction":"right","ratio":0.6,
+                            "first":{"type":"pane","pane_id":"w3:p3","cwd":"/tmp","env":{
+                                (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                            }},
+                            "second":{"type":"pane","pane_id":"w3:p4","cwd":"/tmp","env":{
+                                (REOPEN_INTENT_ENV): reopen_intent_marker("layout-intent", ReopenIntentStage::Layout)
+                            }}}
+                    }})
+                }
+            }
+            "tab.move" => json!({"type":"tab_list","tabs":[]}),
+            _ => unreachable!(),
         });
         let context = ClosedContext {
             workspace_id: "w1".into(),
@@ -3645,7 +3544,7 @@ mod tests {
         };
         let mut notices = Vec::new();
         let restored = ensure_workspace_and_tab(
-            &UnixSocketConnector::new(&socket_path),
+            &herdr.connector(),
             "layout-intent",
             &context,
             false,
@@ -3662,78 +3561,60 @@ mod tests {
             notices,
             ["The incomplete tab restore was repaired before reopening sessions"]
         );
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        assert_eq!(
+            herdr.methods(),
+            [
+                "session.snapshot",
+                "layout.export",
+                "workspace.create",
+                "layout.apply",
+                "layout.apply",
+                "tab.move"
+            ]
+        );
     }
 
     #[test]
     fn recovered_partial_tab_layout_is_repaired_and_revalidated() {
-        let socket_root = std::path::PathBuf::from("/tmp").join(format!(
-            "herdr-core-reopen-repair-recovered-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&socket_root).expect("create socket directory");
-        let socket_path = socket_root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            for expected_method in [
-                "session.snapshot",
-                "layout.export",
-                "layout.apply",
-                "tab.move",
-            ] {
-                let (mut stream, _) = listener.accept().expect("accept request");
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: Value = serde_json::from_str(&line).expect("request JSON");
-                assert_eq!(request["method"], expected_method);
-                let result = match expected_method {
-                    "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
-                        "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                        "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
-                        "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
-                        "tabs":[{"workspace_id":"w1","tab_id":"w1:t2","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
-                        "panes":[], "layouts":[], "agents":[], "lineage":[]
-                    }}),
-                    "layout.export" => json!({"type":"layout_export","layout": {
+        let herdr = FakeHerdr::start(
+            "reopen-repair-recovered",
+            move |method, params| match method {
+                "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
+                    "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
+                    "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
+                    "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
+                    "tabs":[{"workspace_id":"w1","tab_id":"w1:t2","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
+                    "panes":[], "layouts":[], "agents":[], "lineage":[]
+                }}),
+                "layout.export" => json!({"type":"layout_export","layout": {
+                    "workspace_id":"w1", "tab_id":"w1:t2", "zoomed":false,
+                    "focused_pane_id":"w1:p2",
+                    "root":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{
+                        (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
+                    }}
+                }}),
+                "layout.apply" => {
+                    assert_eq!(params["tab_id"], "w1:t2");
+                    assert_eq!(
+                        params["root"]["second"]["env"][REOPEN_INTENT_ENV],
+                        reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
+                    );
+                    json!({"type":"layout_apply","layout": {
                         "workspace_id":"w1", "tab_id":"w1:t2", "zoomed":false,
                         "focused_pane_id":"w1:p2",
-                        "root":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{
-                            (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
-                        }}
-                    }}),
-                    "layout.apply" => {
-                        assert_eq!(request["params"]["tab_id"], "w1:t2");
-                        assert_eq!(
-                            request["params"]["root"]["second"]["env"][REOPEN_INTENT_ENV],
-                            reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
-                        );
-                        json!({"type":"layout_apply","layout": {
-                            "workspace_id":"w1", "tab_id":"w1:t2", "zoomed":false,
-                            "focused_pane_id":"w1:p2",
-                            "root":{"type":"split","direction":"right","ratio":0.6,
-                                "first":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{
-                                    (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
-                                }},
-                                "second":{"type":"pane","pane_id":"w1:p3","cwd":"/tmp","env":{
-                                    (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
-                                }}}
-                        }})
-                    }
-                    "tab.move" => json!({"type":"tab_list","tabs":[]}),
-                    _ => unreachable!(),
-                };
-                writeln!(
-                    stream,
-                    "{}",
-                    wire::checked_response_fixture(&request["id"], result)
-                )
-                .expect("write response");
-            }
-        });
+                        "root":{"type":"split","direction":"right","ratio":0.6,
+                            "first":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{
+                                (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
+                            }},
+                            "second":{"type":"pane","pane_id":"w1:p3","cwd":"/tmp","env":{
+                                (REOPEN_INTENT_ENV): reopen_intent_marker("recovered-intent", ReopenIntentStage::Layout)
+                            }}}
+                    }})
+                }
+                "tab.move" => json!({"type":"tab_list","tabs":[]}),
+                _ => unreachable!(),
+            },
+        );
         let context = ClosedContext {
             workspace_id: "w1".into(),
             workspace_label: "Fixture".into(),
@@ -3766,7 +3647,7 @@ mod tests {
         };
         let mut notices = Vec::new();
         let restored = ensure_workspace_and_tab(
-            &UnixSocketConnector::new(&socket_path),
+            &herdr.connector(),
             "recovered-intent",
             &context,
             false,
@@ -3781,9 +3662,15 @@ mod tests {
             notices,
             ["The incomplete tab restore was repaired before reopening sessions"]
         );
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&socket_root).expect("remove socket directory");
+        assert_eq!(
+            herdr.methods(),
+            [
+                "session.snapshot",
+                "layout.export",
+                "layout.apply",
+                "tab.move"
+            ]
+        );
     }
 
     struct ScrollSink {
@@ -3834,81 +3721,49 @@ mod tests {
 
     #[test]
     fn reused_agent_process_is_interrupted_before_resume() {
-        let root = std::path::PathBuf::from("/tmp").join(format!(
-            "herdr-core-reopen-interrupt-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            for expected_method in ["session.snapshot", "pane.send_text"] {
-                let (mut stream, _) = listener.accept().expect("accept request");
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: Value = serde_json::from_str(&line).expect("request JSON");
-                assert_eq!(request["method"], expected_method);
-                let result = if expected_method == "session.snapshot" {
-                    json!({
-                        "type": "session_snapshot",
-                        "snapshot": {
-                            "version": "fixture",
-                            "protocol": HERDR_PROTOCOL_REVISION,
-                            "host": {"host_id": "fixture", "session_id": "s1"},
-                            "event_sequence": 1,
-                            "workspaces": [],
-                            "tabs": [],
-                            "panes": [],
-                            "layouts": [],
-                            "agents": [{
-                                "terminal_id": "term-1",
-                                "name": "old-agent",
-                                "agent": "claude",
-                                "agent_status": "idle",
-                                "workspace_id": "w1",
-                                "tab_id": "w1:t1",
-                                "pane_id": "w1:p1",
-                                "focused": false,
-                                "interactive_ready": true,
-                                "state_change_seq": 1,
-                                "cwd": "/tmp",
-                                "foreground_cwd": "/tmp",
-                                "revision": 0
-                            }],
-                            "lineage": []
-                        }
-                    })
-                } else {
-                    assert_eq!(
-                        request["params"],
-                        json!({"pane_id": "w1:p1", "text": "\u{3}"})
-                    );
-                    json!({"type": "ok"})
-                };
-                writeln!(
-                    stream,
-                    "{}",
-                    wire::checked_response_fixture(&request["id"], result)
-                )
-                .expect("write response");
+        let herdr = FakeHerdr::start("reopen-interrupt", |method, params| match method {
+            "session.snapshot" => json!({
+                "type": "session_snapshot",
+                "snapshot": {
+                    "version": "fixture",
+                    "protocol": HERDR_PROTOCOL_REVISION,
+                    "host": {"host_id": "fixture", "session_id": "s1"},
+                    "event_sequence": 1,
+                    "workspaces": [],
+                    "tabs": [],
+                    "panes": [],
+                    "layouts": [],
+                    "agents": [{
+                        "terminal_id": "term-1",
+                        "name": "old-agent",
+                        "agent": "claude",
+                        "agent_status": "idle",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "pane_id": "w1:p1",
+                        "focused": false,
+                        "interactive_ready": true,
+                        "state_change_seq": 1,
+                        "cwd": "/tmp",
+                        "foreground_cwd": "/tmp",
+                        "revision": 0
+                    }],
+                    "lineage": []
+                }
+            }),
+            "pane.send_text" => {
+                assert_eq!(*params, json!({"pane_id": "w1:p1", "text": "\u{3}"}));
+                json!({"type": "ok"})
             }
+            other => panic!("unexpected {other}"),
         });
 
         assert!(
-            interrupt_reused_agent(
-                &UnixSocketConnector::new(&socket_path),
-                "fixture",
-                0,
-                "w1:p1"
-            )
-            .expect("reused agent is interrupted")
+            interrupt_reused_agent(&herdr.connector(), "fixture", 0, "w1:p1")
+                .expect("reused agent is interrupted")
         );
 
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        assert_eq!(herdr.methods(), ["session.snapshot", "pane.send_text"]);
     }
 
     #[test]
@@ -4053,47 +3908,17 @@ mod tests {
 
     #[test]
     fn workspace_creation_uses_the_official_focused_root_pane_contract() {
-        let root = std::path::PathBuf::from("/tmp").join(format!(
-            "herdr-core-workspace-create-contract-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept request");
-            let mut line = String::new();
-            BufReader::new(stream.try_clone().expect("clone stream"))
-                .read_line(&mut line)
-                .expect("read request");
-            let request: Value = serde_json::from_str(&line).expect("request JSON");
-            assert_eq!(request["method"], "workspace.create");
-            assert_eq!(
-                request["params"],
-                json!({
-                    "cwd": "/tmp/herdr-ide-verify-workspace",
-                    "focus": true,
-                    "label": "Verify workspace",
-                })
-            );
-            writeln!(
-                stream,
-                "{}",
-                json!({
-                    "id": request["id"],
-                    "result": {
-                        "type": "workspace_created",
-                        "workspace": {"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
-                        "tab": {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
-                        "root_pane": {"pane_id": "w1:p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
-                    }
-                })
-            )
-            .expect("write response");
+        let herdr = FakeHerdr::start("workspace-create-contract", |_, _| {
+            json!({
+                "type": "workspace_created",
+                "workspace": {"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
+                "tab": {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"pane_id": "w1:p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
+            })
         });
 
         let created = create_herdr_workspace(
-            &UnixSocketConnector::new(&socket_path),
+            &herdr.connector(),
             "/tmp/herdr-ide-verify-workspace",
             "Verify workspace",
         )
@@ -4105,65 +3930,29 @@ mod tests {
             }
         );
 
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        assert_eq!(
+            herdr.calls(),
+            [(
+                "workspace.create".to_owned(),
+                json!({
+                    "cwd": "/tmp/herdr-ide-verify-workspace",
+                    "focus": true,
+                    "label": "Verify workspace",
+                })
+            )]
+        );
     }
 
     #[test]
     fn pane_control_uses_the_official_socket_contract_for_every_mutation() {
-        let root = std::path::PathBuf::from("/tmp")
-            .join(format!("herdr-core-pane-control-{}", std::process::id()));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            let expected = [
-                (
-                    "pane.split",
-                    json!({
-                        "target_pane_id": "w1:p1",
-                        "direction": "right",
-                        "right_click": "herdr",
-                        "focus": true,
-                        "cwd": "/tmp/herdr-ide-verify-shortcuts"
-                    }),
-                ),
-                (
-                    "pane.split",
-                    json!({
-                        "target_pane_id": "w1:p1",
-                        "direction": "down",
-                        "right_click": "herdr",
-                        "focus": true
-                    }),
-                ),
-                ("pane.zoom", json!({"pane_id": "w1:p1", "mode": "toggle"})),
-                ("pane.close", json!({"pane_id": "w1:p1"})),
-            ];
-            for (method, params) in expected {
-                let (mut stream, _) = listener.accept().expect("accept request");
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: Value = serde_json::from_str(&line).expect("request JSON");
-                assert_eq!(request["method"], method);
-                assert_eq!(request["params"], params);
-                let result = if method == "pane.split" {
-                    json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
-                } else {
-                    json!({"type": "ok"})
-                };
-                writeln!(
-                    stream,
-                    "{}",
-                    wire::checked_response_fixture(&request["id"], result)
-                )
-                .expect("write response");
+        let herdr = FakeHerdr::start("pane-control", |method, _| match method {
+            "pane.split" => {
+                json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
             }
+            "pane.zoom" | "pane.close" => json!({"type": "ok"}),
+            other => panic!("unexpected {other}"),
         });
-        let connector = UnixSocketConnector::new(&socket_path);
+        let connector = herdr.connector();
         for action in [
             PaneControlAction::Split {
                 pane_id: "w1:p1".to_owned(),
@@ -4184,68 +3973,49 @@ mod tests {
         ] {
             execute_pane_control(&connector, &action).expect("control request");
         }
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        assert_eq!(
+            herdr.calls(),
+            [
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "w1:p1",
+                        "direction": "right",
+                        "right_click": "herdr",
+                        "focus": true,
+                        "cwd": "/tmp/herdr-ide-verify-shortcuts"
+                    }),
+                ),
+                (
+                    "pane.split".to_owned(),
+                    json!({
+                        "target_pane_id": "w1:p1",
+                        "direction": "down",
+                        "right_click": "herdr",
+                        "focus": true
+                    }),
+                ),
+                (
+                    "pane.zoom".to_owned(),
+                    json!({"pane_id": "w1:p1", "mode": "toggle"})
+                ),
+                ("pane.close".to_owned(), json!({"pane_id": "w1:p1"})),
+            ]
+        );
     }
 
     #[test]
     fn remote_session_control_uses_the_official_socket_contract() {
-        let root = std::path::PathBuf::from("/tmp")
-            .join(format!("herdr-core-remote-control-{}", std::process::id()));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            let expected = [
-                (
-                    "workspace.focus",
-                    json!({"workspace_id": "w1"}),
-                    json!({"type": "ok"}),
-                ),
-                (
-                    "tab.focus",
-                    json!({"tab_id": "w1:t2"}),
-                    json!({"type": "ok"}),
-                ),
-                (
-                    "tab.create",
-                    json!({
-                        "workspace_id": "w1",
-                        "cwd": "/tmp/herdr-ide-remote-tab",
-                        "focus": true,
-                        "label": "New tab"
-                    }),
-                    json!({
-                        "type": "tab_created",
-                        "tab": {"tab_id": "w1:t3", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
-                        "root_pane": {"pane_id": "w1:p3", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
-                    }),
-                ),
-                (
-                    "tab.close",
-                    json!({"tab_id": "w1:t3"}),
-                    json!({"type": "ok"}),
-                ),
-            ];
-            for (method, params, result) in expected {
-                let (mut stream, _) = listener.accept().expect("accept request");
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: Value = serde_json::from_str(&line).expect("request JSON");
-                assert_eq!(request["method"], method);
-                assert_eq!(request["params"], params);
-                writeln!(
-                    stream,
-                    "{}",
-                    wire::checked_response_fixture(&request["id"], result)
-                )
-                .expect("write response");
-            }
+        let herdr = FakeHerdr::start("remote-control", |method, _| match method {
+            "workspace.focus" | "tab.focus" | "tab.close" => json!({"type": "ok"}),
+            "tab.create" => json!({
+                "type": "tab_created",
+                "tab": {"tab_id": "w1:t3", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"pane_id": "w1:p3", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
+            }),
+            other => panic!("unexpected {other}"),
         });
-        let connector = UnixSocketConnector::new(&socket_path);
+        let connector = herdr.connector();
         let actions = [
             RemoteControlAction::FocusWorkspace {
                 workspace_id: "w1".to_owned(),
@@ -4293,9 +4063,23 @@ mod tests {
                 created_pane_id: None,
             })
         ));
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        assert_eq!(
+            herdr.calls(),
+            [
+                ("workspace.focus".to_owned(), json!({"workspace_id": "w1"})),
+                ("tab.focus".to_owned(), json!({"tab_id": "w1:t2"})),
+                (
+                    "tab.create".to_owned(),
+                    json!({
+                        "workspace_id": "w1",
+                        "cwd": "/tmp/herdr-ide-remote-tab",
+                        "focus": true,
+                        "label": "New tab"
+                    }),
+                ),
+                ("tab.close".to_owned(), json!({"tab_id": "w1:t3"})),
+            ]
+        );
     }
 
     #[test]
@@ -4465,36 +4249,17 @@ mod tests {
 
     #[test]
     fn pane_control_worker_returns_before_the_socket_receipt() {
-        let root = std::path::PathBuf::from("/tmp")
-            .join(format!("herdr-core-pane-worker-{}", std::process::id()));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept request");
-            let mut line = String::new();
-            BufReader::new(stream.try_clone().expect("clone stream"))
-                .read_line(&mut line)
-                .expect("read request");
-            let request: Value = serde_json::from_str(&line).expect("request JSON");
-            assert_eq!(request["method"], "pane.split");
+        let herdr = FakeHerdr::start("pane-worker", |method, _| {
+            assert_eq!(method, "pane.split");
             std::thread::sleep(Duration::from_millis(500));
-            writeln!(
-                stream,
-                "{}",
-                json!({
-                    "id": request["id"],
-                    "result": {"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}}
-                })
-            )
-            .expect("write response");
+            json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
         });
         let context = LiveContext {
-            socket_path: socket_path.clone(),
+            socket_path: herdr.socket_path().to_path_buf(),
             herdr_bin: None,
             runtime: Weak::new(),
             notifier: ChangeNotifier::noop(),
-            api_connector: Arc::new(UnixSocketConnector::new(&socket_path)),
+            api_connector: Arc::new(herdr.connector()),
         };
 
         let started = Instant::now();
@@ -4513,71 +4278,51 @@ mod tests {
             elapsed < Duration::from_millis(100),
             "pane control spawn waited {elapsed:?} for the socket receipt"
         );
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        // The worker still delivers the request; the spawn only stopped
+        // waiting for its answer.
+        herdr.wait_for_requests(1, Duration::from_secs(5));
+        assert_eq!(herdr.methods(), ["pane.split"]);
     }
 
     #[test]
     fn focus_uses_the_direct_socket_contract_before_reading_authoritative_layout() {
-        // A Unix socket path is capped at ~104 bytes, so it cannot be built
-        // from TMPDIR: a sandboxed test runner points that at a deep path and
-        // the bind fails before the test has said anything about focus.
-        let root = std::path::PathBuf::from("/tmp")
-            .join(format!("herdr-core-focus-contract-{}", std::process::id()));
-        std::fs::create_dir_all(&root).expect("create socket directory");
-        let socket_path = root.join("herdr.sock");
-        let listener = UnixListener::bind(&socket_path).expect("bind fake herdr socket");
-        let server = std::thread::spawn(move || {
-            for expected_method in ["pane.focus", "pane.layout"] {
-                let (mut stream, _) = listener.accept().expect("accept request");
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: Value = serde_json::from_str(&line).expect("request JSON");
-                assert_eq!(request["method"], expected_method);
-                assert_eq!(request["params"]["pane_id"], "fixture:p2");
-                let result = if expected_method == "pane.focus" {
+        let herdr = FakeHerdr::start("focus-contract", |method, params| {
+            assert_eq!(params["pane_id"], "fixture:p2");
+            match method {
+                "pane.focus" => {
                     json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
-                } else {
-                    json!({
-                        "type": "pane_layout",
-                        "layout": {
-                            "workspace_id": "fixture",
-                            "tab_id": "fixture:t1",
-                            "zoomed": false,
-                            "area": {"x": 0, "y": 0, "width": 120, "height": 60},
-                            "focused_pane_id": "fixture:p2",
-                            "panes": [
-                                {"pane_id": "fixture:p1", "focused": false, "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
-                                {"pane_id": "fixture:p2", "focused": true, "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
-                            ],
-                            "splits": [
-                                {"id": "fixture:split1", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
-                            ]
-                        }
-                    })
-                };
-                writeln!(
-                    stream,
-                    "{}",
-                    wire::checked_response_fixture(&request["id"], result)
-                )
-                .expect("write response");
+                }
+                "pane.layout" => json!({
+                    "type": "pane_layout",
+                    "layout": {
+                        "workspace_id": "fixture",
+                        "tab_id": "fixture:t1",
+                        "zoomed": false,
+                        "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                        "focused_pane_id": "fixture:p2",
+                        "panes": [
+                            {"pane_id": "fixture:p1", "focused": false, "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
+                            {"pane_id": "fixture:p2", "focused": true, "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
+                        ],
+                        "splits": [
+                            {"id": "fixture:split1", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}
+                        ]
+                    }
+                }),
+                other => panic!("unexpected {other}"),
             }
         });
 
-        request(&socket_path, "pane.focus", json!({"pane_id": "fixture:p2"}))
-            .expect("focus request");
-        let layout = fetch_pane_layout(&UnixSocketConnector::new(&socket_path), "fixture:p2")
-            .expect("focused layout");
+        request(
+            herdr.socket_path(),
+            "pane.focus",
+            json!({"pane_id": "fixture:p2"}),
+        )
+        .expect("focus request");
+        let layout = fetch_pane_layout(&herdr.connector(), "fixture:p2").expect("focused layout");
         assert_eq!(layout.focused_pane_id, "fixture:p2");
         assert_eq!(layout.pane_ids(), ["fixture:p1", "fixture:p2"]);
-
-        server.join().expect("fake server joins");
-        std::fs::remove_file(&socket_path).expect("remove socket");
-        std::fs::remove_dir(&root).expect("remove socket directory");
+        assert_eq!(herdr.methods(), ["pane.focus", "pane.layout"]);
     }
 
     #[test]

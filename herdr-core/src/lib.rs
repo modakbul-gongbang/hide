@@ -6,6 +6,8 @@ pub mod diagnostics;
 mod disk;
 pub mod domain;
 mod environment;
+#[cfg(test)]
+mod fake_herdr;
 mod ffi;
 mod files;
 pub mod find;

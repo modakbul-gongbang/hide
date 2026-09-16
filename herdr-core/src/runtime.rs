@@ -12911,7 +12911,28 @@ fn unix_milliseconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+    use crate::fake_herdr::FakeHerdr;
+
+    /// The `tab_list` Herdr answers a `tab.move` with, carrying the tabs in
+    /// their new order. Only the order is read here; the other fields are
+    /// what the pinned schema requires of a tab.
+    fn tab_list(ids: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "type": "tab_list",
+            "tabs": ids.iter().enumerate().map(|(index, tab_id)| serde_json::json!({
+                "tab_id": tab_id,
+                "workspace_id": tab_id.split(':').next().unwrap_or_default(),
+                "number": index + 1,
+                "label": "fixture",
+                "focused": false,
+                "pane_count": 1,
+                "agent_status": "idle"
+            })).collect::<Vec<_>>()
+        })
+    }
 
     /// The catalog before the worktree reader has answered.
     /// Reconciling a session with a precomputed catalog runs no git at all.
@@ -18780,47 +18801,13 @@ mod tests {
 
         // A Unix socket path has a hard length limit and the checkout fixture
         // can sit deep, so the fixture server lives at a short one of its own.
-        let socket_root = PathBuf::from("/tmp").join(format!(
-            "herdr-core-tab-move-{}-{}",
-            std::process::id(),
-            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&socket_root).expect("socket directory");
-        let socket_path = socket_root.join("herdr.sock");
-        let listener =
-            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
-        let server = std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader, Write};
-            let (mut stream, _) = listener.accept().expect("accept tab.move");
-            let mut line = String::new();
-            BufReader::new(stream.try_clone().expect("clone stream"))
-                .read_line(&mut line)
-                .expect("read request");
-            let request: serde_json::Value =
-                serde_json::from_str(&line).expect("tab.move request JSON");
-            writeln!(
-                stream,
-                "{}",
-                serde_json::json!({
-                    "id": request["id"],
-                    "result": {
-                        "type": "tab_list",
-                        "tabs": [
-                            {"tab_id": "w-order:t2"},
-                            {"tab_id": "w-order:t1"}
-                        ]
-                    }
-                })
-            )
-            .expect("write tab_list response");
-            request
-        });
+        let herdr = FakeHerdr::start("tab-move", |_, _| tab_list(&["w-order:t2", "w-order:t1"]));
         runtime.live = Some(live::LiveContext {
-            socket_path: socket_path.clone(),
+            socket_path: herdr.socket_path().to_path_buf(),
             herdr_bin: None,
             runtime: std::sync::Weak::new(),
             notifier: crate::ffi::ChangeNotifier::noop(),
-            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+            api_connector: Arc::new(herdr.connector()),
         });
 
         // Move the first Herdr tab behind the second. The file tab does not
@@ -18832,7 +18819,8 @@ mod tests {
             "herdr:w-order:t1",
             1
         ));
-        let request = server.join().expect("fixture server joins");
+        herdr.wait_for_requests(1, Duration::from_secs(5));
+        let request = &herdr.requests()[0];
         assert_eq!(request["method"], "tab.move");
         assert_eq!(
             request["params"],
@@ -18864,7 +18852,6 @@ mod tests {
         );
         assert!(runtime.pending_tab_move.is_empty());
 
-        std::fs::remove_dir_all(&socket_root).ok();
         std::fs::remove_dir_all(&directory).ok();
     }
 
@@ -18998,49 +18985,15 @@ mod tests {
             "the repository's checkout holds only its own three tabs"
         );
 
-        let socket_root = PathBuf::from("/tmp").join(format!(
-            "herdr-core-split-move-{}-{}",
-            std::process::id(),
-            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&socket_root).expect("socket directory");
-        let socket_path = socket_root.join("herdr.sock");
-        let listener =
-            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
-        let server = std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader, Write};
-            let (mut stream, _) = listener.accept().expect("accept tab.move");
-            let mut line = String::new();
-            BufReader::new(stream.try_clone().expect("clone stream"))
-                .read_line(&mut line)
-                .expect("read request");
-            let request: serde_json::Value =
-                serde_json::from_str(&line).expect("tab.move request JSON");
-            writeln!(
-                stream,
-                "{}",
-                serde_json::json!({
-                    "id": request["id"],
-                    "result": {
-                        "type": "tab_list",
-                        "tabs": [
-                            {"tab_id": "w-order:t5"},
-                            {"tab_id": "w-order:t2"},
-                            {"tab_id": "w-order:t3"},
-                            {"tab_id": "w-order:t1"}
-                        ]
-                    }
-                })
-            )
-            .expect("write tab_list response");
-            request
+        let herdr = FakeHerdr::start("split-move", |_, _| {
+            tab_list(&["w-order:t5", "w-order:t2", "w-order:t3", "w-order:t1"])
         });
         runtime.live = Some(live::LiveContext {
-            socket_path: socket_path.clone(),
+            socket_path: herdr.socket_path().to_path_buf(),
             herdr_bin: None,
             runtime: std::sync::Weak::new(),
             notifier: crate::ffi::ChangeNotifier::noop(),
-            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+            api_connector: Arc::new(herdr.connector()),
         });
 
         // Drag the first tab to the end of this checkout's strip. In the
@@ -19052,7 +19005,8 @@ mod tests {
             "herdr:w-order:t1",
             2
         ));
-        let request = server.join().expect("fixture server joins");
+        herdr.wait_for_requests(1, Duration::from_secs(5));
+        let request = &herdr.requests()[0];
         assert_eq!(request["method"], "tab.move");
         assert_eq!(
             request["params"],
@@ -19082,7 +19036,6 @@ mod tests {
         );
         assert!(runtime.pending_tab_move.is_empty());
 
-        std::fs::remove_dir_all(&socket_root).ok();
         std::fs::remove_dir_all(repository.parent().expect("fixture root")).ok();
     }
 
@@ -19152,51 +19105,16 @@ mod tests {
         ))));
         let before = strip_ids(&runtime, &checkout_id);
 
-        let socket_root = PathBuf::from("/tmp").join(format!(
-            "herdr-core-tab-retry-{}-{}",
-            std::process::id(),
-            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&socket_root).expect("socket directory");
-        let socket_path = socket_root.join("herdr.sock");
-        let listener =
-            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
         // Both drags are answered; what the answer says does not matter here,
         // because the worker's callback is what carries it and this test
         // drives that by hand.
-        let server = std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader, Write};
-            let mut requests = Vec::new();
-            for _ in 0..2 {
-                let (mut stream, _) = listener.accept().expect("accept tab.move");
-                let mut line = String::new();
-                BufReader::new(stream.try_clone().expect("clone stream"))
-                    .read_line(&mut line)
-                    .expect("read request");
-                let request: serde_json::Value =
-                    serde_json::from_str(&line).expect("tab.move request JSON");
-                writeln!(
-                    stream,
-                    "{}",
-                    serde_json::json!({
-                        "id": request["id"],
-                        "result": {
-                            "type": "tab_list",
-                            "tabs": [{"tab_id": "w-order:t2"}, {"tab_id": "w-order:t1"}]
-                        }
-                    })
-                )
-                .expect("write tab_list response");
-                requests.push(request);
-            }
-            requests
-        });
+        let herdr = FakeHerdr::start("tab-retry", |_, _| tab_list(&["w-order:t2", "w-order:t1"]));
         runtime.live = Some(live::LiveContext {
-            socket_path: socket_path.clone(),
+            socket_path: herdr.socket_path().to_path_buf(),
             herdr_bin: None,
             runtime: std::sync::Weak::new(),
             notifier: crate::ffi::ChangeNotifier::noop(),
-            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+            api_connector: Arc::new(herdr.connector()),
         });
 
         // The first drag is refused.
@@ -19238,7 +19156,8 @@ mod tests {
             "herdr:w-order:t1",
             1
         ));
-        let requests = server.join().expect("fixture server joins");
+        herdr.wait_for_requests(2, Duration::from_secs(5));
+        let requests = herdr.requests();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[1]["method"], "tab.move");
         assert_eq!(
@@ -19264,7 +19183,6 @@ mod tests {
         );
         assert!(runtime.pending_tab_move.is_empty());
 
-        std::fs::remove_dir_all(&socket_root).ok();
         std::fs::remove_dir_all(&directory).ok();
     }
 
@@ -21856,47 +21774,13 @@ mod tests {
         ))));
         let before = strip_ids(&runtime, &checkout_id);
 
-        let socket_root = PathBuf::from("/tmp").join(format!(
-            "herdr-core-split-move-{}-{}",
-            std::process::id(),
-            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&socket_root).expect("socket directory");
-        let socket_path = socket_root.join("herdr.sock");
-        let listener =
-            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
-        let server = std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader, Write};
-            let (mut stream, _) = listener.accept().expect("accept tab.move");
-            let mut line = String::new();
-            BufReader::new(stream.try_clone().expect("clone stream"))
-                .read_line(&mut line)
-                .expect("read request");
-            let request: serde_json::Value =
-                serde_json::from_str(&line).expect("tab.move request JSON");
-            writeln!(
-                stream,
-                "{}",
-                serde_json::json!({
-                    "id": request["id"],
-                    "result": {
-                        "type": "tab_list",
-                        "tabs": [
-                            {"tab_id": "w-right:t2"},
-                            {"tab_id": "w-right:t1"}
-                        ]
-                    }
-                })
-            )
-            .expect("write tab_list response");
-            request
-        });
+        let herdr = FakeHerdr::start("split-move", |_, _| tab_list(&["w-right:t2", "w-right:t1"]));
         runtime.live = Some(live::LiveContext {
-            socket_path: socket_path.clone(),
+            socket_path: herdr.socket_path().to_path_buf(),
             herdr_bin: None,
             runtime: std::sync::Weak::new(),
             notifier: crate::ffi::ChangeNotifier::noop(),
-            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+            api_connector: Arc::new(herdr.connector()),
         });
 
         // Move the right workspace's first tab behind its second.
@@ -21911,7 +21795,8 @@ mod tests {
             .expect("the right workspace's second tab");
         assert!(reorder_tab(&mut runtime, &checkout_id, &moved, target));
 
-        let request = server.join().expect("fixture server joins");
+        herdr.wait_for_requests(1, Duration::from_secs(5));
+        let request = &herdr.requests()[0];
         assert_eq!(request["method"], "tab.move");
         assert_eq!(
             request["params"],
@@ -21950,7 +21835,6 @@ mod tests {
             "a granted move stayed pending in a checkout two workspaces share"
         );
 
-        std::fs::remove_dir_all(&socket_root).ok();
         std::fs::remove_dir_all(&directory).ok();
     }
 
@@ -21984,47 +21868,15 @@ mod tests {
             "the fixture strip is not the order this test reasons about: {before:?}"
         );
 
-        let socket_root = PathBuf::from("/tmp").join(format!(
-            "herdr-core-split-interleave-{}-{}",
-            std::process::id(),
-            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&socket_root).expect("socket directory");
-        let socket_path = socket_root.join("herdr.sock");
-        let listener =
-            std::os::unix::net::UnixListener::bind(&socket_path).expect("bind fixture socket");
-        let server = std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader, Write};
-            let (mut stream, _) = listener.accept().expect("accept tab.move");
-            let mut line = String::new();
-            BufReader::new(stream.try_clone().expect("clone stream"))
-                .read_line(&mut line)
-                .expect("read request");
-            let request: serde_json::Value =
-                serde_json::from_str(&line).expect("tab.move request JSON");
-            writeln!(
-                stream,
-                "{}",
-                serde_json::json!({
-                    "id": request["id"],
-                    "result": {
-                        "type": "tab_list",
-                        "tabs": [
-                            {"tab_id": "w-right:t2"},
-                            {"tab_id": "w-right:t1"}
-                        ]
-                    }
-                })
-            )
-            .expect("write tab_list response");
-            request
+        let herdr = FakeHerdr::start("split-interleave", |_, _| {
+            tab_list(&["w-right:t2", "w-right:t1"])
         });
         runtime.live = Some(live::LiveContext {
-            socket_path: socket_path.clone(),
+            socket_path: herdr.socket_path().to_path_buf(),
             herdr_bin: None,
             runtime: std::sync::Weak::new(),
             notifier: crate::ffi::ChangeNotifier::noop(),
-            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+            api_connector: Arc::new(herdr.connector()),
         });
 
         // The right workspace's second tab is dragged to the very front, over
@@ -22035,7 +21887,8 @@ mod tests {
             "herdr:w-right:t2",
             0
         ));
-        let request = server.join().expect("fixture server joins");
+        herdr.wait_for_requests(1, Duration::from_secs(5));
+        let request = &herdr.requests()[0];
         assert_eq!(request["method"], "tab.move");
         assert_eq!(
             request["params"],
@@ -22071,7 +21924,6 @@ mod tests {
             "the drag did not stay where the operator dropped it"
         );
 
-        std::fs::remove_dir_all(&socket_root).ok();
         std::fs::remove_dir_all(&directory).ok();
     }
 
