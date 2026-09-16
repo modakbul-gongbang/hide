@@ -56,7 +56,7 @@ fn main() {
     }
 
     let generated = format!(
-        "pub const HERDR_PROTOCOL_REVISION: u32 = {protocol};\n\
+        "pub const HERDR_PROTOCOL_REVISION_SCHEMA: u32 = {protocol};\n\
          pub const HERDR_API_SCHEMA_VERSION: u32 = {schema_version};\n"
     );
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"))

@@ -8,7 +8,7 @@
 //! on macOS) failed under load for weeks before anyone found it. The socket is
 //! handled here, once; a test supplies only the answers.
 //!
-//! The listeners that remain in `herdr_api.rs` and `session_sync.rs` are not
+//! The listeners that remain in `hide-herdr-client` and `session_sync.rs` are not
 //! candidates: they test the transport itself, answering with a foreign id or
 //! streaming subscription frames over one connection, which is exactly what
 //! this fake does not let a test do.
@@ -41,8 +41,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::herdr_api::UnixSocketConnector;
 use crate::wire;
+use hide_herdr_client::UnixSocketConnector;
 
 static NEXT_FAKE_ID: AtomicUsize = AtomicUsize::new(0);
 

@@ -261,7 +261,7 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                     let connector = client
                         .herdr_api_connector(target.herdr_socket_path.clone())
                         .map_err(|error| error.to_string())?;
-                    let connector: Arc<dyn crate::herdr_api::ApiConnector> = Arc::new(connector);
+                    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(connector);
                     lock_recover(&runtime).install_remote_control(
                         crate::live::RemoteControlContext::new(
                             target.id.clone(),

@@ -4,50 +4,65 @@ pub mod provider;
 use anyhow::{Context, Result, anyhow};
 use fs2::FileExt;
 use hide_ai::{AiError, AiResult, AiRouter, CancelToken, ProviderId};
+use hide_session::{
+    Agent as SessionAgent, SessionCursor, SessionIdentity, SessionLocator, parse_events,
+};
+pub use hide_session::{ConversationEvent as SessionEvent, EventKind, ParsedSession};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
-use std::io::{BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Write};
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, mpsc};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use hide_herdr_client::{
+    ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, Subscription, UnixSocketConnector,
+    request_with_connector, request_with_correlation_id,
+};
 
 pub const PLUGIN_ID: &str = "hide.agent-context-labels";
 /// The id this plugin shipped under before it moved into the Hide workspace.
 /// Its state and config directories are moved once by [`migrate_legacy_state`].
 pub const LEGACY_PLUGIN_ID: &str = "herdr-agent-context-labels";
-/// Upper bound on the analysis context. The context normally spans the last
-/// user turn; this only guards against one enormous turn.
+/// Upper bound on the analysis context. This also guards against one enormous
+/// turn while the initial or rolling sections are being assembled.
 pub const MAX_ANALYSIS_CONTEXT_CHARS: usize = 4_000;
-pub const MAX_SUMMARY_CHARS: usize = 30;
-/// How many of the session's user turns feed the summary's "what was asked"
-/// arc. Unbounded, a long session would grow the per-poll context (and cost)
-/// with every new turn; this caps it to the recent history that still shapes
-/// the current task title.
+pub const MAX_TASK_CHARS: usize = 30;
+/// The initial view includes a small head and a bounded tail of human turns.
+pub const INITIAL_FIRST_USER_TURNS: usize = 3;
+/// How many of the session's latest human turns feed the initial task context.
+/// Unbounded, a long session would grow the per-event context (and cost) with
+/// every new turn; this caps the recent history that still shapes the task.
 pub const MAX_USER_REQUEST_TURNS: usize = 8;
-/// Only the tail of a session file can change the current verdict, and session
-/// files reach several megabytes.
-pub const SESSION_TAIL_BYTES: u64 = 256 * 1024;
-pub const POLL_INTERVAL: Duration = Duration::from_millis(750);
 /// How long a pane waits before asking again after the provider layer reported
 /// that no provider can answer right now (not logged in, usage limit, no
 /// provider connected). Retries of one request are the router's; this is the
 /// wait before the pane's next request. Without it the exhausted state was
-/// rediscovered on every poll, which once wrote 42828 identical lines in a day.
+/// rediscovered on every event, which once wrote 42828 identical lines in a day.
 pub const PROVIDER_RECOVERY_INTERVAL: Duration = Duration::from_secs(600);
-/// Day directories scanned when Herdr has not reported a Codex session yet.
-const CODEX_FALLBACK_DAYS: usize = 7;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Attention {
     Question,
     Approval,
     Error,
+}
+
+impl Attention {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Question => "question",
+            Self::Approval => "approval",
+            Self::Error => "error",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -319,16 +334,11 @@ impl AgentSession {
 }
 
 #[derive(Debug, Deserialize)]
-struct AgentListEnvelope {
-    result: AgentListResult,
-}
-
-#[derive(Debug, Deserialize)]
 struct AgentListResult {
     agents: Vec<AgentListItem>,
 }
 
-/// `herdr agent list` already carries every field a scan needs. Reading a
+/// The `agent.list` response carries every field a scan needs. Reading a
 /// second endpoint would mean joining two different points in time.
 #[derive(Debug, Deserialize)]
 struct AgentListItem {
@@ -358,6 +368,18 @@ impl AgentListItem {
     }
 }
 
+/// The exact lifecycle subscriptions used by the watcher. Keep this list in
+/// one place so the client request and contract-facing tests cannot drift.
+pub const WATCHER_SUBSCRIPTIONS: [&str; 7] = [
+    "pane.created",
+    "pane.updated",
+    "pane.closed",
+    "pane.exited",
+    "pane.focused",
+    "pane.agent_detected",
+    "pane.agent_status_changed",
+];
+
 /// Which side produced an attention verdict; a hook is a fact, the provider is
 /// an inference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,7 +390,7 @@ pub enum AttentionSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Display {
-    pub summary: Option<String>,
+    pub task: Option<String>,
     pub status: StatusIcon,
     pub sort_key: SortKey,
     pub elapsed: Option<String>,
@@ -382,7 +404,7 @@ pub struct Display {
 impl Default for Display {
     fn default() -> Self {
         Self {
-            summary: None,
+            task: None,
             status: StatusIcon::Stale,
             sort_key: SortKey::Stale,
             elapsed: None,
@@ -394,7 +416,10 @@ impl Default for Display {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Analysis {
-    pub summary: String,
+    pub task: String,
+    pub task_changed: bool,
+    pub progress: String,
+    pub expected_reply: String,
     pub attention: Option<Attention>,
 }
 
@@ -425,48 +450,43 @@ pub fn status_icon(agent_status: &str, attention: Option<Attention>) -> StatusIc
     }
 }
 
-/// Cut a summary to the display budget without splitting a word.
-pub fn truncate_summary(text: &str) -> String {
-    if text.chars().count() <= MAX_SUMMARY_CHARS {
+/// Cut a task title to the display budget without splitting a word.
+pub fn truncate_task(text: &str) -> String {
+    if text.chars().count() <= MAX_TASK_CHARS {
         return text.to_owned();
     }
-    let budget: String = text.chars().take(MAX_SUMMARY_CHARS - 1).collect();
+    let budget: String = text.chars().take(MAX_TASK_CHARS - 1).collect();
     let head = budget
         .rsplit_once(char::is_whitespace)
         .map(|(head, _)| head)
-        .filter(|head| head.chars().count() * 2 >= MAX_SUMMARY_CHARS)
+        .filter(|head| head.chars().count() * 2 >= MAX_TASK_CHARS)
         .unwrap_or(&budget);
     format!("{}…", head.trim_end())
 }
 
-pub fn normalize_summary(raw: &str) -> Option<String> {
+pub fn normalize_task(raw: &str) -> Option<String> {
     let candidate = raw
         .rsplit("</think>")
         .next()
         .unwrap_or(raw)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())?
+        .trim()
         .trim_matches(|character| matches!(character, '`' | '*' | '"' | '#'))
         .trim();
-    if candidate.chars().count() < 4 || candidate.chars().any(char::is_control) {
+    if candidate.chars().count() < 8 || candidate.chars().any(char::is_control) {
         return None;
     }
-    Some(truncate_summary(candidate))
+    Some(truncate_task(candidate))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionEvent {
-    pub role: &'static str,
-    pub text: String,
-}
-
-#[derive(Debug, Default)]
-pub struct ParsedSession {
-    pub events: Vec<SessionEvent>,
-    /// Lines that could not be parsed, almost always a torn final line in a
-    /// file the agent is still appending to.
-    pub skipped_lines: usize,
+/// Normalize a one-line non-title field from the provider without silently
+/// accepting a multiline answer. Empty values are valid for `progress` and
+/// `expected_reply` when the current boundary has nothing more to say.
+pub fn normalize_text_field(raw: &str, allow_empty: bool) -> Option<String> {
+    let candidate = raw.trim();
+    if (!allow_empty && candidate.is_empty()) || candidate.chars().any(char::is_control) {
+        return None;
+    }
+    Some(candidate.to_owned())
 }
 
 static SECRET: LazyLock<Regex> = LazyLock::new(|| {
@@ -480,48 +500,129 @@ static FILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?:(?:/Users|/home|/tmp|/var|/etc)/)[^\s'"`]+"#).expect("valid path expression")
 });
 
-/// Build the text handed to the provider.
-///
-/// The conversation is already restricted to user and assistant prose by the
-/// session parser, so the only structural thing worth removing is a fenced code
-/// block. Nothing else is dropped: the previous line filter also deleted every
-/// Markdown bullet, which is most of what an agent actually says.
-pub fn analysis_context(events: &[SessionEvent]) -> String {
-    // Span the last two user turns, not one: whether the final assistant
-    // message is a fresh question or a wrap-up of one already answered is
-    // often only visible in the preceding exchange.
-    let last = events
+fn latest_exchange(events: &[SessionEvent]) -> String {
+    let conversation = events
         .iter()
-        .rposition(|event| event.role == "user")
+        .filter(|event| matches!(event.kind, EventKind::Human | EventKind::Assistant))
+        .collect::<Vec<_>>();
+    if conversation.is_empty() {
+        return String::new();
+    }
+    let last = conversation
+        .iter()
+        .rposition(|event| event.kind == EventKind::Human)
         .unwrap_or(0);
-    let start = events[..last]
+    let start = conversation[..last]
         .iter()
-        .rposition(|event| event.role == "user")
+        .rposition(|event| event.kind == EventKind::Human)
         .unwrap_or(last);
-    let transcript = events[start..]
+    conversation[start..]
         .iter()
         .map(|event| format!("{}: {}", event.role, event.text))
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+}
 
-    // The session's recent user turns, not just the latest one: the summary
-    // is a task title for the ongoing work, so it needs the arc of what was
-    // asked, not just the fragment attached to the most recent exchange.
-    // Capped so a long session does not grow the per-poll context forever.
-    let mut user_requests = events
+fn latest_turn_exchange(events: &[SessionEvent]) -> String {
+    let conversation = events
         .iter()
-        .filter(|event| event.role == "user")
-        .map(|event| event.text.as_str())
+        .filter(|event| matches!(event.kind, EventKind::Human | EventKind::Assistant))
         .collect::<Vec<_>>();
-    if user_requests.len() > MAX_USER_REQUEST_TURNS {
-        user_requests = user_requests.split_off(user_requests.len() - MAX_USER_REQUEST_TURNS);
-    }
-    let user_requests = user_requests.join("\n---\n");
+    let Some(start) = conversation
+        .iter()
+        .rposition(|event| event.kind == EventKind::Human)
+    else {
+        return String::new();
+    };
+    conversation[start..]
+        .iter()
+        .map(|event| format!("{}: {}", event.role, event.text))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
+fn initial_human_requests(events: &[SessionEvent]) -> Option<String> {
+    let humans = events
+        .iter()
+        .filter(|event| event.kind == EventKind::Human)
+        .collect::<Vec<_>>();
+    if humans.is_empty() {
+        return None;
+    }
+
+    let recent_start = humans.len().saturating_sub(MAX_USER_REQUEST_TURNS);
+    let first_count = humans.len().min(INITIAL_FIRST_USER_TURNS);
+    let omitted = recent_start.saturating_sub(first_count);
+    let mut requests = humans[..first_count]
+        .iter()
+        .map(|event| format!("user: {}", event.text))
+        .collect::<Vec<_>>();
+    requests.push(format!(
+        "<omitted-human-turns>{omitted}개 사람 턴 생략</omitted-human-turns>"
+    ));
+    requests.extend(
+        humans[recent_start..]
+            .iter()
+            .skip(first_count.saturating_sub(recent_start))
+            .map(|event| format!("user: {}", event.text)),
+    );
+    let requests = requests.join("\n---\n");
+    Some(format!(
+        "<initial-human-requests>\n{requests}\n</initial-human-requests>"
+    ))
+}
+
+/// Build the initial text handed to the provider. It carries the first three
+/// and last eight human turns, with an explicit omission marker between them.
+pub fn analysis_context(events: &[SessionEvent]) -> String {
+    let Some(initial) = initial_human_requests(events) else {
+        return String::new();
+    };
+    let transcript = latest_exchange(events);
+    let combined = format!("{initial}\n<latest-exchange>\n{transcript}\n</latest-exchange>");
+    redact(&strip_code_fences(&combined))
+}
+
+/// Build the rolling text for a task that already exists. Only the new Human
+/// events are supplied as task evidence; the latest exchange remains available
+/// for the attention verdict at the end boundary.
+pub fn rolling_analysis_context(
+    previous_task: &str,
+    new_human_turns: &[SessionEvent],
+    events: &[SessionEvent],
+) -> String {
+    let delta = new_human_turns
+        .iter()
+        .filter(|event| event.kind == EventKind::Human)
+        .map(|event| format!("user: {}", event.text))
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+    let delta = if delta.is_empty() {
+        "<none/>".to_owned()
+    } else {
+        delta
+    };
     let combined = format!(
-        "<all-user-requests>\n{user_requests}\n</all-user-requests>\n<latest-exchange>\n{transcript}\n</latest-exchange>"
+        "<previous-task>{previous_task}</previous-task>\n<new-human-turns>\n{delta}\n</new-human-turns>\n<latest-exchange>\n{}\n</latest-exchange>",
+        latest_turn_exchange(events)
     );
     redact(&strip_code_fences(&combined))
+}
+
+/// Build the same provider context for a complete provider session transcript
+/// that the watcher builds after its cursor has accumulated the same events.
+/// The legacy line-oriented input accepted by `analyze-stdin` is preserved when
+/// the input is not JSONL.
+pub fn analysis_context_from_session(agent: SessionAgent, contents: &str) -> String {
+    let trimmed = contents.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let parsed = parse_events(agent, trimmed);
+    if parsed.events.is_empty() && !trimmed.trim_start().starts_with('{') {
+        return trimmed.to_owned();
+    }
+    analysis_context(&parsed.events)
 }
 
 /// Which of a turn's two boundaries an analysis is answering.
@@ -549,7 +650,7 @@ impl AnalysisPhase {
 ///
 /// The trigger used to be the hash of the whole context window, which grows
 /// with every token the agent emits: a live pane therefore had a permanently
-/// changing key and asked the provider again on almost every poll. One day of
+/// changing key and asked the provider again on almost every event. One day of
 /// that spent the request budget by midday and then wrote 47141 identical skip
 /// lines. The user's message is fixed for the whole turn and changes exactly
 /// once, at the boundary, which is the rate the sidebar actually needs.
@@ -557,8 +658,47 @@ impl AnalysisPhase {
 /// `None` means the transcript holds no user message yet, so there is no turn
 /// to analyze.
 pub fn turn_key(events: &[SessionEvent]) -> Option<u64> {
-    let last = events.iter().rposition(|event| event.role == "user")?;
+    let last = events
+        .iter()
+        .rposition(|event| event.kind == EventKind::Human)?;
     Some(context_fingerprint(&events[last].text))
+}
+
+/// A stable cursor for the last Human event that fed task analysis. The shared
+/// session cursor is a byte cursor, while this cursor is deliberately about
+/// the semantic input boundary and survives a watcher restart.
+pub fn task_input_cursor(events: &[SessionEvent]) -> Option<u64> {
+    let last = events
+        .iter()
+        .rposition(|event| event.kind == EventKind::Human)?;
+    let event = &events[last];
+    let mut hasher = DefaultHasher::new();
+    event.at_unix_ms.hash(&mut hasher);
+    event.text.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+fn new_human_turns(events: &[SessionEvent], previous_cursor: Option<u64>) -> Vec<SessionEvent> {
+    let humans = events
+        .iter()
+        .filter(|event| event.kind == EventKind::Human)
+        .cloned()
+        .collect::<Vec<_>>();
+    let Some(previous_cursor) = previous_cursor else {
+        return humans;
+    };
+    let Some(previous_index) = humans.iter().rposition(|event| {
+        let mut hasher = DefaultHasher::new();
+        event.at_unix_ms.hash(&mut hasher);
+        event.text.hash(&mut hasher);
+        hasher.finish() == previous_cursor
+    }) else {
+        // The bounded reader may have evicted the old boundary. Treat the
+        // retained Human history as the available delta instead of silently
+        // pretending that no new request arrived.
+        return humans;
+    };
+    humans.into_iter().skip(previous_index + 1).collect()
 }
 
 /// The boundary this pane is sitting on, or `None` when the turn's two calls
@@ -566,7 +706,7 @@ pub fn turn_key(events: &[SessionEvent]) -> Option<u64> {
 ///
 /// Both arms are level-triggered rather than edge-triggered: the condition
 /// stays true until the call actually lands, so a call deferred by the request
-/// spacer, the provider cooldown, or the daily cap is made on a later poll
+/// spacer, the provider cooldown, or the daily cap is made on a later wake
 /// instead of being lost with the edge that produced it.
 pub fn analysis_phase(
     newest_user_is_last: bool,
@@ -616,342 +756,137 @@ pub fn context_fingerprint(context: &str) -> u64 {
 }
 
 pub trait SessionReader {
-    fn read(&self, pane: &Pane) -> Result<ParsedSession>;
-}
-
-fn written_within(path: &Path, window: Duration) -> bool {
-    fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|modified| modified.elapsed().ok())
-        .is_some_and(|age| age <= window)
+    fn read(&mut self, pane: &Pane) -> Result<ParsedSession>;
 }
 
 pub struct LocalSessionReader {
-    home: PathBuf,
-    /// Panes whose session Herdr has not reported yet. Resolving those costs a
-    /// directory scan, so the answer is remembered for the process lifetime and
-    /// dropped as soon as the file disappears.
-    resolved: RefCell<HashMap<String, PathBuf>>,
+    locator: SessionLocator,
+    sessions: HashMap<String, PaneSessionState>,
 }
+
+struct PaneSessionState {
+    path: PathBuf,
+    cursor: SessionCursor,
+    events: std::collections::VecDeque<SessionEvent>,
+}
+
+const MAX_RETAINED_EVENTS: usize = 512;
 
 impl LocalSessionReader {
     pub fn new(home: &Path) -> Self {
         Self {
-            home: home.to_path_buf(),
-            resolved: RefCell::new(HashMap::new()),
+            locator: SessionLocator::new(home),
+            sessions: HashMap::new(),
         }
     }
 
-    fn claude_root(&self) -> PathBuf {
-        self.home.join(".claude/projects")
+    fn session_path(&mut self, pane: &Pane) -> Result<PathBuf> {
+        let identity = match pane.agent_session.as_ref() {
+            None => None,
+            Some(session) => match session.kind.as_str() {
+                "id" => Some(SessionIdentity::id(&session.value)),
+                "path" => Some(SessionIdentity::path(&session.value)),
+                _ if pane.cwd.is_some() => None,
+                _ => return Err(anyhow!("session_kind_unsupported")),
+            },
+        };
+        let agent = match pane.agent {
+            AgentKind::Claude => SessionAgent::Claude,
+            AgentKind::Codex => SessionAgent::Codex,
+        };
+        self.locator
+            .locate(&pane.id, agent, identity.as_ref(), pane.cwd.as_deref())
+            .map_err(Into::into)
     }
 
-    fn codex_root(&self) -> PathBuf {
-        self.home.join(".codex/sessions")
-    }
-
-    fn session_path(&self, pane: &Pane) -> Result<PathBuf> {
-        if let Some(session) = &pane.agent_session {
-            // A reported identity can outlive its file (resume, /clear); fall
-            // through to the cwd scan instead of pinning the pane to an error.
-            match self.reported_path(pane, session) {
-                Ok(path) => {
-                    // The pane is processed moments after it was active, so
-                    // its live session file was just written. A reported file
-                    // that stayed untouched while a sibling was written is a
-                    // stale identity, not the live conversation.
-                    if written_within(&path, Duration::from_secs(30)) {
-                        return Ok(path);
-                    }
-                    if let Some(cwd) = pane.cwd.as_deref()
-                        && let Ok(newest) = match pane.agent {
-                            AgentKind::Claude => self.newest_claude_session(cwd),
-                            AgentKind::Codex => self.newest_codex_session(cwd),
-                        }
-                        && newest != path
-                        && written_within(&newest, Duration::from_secs(30))
-                    {
-                        return Ok(newest);
-                    }
-                    return Ok(path);
+    fn retain_bounded(events: &mut std::collections::VecDeque<SessionEvent>) {
+        let human_positions = events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| (event.kind == EventKind::Human).then_some(index))
+            .collect::<Vec<_>>();
+        let second_last_human = human_positions.iter().rev().nth(1).copied();
+        let mut retained = std::collections::VecDeque::new();
+        for (index, event) in events.drain(..).enumerate() {
+            let keep = if event.kind == EventKind::Human {
+                index
+                    < human_positions
+                        .get(INITIAL_FIRST_USER_TURNS.saturating_sub(1))
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                    || human_positions
+                        .iter()
+                        .rev()
+                        .take(MAX_USER_REQUEST_TURNS)
+                        .any(|position| *position == index)
+            } else {
+                match human_positions.as_slice() {
+                    [] => false,
+                    [first_human] => index >= *first_human,
+                    _ => second_last_human.is_some_and(|boundary| index >= boundary),
                 }
-                Err(error) if pane.cwd.is_none() => return Err(error),
-                Err(_) => {}
-            }
-        }
-        let cwd = pane
-            .cwd
-            .as_deref()
-            .ok_or_else(|| anyhow!("session_cwd_unavailable"))?;
-        // Re-resolve on every read: a pane without a reported identity can
-        // start a newer session at any time, and pinning the first answer for
-        // the process lifetime left panes reading a finished conversation.
-        // Reads only happen on state changes, so the scan cost stays rare.
-        match match pane.agent {
-            AgentKind::Claude => self.newest_claude_session(cwd),
-            AgentKind::Codex => self.newest_codex_session(cwd),
-        } {
-            Ok(path) => {
-                self.resolved
-                    .borrow_mut()
-                    .insert(pane.id.clone(), path.clone());
-                Ok(path)
-            }
-            // A transient scan failure falls back to the last known file.
-            Err(error) => match self.resolved.borrow().get(&pane.id) {
-                Some(path) if path.is_file() => Ok(path.clone()),
-                _ => Err(error),
-            },
-        }
-    }
-
-    fn reported_path(&self, pane: &Pane, session: &AgentSession) -> Result<PathBuf> {
-        match session.kind.as_str() {
-            "path" => {
-                let path = PathBuf::from(&session.value);
-                path.is_file()
-                    .then_some(path)
-                    .ok_or_else(|| anyhow!("session_file_missing"))
-            }
-            "id" => match pane.agent {
-                AgentKind::Claude => self.claude_path_for_id(pane.cwd.as_deref(), &session.value),
-                AgentKind::Codex => self.codex_path_for_id(&session.value),
-            },
-            _ => Err(anyhow!("session_kind_unsupported")),
-        }
-    }
-
-    /// Claude stores one file per session under a directory named after the
-    /// working directory, so the lookup is a single stat when the cwd is known
-    /// and one shallow directory listing otherwise.
-    fn claude_path_for_id(&self, cwd: Option<&str>, id: &str) -> Result<PathBuf> {
-        let name = format!("{id}.jsonl");
-        if let Some(cwd) = cwd {
-            let direct = self.claude_root().join(project_directory(cwd)).join(&name);
-            if direct.is_file() {
-                return Ok(direct);
-            }
-        }
-        let root = self.claude_root();
-        let entries = fs::read_dir(&root).context("cannot read Claude sessions")?;
-        for entry in entries.flatten() {
-            let candidate = entry.path().join(&name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-        }
-        Err(anyhow!("session_file_missing"))
-    }
-
-    fn codex_path_for_id(&self, id: &str) -> Result<PathBuf> {
-        for directory in self.recent_codex_days() {
-            let Ok(entries) = fs::read_dir(&directory) else {
-                continue;
             };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy().contains(id))
-                {
-                    return Ok(path);
-                }
+            if keep {
+                retained.push_back(event);
             }
         }
-        Err(anyhow!("session_file_missing"))
-    }
+        *events = retained;
 
-    fn newest_claude_session(&self, cwd: &str) -> Result<PathBuf> {
-        let directory = self.claude_root().join(project_directory(cwd));
-        newest_by_modified(jsonl_files(&directory)).ok_or_else(|| anyhow!("session_file_missing"))
-    }
-
-    /// Codex files are laid out as sessions/YYYY/MM/DD and record their working
-    /// directory in the first `session_meta` line, so a bounded sweep of the
-    /// most recent day directories is enough.
-    fn newest_codex_session(&self, cwd: &str) -> Result<PathBuf> {
-        let mut candidates: Vec<_> = self
-            .recent_codex_days()
-            .into_iter()
-            .flat_map(|directory| jsonl_files(&directory))
-            .filter_map(|path| {
-                let modified = fs::metadata(&path).and_then(|data| data.modified()).ok()?;
-                Some((modified, path))
-            })
-            .collect();
-        // Newest first, so the usual case opens one file rather than all of them.
-        candidates.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-        candidates
-            .into_iter()
-            .map(|(_, path)| path)
-            .find(|path| codex_session_cwd(path).as_deref() == Some(cwd))
-            .ok_or_else(|| anyhow!("session_file_missing"))
-    }
-
-    fn recent_codex_days(&self) -> Vec<PathBuf> {
-        let mut days = Vec::new();
-        for year in newest_directories(&self.codex_root(), 2) {
-            for month in newest_directories(&year, 2) {
-                days.extend(newest_directories(&month, CODEX_FALLBACK_DAYS));
-            }
+        // A streaming response can contain many assistant records after the
+        // second-last Human event. Keep the required Human history and bound
+        // the rest so a pane cannot accumulate an unbounded transcript.
+        while events.len() > MAX_RETAINED_EVENTS {
+            let Some(index) = events
+                .iter()
+                .position(|event| event.kind != EventKind::Human)
+            else {
+                break;
+            };
+            events.remove(index);
         }
-        days.sort();
-        days.reverse();
-        days.truncate(CODEX_FALLBACK_DAYS);
-        days
     }
-}
-
-fn project_directory(cwd: &str) -> String {
-    cwd.replace('/', "-")
-}
-
-fn jsonl_files(directory: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|value| value == "jsonl"))
-        .collect()
-}
-
-fn newest_directories(root: &Path, limit: usize) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut directories: Vec<_> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect();
-    directories.sort();
-    directories.reverse();
-    directories.truncate(limit);
-    directories
-}
-
-fn newest_by_modified(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
-    paths
-        .into_iter()
-        .filter_map(|path| {
-            let modified = fs::metadata(&path).and_then(|data| data.modified()).ok()?;
-            Some((modified, path))
-        })
-        .max_by_key(|(modified, _)| *modified)
-        .map(|(_, path)| path)
-}
-
-/// Codex records the working directory in the `session_meta` line that opens
-/// every rollout file. That line embeds the full base instructions and runs to
-/// tens of kilobytes, so it has to be read as a line rather than from a
-/// fixed-size window.
-fn codex_session_cwd(path: &Path) -> Option<String> {
-    let mut first = String::new();
-    std::io::BufReader::new(File::open(path).ok()?)
-        .read_line(&mut first)
-        .ok()?;
-    let value: serde_json::Value = serde_json::from_str(first.trim()).ok()?;
-    value
-        .pointer("/payload/cwd")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-}
-
-/// Read only the tail of a session file. The first line is dropped unless the
-/// whole file was read, because it is almost certainly cut in half.
-fn read_tail(path: &Path, limit: u64) -> Result<String> {
-    let mut file = File::open(path).with_context(|| "cannot read raw session")?;
-    let length = file.metadata()?.len();
-    let start = length.saturating_sub(limit);
-    file.seek(SeekFrom::Start(start))?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    let text = String::from_utf8_lossy(&buffer).into_owned();
-    if start == 0 {
-        return Ok(text);
-    }
-    Ok(text
-        .split_once('\n')
-        .map_or_else(String::new, |(_, rest)| rest.to_owned()))
 }
 
 impl SessionReader for LocalSessionReader {
-    fn read(&self, pane: &Pane) -> Result<ParsedSession> {
+    fn read(&mut self, pane: &Pane) -> Result<ParsedSession> {
         let path = self.session_path(pane)?;
-        let contents = read_tail(&path, SESSION_TAIL_BYTES)?;
-        Ok(match pane.agent {
-            AgentKind::Claude => parse_claude_events(&contents),
-            AgentKind::Codex => parse_codex_events(&contents),
+        let state = self
+            .sessions
+            .entry(pane.id.clone())
+            .or_insert_with(|| PaneSessionState {
+                path: path.clone(),
+                cursor: SessionCursor::new(),
+                events: std::collections::VecDeque::new(),
+            });
+        if state.path != path {
+            state.path = path.clone();
+            state.cursor.reset();
+            state.events.clear();
+        }
+        let chunk = state.cursor.read(&path).map_err(anyhow::Error::from)?;
+        if chunk.rescan_reason.is_some() {
+            state.events.clear();
+        }
+        let parsed = parse_events(
+            match pane.agent {
+                AgentKind::Claude => SessionAgent::Claude,
+                AgentKind::Codex => SessionAgent::Codex,
+            },
+            &chunk.contents,
+        );
+        for event in parsed.events {
+            if event.kind != EventKind::Injected {
+                state.events.push_back(event);
+            }
+        }
+        Self::retain_bounded(&mut state.events);
+        Ok(ParsedSession {
+            events: state.events.iter().cloned().collect(),
+            skipped_lines: parsed.skipped_lines,
+            skipped_reasons: parsed.skipped_reasons,
+            rescan_reason: chunk.rescan_reason,
         })
     }
-}
-
-/// A session file is appended to while it is read, so one unparsable line is
-/// normal and must never discard the turns that did parse.
-fn parse_lines(
-    contents: &str,
-    mut extract: impl FnMut(&serde_json::Value) -> Option<SessionEvent>,
-) -> ParsedSession {
-    let mut parsed = ParsedSession::default();
-    for line in contents.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<serde_json::Value>(line) {
-            Ok(value) => parsed.events.extend(extract(&value)),
-            Err(_) => parsed.skipped_lines += 1,
-        }
-    }
-    parsed
-}
-
-fn parse_claude_events(contents: &str) -> ParsedSession {
-    parse_lines(contents, |item| {
-        let role = match item.get("type").and_then(serde_json::Value::as_str) {
-            Some("user") => "user",
-            Some("assistant") => "assistant",
-            _ => return None,
-        };
-        session_text(item.pointer("/message/content")).map(|text| SessionEvent { role, text })
-    })
-}
-
-fn parse_codex_events(contents: &str) -> ParsedSession {
-    parse_lines(contents, |item| {
-        if item.get("type").and_then(serde_json::Value::as_str) != Some("response_item") {
-            return None;
-        }
-        let payload = item.get("payload")?;
-        if payload.get("type").and_then(serde_json::Value::as_str) != Some("message") {
-            return None;
-        }
-        let role = match payload.get("role").and_then(serde_json::Value::as_str) {
-            Some("user") => "user",
-            Some("assistant") => "assistant",
-            _ => return None,
-        };
-        session_text(payload.get("content")).map(|text| SessionEvent { role, text })
-    })
-}
-
-fn session_text(content: Option<&serde_json::Value>) -> Option<String> {
-    let text = match content? {
-        serde_json::Value::String(text) => text.to_owned(),
-        serde_json::Value::Array(blocks) => blocks
-            .iter()
-            .filter_map(|block| {
-                matches!(
-                    block.get("type").and_then(serde_json::Value::as_str),
-                    Some("text" | "input_text" | "output_text")
-                )
-                .then(|| block.get("text").and_then(serde_json::Value::as_str))
-                .flatten()
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    };
-    (!text.trim().is_empty()).then_some(text)
 }
 
 #[derive(Debug, Serialize)]
@@ -1006,6 +941,10 @@ impl StatePaths {
     pub fn refresh_request(&self) -> PathBuf {
         self.root.join("refresh-request")
     }
+
+    pub fn wake_socket(&self) -> PathBuf {
+        self.root.join("watcher.sock")
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1031,13 +970,22 @@ struct DisplayStates {
 struct PersistedDisplayState {
     state_change_seq: u64,
     changed_unix_ms: u64,
-    summary: Option<String>,
+    task: Option<String>,
+    #[serde(default)]
+    progress: String,
+    /// The last Human event included in the rolling task input.
+    #[serde(default)]
+    task_input_cursor: Option<u64>,
+    /// Read once for the v1 to v2 state transition, then omitted on the next
+    /// write so the old field cannot become a second source of truth.
+    #[serde(default, rename = "summary", skip_serializing)]
+    legacy_summary: Option<String>,
     #[serde(default)]
     semantic_attention: Option<Attention>,
     /// When the semantic verdict was drawn, so a later hook signal can retire it.
     #[serde(default)]
     analysis_unix_ms: u64,
-    /// The turn whose start has already been named, so a task summary costs one
+    /// The turn whose start has already been named, so a task label costs one
     /// request per turn however long the turn runs.
     #[serde(default)]
     analysis_turn_start: Option<u64>,
@@ -1093,6 +1041,33 @@ fn load_state_json<T: Default + serde::de::DeserializeOwned>(path: &Path) -> (T,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (T::default(), None),
         Err(error) => (T::default(), Some(error.to_string())),
     }
+}
+
+fn load_display_states(path: &Path) -> (DisplayStates, Option<String>, bool) {
+    let (mut states, error) = load_state_json(path);
+    if error.is_some() {
+        return (states, error, false);
+    }
+    let mut migrated = false;
+    for state in states.panes.values_mut() {
+        if state.task.is_none() {
+            if let Some(legacy_summary) = state.legacy_summary.take() {
+                state.task = normalize_legacy_task(&legacy_summary);
+                migrated = true;
+            }
+        } else if state.legacy_summary.take().is_some() {
+            migrated = true;
+        }
+    }
+    (states, None, migrated)
+}
+
+fn normalize_legacy_task(raw: &str) -> Option<String> {
+    let candidate = raw.trim();
+    if candidate.is_empty() || candidate.chars().any(char::is_control) {
+        return None;
+    }
+    Some(truncate_task(candidate))
 }
 
 fn load_hook_states(paths: &StatePaths) -> HookStates {
@@ -1181,6 +1156,7 @@ pub fn apply_hook_payload(
         },
     );
     write_state_json(&paths.hook_state(), &states, "hook-state")?;
+    wake_watcher(paths);
     Ok(update)
 }
 
@@ -1327,33 +1303,59 @@ pub fn enforce_retention(paths: &StatePaths) -> Result<()> {
 pub trait HerdrTransport {
     fn panes(&self) -> Result<Vec<Pane>>;
     fn report(&self, pane: &Pane, display: &Display) -> Result<()>;
-}
 
-pub struct CliHerdr;
-
-impl CliHerdr {
-    fn run(&self, arguments: &[&str]) -> Result<String> {
-        let output = Command::new("herdr")
-            .args(arguments)
-            .output()
-            .context("cannot run herdr")?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Herdr command failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        String::from_utf8(output.stdout).context("Herdr returned non-UTF-8 output")
+    /// Clear the token published by the v1 plugin once before the v2 task
+    /// report takes ownership of the same sidebar slot.
+    fn clear_legacy_summary_token(&self, _pane: &Pane) -> Result<()> {
+        Ok(())
     }
 }
 
-impl HerdrTransport for CliHerdr {
+pub trait HerdrEventTransport: HerdrTransport {
+    fn subscribe(
+        &self,
+        after_sequence: u64,
+        pane_ids: &[String],
+    ) -> std::result::Result<Subscription, ApiError>;
+    fn apply_priority_view(&self) -> Result<()>;
+}
+
+const HERDR_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Clone)]
+pub struct SocketHerdr {
+    connector: Arc<dyn ApiConnector>,
+    timeout: Duration,
+}
+
+impl SocketHerdr {
+    pub fn new(socket_path: impl Into<PathBuf>) -> Self {
+        Self {
+            connector: Arc::new(UnixSocketConnector::new(socket_path)),
+            timeout: HERDR_REQUEST_TIMEOUT,
+        }
+    }
+
+    pub fn from_environment(home: &Path) -> Self {
+        let socket_path = std::env::var_os("HERDR_SOCKET_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".config/herdr/herdr.sock"));
+        Self::new(socket_path)
+    }
+}
+
+impl HerdrTransport for SocketHerdr {
     fn panes(&self) -> Result<Vec<Pane>> {
-        let output = self.run(&["agent", "list"])?;
-        let envelope: AgentListEnvelope =
-            serde_json::from_str(&output).context("invalid Herdr agent list")?;
-        Ok(envelope
-            .result
+        let value = request_with_connector(
+            self.connector.as_ref(),
+            "agent.list",
+            serde_json::json!({}),
+            self.timeout,
+        )
+        .map_err(|error| anyhow!("agent.list failed: {error}"))?;
+        let result: AgentListResult =
+            serde_json::from_value(value).context("invalid Herdr agent list")?;
+        Ok(result
             .agents
             .into_iter()
             .filter_map(AgentListItem::into_pane)
@@ -1361,59 +1363,121 @@ impl HerdrTransport for CliHerdr {
     }
 
     fn report(&self, pane: &Pane, display: &Display) -> Result<()> {
-        let args = metadata_arguments(pane, display);
-        let refs: Vec<_> = args.iter().map(String::as_str).collect();
-        self.run(&refs).map(|_| ())
+        request_with_connector(
+            self.connector.as_ref(),
+            "pane.report_metadata",
+            metadata_params(pane, display),
+            self.timeout,
+        )
+        .map(|_| ())
+        .map_err(|error| anyhow!("pane.report_metadata failed: {error}"))
+    }
+
+    fn clear_legacy_summary_token(&self, pane: &Pane) -> Result<()> {
+        request_with_connector(
+            self.connector.as_ref(),
+            "pane.report_metadata",
+            serde_json::json!({
+                "pane_id": pane.id,
+                "source": PLUGIN_ID,
+                "tokens": {"summary": serde_json::Value::Null},
+            }),
+            self.timeout,
+        )
+        .map(|_| ())
+        .map_err(|error| anyhow!("legacy summary token clear failed: {error}"))
     }
 }
 
-pub fn metadata_arguments(pane: &Pane, display: &Display) -> Vec<String> {
-    let mut args = vec![
-        "pane".to_owned(),
-        "report-metadata".to_owned(),
-        pane.id.clone(),
-        "--source".to_owned(),
-        PLUGIN_ID.to_owned(),
-    ];
-    if let Some(summary) = &display.summary {
-        args.extend(["--token".to_owned(), format!("summary={summary}")]);
+impl HerdrEventTransport for SocketHerdr {
+    fn subscribe(
+        &self,
+        after_sequence: u64,
+        pane_ids: &[String],
+    ) -> std::result::Result<Subscription, ApiError> {
+        hide_herdr_client::subscribe_with_connector_for_panes(
+            self.connector.as_ref(),
+            after_sequence,
+            &WATCHER_SUBSCRIPTIONS,
+            pane_ids,
+            self.timeout,
+        )
     }
-    // Attention states carry a `_new` variant while unfocused since the last
-    // change, so the user's config can color an unread question differently
-    // from one already looked at.
+
+    fn apply_priority_view(&self) -> Result<()> {
+        let result = request_with_correlation_id(
+            self.connector.as_ref(),
+            "agent-context-labels:view",
+            "agent.view.set",
+            priority_agent_view_params(),
+            self.timeout,
+        )
+        .map_err(|error| anyhow!("agent.view.set failed: {error}"))?;
+        if result.get("active") == Some(&serde_json::Value::Bool(true)) {
+            Ok(())
+        } else {
+            Err(anyhow!("agent_view_rejected"))
+        }
+    }
+}
+
+fn metadata_params(pane: &Pane, display: &Display) -> serde_json::Value {
+    let mut tokens = serde_json::Map::new();
     let status_token = match (display.unseen, display.status) {
         (true, StatusIcon::Question) => "status_question_new",
         (true, StatusIcon::Approval) => "status_approval_new",
         (true, StatusIcon::Error) => "status_error_new",
         _ => display.status.token_name(),
     };
-    // One report may touch at most 16 tokens, so clear only what this report
-    // does not overwrite: every other status token, and elapsed when absent.
-    // sort_rank, activity, and the agent glyph are always set, never cleared.
-    for token in STATUS_TOKENS.iter().copied() {
-        if token != status_token {
-            args.extend(["--clear-token".to_owned(), token.to_owned()]);
-        }
+    for token in STATUS_TOKENS {
+        let value = (token == status_token).then(|| display.status.symbol().to_owned());
+        tokens.insert(
+            token.to_owned(),
+            value.map_or(serde_json::Value::Null, serde_json::Value::String),
+        );
     }
-    args.extend([
-        "--token".to_owned(),
-        format!("{status_token}={}", display.status.symbol()),
-        "--token".to_owned(),
-        format!("sort_rank={}", sort_rank_token(&SORT_ORDER, display)),
-        "--token".to_owned(),
-        // The view sorts on this descending, so panes tie-break by when they
-        // last moved rather than by how many times they have moved.
-        format!("activity={}", activity_token(display.activity_unix_ms)),
-    ]);
-    match &display.elapsed {
-        Some(elapsed) => args.extend(["--token".to_owned(), format!("elapsed={elapsed}")]),
-        None => args.extend(["--clear-token".to_owned(), "elapsed".to_owned()]),
-    }
-    args.extend([
-        "--token".to_owned(),
-        format!("{}={}", pane.agent.icon_token(), pane.agent.label()),
-    ]);
-    args
+    tokens.insert(
+        "task".to_owned(),
+        display
+            .task
+            .clone()
+            .map_or(serde_json::Value::Null, serde_json::Value::String),
+    );
+    tokens.insert(
+        "sort_rank".to_owned(),
+        serde_json::Value::String(sort_rank_token(&SORT_ORDER, display)),
+    );
+    tokens.insert(
+        "activity".to_owned(),
+        serde_json::Value::String(activity_token(display.activity_unix_ms)),
+    );
+    tokens.insert(
+        "elapsed".to_owned(),
+        display
+            .elapsed
+            .clone()
+            .map_or(serde_json::Value::Null, serde_json::Value::String),
+    );
+    tokens.insert(
+        pane.agent.icon_token().to_owned(),
+        serde_json::Value::String(pane.agent.label().to_owned()),
+    );
+    serde_json::json!({
+        "pane_id": pane.id,
+        "source": PLUGIN_ID,
+        "tokens": tokens,
+    })
+}
+
+fn priority_agent_view_params() -> serde_json::Value {
+    serde_json::json!({
+        "source": format!("plugin:{PLUGIN_ID}"),
+        "label": "attention priority",
+        "sort": [
+            {"field": {"token": "sort_rank"}, "order": "asc"},
+            {"field": {"token": "activity"}, "order": "desc"},
+        ],
+    })
 }
 
 /// Why one analysis produced no verdict, and what the watcher does about it.
@@ -1458,7 +1522,19 @@ struct AnalysisOutcome {
     turn: u64,
     phase: AnalysisPhase,
     context_chars: usize,
+    task_input_cursor: Option<u64>,
+    initial_context: bool,
     result: std::result::Result<(ProviderId, Analysis), AnalysisFailure>,
+}
+
+struct RecordedAnalysis<'a> {
+    provider: ProviderId,
+    analysis: &'a Analysis,
+    turn: u64,
+    phase: AnalysisPhase,
+    context_chars: usize,
+    task_input_cursor: Option<u64>,
+    initial_context: bool,
 }
 
 /// One label request on the calling thread: the router's answer, then the
@@ -1492,22 +1568,40 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     analysis_in_flight: HashSet<String>,
     analysis_sender: mpsc::Sender<AnalysisOutcome>,
     analysis_receiver: mpsc::Receiver<AnalysisOutcome>,
+    /// Pane ids for which the v1 `$summary` token has already been cleared in
+    /// this watcher lifetime.
+    legacy_summary_cleared: HashSet<String>,
     /// The home whose `hide-ai` settings file this watcher follows, and the
     /// choice it last read from it. `None` for a watcher given its router
     /// directly, which is what a test does.
     ai_settings: Option<(PathBuf, hide_ai::AiSettings)>,
     /// Why that file last failed to read, so a reason is logged when it
-    /// changes rather than on every scan. The file is read every
-    /// `POLL_INTERVAL` and this plugin's log is never rotated, so a broken
-    /// file logged unconditionally would grow it without end.
+    /// changes rather than on every event. The plugin's log is never rotated,
+    /// so a broken file logged unconditionally would grow it without end.
     ai_settings_failure: Option<String>,
 }
 
 impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
     pub fn new(transport: T, router: Arc<AiRouter>, session_reader: R, paths: StatePaths) -> Self {
-        let (display_states, display_error) = load_state_json(&paths.display_state());
+        let (display_states, display_error, migrated) = load_display_states(&paths.display_state());
         if let Some(error) = display_error {
             let _ = append_log(&paths, "display_state_reset", None, Some(&error));
+        }
+        if migrated {
+            if let Err(error) = write_state_json(
+                &paths.display_state(),
+                &display_states,
+                "display-state-migrated",
+            ) {
+                let _ = append_log(
+                    &paths,
+                    "display_state_migration_failed",
+                    None,
+                    Some(&error.to_string()),
+                );
+            } else {
+                let _ = append_log(&paths, "display_state_migrated", None, None);
+            }
         }
         let (analysis_sender, analysis_receiver) = mpsc::channel();
         Self {
@@ -1527,6 +1621,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             analysis_in_flight: HashSet::new(),
             analysis_sender,
             analysis_receiver,
+            legacy_summary_cleared: HashSet::new(),
             ai_settings: None,
             ai_settings_failure: None,
         }
@@ -1534,8 +1629,8 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
 
     /// Follows the operator's saved provider and model choice from this home.
     ///
-    /// The choice is re-read on every scan, beside this plugin's own settings,
-    /// and a changed one rebuilds the router: a backend is constructed with
+    /// The choice is re-read on every watcher wake, beside this plugin's own
+    /// settings, and a changed one rebuilds the router: a backend is constructed with
     /// its model, and the priority is what the choice reorders. Rebuilding
     /// also drops the sticky failover state, which is right, because the
     /// reason it was sticky was about the provider that is no longer chosen.
@@ -1583,6 +1678,33 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
 
     pub fn scan(&mut self) -> Result<usize> {
         let panes = self.transport.panes()?;
+        let refresh_requested = self.take_refresh_request();
+        let elapsed_due =
+            self.last_animation_at.elapsed().unwrap_or_default() >= Duration::from_millis(900);
+        self.scan_panes(&panes, refresh_requested, elapsed_due)
+    }
+
+    /// Process a known pane snapshot without asking Herdr for another one.
+    /// Event-driven production code calls this after a subscription event or a
+    /// wake, while `scan` remains a deterministic compatibility seam for the
+    /// feature's unit tests.
+    pub fn scan_panes(
+        &mut self,
+        panes: &[Pane],
+        refresh_requested: bool,
+        elapsed_due: bool,
+    ) -> Result<usize> {
+        self.scan_panes_at(panes, refresh_requested, elapsed_due, None, false)
+    }
+
+    fn scan_panes_at(
+        &mut self,
+        panes: &[Pane],
+        refresh_requested: bool,
+        elapsed_due: bool,
+        event_received_at: Option<std::time::Instant>,
+        replayed_event: bool,
+    ) -> Result<usize> {
         // Both files are read once per scan rather than once per pane.
         self.hook_states = load_hook_states(&self.paths);
         self.settings = load_settings(&self.paths);
@@ -1594,7 +1716,6 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             let detail = crate::provider::settings_detail(settings);
             let _ = append_log(&self.paths, "ai_settings_changed", None, Some(&detail));
         }
-        let refresh_requested = self.take_refresh_request();
         let mut processed = 0;
 
         while let Ok(outcome) = self.analysis_receiver.try_recv() {
@@ -1606,11 +1727,15 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 Ok((provider, analysis)) => {
                     self.record_analysis(
                         pane,
-                        provider,
-                        &analysis,
-                        outcome.turn,
-                        outcome.phase,
-                        outcome.context_chars,
+                        RecordedAnalysis {
+                            provider,
+                            analysis: &analysis,
+                            turn: outcome.turn,
+                            phase: outcome.phase,
+                            context_chars: outcome.context_chars,
+                            task_input_cursor: outcome.task_input_cursor,
+                            initial_context: outcome.initial_context,
+                        },
                     )?;
                     self.next_analysis_at
                         .insert(pane.id.clone(), SystemTime::now());
@@ -1648,14 +1773,27 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
 
         // The status symbol no longer animates, but elapsed time still moves,
         // so the same tick keeps driving a redraw.
-        let animation_due =
-            self.last_animation_at.elapsed().unwrap_or_default() >= Duration::from_millis(900);
-        if animation_due {
+        if elapsed_due {
             self.last_animation_at = SystemTime::now();
         }
 
-        for pane in &panes {
-            let lifecycle_changed = self.observe_lifecycle(pane)?;
+        let event_unix_ms = match event_received_at {
+            Some(received_at) => {
+                let age = std::time::Instant::now()
+                    .saturating_duration_since(received_at)
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX);
+                Some(unix_time_ms()?.saturating_sub(age))
+            }
+            None => None,
+        };
+        for pane in panes {
+            if !self.legacy_summary_cleared.contains(&pane.id) {
+                self.transport.clear_legacy_summary_token(pane)?;
+                self.legacy_summary_cleared.insert(pane.id.clone());
+            }
+            let lifecycle_changed = self.observe_lifecycle(pane, event_unix_ms, replayed_event)?;
             let revision_changed = self.revisions.get(&pane.id) != Some(&pane.revision);
             let state_changed =
                 self.state_change_seqs.get(&pane.id) != Some(&pane.state_change_seq);
@@ -1673,7 +1811,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 forced || state_changed || retry_due || (revision_changed && !own_revision);
             let changed = if needs_full_refresh {
                 self.process(pane, forced)?
-            } else if lifecycle_changed || animation_due || self.elapsed_changed(pane)? {
+            } else if lifecycle_changed || elapsed_due || self.elapsed_changed(pane)? {
                 let display = self.display_for(pane)?;
                 self.report_if_changed(pane, &display)?
             } else {
@@ -1707,27 +1845,48 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 return self.report_if_changed(pane, &display);
             }
         };
+        if let Some(reason) = parsed.rescan_reason {
+            append_log(
+                &self.paths,
+                "session_rescanned",
+                Some(pane),
+                Some(reason.as_str()),
+            )?;
+        }
         if parsed.skipped_lines > 0 {
+            let reasons = parsed
+                .skipped_reasons
+                .iter()
+                .map(|(reason, count)| format!("{}={count}", reason.as_str()))
+                .collect::<Vec<_>>()
+                .join(",");
             append_log(
                 &self.paths,
                 "session_lines_skipped",
                 Some(pane),
-                Some(&format!("lines={}", parsed.skipped_lines)),
+                Some(&format!("lines={};reasons={reasons}", parsed.skipped_lines)),
             )?;
         }
         let newest_user_is_last = parsed
             .events
-            .last()
-            .is_some_and(|event| event.role == "user");
+            .iter()
+            .rev()
+            .find(|event| {
+                matches!(
+                    event.kind,
+                    EventKind::Human | EventKind::Interrupted | EventKind::Assistant
+                )
+            })
+            .is_some_and(|event| event.kind == EventKind::Human);
         // An interruption is the user's own act, not a new task: keep the last
-        // summary, mark it, and spend no provider request on the torn turn.
+        // task, mark it, and spend no provider request on the torn turn.
         let interrupted = pane.agent_status != "working"
             && parsed
                 .events
                 .iter()
                 .rev()
-                .find(|event| event.role == "user")
-                .is_some_and(|event| event.text.trim_start().starts_with("[Request interrupted"));
+                .find(|event| matches!(event.kind, EventKind::Human | EventKind::Interrupted))
+                .is_some_and(|event| event.kind == EventKind::Interrupted);
         if interrupted && !forced {
             let now = unix_time_ms()?;
             let state = self
@@ -1763,7 +1922,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             if forced {
                 append_log(
                     &self.paths,
-                    "summary_refresh_skipped_disabled",
+                    "task_refresh_skipped_disabled",
                     Some(pane),
                     None,
                 )?;
@@ -1772,23 +1931,19 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             return self.report_if_changed(pane, &display);
         }
 
-        let context = analysis_context(&parsed.events);
         let display = self.display_for(pane)?;
-        if context.is_empty() {
-            append_log(
-                &self.paths,
-                "analysis_skipped_empty_context",
-                Some(pane),
-                None,
-            )?;
-            return self.report_if_changed(pane, &display);
-        }
         // No user message means no turn, so there is nothing to name or judge.
         let Some(turn) = turn_key(&parsed.events) else {
             self.next_analysis_at.remove(&pane.id);
             return self.report_if_changed(pane, &display);
         };
         let persisted = self.display_states.panes.get(&pane.id);
+        let previous_task = persisted.and_then(|state| state.task.clone());
+        let previous_cursor = persisted.and_then(|state| state.task_input_cursor);
+        // A forced refresh intentionally starts from the session-wide view.
+        // A missing cursor is treated the same way, so a migrated or partially
+        // written state never turns into an incomplete rolling input.
+        let initial_context = forced || previous_task.is_none() || previous_cursor.is_none();
         let phase = if forced {
             // A refresh request is the user asking directly, so it re-answers
             // whichever boundary the pane is currently sitting on.
@@ -1809,6 +1964,29 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             self.next_analysis_at.remove(&pane.id);
             return self.report_if_changed(pane, &display);
         };
+        let context = if initial_context {
+            analysis_context(&parsed.events)
+        } else {
+            let delta = new_human_turns(&parsed.events, previous_cursor);
+            rolling_analysis_context(
+                previous_task.as_deref().unwrap_or_default(),
+                if phase == AnalysisPhase::TurnStart {
+                    &delta
+                } else {
+                    &[]
+                },
+                &parsed.events,
+            )
+        };
+        if context.is_empty() {
+            append_log(
+                &self.paths,
+                "analysis_skipped_empty_context",
+                Some(pane),
+                None,
+            )?;
+            return self.report_if_changed(pane, &display);
+        }
         if self.analysis_in_flight.contains(&pane.id) {
             return self.report_if_changed(pane, &display);
         }
@@ -1816,6 +1994,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let sender = self.analysis_sender.clone();
         let pane_id = pane.id.clone();
         let context_chars = context.chars().count();
+        let task_cursor = task_input_cursor(&parsed.events);
         // The same pane, turn, boundary and context is the same intent: a
         // repeat carries the same key to the provider and the log.
         let request_id = format!(
@@ -1842,13 +2021,20 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 turn,
                 phase,
                 context_chars,
+                task_input_cursor: task_cursor,
+                initial_context,
                 result,
             });
         });
         self.report_if_changed(pane, &display)
     }
 
-    fn observe_lifecycle(&mut self, pane: &Pane) -> Result<bool> {
+    fn observe_lifecycle(
+        &mut self,
+        pane: &Pane,
+        event_unix_ms: Option<u64>,
+        replayed_event: bool,
+    ) -> Result<bool> {
         self.sync_hook_lifecycle(pane)?;
         let now = unix_time_ms()?;
         let is_new = !self.display_states.panes.contains_key(&pane.id);
@@ -1864,7 +2050,9 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let mut changed = is_new;
         if state.state_change_seq != pane.state_change_seq {
             state.state_change_seq = pane.state_change_seq;
-            state.changed_unix_ms = now;
+            if !replayed_event {
+                state.changed_unix_ms = event_unix_ms.unwrap_or(now);
+            }
             state.unseen = !pane.focused;
             changed = true;
         }
@@ -1941,7 +2129,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         Ok(())
     }
 
-    /// Give up on one context without inventing a verdict for it: the summary
+    /// Give up on one context without inventing a verdict for it: the task
     /// and the attention already on screen stay untouched, and only the
     /// fingerprint is stored so the deduplication check stops the re-ask.
     /// Give up on a turn after the retry cap. Both phases are recorded so the
@@ -1966,15 +2154,16 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         )
     }
 
-    fn record_analysis(
-        &mut self,
-        pane: &Pane,
-        provider: ProviderId,
-        analysis: &Analysis,
-        turn: u64,
-        phase: AnalysisPhase,
-        context_chars: usize,
-    ) -> Result<()> {
+    fn record_analysis(&mut self, pane: &Pane, record: RecordedAnalysis<'_>) -> Result<()> {
+        let RecordedAnalysis {
+            provider,
+            analysis,
+            turn,
+            phase,
+            context_chars,
+            task_input_cursor,
+            initial_context,
+        } = record;
         let now = unix_time_ms()?;
         let state = self
             .display_states
@@ -1990,13 +2179,23 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         if analysis.attention.is_some() && state.semantic_attention != analysis.attention {
             state.unseen = !pane.focused;
         }
-        state.summary = Some(analysis.summary.clone());
+        let previous_task = state.task.clone();
+        let may_update_task = initial_context
+            || previous_task.is_none()
+            || (phase == AnalysisPhase::TurnStart && analysis.task_changed);
+        let task_changed =
+            may_update_task && previous_task.as_deref() != Some(analysis.task.as_str());
+        if task_changed {
+            state.task = Some(analysis.task.clone());
+        }
+        state.progress = analysis.progress.clone();
+        state.task_input_cursor = task_input_cursor.or(state.task_input_cursor);
         state.semantic_attention = analysis.attention;
         state.interrupted = false;
         match phase {
             AnalysisPhase::TurnStart => state.analysis_turn_start = Some(turn),
             // Recording the start too keeps a turn first seen at its end from
-            // going back and asking for a summary it no longer needs.
+            // going back and asking for a task it no longer needs.
             AnalysisPhase::TurnEnd => {
                 state.analysis_turn_start = Some(turn);
                 state.analysis_turn_end = Some(turn);
@@ -2011,12 +2210,17 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         // Enough to reconstruct a verdict later without recording any content.
         append_log(
             &self.paths,
-            "analysis_updated",
+            "analysis_recorded",
             Some(pane),
             Some(&format!(
-                "attention={};phase={};context_chars={context_chars};turn={turn:016x};provider={provider}",
-                analysis.attention.map_or("none", |_| "question"),
+                "phase={};task_changed={task_changed};task_chars={};progress_chars={};expected_reply_chars={};attention_chars={};context_chars={context_chars};turn={turn:016x};provider={provider}",
                 phase.label(),
+                analysis.task.chars().count(),
+                analysis.progress.chars().count(),
+                analysis.expected_reply.chars().count(),
+                analysis
+                    .attention
+                    .map_or(0, |attention| attention.as_str().len()),
             )),
         )
     }
@@ -2081,11 +2285,11 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             .map_or(0, |state| state.changed_unix_ms);
         if interrupted {
             return Ok(Display {
-                summary: self
+                task: self
                     .display_states
                     .panes
                     .get(&pane.id)
-                    .and_then(|state| state.summary.clone()),
+                    .and_then(|state| state.task.clone()),
                 status: StatusIcon::Interrupted,
                 sort_key: SortKey::Interrupted,
                 elapsed: self.elapsed_for(pane)?,
@@ -2109,11 +2313,11 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             },
         };
         Ok(Display {
-            summary: self
+            task: self
                 .display_states
                 .panes
                 .get(&pane.id)
-                .and_then(|state| state.summary.clone()),
+                .and_then(|state| state.task.clone()),
             status: status_icon(&pane.agent_status, attention.map(|(kind, _)| kind)),
             sort_key,
             elapsed: self.elapsed_for(pane)?,
@@ -2133,6 +2337,631 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         self.reported_revisions
             .insert(pane.id.clone(), pane.revision.saturating_add(1));
         Ok(true)
+    }
+}
+
+#[derive(Debug)]
+enum WatcherMessage {
+    Wake,
+    SubscriptionLine {
+        generation: u64,
+        line: String,
+        received_at: std::time::Instant,
+    },
+    SubscriptionEnded {
+        generation: u64,
+        message: String,
+    },
+}
+
+struct ActiveWatcherSubscription {
+    generation: u64,
+    shutdown: Box<dyn hide_herdr_client::ConnectionShutdown>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl ActiveWatcherSubscription {
+    fn stop(mut self) {
+        self.stop_in_place();
+    }
+
+    fn stop_in_place(&mut self) {
+        self.shutdown.shutdown();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for ActiveWatcherSubscription {
+    fn drop(&mut self) {
+        self.stop_in_place();
+    }
+}
+
+struct WakeSocket {
+    path: PathBuf,
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl WakeSocket {
+    #[cfg(unix)]
+    fn start(paths: &StatePaths, sender: mpsc::Sender<WatcherMessage>) -> Result<Self> {
+        fs::create_dir_all(&paths.root)?;
+        let path = paths.wake_socket();
+        if path.exists() {
+            fs::remove_file(&path).with_context(|| {
+                format!("cannot remove stale watcher wake socket {}", path.display())
+            })?;
+        }
+        let listener = UnixListener::bind(&path)
+            .with_context(|| format!("cannot bind watcher wake socket {}", path.display()))?;
+        listener
+            .set_nonblocking(true)
+            .context("cannot configure watcher wake socket")?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let worker = thread::Builder::new()
+            .name("agent-context-labels-wake".to_owned())
+            .spawn(move || {
+                while !thread_stop.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            let mut line = String::new();
+                            let _ = std::io::BufReader::new(stream).read_line(&mut line);
+                            let _ = sender.send(WatcherMessage::Wake);
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(20));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            })
+            .context("cannot start watcher wake listener")?;
+        Ok(Self {
+            path,
+            stop,
+            worker: Some(worker),
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn start(_paths: &StatePaths, _sender: mpsc::Sender<WatcherMessage>) -> Result<Self> {
+        Err(anyhow!(
+            "watcher wake socket is unsupported on this platform"
+        ))
+    }
+}
+
+impl Drop for WakeSocket {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        #[cfg(unix)]
+        {
+            let _ = UnixStream::connect(&self.path);
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[derive(Debug)]
+enum WatcherSubscriptionLine {
+    Event {
+        protocol: u64,
+        sequence: u64,
+        kind: String,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+}
+
+fn parse_watcher_subscription_line(line: &str) -> Result<WatcherSubscriptionLine> {
+    if line.trim().is_empty() {
+        return Err(anyhow!("Herdr event stream emitted an empty line"));
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(line).context("Herdr event stream emitted invalid JSON")?;
+    if let Some(error) = value.get("error") {
+        let id = value
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("Herdr subscription error is missing id"))?;
+        if id != "herdr-core:events.subscribe" {
+            return Err(anyhow!("Herdr subscription error id {id:?} is unexpected"));
+        }
+        let code = error
+            .get("code")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("Herdr subscription error is missing code"))?;
+        let message = error
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("Herdr subscription error is missing message"))?;
+        return Ok(WatcherSubscriptionLine::Error {
+            code: code.to_owned(),
+            message: message.to_owned(),
+        });
+    }
+    let protocol = value
+        .get("protocol")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| anyhow!("Herdr sequenced event is missing protocol"))?;
+    let sequence = value
+        .get("sequence")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| anyhow!("Herdr sequenced event is missing sequence"))?;
+    let kind = value
+        .get("event")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            value
+                .get("data")
+                .and_then(|data| data.get("type"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .ok_or_else(|| anyhow!("Herdr sequenced event is missing event type"))?;
+    Ok(WatcherSubscriptionLine::Event {
+        protocol,
+        sequence,
+        kind: kind.to_owned(),
+    })
+}
+
+fn is_watcher_pane_event(kind: &str) -> bool {
+    matches!(
+        kind,
+        "pane.created"
+            | "pane.updated"
+            | "pane.closed"
+            | "pane.exited"
+            | "pane.focused"
+            | "pane.agent_detected"
+            | "pane.agent_status_changed"
+            | "pane_created"
+            | "pane_updated"
+            | "pane_closed"
+            | "pane_exited"
+            | "pane_focused"
+            | "pane_agent_detected"
+            | "pane_agent_status_changed"
+    )
+}
+
+fn watcher_pane_ids(panes: &[Pane]) -> Vec<String> {
+    let mut ids = panes.iter().map(|pane| pane.id.clone()).collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn spawn_watcher_subscription(
+    subscription: Subscription,
+    generation: u64,
+    sender: mpsc::Sender<WatcherMessage>,
+) -> Result<ActiveWatcherSubscription> {
+    let (mut reader, shutdown) = subscription.into_parts();
+    let worker = match thread::Builder::new()
+        .name("agent-context-labels-events".to_owned())
+        .spawn(move || {
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        let _ = sender.send(WatcherMessage::SubscriptionEnded {
+                            generation,
+                            message: "socket reached EOF".to_owned(),
+                        });
+                        return;
+                    }
+                    Ok(_) => {
+                        if sender
+                            .send(WatcherMessage::SubscriptionLine {
+                                generation,
+                                line,
+                                received_at: std::time::Instant::now(),
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sender.send(WatcherMessage::SubscriptionEnded {
+                            generation,
+                            message: format!("socket read failed: {error}"),
+                        });
+                        return;
+                    }
+                }
+            }
+        }) {
+        Ok(worker) => worker,
+        Err(error) => {
+            shutdown.shutdown();
+            return Err(anyhow!("subscription reader could not be started: {error}"));
+        }
+    };
+    Ok(ActiveWatcherSubscription {
+        generation,
+        shutdown,
+        worker: Some(worker),
+    })
+}
+
+fn reconnect_delay(delay: Duration) -> Duration {
+    (delay * 2).min(Duration::from_secs(5))
+}
+
+fn watcher_failure(paths: &StatePaths, streak: &mut u32, error: &str) {
+    if *streak == 0 {
+        let _ = append_log(paths, "watcher_scan_failed", None, Some(error));
+    }
+    *streak = streak.saturating_add(1);
+}
+
+fn watcher_recovered(paths: &StatePaths, streak: &mut u32) {
+    if *streak > 0 {
+        let _ = append_log(
+            paths,
+            "watcher_scan_recovered",
+            None,
+            Some(&format!("failures={streak}")),
+        );
+        *streak = 0;
+    }
+}
+
+impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
+    pub fn apply_priority_view(&self) -> Result<()> {
+        self.transport.apply_priority_view()
+    }
+
+    /// Run the production watcher loop. Herdr is queried only on startup,
+    /// reconnect, and an actual subscribed pane event; idle waits use the
+    /// elapsed display boundary or the wake socket.
+    pub fn run_event_loop(&mut self) -> Result<()> {
+        let (sender, receiver) = mpsc::channel();
+        let _wake_socket = WakeSocket::start(&self.paths, sender.clone())?;
+        let mut subscription: Option<ActiveWatcherSubscription> = None;
+        let mut generation = 0_u64;
+        let mut panes = Vec::new();
+        let mut cursor = 0_u64;
+        let mut replay_until = 0_u64;
+        let mut reconnect_at = std::time::Instant::now();
+        let mut reconnect_wait = Duration::from_millis(100);
+        let mut failure_streak = 0_u32;
+        let mut needs_bootstrap = true;
+
+        loop {
+            if subscription.is_none() && std::time::Instant::now() >= reconnect_at {
+                let bootstrap = self.transport.panes();
+                let next_panes = match bootstrap {
+                    Ok(next_panes) => next_panes,
+                    Err(error) => {
+                        watcher_failure(
+                            &self.paths,
+                            &mut failure_streak,
+                            &format!("agent.list failed: {error:#}"),
+                        );
+                        reconnect_at = std::time::Instant::now() + reconnect_wait;
+                        reconnect_wait = reconnect_delay(reconnect_wait);
+                        continue;
+                    }
+                };
+                let pane_ids = watcher_pane_ids(&next_panes);
+                match self.transport.subscribe(cursor, &pane_ids) {
+                    Ok(next) => {
+                        let ack = next.ack.clone();
+                        let sequence_regressed = ack.sequence < cursor;
+                        let rebootstrap = needs_bootstrap
+                            || sequence_regressed
+                            || (cursor > 0
+                                && cursor.saturating_add(1) < ack.oldest_available_sequence);
+                        panes = next_panes;
+                        let refresh = if panes.is_empty() {
+                            false
+                        } else {
+                            self.take_refresh_request()
+                        };
+                        if let Err(error) = self.scan_panes(&panes, refresh, false) {
+                            watcher_failure(
+                                &self.paths,
+                                &mut failure_streak,
+                                &format!("bootstrap failed: {error:#}"),
+                            );
+                            next.into_parts().1.shutdown();
+                            reconnect_at = std::time::Instant::now() + reconnect_wait;
+                            reconnect_wait = reconnect_delay(reconnect_wait);
+                            continue;
+                        }
+                        cursor = if sequence_regressed {
+                            ack.sequence
+                        } else {
+                            cursor.max(ack.sequence)
+                        };
+                        replay_until = ack.sequence;
+                        generation = generation.saturating_add(1);
+                        match spawn_watcher_subscription(next, generation, sender.clone()) {
+                            Ok(active) => {
+                                subscription = Some(active);
+                                watcher_recovered(&self.paths, &mut failure_streak);
+                                let detail = format!("cursor={cursor};rebootstrap={rebootstrap}");
+                                let _ = append_log(
+                                    &self.paths,
+                                    "herdr_subscription_resumed",
+                                    None,
+                                    Some(&detail),
+                                );
+                                reconnect_wait = Duration::from_millis(100);
+                                needs_bootstrap = false;
+                            }
+                            Err(error) => {
+                                watcher_failure(
+                                    &self.paths,
+                                    &mut failure_streak,
+                                    &format!("{error:#}"),
+                                );
+                                reconnect_at = std::time::Instant::now() + reconnect_wait;
+                                reconnect_wait = reconnect_delay(reconnect_wait);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let detail = format!("cursor={cursor};error={error}");
+                        let _ =
+                            append_log(&self.paths, "herdr_subscription_lost", None, Some(&detail));
+                        watcher_failure(&self.paths, &mut failure_streak, &error.to_string());
+                        if matches!(
+                            error.code(),
+                            Some("event_gap" | "event_journal_unavailable")
+                        ) {
+                            // The server could not replay from this cursor.
+                            // Keep the next connection on the fresh-list path;
+                            // the zero cursor is only a marker here because the
+                            // next successful acknowledgement supplies the
+                            // authoritative sequence floor.
+                            needs_bootstrap = true;
+                            cursor = 0;
+                        }
+                        if let ApiError::Remote { code, message } = &error
+                            && code.contains("protocol")
+                        {
+                            let mismatch = format!(
+                                "Herdr protocol mismatch: expected {HERDR_PROTOCOL_REVISION}, actual {message}"
+                            );
+                            eprintln!("{mismatch}");
+                            let _ = append_log(
+                                &self.paths,
+                                "herdr_protocol_mismatch",
+                                None,
+                                Some(&mismatch),
+                            );
+                            return Err(anyhow!(mismatch));
+                        }
+                        reconnect_at = std::time::Instant::now() + reconnect_wait;
+                        reconnect_wait = reconnect_delay(reconnect_wait);
+                    }
+                }
+            }
+
+            let mut wait = Duration::from_secs(60);
+            if subscription.is_none() {
+                wait = reconnect_at
+                    .saturating_duration_since(std::time::Instant::now())
+                    .min(wait);
+            } else {
+                wait = self.next_elapsed_wait(&panes).min(wait);
+            }
+            match receiver.recv_timeout(wait) {
+                Ok(WatcherMessage::Wake) => {
+                    let refresh = if panes.is_empty() {
+                        false
+                    } else {
+                        self.take_refresh_request()
+                    };
+                    if let Err(error) = self.scan_panes(&panes, refresh, false) {
+                        watcher_failure(
+                            &self.paths,
+                            &mut failure_streak,
+                            &format!("wake failed: {error:#}"),
+                        );
+                    }
+                }
+                Ok(WatcherMessage::SubscriptionLine {
+                    generation: line_generation,
+                    line,
+                    received_at,
+                }) => {
+                    if subscription.as_ref().map(|item| item.generation) != Some(line_generation) {
+                        continue;
+                    }
+                    match parse_watcher_subscription_line(&line) {
+                        Ok(WatcherSubscriptionLine::Event {
+                            protocol,
+                            sequence,
+                            kind,
+                        }) => {
+                            if protocol != HERDR_PROTOCOL_REVISION {
+                                let mismatch = format!(
+                                    "Herdr protocol mismatch: expected {HERDR_PROTOCOL_REVISION}, actual {protocol}"
+                                );
+                                eprintln!("{mismatch}");
+                                let _ = append_log(
+                                    &self.paths,
+                                    "herdr_protocol_mismatch",
+                                    None,
+                                    Some(&mismatch),
+                                );
+                                if let Some(active) = subscription.take() {
+                                    active.stop();
+                                }
+                                return Err(anyhow!(mismatch));
+                            }
+                            if !is_watcher_pane_event(&kind) {
+                                continue;
+                            }
+                            let replayed_event = sequence <= replay_until;
+                            cursor = cursor.max(sequence);
+                            match self.transport.panes() {
+                                Ok(next_panes) => {
+                                    let pane_ids_changed =
+                                        watcher_pane_ids(&panes) != watcher_pane_ids(&next_panes);
+                                    panes = next_panes;
+                                    let refresh = if panes.is_empty() {
+                                        false
+                                    } else {
+                                        self.take_refresh_request()
+                                    };
+                                    if let Err(error) = self.scan_panes_at(
+                                        &panes,
+                                        refresh,
+                                        false,
+                                        Some(received_at),
+                                        replayed_event,
+                                    ) {
+                                        watcher_failure(
+                                            &self.paths,
+                                            &mut failure_streak,
+                                            &format!("event processing failed: {error:#}"),
+                                        );
+                                    }
+                                    if sequence > replay_until {
+                                        replay_until = sequence;
+                                    }
+                                    if pane_ids_changed {
+                                        if let Some(active) = subscription.take() {
+                                            active.stop();
+                                        }
+                                        reconnect_at = std::time::Instant::now();
+                                    }
+                                }
+                                Err(error) => {
+                                    let detail = format!("cursor={cursor};error={error:#}");
+                                    let _ = append_log(
+                                        &self.paths,
+                                        "herdr_subscription_lost",
+                                        None,
+                                        Some(&detail),
+                                    );
+                                    watcher_failure(
+                                        &self.paths,
+                                        &mut failure_streak,
+                                        &format!("event agent.list failed: {error:#}"),
+                                    );
+                                    if let Some(active) = subscription.take() {
+                                        active.stop();
+                                    }
+                                    reconnect_at = std::time::Instant::now() + reconnect_wait;
+                                    reconnect_wait = reconnect_delay(reconnect_wait);
+                                }
+                            }
+                        }
+                        Ok(WatcherSubscriptionLine::Error { code, message }) => {
+                            let detail = format!("cursor={cursor};code={code};message={message}");
+                            let _ = append_log(
+                                &self.paths,
+                                "herdr_subscription_lost",
+                                None,
+                                Some(&detail),
+                            );
+                            needs_bootstrap =
+                                code == "event_gap" || code == "event_journal_unavailable";
+                            if needs_bootstrap {
+                                // The retained journal cannot satisfy this
+                                // cursor. A zero cursor asks Herdr to replay
+                                // whatever it still has after the fresh list
+                                // bootstrap below.
+                                cursor = 0;
+                            }
+                            if let Some(active) = subscription.take() {
+                                active.stop();
+                            }
+                            watcher_failure(&self.paths, &mut failure_streak, &message);
+                            reconnect_at = std::time::Instant::now() + reconnect_wait;
+                            reconnect_wait = reconnect_delay(reconnect_wait);
+                        }
+                        Err(error) => {
+                            watcher_failure(
+                                &self.paths,
+                                &mut failure_streak,
+                                &format!("subscription malformed: {error:#}"),
+                            );
+                            if let Some(active) = subscription.take() {
+                                active.stop();
+                            }
+                            needs_bootstrap = true;
+                            cursor = 0;
+                            reconnect_at = std::time::Instant::now() + reconnect_wait;
+                            reconnect_wait = reconnect_delay(reconnect_wait);
+                        }
+                    }
+                }
+                Ok(WatcherMessage::SubscriptionEnded {
+                    generation: ended_generation,
+                    message,
+                }) => {
+                    if subscription.as_ref().map(|item| item.generation) != Some(ended_generation) {
+                        continue;
+                    }
+                    let detail = format!("cursor={cursor};message={message}");
+                    let _ = append_log(&self.paths, "herdr_subscription_lost", None, Some(&detail));
+                    if let Some(active) = subscription.take() {
+                        active.stop();
+                    }
+                    watcher_failure(&self.paths, &mut failure_streak, &message);
+                    reconnect_at = std::time::Instant::now() + reconnect_wait;
+                    reconnect_wait = reconnect_delay(reconnect_wait);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if subscription.is_some()
+                        && let Err(error) = self.scan_panes(&panes, false, true)
+                    {
+                        watcher_failure(
+                            &self.paths,
+                            &mut failure_streak,
+                            &format!("elapsed refresh failed: {error:#}"),
+                        );
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            }
+        }
+    }
+
+    fn next_elapsed_wait(&self, panes: &[Pane]) -> Duration {
+        let now = unix_time_ms().unwrap_or(u64::MAX);
+        panes
+            .iter()
+            .filter_map(|pane| {
+                self.display_states
+                    .panes
+                    .get(&pane.id)
+                    .map(|state| (now, state.changed_unix_ms))
+            })
+            .map(|(now, changed)| {
+                let elapsed_ms = now.saturating_sub(changed);
+                let elapsed_seconds = elapsed_ms / 1_000;
+                let target_seconds = if elapsed_seconds < 60 {
+                    elapsed_seconds + 1
+                } else if elapsed_seconds < 60 * 60 {
+                    (elapsed_seconds / 60 + 1) * 60
+                } else if elapsed_seconds < 24 * 60 * 60 {
+                    (elapsed_seconds / (60 * 60) + 1) * 60 * 60
+                } else {
+                    (elapsed_seconds / (24 * 60 * 60) + 1) * 24 * 60 * 60
+                };
+                let target = changed.saturating_add(target_seconds.saturating_mul(1_000));
+                Duration::from_millis(target.saturating_sub(now).max(20))
+            })
+            .min()
+            .unwrap_or_else(|| Duration::from_secs(60))
     }
 }
 
@@ -2172,29 +3001,26 @@ pub fn priority_agent_view_request() -> serde_json::Value {
 }
 
 pub fn apply_priority_agent_view(home: &Path) -> Result<()> {
-    let socket_path = std::env::var_os("HERDR_SOCKET_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config/herdr/herdr.sock"));
-    let request = priority_agent_view_request();
-    let mut stream = std::os::unix::net::UnixStream::connect(&socket_path)
-        .context("cannot connect to the Herdr socket")?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.write_all(format!("{request}\n").as_bytes())?;
-    let mut reader = std::io::BufReader::new(stream);
-    let mut response = String::new();
-    reader.read_line(&mut response)?;
-    let value: serde_json::Value =
-        serde_json::from_str(response.trim()).context("invalid agent view response")?;
-    if value.pointer("/result/active") == Some(&serde_json::Value::Bool(true)) {
-        Ok(())
-    } else {
-        Err(anyhow!("agent_view_rejected"))
-    }
+    SocketHerdr::from_environment(home).apply_priority_view()
 }
 
 pub fn request_refresh(paths: &StatePaths) -> Result<()> {
     fs::create_dir_all(&paths.root)?;
-    fs::write(paths.refresh_request(), b"").context("cannot write refresh request")
+    fs::write(paths.refresh_request(), b"").context("cannot write refresh request")?;
+    wake_watcher(paths);
+    Ok(())
+}
+
+/// Wake a running watcher without making the marker file the source of truth.
+/// A missing watcher is deliberately quiet: the marker remains for its next
+/// startup, preserving the existing command semantics.
+fn wake_watcher(paths: &StatePaths) {
+    #[cfg(unix)]
+    {
+        if let Ok(mut stream) = UnixStream::connect(paths.wake_socket()) {
+            let _ = stream.write_all(b"wake\n");
+        }
+    }
 }
 
 pub fn exclusive_watcher_lock(paths: &StatePaths) -> Result<File> {

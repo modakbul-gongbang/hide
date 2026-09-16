@@ -2,12 +2,14 @@ use super::*;
 use hide_ai::{
     AiBackend, AiResponse, AiUsage, Availability, NoopLogSink, ProviderId, RouterConfig,
 };
+use hide_session::{parse_claude_events, parse_codex_events};
 use serde_json::{Value, json};
 use std::cell::RefCell;
+use std::io::{BufRead, Cursor, Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 
 /// Block until the background analysis thread has produced its result, then put
@@ -35,7 +37,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         }
     }
 
-    /// One poll cycle: scan, let the provider thread finish, scan again to
+    /// One compatibility scan cycle: scan, let the provider thread finish, scan again to
     /// consume its result.
     fn settle(&mut self) {
         self.scan().unwrap();
@@ -57,12 +59,24 @@ fn pane(id: &str, agent: AgentKind, status: &str) -> Pane {
     }
 }
 
+fn human_event(text: impl Into<String>) -> SessionEvent {
+    SessionEvent::new("user", EventKind::Human, 0, text)
+}
+
+fn assistant_event(text: impl Into<String>) -> SessionEvent {
+    SessionEvent::new("assistant", EventKind::Assistant, 0, text)
+}
+
 // ---------------------------------------------------------------- AC1
 
 #[test]
 fn agent_list_payload_from_a_live_session_parses_without_a_second_endpoint() {
+    #[derive(Deserialize)]
+    struct AgentListFixture {
+        result: AgentListResult,
+    }
     let payload = include_str!("../tests/fixtures/agent-list.json");
-    let envelope: AgentListEnvelope = serde_json::from_str(payload).unwrap();
+    let envelope: AgentListFixture = serde_json::from_str(payload).unwrap();
     let panes: Vec<Pane> = envelope
         .result
         .agents
@@ -84,6 +98,153 @@ fn agent_list_payload_from_a_live_session_parses_without_a_second_endpoint() {
     assert_eq!(panes.iter().filter(|pane| pane.focused).count(), 1);
 }
 
+#[test]
+fn watcher_subscribes_to_the_contract_pane_events_only() {
+    assert_eq!(
+        WATCHER_SUBSCRIPTIONS,
+        [
+            "pane.created",
+            "pane.updated",
+            "pane.closed",
+            "pane.exited",
+            "pane.focused",
+            "pane.agent_detected",
+            "pane.agent_status_changed",
+        ]
+    );
+    let params = hide_herdr_client::subscription_params_for_panes(
+        17,
+        &WATCHER_SUBSCRIPTIONS,
+        &["w1:p1".to_owned()],
+    )
+    .unwrap();
+    assert_eq!(params["after_sequence"], 17);
+    assert_eq!(params["subscriptions"].as_array().unwrap().len(), 7);
+    assert!(
+        params["subscriptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|subscription| subscription["type"].as_str().unwrap().starts_with("pane."))
+    );
+    assert_eq!(
+        params["subscriptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|subscription| subscription["type"] == "pane.agent_status_changed")
+            .and_then(|subscription| subscription["pane_id"].as_str()),
+        Some("w1:p1")
+    );
+}
+
+#[test]
+fn event_lines_carry_sequence_and_protocol_and_errors_stay_explicit() {
+    let event = parse_watcher_subscription_line(
+        &json!({
+            "protocol": HERDR_PROTOCOL_REVISION,
+            "sequence": 42,
+            "event": "pane_agent_status_changed",
+            "data": {"type": "pane_agent_status_changed", "pane_id": "w1:p1"}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(matches!(
+        event,
+        WatcherSubscriptionLine::Event {
+            protocol: HERDR_PROTOCOL_REVISION,
+            sequence: 42,
+            kind,
+        } if kind == "pane_agent_status_changed"
+    ));
+
+    let error = parse_watcher_subscription_line(
+        r#"{"id":"herdr-core:events.subscribe","error":{"code":"event_gap","message":"sequence is no longer retained"}}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        error,
+        WatcherSubscriptionLine::Error { code, message }
+            if code == "event_gap" && message == "sequence is no longer retained"
+    ));
+}
+
+#[test]
+fn reconnect_backoff_doubles_and_stops_at_five_seconds() {
+    let mut delay = Duration::from_millis(100);
+    for expected in [200, 400, 800, 1_600, 3_200, 5_000, 5_000] {
+        delay = reconnect_delay(delay);
+        assert_eq!(delay, Duration::from_millis(expected));
+    }
+}
+
+#[test]
+fn event_driven_scan_updates_status_and_focus_without_waiting_for_a_tick() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let mut initial = pane("w1:p1", AgentKind::Claude, "working");
+    initial.focused = false;
+    let transport = FakeTransport::new(vec![initial.clone()]);
+    let mut watcher = Watcher::new(transport, no_provider(), FakeSessionReader, paths);
+
+    watcher
+        .scan_panes(&[initial.clone()], false, false)
+        .unwrap();
+    let mut changed = initial.clone();
+    changed.agent_status = "blocked".to_owned();
+    changed.state_change_seq += 1;
+    watcher
+        .scan_panes(&[changed.clone()], false, false)
+        .unwrap();
+    assert_eq!(watcher.last_report().status, StatusIcon::Approval);
+
+    changed.focused = true;
+    watcher.scan_panes(&[changed], false, false).unwrap();
+    assert!(
+        !watcher.last_report().unseen,
+        "focus clears unseen immediately"
+    );
+}
+
+#[test]
+fn watcher_clears_the_legacy_summary_token_once_per_pane() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let subject = pane("w1:p1", AgentKind::Claude, "idle");
+    let transport = FakeTransport::new(vec![subject.clone()]);
+    let mut watcher = Watcher::new(transport, no_provider(), FakeSessionReader, paths);
+
+    watcher
+        .scan_panes(std::slice::from_ref(&subject), false, false)
+        .unwrap();
+    watcher.scan_panes(&[subject], false, false).unwrap();
+
+    assert_eq!(
+        watcher.transport.legacy_summary_clears.borrow().as_slice(),
+        ["w1:p1".to_owned()]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_marker_wakes_the_single_event_loop_without_becoming_state() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let (sender, receiver) = mpsc::channel();
+    let wake = WakeSocket::start(&paths, sender).unwrap();
+
+    request_refresh(&paths).unwrap();
+    assert!(paths.refresh_request().exists());
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_secs(1)),
+        Ok(WatcherMessage::Wake)
+    ));
+
+    drop(wake);
+    assert!(!paths.wake_socket().exists());
+}
+
 // ---------------------------------------------------------------- AC2
 
 #[test]
@@ -99,7 +260,7 @@ fn session_path_prefers_the_herdr_reported_identity() {
     fs::write(project.join(format!("{reported}.jsonl")), "").unwrap();
     fs::write(other.join("11111111-0000-0000-0000-000000000000.jsonl"), "").unwrap();
 
-    let reader = LocalSessionReader::new(root.path());
+    let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Claude, "idle");
     target.cwd = Some("/Users/example".to_owned());
     target.agent_session = Some(AgentSession::new("id", reported));
@@ -121,7 +282,7 @@ fn session_path_falls_back_to_the_newest_file_for_the_working_directory() {
     std::thread::sleep(Duration::from_millis(20));
     fs::write(&newer, "").unwrap();
 
-    let reader = LocalSessionReader::new(root.path());
+    let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Claude, "idle");
     target.cwd = Some("/Users/example".to_owned());
 
@@ -148,7 +309,7 @@ fn codex_session_falls_back_through_the_recent_day_directories() {
     fs::write(&mine, meta("/Users/example/projects/mine")).unwrap();
     assert!(fs::metadata(&mine).unwrap().len() > 16 * 1024);
 
-    let reader = LocalSessionReader::new(root.path());
+    let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Codex, "idle");
     target.cwd = Some("/Users/example/projects/mine".to_owned());
 
@@ -156,21 +317,109 @@ fn codex_session_falls_back_through_the_recent_day_directories() {
 }
 
 #[test]
-fn session_reads_only_the_tail_of_a_large_file() {
+fn session_reader_reads_the_full_file_and_keeps_the_first_recent_request() {
     let root = tempdir().unwrap();
-    let path = root.path().join("session.jsonl");
-    let filler = "{\"type\":\"user\",\"message\":{\"content\":\"오래된 내용\"}}\n";
-    let mut contents = filler.repeat(20_000);
-    contents.push_str("{\"type\":\"user\",\"message\":{\"content\":\"최신 요청\"}}\n");
-    fs::write(&path, &contents).unwrap();
-    assert!(fs::metadata(&path).unwrap().len() > SESSION_TAIL_BYTES);
+    let project = root.path().join(".claude/projects/-Users-example");
+    fs::create_dir_all(&project).unwrap();
+    let path = project.join("session.jsonl");
+    let mut contents = String::new();
+    for index in 0..40 {
+        contents.push_str(
+            &json!({
+                "type": "user",
+                "timestamp": format!("2026-09-16T00:00:{index:02}Z"),
+                "isMeta": true,
+                "message": {"content": "injected ".to_owned() + &"x".repeat(8 * 1024)},
+            })
+            .to_string(),
+        );
+        contents.push('\n');
+    }
+    for index in 0..MAX_USER_REQUEST_TURNS {
+        contents.push_str(
+            &json!({
+                "type": "user",
+                "timestamp": format!("2026-09-16T01:00:{index:02}Z"),
+                "origin": {"kind": "human"},
+                "message": {"content": format!("요청 {index}")},
+            })
+            .to_string(),
+        );
+        contents.push('\n');
+    }
+    fs::write(&path, contents).unwrap();
+    assert!(fs::metadata(&path).unwrap().len() > 256 * 1024);
 
-    let tail = read_tail(&path, SESSION_TAIL_BYTES).unwrap();
+    let mut reader = LocalSessionReader::new(root.path());
+    let mut target = pane("w1:p1", AgentKind::Claude, "working");
+    target.cwd = Some("/Users/example".to_owned());
+    target.agent_session = Some(AgentSession::new("id", "session"));
 
-    assert!(tail.len() as u64 <= SESSION_TAIL_BYTES);
-    assert!(tail.contains("최신 요청"));
-    // The first line of a tail read is cut in half and must be discarded.
-    assert!(serde_json::from_str::<serde_json::Value>(tail.lines().next().unwrap()).is_ok());
+    let parsed = reader.read(&target).unwrap();
+
+    assert_eq!(parsed.events.len(), MAX_USER_REQUEST_TURNS);
+    assert_eq!(parsed.events.first().unwrap().text, "요청 0");
+    assert_eq!(parsed.events.last().unwrap().text, "요청 7");
+}
+
+#[test]
+fn session_reader_reads_appends_and_rescans_truncated_or_replaced_files() {
+    let root = tempdir().unwrap();
+    let project = root.path().join(".claude/projects/-Users-example");
+    fs::create_dir_all(&project).unwrap();
+    let path = project.join("session.jsonl");
+    let line = |text: &str, second: u8| {
+        json!({
+            "type": "user",
+            "timestamp": format!("1970-01-01T00:00:{second:02}Z"),
+            "origin": {"kind": "human"},
+            "message": {"content": text},
+        })
+        .to_string()
+            + "\n"
+    };
+    fs::write(&path, line("첫 요청", 1)).unwrap();
+    let mut reader = LocalSessionReader::new(root.path());
+    let mut target = pane("w1:p1", AgentKind::Claude, "working");
+    target.cwd = Some("/Users/example".to_owned());
+    target.agent_session = Some(AgentSession::new("id", "session"));
+
+    assert_eq!(reader.read(&target).unwrap().events.len(), 1);
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(line("둘째 요청", 2).as_bytes())
+        .unwrap();
+    let appended = reader.read(&target).unwrap();
+    assert_eq!(appended.rescan_reason, None);
+    assert_eq!(
+        appended
+            .events
+            .iter()
+            .map(|event| event.text.as_str())
+            .collect::<Vec<_>>(),
+        ["첫 요청", "둘째 요청"]
+    );
+
+    fs::write(&path, line("새 파일 요청", 3)).unwrap();
+    let truncated = reader.read(&target).unwrap();
+    assert_eq!(
+        truncated.rescan_reason,
+        Some(hide_session::RescanReason::Truncated)
+    );
+    assert_eq!(truncated.events.len(), 1);
+    assert_eq!(truncated.events[0].text, "새 파일 요청");
+
+    let replacement = project.join("replacement.jsonl");
+    fs::write(&replacement, line("교체 파일 요청", 4)).unwrap();
+    fs::rename(&replacement, &path).unwrap();
+    let replaced = reader.read(&target).unwrap();
+    assert_eq!(
+        replaced.rescan_reason,
+        Some(hide_session::RescanReason::Replaced)
+    );
+    assert_eq!(replaced.events[0].text, "교체 파일 요청");
 }
 
 // ---------------------------------------------------------------- AC3
@@ -178,9 +427,9 @@ fn session_reads_only_the_tail_of_a_large_file() {
 #[test]
 fn skips_malformed_session_lines() {
     let torn = concat!(
-        r#"{"type":"user","message":{"content":"첫 번째 요청"}}"#,
+        r#"{"type":"user","timestamp":"1970-01-01T00:00:01Z","origin":{"kind":"human"},"message":{"content":"첫 번째 요청"}}"#,
         "\n",
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"작업했습니다."}]}}"#,
+        r#"{"type":"assistant","timestamp":"1970-01-01T00:00:02Z","message":{"content":[{"type":"text","text":"작업했습니다."}]}}"#,
         "\n",
         r#"{"type":"assistant","message":{"content":[{"type":"tex"#,
     );
@@ -193,7 +442,7 @@ fn skips_malformed_session_lines() {
     assert_eq!(parsed.events[1].text, "작업했습니다.");
 
     let codex = concat!(
-        r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"요약을 고쳐줘"}]}}"#,
+        r#"{"type":"response_item","timestamp":"1970-01-01T00:00:03Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"요약을 고쳐줘"}]}}"#,
         "\n",
         r#"{"type":"response_item","payload":{"type":"messa"#,
     );
@@ -206,9 +455,9 @@ fn skips_malformed_session_lines() {
 
 #[test]
 fn redaction_preserves_prose_and_bullets() {
-    let events = [SessionEvent {
-        role: "assistant",
-        text: concat!(
+    let events = [
+        human_event("음료 소비량 문제를 검토해줘"),
+        assistant_event(concat!(
             "세 문제 모두 대기 중입니다. 답 주시면 채점해 드릴게요.\n",
             "- 문제 1 물 제외 가장 많이 소비되는 음료\n",
             "- 문제 2 노벨상에 없는 분야\n",
@@ -220,9 +469,8 @@ fn redaction_preserves_prose_and_bullets() {
             "```rust\n",
             "fn leak() { let secret = 1; }\n",
             "```",
-        )
-        .to_owned(),
-    }];
+        )),
+    ];
 
     let context = analysis_context(&events);
 
@@ -241,36 +489,15 @@ fn redaction_preserves_prose_and_bullets() {
 // ---------------------------------------------------------------- AC5
 
 #[test]
-fn context_spans_the_last_two_user_turns() {
+fn initial_context_spans_the_first_three_and_last_eight_user_turns() {
     let events = [
-        SessionEvent {
-            role: "user",
-            text: "가장 오래된 요청입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "assistant",
-            text: "가장 오래된 응답입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "user",
-            text: "직전 요청입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "assistant",
-            text: "직전 응답입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "user",
-            text: "최신 요청입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "assistant",
-            text: "긴 응답 ".repeat(200),
-        },
-        SessionEvent {
-            role: "assistant",
-            text: "마지막으로 답을 기다립니다".to_owned(),
-        },
+        human_event("가장 오래된 요청입니다"),
+        assistant_event("가장 오래된 응답입니다"),
+        human_event("직전 요청입니다"),
+        assistant_event("직전 응답입니다"),
+        human_event("최신 요청입니다"),
+        assistant_event("긴 응답 ".repeat(200)),
+        assistant_event("마지막으로 답을 기다립니다"),
     ];
 
     let context = analysis_context(&events);
@@ -281,36 +508,141 @@ fn context_spans_the_last_two_user_turns() {
     // question is not mistaken for a fresh one.
     assert!(context.contains("직전 요청입니다"));
     assert!(context.contains("직전 응답입니다"));
-    // Every user turn is carried too, so the summary can see the whole arc of
-    // what was asked, not just the latest exchange.
+    // The initial view carries the first request as well as the latest request
+    // history, with an explicit marker for the middle that was omitted.
     assert!(context.contains("가장 오래된 요청입니다"));
+    assert!(context.contains("<omitted-human-turns>0개 사람 턴 생략</omitted-human-turns>"));
     // Older assistant prose is not part of that request history and stays out.
     assert!(!context.contains("가장 오래된 응답입니다"));
 }
 
 #[test]
-fn all_user_requests_is_capped_to_the_recent_turns() {
+fn stdin_session_context_uses_the_shared_parser() {
+    let context = analysis_context_from_session(
+        hide_session::Agent::Claude,
+        include_str!("../../../hide-session/tests/fixtures/claude.jsonl"),
+    );
+
+    assert!(context.contains("첫 번째 요청"), "{context}");
+    assert!(context.contains("--quick"), "{context}");
+    assert!(context.contains("검토를 시작했습니다."), "{context}");
+    assert!(!context.contains("task-notification"), "{context}");
+    assert!(!context.contains("system-reminder"), "{context}");
+}
+
+#[test]
+fn interrupted_turn_keeps_the_previous_task_without_a_provider_call() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let session = ScriptedSessionReader::new();
+    session.user("기존 요청");
+    session.assistant("작업을 마쳤습니다.");
+    let backend = task_backend();
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        router_with(&backend),
+        session,
+        paths.clone(),
+    );
+
+    watcher.settle();
+    assert_eq!(backend.calls(), 1);
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("작업 요약 제목")
+    );
+
+    watcher
+        .session_reader
+        .interrupted("[Request interrupted by user]");
+    watcher.transport.set_status("idle");
+    watcher.scan().unwrap();
+
+    assert_eq!(backend.calls(), 1);
+    assert_eq!(watcher.last_report().status, StatusIcon::Interrupted);
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("작업 요약 제목")
+    );
+}
+
+#[test]
+fn a_pane_without_a_human_turn_has_no_task_and_no_provider_call() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        router_with(&backend),
+        ScriptedSessionReader::new(),
+        paths,
+    );
+
+    watcher.scan().unwrap();
+
+    assert_eq!(backend.calls(), 0);
+    assert_eq!(watcher.last_report().task, None);
+    assert_eq!(watcher.last_report().status, StatusIcon::Idle);
+}
+
+#[test]
+fn initial_context_keeps_first_three_and_last_eight_user_turns() {
     let mut events: Vec<SessionEvent> = Vec::new();
-    for i in 0..(MAX_USER_REQUEST_TURNS + 3) {
-        events.push(SessionEvent {
-            role: "user",
-            text: format!("요청 {i}"),
-        });
-        events.push(SessionEvent {
-            role: "assistant",
-            text: format!("응답 {i}"),
-        });
+    for i in 0..(MAX_USER_REQUEST_TURNS + INITIAL_FIRST_USER_TURNS + 3) {
+        events.push(human_event(format!("요청 {i}")));
+        events.push(assistant_event(format!("응답 {i}")));
     }
 
     let context = analysis_context(&events);
 
-    // The oldest requests, beyond the cap, are dropped.
-    assert!(!context.contains("요청 0"));
-    assert!(!context.contains("요청 2"));
-    // The most recent MAX_USER_REQUEST_TURNS requests survive.
-    for i in (events.len() / 2 - MAX_USER_REQUEST_TURNS)..(events.len() / 2) {
+    // The first three requests survive even though the session is long.
+    for i in 0..INITIAL_FIRST_USER_TURNS {
         assert!(context.contains(&format!("요청 {i}")));
     }
+    assert!(context.contains("<omitted-human-turns>3개 사람 턴 생략</omitted-human-turns>"));
+    // The most recent MAX_USER_REQUEST_TURNS requests survive too.
+    for i in (MAX_USER_REQUEST_TURNS + INITIAL_FIRST_USER_TURNS + 3 - MAX_USER_REQUEST_TURNS)
+        ..(MAX_USER_REQUEST_TURNS + INITIAL_FIRST_USER_TURNS + 3)
+    {
+        assert!(context.contains(&format!("요청 {i}")));
+    }
+}
+
+#[test]
+fn rolling_context_contains_only_the_previous_task_and_new_human_delta() {
+    let events = [
+        human_event("처음 세션 목표를 정한다"),
+        assistant_event("목표를 확인했습니다."),
+        human_event("하위 작업으로 테스트도 추가해줘"),
+        assistant_event("테스트를 준비했습니다."),
+    ];
+    let delta = vec![events[2].clone()];
+
+    let context = rolling_analysis_context("세션 목표 구현", &delta, &events);
+
+    assert!(context.contains("<previous-task>세션 목표 구현</previous-task>"));
+    assert!(context.contains("하위 작업으로 테스트도 추가해줘"));
+    assert!(!context.contains("처음 세션 목표를 정한다"));
+
+    let end_context = rolling_analysis_context("세션 목표 구현", &[], &events);
+    assert!(end_context.contains("<new-human-turns>\n<none/>\n</new-human-turns>"));
+}
+
+#[test]
+fn task_input_cursor_moves_only_when_a_human_turn_changes() {
+    let first = [human_event("첫 요청"), assistant_event("첫 응답")];
+    let second = [
+        human_event("첫 요청"),
+        assistant_event("첫 응답"),
+        human_event("둘째 요청"),
+    ];
+    let first_cursor = task_input_cursor(&first).unwrap();
+    assert_eq!(task_input_cursor(&first), Some(first_cursor));
+    assert_ne!(task_input_cursor(&second), Some(first_cursor));
+    assert_eq!(
+        new_human_turns(&second, Some(first_cursor))[0].text,
+        "둘째 요청"
+    );
 }
 
 // ---------------------------------------------------------------- AC7
@@ -540,8 +872,8 @@ fn an_unreadable_choice_is_logged_before_the_defaults_are_used() {
 }
 
 /// The reason is a state, not a tick. The watcher re-reads the file every
-/// `POLL_INTERVAL` and this plugin's log is never rotated, so a broken file
-/// logged on every scan would grow it without end; the reason is written when
+/// the plugin's log is never rotated, so a broken file logged on every scan
+/// would grow it without end; the reason is written when
 /// it changes, and so is the recovery.
 #[test]
 fn a_broken_choice_is_logged_once_and_its_repair_is_logged_once() {
@@ -640,57 +972,61 @@ fn corrupt_state_files_do_not_stop_the_watcher() {
 // ---------------------------------------------------------------- AC9
 
 #[test]
-fn summary_truncates_on_a_word_boundary() {
-    assert_eq!(truncate_summary("짧은 요약"), "짧은 요약");
+fn task_truncates_on_a_word_boundary() {
+    assert_eq!(truncate_task("짧은 요약"), "짧은 요약");
     // "Commit benchmark PRD validation" used to render as "Commit benchmark PRD validatio".
     assert_eq!(
-        truncate_summary("Commit benchmark PRD validation"),
+        truncate_task("Commit benchmark PRD validation"),
         "Commit benchmark PRD…"
     );
     assert!(
-        truncate_summary("Commit benchmark PRD validation")
+        truncate_task("Commit benchmark PRD validation")
             .chars()
             .count()
-            <= MAX_SUMMARY_CHARS
+            <= MAX_TASK_CHARS
     );
     // A single unbroken token still has to fit the budget.
     let unbroken = "a".repeat(50);
-    assert_eq!(
-        truncate_summary(&unbroken).chars().count(),
-        MAX_SUMMARY_CHARS
-    );
-    assert!(truncate_summary(&unbroken).ends_with('…'));
+    assert_eq!(truncate_task(&unbroken).chars().count(), MAX_TASK_CHARS);
+    assert!(truncate_task(&unbroken).ends_with('…'));
 }
 
 #[test]
-fn normalizes_only_safe_one_line_summaries() {
+fn normalizes_only_safe_one_line_tasks() {
     assert_eq!(
-        normalize_summary("  간단한 작업 요약  "),
-        Some("간단한 작업 요약".into())
+        normalize_task("  간단한 작업 제목  "),
+        Some("간단한 작업 제목".into())
     );
-    assert_eq!(normalize_summary("\n"), None);
+    assert_eq!(normalize_task("\n"), None);
     assert_eq!(
-        normalize_summary("**`Compact task labels`**"),
+        normalize_task("**`Compact task labels`**"),
         Some("Compact task labels".into())
     );
-    assert_eq!(normalize_summary("bad\u{0000}"), None);
-    assert_eq!(normalize_summary("ab"), None);
+    assert_eq!(normalize_task("bad\u{0000}"), None);
+    assert_eq!(normalize_task("짧음"), None);
 }
 
 #[test]
 fn parses_the_provider_structured_output_contract() {
     assert_eq!(
-        context_label::parse_text(r#"{"summary":"수학 문제 출제 및 채점","attention":"none"}"#)
+        context_label::parse_text(
+            r#"{"task":"수학 문제 출제 및 채점","task_changed":true,"progress":"착수","expected_reply":"","attention":"none"}"#,
+        )
             .unwrap(),
         Analysis {
-            summary: "수학 문제 출제 및 채점".into(),
+            task: "수학 문제 출제 및 채점".into(),
+            task_changed: true,
+            progress: "착수".into(),
+            expected_reply: String::new(),
             attention: None,
         }
     );
     // A bare question verdict with no expected_reply field carries no statable
     // user action, so it downgrades like an empty one.
     assert_eq!(
-        context_label::parse_text(r#"{"summary":"음료 소비량 퀴즈 풀이","attention":"question"}"#)
+        context_label::parse_text(
+            r#"{"task":"음료 소비량 퀴즈 풀이","task_changed":false,"progress":"진행 중","expected_reply":"","attention":"question"}"#,
+        )
             .unwrap()
             .attention,
         None
@@ -698,7 +1034,7 @@ fn parses_the_provider_structured_output_contract() {
     // A question verdict needs a statable user action to survive.
     assert_eq!(
         context_label::parse_text(
-            r#"{"expected_reply":"배포 진행 여부를 답한다","summary":"배포 진행 여부 확인","attention":"question"}"#
+            r#"{"task":"배포 진행 여부 확인","task_changed":true,"progress":"완료","expected_reply":"배포 진행 여부를 답한다","attention":"question"}"#,
         )
         .unwrap()
         .attention,
@@ -707,16 +1043,90 @@ fn parses_the_provider_structured_output_contract() {
     // Question without an expected reply is a surface match and is downgraded.
     assert_eq!(
         context_label::parse_text(
-            r#"{"expected_reply":"","summary":"새 작업 지시 대기","attention":"question"}"#
+            r#"{"task":"새 작업 지시 대기","task_changed":false,"progress":"대기","expected_reply":"","attention":"question"}"#,
         )
         .unwrap()
         .attention,
         None
     );
+    assert!(context_label::parse_text(
+        r#"{"task":"작업 승인 대기","task_changed":true,"progress":"대기","expected_reply":"","attention":"approval"}"#
+    )
+    .is_err());
+    assert!(context_label::parse_text(
+        r#"{"task":"상태 없는 응답","task_changed":true,"expected_reply":"","attention":"none"}"#
+    )
+    .is_err());
+}
+
+#[test]
+fn task_parser_enforces_the_minimum_and_display_maximum() {
+    let response = |task: &str| {
+        json!({
+            "task": task,
+            "task_changed": true,
+            "progress": "착수",
+            "expected_reply": "",
+            "attention": "none"
+        })
+    };
+
+    assert!(context_label::parse(response("짧은 제목")).is_err());
+    let parsed = context_label::parse(response(&"아주 긴 작업 제목 ".repeat(8))).unwrap();
+    assert!(parsed.task.chars().count() <= MAX_TASK_CHARS);
+    assert!(parsed.task.ends_with('…'));
     assert!(
-        context_label::parse_text(r#"{"summary":"작업 승인","attention":"approval"}"#).is_err()
+        context_label::parse({
+            let mut value = response("유효한 작업 제목");
+            value["task_changed"] = json!("true");
+            value
+        })
+        .is_err()
     );
-    assert!(context_label::parse_text(r#"{"summary":"상태 없는 응답"}"#).is_err());
+}
+
+#[test]
+fn an_invalid_later_analysis_keeps_the_previous_task() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let session = ScriptedSessionReader::new();
+    session.user("첫 번째 목표를 진행해줘");
+    let backend = ScriptedBackend::new(vec![
+        Ok(json!({
+            "task": "기존 세션 목표 구현",
+            "task_changed": true,
+            "progress": "착수",
+            "expected_reply": "",
+            "attention": "none"
+        })),
+        Ok(json!({"task": "기존 세션 목표 구현"})),
+    ]);
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "working")]),
+        router_with(&backend),
+        session,
+        paths.clone(),
+    );
+
+    watcher.settle();
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("기존 세션 목표 구현")
+    );
+
+    watcher.session_reader.assistant("작업을 마쳤습니다.");
+    watcher.transport.set_status("idle");
+    watcher.settle();
+
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("기존 세션 목표 구현")
+    );
+    assert!(
+        fs::read_to_string(paths.log())
+            .unwrap()
+            .contains("analysis_abandoned")
+    );
 }
 
 // ---------------------------------------------------------------- AC10
@@ -757,7 +1167,8 @@ fn failures_are_logged_with_actionable_detail() {
     watcher.await_pending_analysis();
     watcher.scan().unwrap();
     let log = fs::read_to_string(paths.log()).unwrap();
-    assert!(log.contains("attention=question"), "log was: {log}");
+    assert!(log.contains("attention_chars="), "log was: {log}");
+    assert!(log.contains("task_changed="), "log was: {log}");
     assert!(log.contains("context_chars="), "log was: {log}");
     // The turn it judged, and which of the turn's two boundaries it answered.
     assert!(log.contains("turn="), "log was: {log}");
@@ -957,6 +1368,13 @@ fn plain_text_question_survives_a_watcher_restart() {
     );
     watcher.settle();
     assert_eq!(watcher.last_report().status, StatusIcon::Question);
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("음료 소비량 퀴즈 풀이")
+    );
+    let state = fs::read_to_string(paths.display_state()).unwrap();
+    assert!(state.contains("\"progress\":\"대기\""), "{state}");
+    assert!(state.contains("\"task_input_cursor\":"), "{state}");
     drop(watcher);
 
     let mut restarted = Watcher::new(
@@ -967,6 +1385,41 @@ fn plain_text_question_survives_a_watcher_restart() {
     );
     restarted.scan().unwrap();
     assert_eq!(restarted.last_report().status, StatusIcon::Question);
+    assert_eq!(
+        restarted.last_report().task.as_deref(),
+        Some("음료 소비량 퀴즈 풀이")
+    );
+}
+
+#[test]
+fn missing_task_state_rebuilds_from_the_initial_session_view() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let session = ScriptedSessionReader::new();
+    for index in 0..14 {
+        session.user(&format!("세션 전체 요청 {index}"));
+    }
+    let backend = task_backend();
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        router_with(&backend),
+        session,
+        paths.clone(),
+    );
+
+    watcher.settle();
+
+    assert_eq!(backend.calls(), 1);
+    let input = &backend.inputs()[0];
+    assert!(input.contains("세션 전체 요청 0"));
+    assert!(input.contains("세션 전체 요청 2"));
+    assert!(input.contains("세션 전체 요청 13"));
+    assert!(input.contains("<omitted-human-turns>3개 사람 턴 생략</omitted-human-turns>"));
+    assert!(
+        fs::read_to_string(paths.display_state())
+            .unwrap()
+            .contains("\"task\":\"작업 요약 제목\"")
+    );
 }
 
 // ------------------------------------------------------------- scheduling
@@ -975,7 +1428,7 @@ fn plain_text_question_survives_a_watcher_restart() {
 fn watcher_deduplicates_reports_and_its_own_revision_bump() {
     let root = tempdir().unwrap();
     let paths = StatePaths::for_tests(root.path());
-    let backend = summary_backend();
+    let backend = task_backend();
     let mut watcher = Watcher::new(
         FakeTransport::new(vec![pane("w1:p1", AgentKind::Codex, "blocked")]),
         router_with(&backend),
@@ -1003,7 +1456,7 @@ fn watcher_deduplicates_reports_and_its_own_revision_bump() {
 fn a_changed_session_is_analyzed_again() {
     let root = tempdir().unwrap();
     let paths = StatePaths::for_tests(root.path());
-    let backend = summary_backend();
+    let backend = task_backend();
     let mut watcher = Watcher::new(
         FakeTransport::new(vec![pane("w1:p5", AgentKind::Claude, "idle")]),
         router_with(&backend),
@@ -1029,7 +1482,7 @@ fn a_refresh_request_is_consumed_once_by_the_focused_pane() {
     set_automatic_summaries(&paths, false).unwrap();
     let mut focused = pane("w1:p5", AgentKind::Claude, "idle");
     focused.focused = true;
-    let backend = summary_backend();
+    let backend = task_backend();
     let mut watcher = Watcher::new(
         FakeTransport::new(vec![focused]),
         router_with(&backend),
@@ -1046,56 +1499,99 @@ fn a_refresh_request_is_consumed_once_by_the_focused_pane() {
     assert!(
         fs::read_to_string(paths.log())
             .unwrap()
-            .contains("summary_refresh_skipped_disabled")
+            .contains("task_refresh_skipped_disabled")
     );
     assert_eq!(backend.calls(), 0);
 }
 
 #[test]
+fn refresh_rederives_the_task_from_the_initial_session_view() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let session = ScriptedSessionReader::new();
+    session.user("세션 전체 목표를 구현해줘");
+    let backend = ScriptedBackend::new(vec![
+        Ok(json!({
+            "task": "오래된 누적 작업 제목",
+            "task_changed": true,
+            "progress": "착수",
+            "expected_reply": "",
+            "attention": "none"
+        })),
+        Ok(json!({
+            "task": "현재 세션 목표 정리",
+            "task_changed": true,
+            "progress": "재검토",
+            "expected_reply": "",
+            "attention": "none"
+        })),
+    ]);
+    let mut focused = pane("w1:p1", AgentKind::Claude, "idle");
+    focused.focused = true;
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![focused]),
+        router_with(&backend),
+        session,
+        paths.clone(),
+    );
+
+    watcher.settle();
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("오래된 누적 작업 제목")
+    );
+
+    watcher.session_reader.assistant("이전 답변입니다.");
+    request_refresh(&paths).unwrap();
+    watcher.settle();
+
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("현재 세션 목표 정리")
+    );
+    let inputs = backend.inputs();
+    assert!(inputs[1].contains("<initial-human-requests>"));
+    assert!(!inputs[1].contains("<previous-task>"));
+}
+
+#[test]
 fn metadata_clears_every_status_token_it_may_own() {
     let subject = pane("w1:p1", AgentKind::Codex, "idle");
-    let args = metadata_arguments(
+    let params = metadata_params(
         &subject,
         &Display {
-            summary: Some("작업 요약".into()),
+            task: Some("작업 요약 제목".into()),
             status: StatusIcon::Approval,
             sort_key: SortKey::Approval,
             elapsed: Some("7s".into()),
             ..Display::default()
         },
     );
+    let tokens = params["tokens"].as_object().unwrap();
 
-    assert!(args.iter().any(|item| item == "summary=작업 요약"));
-    assert!(args.iter().any(|item| item == "status_approval=!"));
-    assert!(args.iter().any(|item| item == "agent_codex=⬢"));
-    assert!(args.iter().any(|item| item == "elapsed=7s"));
+    assert_eq!(tokens["task"], "작업 요약 제목");
+    assert!(!tokens.contains_key("summary"));
+    assert!(!tokens.contains_key("progress"));
+    assert_eq!(tokens.len(), 16);
+    assert_eq!(tokens["status_approval"], "!");
+    assert_eq!(tokens["agent_codex"], "⬢");
+    assert_eq!(tokens["elapsed"], "7s");
     // Approval sits in the user-blocking group at the top of the ordering.
     // The rank digit depends on the machine's optional sort-order file, so
     // only the seen partition prefix is asserted.
-    assert!(
-        args.iter()
-            .any(|item| item.starts_with("sort_rank=1") && item.len() == "sort_rank=1x".len())
-    );
-    // Every other status token is cleared, so two icons can never render at
-    // once; the one being set is not cleared to stay under the 16-token cap.
+    assert!(tokens["sort_rank"].as_str().unwrap().starts_with('1'));
+    // Every other status token is explicitly nulled, so two icons can never
+    // render at once; the one being set remains a string.
     for token in STATUS_TOKENS {
         if token == "status_approval" {
             continue;
         }
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "--clear-token" && pair[1] == token),
-            "{token} is not cleared"
-        );
+        assert_eq!(tokens[token], Value::Null, "{token} is not cleared");
     }
     // The report never exceeds Herdr's 16-token budget.
-    let touched = args
-        .iter()
-        .filter(|a| *a == "--token" || *a == "--clear-token")
-        .count();
-    assert!(touched <= 16, "report touches {touched} tokens");
+    assert!(tokens.len() <= 16, "report touches {} tokens", tokens.len());
     // The pane title belongs to the user, not to this plugin.
-    assert!(!args.iter().any(|item| item == "--title"));
+    assert!(params.get("title").is_none());
 }
 
 #[test]
@@ -1184,7 +1680,7 @@ fn the_activity_token_is_a_fixed_width_clock_two_panes_can_be_compared_on() {
     assert!(activity_token(999) < activity_token(1_000));
     assert_eq!(activity_token(0), "0000000000000");
 
-    let args = metadata_arguments(
+    let params = metadata_params(
         &pane("w1:p1", AgentKind::Codex, "done"),
         &Display {
             status: StatusIcon::Done,
@@ -1193,13 +1689,9 @@ fn the_activity_token_is_a_fixed_width_clock_two_panes_can_be_compared_on() {
             ..Display::default()
         },
     );
-    assert!(args.iter().any(|item| item == "activity=1755000000000"));
-    // Always set, never cleared: the sidebar cannot order a pane without it.
-    assert!(
-        !args
-            .windows(2)
-            .any(|pair| pair[0] == "--clear-token" && pair[1] == "activity")
-    );
+    assert_eq!(params["tokens"]["activity"], "1755000000000");
+    // Always set, never nulled: the sidebar cannot order a pane without it.
+    assert_ne!(params["tokens"]["activity"], Value::Null);
 }
 
 #[test]
@@ -1299,17 +1791,11 @@ fn the_documented_model_is_the_one_the_code_calls() {
 
 /// The regression this whole design exists for: the old trigger hashed the
 /// context window, which grows with every token the agent emits, so a live pane
-/// asked the provider again on almost every poll.
+/// asked the provider again on almost every trigger.
 #[test]
 fn turn_identity_holds_while_output_grows_and_moves_only_at_a_boundary() {
-    let user = |text: &str| SessionEvent {
-        role: "user",
-        text: text.to_owned(),
-    };
-    let assistant = |text: &str| SessionEvent {
-        role: "assistant",
-        text: text.to_owned(),
-    };
+    let user = |text: &str| human_event(text);
+    let assistant = |text: &str| assistant_event(text);
 
     let mut events = vec![user("정렬 순서를 고쳐줘")];
     let start = turn_key(&events).unwrap();
@@ -1357,7 +1843,7 @@ fn the_phase_stays_offered_until_its_call_actually_lands() {
     assert_eq!(analysis_phase(false, true, true, false), None);
 }
 
-/// One turn buys one summary and one verdict, whatever the agent does in
+/// One turn buys one task decision and one verdict, whatever the agent does in
 /// between. On 2026-08-17 the old trigger spent 470 calls across 19 panes,
 /// 37 of them under ten seconds apart on the same pane.
 #[test]
@@ -1365,7 +1851,7 @@ fn one_turn_costs_at_most_two_provider_calls() {
     let root = tempdir().unwrap();
     let paths = StatePaths::for_tests(root.path());
     let session = ScriptedSessionReader::new();
-    let backend = summary_backend();
+    let backend = task_backend();
     let mut watcher = Watcher::new(
         FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
         router_with(&backend),
@@ -1373,7 +1859,7 @@ fn one_turn_costs_at_most_two_provider_calls() {
         paths.clone(),
     );
 
-    // Nothing said yet: no turn, so no call however often the watcher polls.
+    // Nothing said yet: no turn, so no call however often the watcher wakes.
     for _ in 0..3 {
         watcher.scan().unwrap();
     }
@@ -1387,6 +1873,9 @@ fn one_turn_costs_at_most_two_provider_calls() {
 
     // The agent works and talks. This is where the old trigger bled requests.
     for chunk in ["파일을 읽는 중", "테스트 실행", "수정 적용", "커밋 완료"] {
+        watcher
+            .session_reader
+            .injected("<task-notification>background result</task-notification>");
         watcher.session_reader.assistant(chunk);
         watcher.advance_past_provider_waits();
         watcher.settle();
@@ -1421,6 +1910,90 @@ fn one_turn_costs_at_most_two_provider_calls() {
     watcher.advance_past_provider_waits();
     watcher.settle();
     assert_eq!(backend.calls(), 3);
+}
+
+#[test]
+fn rolling_task_keeps_subtasks_and_replaces_a_new_goal() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let session = ScriptedSessionReader::new();
+    let response = |task: &str, task_changed: bool, progress: &str| {
+        Ok(json!({
+            "task": task,
+            "task_changed": task_changed,
+            "progress": progress,
+            "expected_reply": "",
+            "attention": "none"
+        }))
+    };
+    let backend = ScriptedBackend::new(vec![
+        response("Task Factory 운영 구축", true, "착수"),
+        response("완전히 다른 제목", false, "완료"),
+        response("흔들린 작업 제목", false, "착수"),
+        response("또 다른 작업 제목", true, "완료"),
+        response("Herdr 종료 안정화 PRD", true, "착수"),
+    ]);
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "working")]),
+        router_with(&backend),
+        session,
+        paths,
+    );
+
+    watcher.session_reader.user("Task Factory를 구축해줘");
+    watcher.settle();
+    assert_eq!(backend.calls(), 1, "after first start");
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("Task Factory 운영 구축")
+    );
+
+    watcher.session_reader.assistant("첫 작업을 마쳤습니다.");
+    watcher.transport.set_status("idle");
+    watcher.settle();
+    assert_eq!(backend.calls(), 2, "after first end");
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("Task Factory 운영 구축")
+    );
+
+    watcher
+        .session_reader
+        .user("하위 작업으로 사용법도 정리해줘");
+    watcher.transport.set_status("working");
+    watcher.settle();
+    assert_eq!(backend.calls(), 3, "after second start");
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("Task Factory 운영 구축")
+    );
+
+    watcher.session_reader.assistant("사용법을 정리했습니다.");
+    watcher.transport.set_status("idle");
+    watcher.settle();
+    assert_eq!(backend.calls(), 4, "after second end");
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("Task Factory 운영 구축")
+    );
+
+    watcher
+        .session_reader
+        .user("이제 Herdr 종료 안정화 PRD를 써줘");
+    watcher.transport.set_status("working");
+    watcher.settle();
+    assert_eq!(
+        watcher.last_report().task.as_deref(),
+        Some("Herdr 종료 안정화 PRD")
+    );
+    assert_eq!(backend.calls(), 5);
+
+    let inputs = backend.inputs();
+    assert!(inputs[0].contains("<initial-human-requests>"));
+    assert!(inputs[2].contains("<previous-task>Task Factory 운영 구축</previous-task>"));
+    assert!(inputs[2].contains("하위 작업으로 사용법도 정리해줘"));
+    assert!(!inputs[2].contains("Task Factory를 구축해줘"));
+    assert!(inputs[1].contains("<new-human-turns>\n<none/>\n</new-human-turns>"));
 }
 
 /// The symptom the user reported: a pane's question symbol appearing and
@@ -1482,13 +2055,18 @@ fn persisted_state_records_both_turn_phases_and_no_fingerprint() {
     let session = ScriptedSessionReader::new();
     session.user("정렬 순서를 고쳐줘");
     session.assistant("고쳤습니다");
-    let backend = summary_backend();
+    let backend = task_backend();
     let mut watcher = Watcher::new(
         FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
         router_with(&backend),
         session,
         paths.clone(),
     );
+
+    let migrated = fs::read_to_string(paths.display_state()).unwrap();
+    assert!(migrated.contains("\"task\":\"이전 요약\""), "{migrated}");
+    assert!(!migrated.contains("\"summary\":"), "{migrated}");
+
     watcher.scan().unwrap();
     watcher.await_pending_analysis();
     watcher.scan().unwrap();
@@ -1497,6 +2075,11 @@ fn persisted_state_records_both_turn_phases_and_no_fingerprint() {
     assert!(
         !written.contains("analysis_fingerprint"),
         "the content fingerprint is gone: {written}"
+    );
+    assert!(written.contains("\"task\":"), "{written}");
+    assert!(
+        !written.contains("\"summary\":"),
+        "legacy summary survived: {written}"
     );
     assert!(written.contains("analysis_turn_start"), "{written}");
     assert!(written.contains("analysis_turn_end"), "{written}");
@@ -1507,6 +2090,7 @@ fn persisted_state_records_both_turn_phases_and_no_fingerprint() {
 struct FakeTransport {
     panes: RefCell<Vec<Pane>>,
     reports: RefCell<Vec<Display>>,
+    legacy_summary_clears: RefCell<Vec<String>>,
 }
 
 impl FakeTransport {
@@ -1514,11 +2098,12 @@ impl FakeTransport {
         Self {
             panes: RefCell::new(panes),
             reports: RefCell::new(Vec::new()),
+            legacy_summary_clears: RefCell::new(Vec::new()),
         }
     }
 
     /// Move Herdr's lifecycle for every pane, the way the real server does
-    /// between polls.
+    /// between event-driven scans.
     fn set_status(&self, status: &str) {
         for pane in self.panes.borrow_mut().iter_mut() {
             pane.agent_status = status.to_owned();
@@ -1533,6 +2118,13 @@ impl HerdrTransport for FakeTransport {
     }
     fn report(&self, _: &Pane, display: &Display) -> Result<()> {
         self.reports.borrow_mut().push(display.clone());
+        Ok(())
+    }
+
+    fn clear_legacy_summary_token(&self, pane: &Pane) -> Result<()> {
+        self.legacy_summary_clears
+            .borrow_mut()
+            .push(pane.id.clone());
         Ok(())
     }
 }
@@ -1554,12 +2146,205 @@ impl<R: SessionReader> Watcher<FakeTransport, R> {
     }
 }
 
+struct RecordingShutdown;
+
+impl hide_herdr_client::ConnectionShutdown for RecordingShutdown {
+    fn shutdown(&self) {}
+}
+
+struct RecordingStream {
+    incoming: Cursor<Vec<u8>>,
+    requests: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl Read for RecordingStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.incoming.read(buffer)
+    }
+}
+
+impl Write for RecordingStream {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.requests.lock().unwrap().push(buffer.to_vec());
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl hide_herdr_client::ApiStream for RecordingStream {
+    fn set_read_timeout(
+        &self,
+        _timeout: Option<Duration>,
+    ) -> std::result::Result<(), hide_herdr_client::ApiError> {
+        Ok(())
+    }
+
+    fn set_write_timeout(
+        &self,
+        _timeout: Option<Duration>,
+    ) -> std::result::Result<(), hide_herdr_client::ApiError> {
+        Ok(())
+    }
+
+    fn read_line_with_timeout(
+        &mut self,
+        _timeout: Duration,
+    ) -> std::result::Result<String, hide_herdr_client::ApiError> {
+        let mut line = String::new();
+        self.incoming
+            .read_line(&mut line)
+            .map_err(|error| hide_herdr_client::ApiError::Transport(error.to_string()))?;
+        Ok(line)
+    }
+
+    fn shutdown_handle(
+        &self,
+    ) -> std::result::Result<
+        Box<dyn hide_herdr_client::ConnectionShutdown>,
+        hide_herdr_client::ApiError,
+    > {
+        Ok(Box::new(RecordingShutdown))
+    }
+}
+
+struct RecordingConnector {
+    responses: Mutex<Vec<Vec<u8>>>,
+    requests: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl hide_herdr_client::ApiConnector for RecordingConnector {
+    fn connect(
+        &self,
+    ) -> std::result::Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError>
+    {
+        let incoming = self.responses.lock().unwrap().remove(0);
+        Ok(Box::new(RecordingStream {
+            incoming: Cursor::new(incoming),
+            requests: Arc::clone(&self.requests),
+        }))
+    }
+}
+
+#[test]
+fn socket_transport_uses_one_client_for_list_metadata_and_subscription() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let list_response = json!({
+        "id": "herdr-core:agent.list",
+        "result": {
+            "type": "agent_list",
+            "agents": [{
+                "pane_id": "w1:p1",
+                "agent": "claude",
+                "agent_status": "idle",
+                "revision": 3,
+                "state_change_seq": 9,
+                "cwd": "/tmp",
+                "focused": true,
+                "agent_session": null
+            }]
+        }
+    });
+    let report_response = json!({
+        "id": "herdr-core:pane.report_metadata",
+        "result": {"type": "pane_metadata_reported", "pane_id": "w1:p1"}
+    });
+    let legacy_clear_response = json!({
+        "id": "herdr-core:pane.report_metadata",
+        "result": {"type": "pane_metadata_reported", "pane_id": "w1:p1"}
+    });
+    let subscription_response = format!(
+        "{}\n{}\n",
+        json!({
+            "id": "herdr-core:events.subscribe",
+            "result": {
+                "type": "subscription_started",
+                "host": {"host_id": "fixture", "session_id": "session"},
+                "sequence": 20,
+                "oldest_available_sequence": 1
+            }
+        }),
+        json!({
+            "protocol": HERDR_PROTOCOL_REVISION,
+            "host": {"host_id": "fixture", "session_id": "session"},
+            "sequence": 21,
+            "event": "pane_focused",
+            "data": {"type": "pane_focused", "pane_id": "w1:p1", "workspace_id": "w1"}
+        })
+    );
+    let connector = RecordingConnector {
+        responses: Mutex::new(vec![
+            list_response.to_string().into_bytes(),
+            report_response.to_string().into_bytes(),
+            legacy_clear_response.to_string().into_bytes(),
+            subscription_response.into_bytes(),
+        ]),
+        requests: Arc::clone(&requests),
+    };
+    let socket = SocketHerdr {
+        connector: Arc::new(connector),
+        timeout: Duration::from_secs(1),
+    };
+
+    let panes = socket.panes().unwrap();
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].state_change_seq, 9);
+    socket
+        .report(
+            &panes[0],
+            &Display {
+                status: StatusIcon::Idle,
+                ..Display::default()
+            },
+        )
+        .unwrap();
+    socket.clear_legacy_summary_token(&panes[0]).unwrap();
+    let subscription = socket.subscribe(17, &["w1:p1".to_owned()]).unwrap();
+    assert_eq!(subscription.ack.sequence, 20);
+    let (mut reader, _shutdown) = subscription.into_parts();
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(line.contains("pane_focused"));
+
+    let requests = requests.lock().unwrap();
+    let methods = requests
+        .iter()
+        .map(|request| serde_json::from_slice::<Value>(request).unwrap()["method"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        methods,
+        [
+            json!("agent.list"),
+            json!("pane.report_metadata"),
+            json!("pane.report_metadata"),
+            json!("events.subscribe")
+        ]
+    );
+    let legacy_clear_request: Value = serde_json::from_slice(&requests[2]).unwrap();
+    assert_eq!(
+        legacy_clear_request["params"]["tokens"]["summary"],
+        Value::Null
+    );
+    let subscription_request: Value = serde_json::from_slice(&requests[3]).unwrap();
+    assert_eq!(subscription_request["params"]["after_sequence"], 17);
+    assert_eq!(
+        subscription_request["params"]["subscriptions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        WATCHER_SUBSCRIPTIONS.len()
+    );
+}
+
 /// A provider the test scripts: each request receives the next reply, and the
 /// last one repeats. Counting calls is what the request-budget tests observe.
 struct ScriptedBackend {
     id: ProviderId,
     calls: AtomicUsize,
     replies: Mutex<Vec<std::result::Result<Value, AiError>>>,
+    inputs: Mutex<Vec<String>>,
 }
 
 impl ScriptedBackend {
@@ -1572,11 +2357,16 @@ impl ScriptedBackend {
             id,
             calls: AtomicUsize::new(0),
             replies: Mutex::new(replies),
+            inputs: Mutex::new(Vec::new()),
         })
     }
 
     fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
+    }
+
+    fn inputs(&self) -> Vec<String> {
+        self.inputs.lock().unwrap().clone()
     }
 }
 
@@ -1595,10 +2385,11 @@ impl AiBackend for ScriptedBackend {
 
     fn execute(
         &self,
-        _: &hide_ai::AiRequest,
+        request: &hide_ai::AiRequest,
         _: &CancelToken,
     ) -> std::result::Result<AiResponse, AiError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inputs.lock().unwrap().push(request.input.clone());
         let mut replies = self.replies.lock().unwrap();
         let reply = if replies.len() > 1 {
             replies.remove(0)
@@ -1655,7 +2446,13 @@ impl AiBackend for PanickingBackend {
             panic!("provider bug");
         }
         Ok(AiResponse {
-            value: json!({"expected_reply": "", "summary": "두 번째 요청 요약", "attention": "none"}),
+            value: json!({
+                "task": "두 번째 요청 요약",
+                "task_changed": true,
+                "progress": "완료",
+                "expected_reply": "",
+                "attention": "none"
+            }),
             usage: AiUsage::default(),
         })
     }
@@ -1670,18 +2467,22 @@ fn no_provider() -> Arc<AiRouter> {
     ))
 }
 
-fn summary_backend() -> Arc<ScriptedBackend> {
+fn task_backend() -> Arc<ScriptedBackend> {
     ScriptedBackend::new(vec![Ok(json!({
+        "task": "작업 요약 제목",
+        "task_changed": true,
+        "progress": "착수",
         "expected_reply": "",
-        "summary": "작업 요약",
         "attention": "none"
     }))])
 }
 
 fn question_backend() -> Arc<ScriptedBackend> {
     ScriptedBackend::new(vec![Ok(json!({
+        "task": "음료 소비량 퀴즈 풀이",
+        "task_changed": false,
+        "progress": "대기",
         "expected_reply": "퀴즈 답을 말한다",
-        "summary": "음료 소비량 퀴즈 풀이",
         "attention": "question"
     }))])
 }
@@ -1693,7 +2494,7 @@ fn usage_limited_backend() -> Arc<ScriptedBackend> {
 /// Well-formed JSON that is not the answer: the router refuses it against
 /// the feature schema before the feature ever sees it.
 fn malformed_backend() -> Arc<ScriptedBackend> {
-    ScriptedBackend::new(vec![Ok(json!({"summary": "작업 요약"}))])
+    ScriptedBackend::new(vec![Ok(json!({"task": "작업 요약 제목"}))])
 }
 
 /// A transcript the test drives turn by turn, so a scan sees exactly the
@@ -1710,27 +2511,35 @@ impl ScriptedSessionReader {
     }
 
     fn user(&self, text: &str) {
-        self.events.borrow_mut().push(SessionEvent {
-            role: "user",
-            text: text.to_owned(),
-        });
+        self.events.borrow_mut().push(human_event(text));
     }
 
     /// Assistant output landing mid-turn. This is the churn that used to make
-    /// every poll look like a new question to ask the provider.
+    /// every event look like a new question to ask the provider.
     fn assistant(&self, text: &str) {
-        self.events.borrow_mut().push(SessionEvent {
-            role: "assistant",
-            text: text.to_owned(),
-        });
+        self.events.borrow_mut().push(assistant_event(text));
+    }
+
+    fn injected(&self, text: &str) {
+        self.events
+            .borrow_mut()
+            .push(SessionEvent::new("user", EventKind::Injected, 0, text));
+    }
+
+    fn interrupted(&self, text: &str) {
+        self.events
+            .borrow_mut()
+            .push(SessionEvent::new("user", EventKind::Interrupted, 0, text));
     }
 }
 
 impl SessionReader for ScriptedSessionReader {
-    fn read(&self, _: &Pane) -> Result<ParsedSession> {
+    fn read(&mut self, _: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
             events: self.events.borrow().clone(),
             skipped_lines: 0,
+            skipped_reasons: Default::default(),
+            rescan_reason: None,
         })
     }
 }
@@ -1738,13 +2547,12 @@ impl SessionReader for ScriptedSessionReader {
 struct FakeSessionReader;
 
 impl SessionReader for FakeSessionReader {
-    fn read(&self, _: &Pane) -> Result<ParsedSession> {
+    fn read(&mut self, _: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
-            events: vec![SessionEvent {
-                role: "user",
-                text: "작업 요약을 생성하고 표시를 검증해줘".to_owned(),
-            }],
+            events: vec![human_event("작업 요약을 생성하고 표시를 검증해줘")],
             skipped_lines: 0,
+            skipped_reasons: Default::default(),
+            rescan_reason: None,
         })
     }
 }
@@ -1773,7 +2581,7 @@ fn a_repeating_failure_is_abandoned_instead_of_retried_forever() {
     assert_eq!(backend.calls(), settled_attempts);
 
     // From here nobody asks for anything, and the watcher must stay quiet
-    // rather than rediscovering the same failure on every poll.
+    // rather than rediscovering the same failure on every event.
     for _ in 0..8 {
         watcher.advance_past_provider_waits();
         watcher.settle();
@@ -1802,9 +2610,13 @@ fn the_recorded_verdict_names_the_provider_that_answered() {
     let codex = ScriptedBackend::new(vec![Err(AiError::ProviderUnavailable("gone".to_owned()))]);
     let claude = ScriptedBackend::with_id(
         ProviderId::Claude,
-        vec![Ok(
-            json!({"expected_reply": "", "summary": "대체 provider 요약", "attention": "none"}),
-        )],
+        vec![Ok(json!({
+            "task": "대체 provider 작업",
+            "task_changed": true,
+            "progress": "완료",
+            "expected_reply": "",
+            "attention": "none"
+        }))],
     );
     let mut watcher = Watcher::new(
         FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
@@ -1820,12 +2632,12 @@ fn the_recorded_verdict_names_the_provider_that_answered() {
     assert_eq!(claude.calls(), 1);
     let log = fs::read_to_string(paths.log()).unwrap();
     assert!(
-        log.contains("analysis_updated") && log.contains("provider=claude"),
+        log.contains("analysis_recorded") && log.contains("provider=claude"),
         "log was: {log}"
     );
     assert_eq!(
-        watcher.last_report().summary.as_deref(),
-        Some("대체 provider 요약")
+        watcher.last_report().task.as_deref(),
+        Some("대체 provider 작업")
     );
 }
 
@@ -1866,7 +2678,7 @@ fn a_panicking_analysis_still_reports_and_frees_the_pane() {
     watcher.settle();
     assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
     assert_eq!(
-        watcher.last_report().summary.as_deref(),
+        watcher.last_report().task.as_deref(),
         Some("두 번째 요청 요약")
     );
 }
@@ -1915,20 +2727,25 @@ fn a_label_request_carries_the_feature_prompt_and_schema() {
     assert!(request.input.contains("<latest-exchange/>"));
     assert_eq!(
         request.output_schema["required"],
-        json!(["expected_reply", "summary", "attention"])
+        json!([
+            "task",
+            "task_changed",
+            "progress",
+            "expected_reply",
+            "attention"
+        ])
     );
 }
 
 struct StateSequenceReader;
 
 impl SessionReader for StateSequenceReader {
-    fn read(&self, pane: &Pane) -> Result<ParsedSession> {
+    fn read(&mut self, pane: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
-            events: vec![SessionEvent {
-                role: "user",
-                text: format!("새 요청 {}", pane.state_change_seq),
-            }],
+            events: vec![human_event(format!("새 요청 {}", pane.state_change_seq))],
             skipped_lines: 0,
+            skipped_reasons: Default::default(),
+            rescan_reason: None,
         })
     }
 }

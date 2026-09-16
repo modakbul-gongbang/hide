@@ -1,11 +1,11 @@
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use hide_session::{newest_codex_session_files, parse_rfc3339, read_tail};
 use serde_json::{Value, json};
 
 use crate::model::{ProviderUsageBucketSnapshot, ProviderUsageSnapshot};
@@ -20,7 +20,6 @@ const STALE_LIMIT_MS: u64 = 15 * 60 * 1_000;
 const KEYCHAIN_TIMEOUT: Duration = Duration::from_secs(3);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const CODEX_TAIL_BYTES: u64 = 2 * 1024 * 1024;
-const CODEX_CANDIDATE_LIMIT: usize = 32;
 const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const RETRY_BACKOFF: [Duration; 3] = [
@@ -857,129 +856,6 @@ fn parse_latest_codex_weekly_usage(contents: &str) -> Option<(f64, u64, Option<u
             source_at,
         ))
     })
-}
-
-fn newest_codex_session_files(root: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut level = root.to_path_buf();
-    for _ in 0..3 {
-        let children = numeric_child_directories(&level)?;
-        let Some(next) = children.into_iter().max() else {
-            return Err(format!(
-                "no dated session directory under {}",
-                level.display()
-            ));
-        };
-        level.push(next);
-    }
-    let entries = fs::read_dir(&level)
-        .map_err(|error| format!("could not read {}: {error}", level.display()))?;
-    let mut candidates = entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            (path.extension().and_then(|extension| extension.to_str()) == Some("jsonl"))
-                .then(|| Some((entry.metadata().ok()?.modified().ok()?, path)))?
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
-    candidates.truncate(CODEX_CANDIDATE_LIMIT);
-    Ok(candidates.into_iter().map(|(_, path)| path).collect())
-}
-
-fn numeric_child_directories(path: &Path) -> Result<Vec<String>, String> {
-    let entries = fs::read_dir(path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    Ok(entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .filter_map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            name.chars()
-                .all(|character| character.is_ascii_digit())
-                .then_some(name)
-        })
-        .collect())
-}
-
-fn read_tail(path: &Path, maximum_bytes: u64) -> Result<String, String> {
-    let mut file =
-        File::open(path).map_err(|error| format!("could not open {}: {error}", path.display()))?;
-    let length = file
-        .metadata()
-        .map_err(|error| format!("could not stat {}: {error}", path.display()))?
-        .len();
-    let start = length.saturating_sub(maximum_bytes);
-    file.seek(SeekFrom::Start(start))
-        .map_err(|error| format!("could not seek {}: {error}", path.display()))?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    let mut contents = String::from_utf8_lossy(&bytes).into_owned();
-    if start > 0
-        && let Some(first_newline) = contents.find('\n')
-    {
-        contents.drain(..=first_newline);
-    }
-    Ok(contents)
-}
-
-fn parse_rfc3339(value: &str) -> Option<u64> {
-    let bytes = value.as_bytes();
-    if bytes.len() < 20
-        || bytes.get(4) != Some(&b'-')
-        || bytes.get(7) != Some(&b'-')
-        || !matches!(bytes.get(10), Some(b'T' | b't'))
-        || bytes.get(13) != Some(&b':')
-        || bytes.get(16) != Some(&b':')
-    {
-        return None;
-    }
-    let number = |start: usize, end: usize| value.get(start..end)?.parse::<i64>().ok();
-    let year = number(0, 4)?;
-    let month = number(5, 7)?;
-    let day = number(8, 10)?;
-    let hour = number(11, 13)?;
-    let minute = number(14, 16)?;
-    let second = number(17, 19)?;
-    if !(1..=12).contains(&month)
-        || !(1..=days_in_month(year, month)).contains(&day)
-        || !(0..=23).contains(&hour)
-        || !(0..=59).contains(&minute)
-        || !(0..=60).contains(&second)
-    {
-        return None;
-    }
-    let mut cursor = 19;
-    if bytes.get(cursor) == Some(&b'.') {
-        cursor += 1;
-        let start = cursor;
-        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
-            cursor += 1;
-        }
-        if cursor == start {
-            return None;
-        }
-    }
-    let offset = match bytes.get(cursor)? {
-        b'Z' | b'z' if cursor + 1 == bytes.len() => 0,
-        sign @ (b'+' | b'-')
-            if cursor + 6 == bytes.len() && bytes.get(cursor + 3) == Some(&b':') =>
-        {
-            let offset_hour = number(cursor + 1, cursor + 3)?;
-            let offset_minute = number(cursor + 4, cursor + 6)?;
-            if offset_hour > 23 || offset_minute > 59 {
-                return None;
-            }
-            let seconds = offset_hour * 3_600 + offset_minute * 60;
-            if *sign == b'+' { seconds } else { -seconds }
-        }
-        _ => return None,
-    };
-    let timestamp = days_from_civil(year, month, day)
-        .checked_mul(86_400)?
-        .checked_add(hour * 3_600 + minute * 60 + second)?
-        .checked_sub(offset)?;
-    u64::try_from(timestamp).ok()
 }
 
 fn parse_http_date(value: &str) -> Option<u64> {

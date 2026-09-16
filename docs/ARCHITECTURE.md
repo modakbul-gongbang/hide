@@ -18,6 +18,11 @@ The AppKit outline derives file and ancestor-folder decorations from that snapsh
 Per-pane attach threads stream PTY bytes into the runtime as terminal chunks.
 Everything the shell renders comes from that one snapshot pull.
 
+The agent-context-labels plugin is a separate headless consumer of the same Herdr socket contract.
+It opens one long-lived `events.subscribe` stream for pane lifecycle events, bootstraps pane state with `agent.list`, and reports metadata only after a display transition.
+Its event loop also receives hook and refresh wakes through a short-lived Unix socket in the plugin state directory.
+When the stream ends, the plugin resumes from its sequence cursor with bounded exponential backoff and performs a fresh pane bootstrap when the retained journal cannot cover the gap.
+
 The shell holds no authority, but the core does not hand all of it to Herdr either.
 Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
 A core-owned value changes on the event that asked for it and Herdr is told afterwards, so the canvas and the focus ring never wait for a round trip.
@@ -95,8 +100,8 @@ No reopen notice uses the shell's modal interaction alert.
 ## The Herdr wire boundary
 
 The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`, and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
-`herdr-core/build.rs` turns the five sub-schemas into Rust modules under `herdr_contract::wire` at build time; generated source stays in `OUT_DIR` and is never committed.
-`herdr-core/src/wire.rs` is the only boundary that converts generated values into the core's projection and event inputs and builds generated subscription parameters.
+`hide-herdr-client/build.rs` turns the five sub-schemas into Rust modules under `hide_herdr_client::wire` at build time; generated source stays in `OUT_DIR` and is never committed.
+`herdr-core/src/wire.rs` is the only core boundary that converts generated values into the core's projection and event inputs; shared request and subscription encoding lives in `hide-herdr-client`.
 Do not write new wire deserialization structs in `session_sync.rs` or import generated types into domain, runtime or sidebar code.
 The pinned event schema currently omits protocol, host and sequence: only the boundary's minimal metadata envelope is handwritten, and its schema-gap test requires deletion when the fork declares those fields.
 Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them.

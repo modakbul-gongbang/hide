@@ -4,7 +4,6 @@ use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
-#[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -12,18 +11,46 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// Herdr API protocol revision this core speaks. A mismatch is a hard,
-/// explicit failure instead of a partially working sidebar.
-pub const HERDR_PROTOCOL_REVISION: u64 = crate::herdr_contract::HERDR_PROTOCOL_REVISION as u64;
+/// The canonical schema copied from the pinned Herdr binary.
+pub const HERDR_API_SCHEMA_JSON: &str = include_str!("../../contracts/herdr-api.schema.json");
 
-#[cfg(test)]
+include!(concat!(env!("OUT_DIR"), "/herdr_contract.rs"));
+
+/// Herdr API protocol revision this client speaks. A mismatch is a hard,
+/// explicit failure instead of a partially working sidebar.
+pub const HERDR_PROTOCOL_REVISION: u64 = HERDR_PROTOCOL_REVISION_SCHEMA as u64;
+
+#[allow(
+    dead_code,
+    clippy::derivable_impls,
+    clippy::enum_variant_names,
+    clippy::large_enum_variant
+)]
+pub mod wire {
+    pub mod request {
+        include!(concat!(env!("OUT_DIR"), "/herdr_request.rs"));
+    }
+    pub mod success_response {
+        include!(concat!(env!("OUT_DIR"), "/herdr_success_response.rs"));
+    }
+    pub mod event {
+        include!(concat!(env!("OUT_DIR"), "/herdr_event.rs"));
+    }
+    pub mod subscription_event {
+        include!(concat!(env!("OUT_DIR"), "/herdr_subscription_event.rs"));
+    }
+    pub mod error_response {
+        include!(concat!(env!("OUT_DIR"), "/herdr_error_response.rs"));
+    }
+}
+
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub(crate) trait ConnectionShutdown: Send {
+pub trait ConnectionShutdown: Send {
     fn shutdown(&self);
 }
 
-pub(crate) trait ApiStream: Read + Write + Send {
+pub trait ApiStream: Read + Write + Send {
     fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError>;
 
     fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError>;
@@ -33,12 +60,12 @@ pub(crate) trait ApiStream: Read + Write + Send {
     fn shutdown_handle(&self) -> Result<Box<dyn ConnectionShutdown>, ApiError>;
 }
 
-pub(crate) trait ApiConnector: Send + Sync {
+pub trait ApiConnector: Send + Sync {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct UnixSocketConnector {
+pub struct UnixSocketConnector {
     socket_path: PathBuf,
 }
 
@@ -148,13 +175,13 @@ impl ApiStream for UnixStream {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) struct HostScope {
+pub struct HostScope {
     pub host_id: String,
     pub session_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ApiError {
+pub enum ApiError {
     Transport(String),
     Remote { code: String, message: String },
     Malformed(String),
@@ -194,15 +221,15 @@ struct ResponseEnvelope {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-pub(crate) struct SubscriptionStarted {
+pub struct SubscriptionStarted {
     #[serde(rename = "type")]
-    kind: String,
+    pub kind: String,
     pub host: HostScope,
     pub sequence: u64,
     pub oldest_available_sequence: u64,
 }
 
-pub(crate) struct Subscription {
+pub struct Subscription {
     pub ack: SubscriptionStarted,
     reader: BufReader<Box<dyn ApiStream>>,
     shutdown: Box<dyn ConnectionShutdown>,
@@ -214,14 +241,12 @@ impl Subscription {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn request(socket_path: &Path, method: &str, params: Value) -> Result<Value, String> {
+pub fn request(socket_path: &Path, method: &str, params: Value) -> Result<Value, String> {
     request_with_timeout(socket_path, method, params, API_TIMEOUT)
         .map_err(|error| format!("{method} failed: {error}"))
 }
 
-#[cfg(test)]
-pub(crate) fn request_with_timeout(
+pub fn request_with_timeout(
     socket_path: &Path,
     method: &str,
     params: Value,
@@ -235,7 +260,7 @@ pub(crate) fn request_with_timeout(
     )
 }
 
-pub(crate) fn request_with_connector(
+pub fn request_with_connector(
     connector: &dyn ApiConnector,
     method: &str,
     params: Value,
@@ -256,7 +281,7 @@ pub(crate) fn request_with_connector(
 /// mutation idempotency. Callers may use it to correlate one reopen stage in
 /// diagnostics, but must reconcile an ambiguous transport failure before
 /// submitting that external effect again.
-pub(crate) fn request_with_correlation_id(
+pub fn request_with_correlation_id(
     connector: &dyn ApiConnector,
     request_id: &str,
     method: &str,
@@ -271,8 +296,7 @@ pub(crate) fn request_with_correlation_id(
     response_result(response, request_id)
 }
 
-#[cfg(test)]
-pub(crate) fn subscribe(
+pub fn subscribe(
     socket_path: &Path,
     after_sequence: u64,
     subscriptions: &[&str],
@@ -286,10 +310,25 @@ pub(crate) fn subscribe(
     )
 }
 
-pub(crate) fn subscribe_with_connector(
+pub fn subscribe_with_connector(
     connector: &dyn ApiConnector,
     after_sequence: u64,
     subscriptions: &[&str],
+    timeout: Duration,
+) -> Result<Subscription, ApiError> {
+    subscribe_with_connector_for_panes(connector, after_sequence, subscriptions, &[], timeout)
+}
+
+/// Open an event subscription whose filters may include the pane-scoped
+/// `pane.agent_status_changed` kind.  The Herdr contract requires a
+/// `pane_id` for that filter, so callers pass the pane ids discovered from
+/// their bootstrap snapshot.  The other subscription kinds remain
+/// unparameterized.
+pub fn subscribe_with_connector_for_panes(
+    connector: &dyn ApiConnector,
+    after_sequence: u64,
+    subscriptions: &[&str],
+    pane_ids: &[String],
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
     let mut stream = connector.connect()?;
@@ -299,7 +338,7 @@ pub(crate) fn subscribe_with_connector(
         stream.as_mut(),
         request_id,
         "events.subscribe",
-        crate::wire::subscription_params(after_sequence, subscriptions)
+        subscription_params_for_panes(after_sequence, subscriptions, pane_ids)
             .map_err(ApiError::Malformed)?,
     )?;
 
@@ -323,6 +362,62 @@ pub(crate) fn subscribe_with_connector(
         reader,
         shutdown,
     })
+}
+
+/// Encode a contract-checked `events.subscribe` parameter object.
+pub fn subscription_params(after_sequence: u64, subscriptions: &[&str]) -> Result<Value, String> {
+    encode_subscription_params(after_sequence, subscriptions, &[], false)
+}
+
+/// Encode a contract-checked `events.subscribe` parameter object, expanding
+/// pane-scoped status filters once per known pane.
+pub fn subscription_params_for_panes(
+    after_sequence: u64,
+    subscriptions: &[&str],
+    pane_ids: &[String],
+) -> Result<Value, String> {
+    encode_subscription_params(after_sequence, subscriptions, pane_ids, true)
+}
+
+fn encode_subscription_params(
+    after_sequence: u64,
+    subscriptions: &[&str],
+    pane_ids: &[String],
+    skip_empty_status_filter: bool,
+) -> Result<Value, String> {
+    let mut encoded = Vec::new();
+    for kind in subscriptions {
+        if *kind == "pane.agent_status_changed" {
+            if pane_ids.is_empty() {
+                if skip_empty_status_filter {
+                    continue;
+                }
+                return Err(
+                    "invalid event subscription: pane.agent_status_changed requires pane ids"
+                        .to_owned(),
+                );
+            }
+            for pane_id in pane_ids {
+                encoded.push(
+                    serde_json::from_value::<wire::request::Subscription>(json!({
+                        "type": kind,
+                        "pane_id": pane_id,
+                    }))
+                    .map_err(|error| format!("invalid event subscription: {error}"))?,
+                );
+            }
+        } else {
+            encoded.push(
+                serde_json::from_value::<wire::request::Subscription>(json!({"type": kind}))
+                    .map_err(|error| format!("invalid event subscription: {error}"))?,
+            );
+        }
+    }
+    serde_json::to_value(wire::request::EventsSubscribeParams {
+        after_sequence,
+        subscriptions: encoded,
+    })
+    .map_err(|error| format!("subscription parameters could not be encoded: {error}"))
 }
 
 fn write_request(
@@ -583,5 +678,27 @@ mod tests {
         server.join().expect("fake server joins");
         std::fs::remove_file(&socket_path).expect("remove socket");
         std::fs::remove_dir(&root).expect("remove socket directory");
+    }
+
+    #[test]
+    fn parameterized_status_subscriptions_are_expanded_for_known_panes() {
+        let params = subscription_params_for_panes(
+            17,
+            &["pane.focused", "pane.agent_status_changed"],
+            &["w1:p1".to_owned(), "w1:p2".to_owned()],
+        )
+        .expect("contract-valid subscription filters");
+        assert_eq!(
+            params,
+            json!({
+                "after_sequence": 17,
+                "subscriptions": [
+                    {"type": "pane.focused"},
+                    {"type": "pane.agent_status_changed", "pane_id": "w1:p1"},
+                    {"type": "pane.agent_status_changed", "pane_id": "w1:p2"}
+                ]
+            })
+        );
+        assert!(subscription_params(17, &["pane.agent_status_changed"]).is_err());
     }
 }

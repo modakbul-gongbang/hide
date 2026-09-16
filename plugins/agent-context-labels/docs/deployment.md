@@ -52,7 +52,7 @@ It extends `PATH` with the usual install locations so the watcher finds the `cod
 ```text
 ~/.local/state/hide.agent-context-labels/
 ├── events.jsonl        # append-only log; the first place to look
-├── display-state.json  # per-pane summary, verdict, analyzed turn per phase
+├── display-state.json  # per-pane task, progress, verdict, analyzed turn per phase
 ├── hook-state.json     # pending native-hook interaction state
 └── settings.json       # automatic-summaries toggle
 ```

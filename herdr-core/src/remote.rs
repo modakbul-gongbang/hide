@@ -36,10 +36,10 @@ use tokio::runtime::{Builder, Runtime};
 use crate::domain::{
     DomainEvent, DomainProjection, DomainSnapshot, EnvironmentContract, HostScope,
 };
-use crate::herdr_api::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 use crate::remote_files::{FileEntry, FileKind, FileResult, FileServiceError, SftpTransport};
 #[cfg(test)]
 use crate::remote_files::{FileService, RemoteFileService};
+use hide_herdr_client::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
@@ -1863,7 +1863,7 @@ impl RusshRemoteClient {
 
     pub fn fetch_herdr_snapshot(&self, socket_path: &str) -> RemoteResult<RemoteSnapshotEnvelope> {
         let connector = self.herdr_api_connector(socket_path)?;
-        let response = crate::herdr_api::request_with_connector(
+        let response = hide_herdr_client::request_with_connector(
             &connector,
             "session.snapshot",
             crate::wire::empty_params(),
@@ -1876,7 +1876,7 @@ impl RusshRemoteClient {
     #[cfg(test)]
     pub fn fetch_herdr_snapshot_value(&self, socket_path: &str) -> RemoteResult<Value> {
         let connector = self.herdr_api_connector(socket_path)?;
-        crate::herdr_api::request_with_connector(
+        hide_herdr_client::request_with_connector(
             &connector,
             "session.snapshot",
             crate::wire::empty_params(),
@@ -3813,7 +3813,7 @@ mod tests {
         let connector = client
             .herdr_api_connector(&socket_path)
             .expect("remote Socket API connector initializes");
-        let result = crate::herdr_api::request_with_connector(
+        let result = hide_herdr_client::request_with_connector(
             &connector,
             "session.snapshot",
             json!({}),
@@ -3822,7 +3822,7 @@ mod tests {
         .expect("official remote Socket API snapshot responds");
         let snapshot = decode_remote_snapshot(&result, "remote-herdr-snapshot")
             .expect("remote snapshot matches the official protocol");
-        let agents = crate::herdr_api::request_with_connector(
+        let agents = hide_herdr_client::request_with_connector(
             &connector,
             "agent.list",
             json!({}),
@@ -3831,7 +3831,7 @@ mod tests {
         .expect("a second channel reuses the authenticated SSH connection");
         assert_eq!(agents["type"], "agent_list");
 
-        let subscription = crate::herdr_api::subscribe_with_connector(
+        let subscription = hide_herdr_client::subscribe_with_connector(
             &connector,
             snapshot.event_sequence,
             &["pane.updated"],

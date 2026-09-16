@@ -12,10 +12,10 @@
 - Herdr 0.8.0 이상 (`herdr --version`)
 - macOS 또는 Linux
 - Rust stable 툴체인 (`cargo --version`) - GitHub 설치 시 빌드에 필요
-- 로그인된 Codex CLI (`codex login`) - 요약과 평문 질문 감지에 사용. 없어도 lifecycle 심볼은 그대로 동작합니다.
+- 로그인된 Codex CLI (`codex login`) - task 라벨과 평문 질문 감지에 사용. 없어도 lifecycle 심볼은 그대로 동작합니다.
 
 API 키나 환경변수는 없습니다.
-요약은 이 머신에 이미 로그인된 Codex 계정으로 `codex app-server`를 통해 만들어집니다.
+task 라벨은 이 머신에 이미 로그인된 Codex 계정으로 `codex app-server`를 통해 만들어집니다.
 
 ## 1. 플러그인과 통합 설치
 
@@ -39,7 +39,7 @@ codex login
 ```
 
 워처는 Herdr 서버가 로그인 셸 밖에서 시작됐더라도 `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`에서 `codex`를 찾습니다.
-Codex가 없거나 로그아웃 상태거나 사용량 한도에 걸리면 워처는 기존 요약을 유지하고 `analysis_provider_unavailable`을 기록한 뒤 10분 후 다시 시도합니다.
+Codex가 없거나 로그아웃 상태거나 사용량 한도에 걸리면 워처는 기존 task를 유지하고 `analysis_provider_unavailable`을 기록한 뒤 10분 후 다시 시도합니다.
 Claude Code는 provider로 등록돼 있지만 `unsupported`로 보고됩니다.
 사용자 대화에 끼어들지 않고 구조화된 답을 돌려받는 계약이 없기 때문이며, README의 [Requirements](README.md#requirements)에 근거가 있습니다.
 
@@ -86,7 +86,7 @@ nohup /bin/sh "$root/scripts/start-watcher.sh" >/dev/null 2>&1 &
 
 ```bash
 herdr plugin list --plugin hide.agent-context-labels
-herdr agent list          # pane에 summary / status_* / sort_rank / activity 토큰이 붙었는지
+herdr agent list          # pane에 task / status_* / sort_rank / activity 토큰이 붙었는지
 tail -n 50 ~/.local/state/hide.agent-context-labels/events.jsonl
 ```
 

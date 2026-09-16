@@ -1,16 +1,15 @@
 use agent_context_labels::{
-    CliHerdr, LocalSessionReader, PLUGIN_ID, POLL_INTERVAL, SessionEvent, StatePaths, Watcher,
-    analysis_context, append_log, apply_hook_payload, apply_priority_agent_view, context_label,
+    EventKind, LocalSessionReader, PLUGIN_ID, SessionEvent, SocketHerdr, StatePaths, Watcher,
+    analysis_context, analysis_context_from_session, append_log, apply_hook_payload, context_label,
     exclusive_watcher_lock, migrate_legacy_state, provider, request_refresh,
     set_automatic_summaries,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use hide_ai::{AiResult, AiRouter, CancelToken, ProviderId};
+use hide_session::Agent as SessionAgent;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::SystemTime;
 
 #[derive(Parser)]
 #[command(name = "hide-agent-context-labels")]
@@ -23,6 +22,21 @@ struct Cli {
 enum Provider {
     Codex,
     Claude,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SessionFormat {
+    Claude,
+    Codex,
+}
+
+impl From<SessionFormat> for SessionAgent {
+    fn from(format: SessionFormat) -> Self {
+        match format {
+            SessionFormat::Claude => Self::Claude,
+            SessionFormat::Codex => Self::Codex,
+        }
+    }
 }
 
 impl From<Provider> for ProviderId {
@@ -57,7 +71,12 @@ enum Action {
     },
     /// Classify a transcript from stdin through the configured providers and
     /// print the verdict. Evaluation aid; touches no pane state.
-    AnalyzeStdin,
+    AnalyzeStdin {
+        /// Format of a JSONL session transcript. Plain `user:`/`assistant:`
+        /// input remains accepted for backwards-compatible evaluation.
+        #[arg(long, value_enum, default_value = "claude")]
+        agent: SessionFormat,
+    },
 }
 
 fn home_directory() -> Result<PathBuf> {
@@ -95,16 +114,16 @@ fn watch(home: &Path) -> Result<()> {
         Some(&provider::availability_detail(&router.availability())),
     )?;
     let mut watcher = Watcher::new(
-        CliHerdr,
+        SocketHerdr::from_environment(home),
         router,
         LocalSessionReader::new(home),
         paths.clone(),
     );
-    // From here the choice is re-read on every scan, so a change in Settings
-    // reaches the next label without restarting the watcher.
+    // From here the choice is re-read on every watcher wake, so a change in
+    // Settings reaches the next label without restarting the watcher.
     watcher.follow_ai_settings(home);
     // Ordering is a nicety; a rejected view must not stop status reporting.
-    match apply_priority_agent_view(home) {
+    match watcher.apply_priority_view() {
         Ok(()) => append_log(paths, "agent_view_applied", None, None)?,
         Err(error) => append_log(
             paths,
@@ -113,37 +132,7 @@ fn watch(home: &Path) -> Result<()> {
             Some(&format!("{error:#}")),
         )?,
     }
-    let mut failing_since: Option<(u32, SystemTime)> = None;
-    loop {
-        match watcher.scan() {
-            Ok(_) => {
-                if let Some((count, since)) = failing_since.take() {
-                    let seconds = since.elapsed().unwrap_or_default().as_secs();
-                    append_log(
-                        paths,
-                        "watcher_scan_recovered",
-                        None,
-                        Some(&format!("failures={count};seconds={seconds}")),
-                    )?;
-                }
-            }
-            Err(error) => match &mut failing_since {
-                Some((count, _)) => *count += 1,
-                slot @ None => {
-                    // Only the first failure of a streak is logged, so it has to
-                    // carry the reason; the recovery record carries the extent.
-                    append_log(
-                        paths,
-                        "watcher_scan_failed",
-                        None,
-                        Some(&format!("{error:#}")),
-                    )?;
-                    *slot = Some((1, SystemTime::now()));
-                }
-            },
-        }
-        thread::sleep(POLL_INTERVAL);
-    }
+    watcher.run_event_loop()
 }
 
 /// One label request over `context`, outside any pane. The request id names
@@ -156,13 +145,13 @@ fn analyze_once(router: &AiRouter, subject: &str, context: &str) -> Result<Strin
         .map_err(|error| anyhow!("{error}"))?;
     let analysis = context_label::parse(value)?;
     Ok(format!(
-        "provider={provider} attention={} summary={}",
+        "provider={provider} attention={} task={}",
         if analysis.attention.is_some() {
             "question"
         } else {
             "none"
         },
-        analysis.summary
+        analysis.task
     ))
 }
 
@@ -197,13 +186,14 @@ fn main() -> Result<()> {
             apply_hook_payload(&paths, &pane_id, &payload)?;
             Ok(())
         }
-        Action::AnalyzeStdin => {
+        Action::AnalyzeStdin { agent } => {
             let router = provider::router(&provider::settings_once(&home, &paths), &paths);
             let mut input = String::new();
             std::io::stdin()
                 .read_to_string(&mut input)
                 .context("cannot read transcript")?;
-            println!("{}", analyze_once(&router, "stdin", input.trim())?);
+            let context = analysis_context_from_session(agent.into(), &input);
+            println!("{}", analyze_once(&router, "stdin", &context)?);
             Ok(())
         }
         Action::VerifyProvider { provider } => {
@@ -219,10 +209,14 @@ fn main() -> Result<()> {
             let events = [
                 SessionEvent {
                     role: "user",
+                    kind: EventKind::Human,
+                    at_unix_ms: 0,
                     text: "Add compact task labels".to_owned(),
                 },
                 SessionEvent {
                     role: "assistant",
+                    kind: EventKind::Assistant,
+                    at_unix_ms: 0,
                     text: "Implementing the labels and waiting for review.".to_owned(),
                 },
             ];

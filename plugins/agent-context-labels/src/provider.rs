@@ -33,9 +33,9 @@ pub fn router_for(
 /// it could not be read when it could not.
 ///
 /// This function writes nothing to the log, because the watcher calls it on
-/// every scan: a line written here would repeat every `POLL_INTERVAL` for as
-/// long as the file stays broken, and this plugin does not rotate its log. It
-/// hands the reason back instead, and the caller decides when a reason is new.
+/// every wake: a line written here would repeat for as long as the file stays
+/// broken, and this plugin does not rotate its log. It hands the reason back
+/// instead, and the caller decides when a reason is new.
 pub fn settings(home: &Path) -> (AiSettings, Option<String>) {
     match hide_ai::settings::load(home) {
         Ok(settings) => (settings, None),

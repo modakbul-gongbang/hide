@@ -5,10 +5,6 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::herdr_api::{HERDR_PROTOCOL_REVISION, HostScope};
-use crate::herdr_contract::wire::{
-    error_response as err, event as ev, request as req, success_response as res,
-};
 use crate::live::SessionFetchError;
 use crate::model::PaneLayoutDirection;
 use crate::recent_closed::{ClosedLayout, ClosedLayoutNode, ClosedSplitDirection};
@@ -20,6 +16,10 @@ use crate::sidebar::{
     SessionAgentSessionPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
     SessionLayoutSplitPayload,
 };
+use hide_herdr_client::wire::{
+    error_response as err, event as ev, request as req, success_response as res,
+};
+use hide_herdr_client::{HERDR_PROTOCOL_REVISION, HostScope};
 
 // Observer decision: the pinned schema declares event/data but the server adds
 // these three sequencing fields. Keep only that contract gap hand-written here.
@@ -194,22 +194,6 @@ pub(crate) fn agents_response(value: Value) -> Result<Vec<ProjectedAgent>, Sessi
         }
         _ => unreachable!("the result discriminator was checked before deserialization"),
     }
-}
-
-pub(crate) fn subscription_params(
-    after_sequence: u64,
-    subscriptions: &[&str],
-) -> Result<Value, String> {
-    let subscriptions = subscriptions
-        .iter()
-        .map(|kind| serde_json::from_value::<req::Subscription>(json!({"type": kind})))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("invalid event subscription: {e}"))?;
-    serde_json::to_value(req::EventsSubscribeParams {
-        after_sequence,
-        subscriptions,
-    })
-    .map_err(|e| format!("subscription parameters could not be encoded: {e}"))
 }
 
 pub(crate) fn agent_activity(agent: &ProjectedAgent) -> Option<&str> {
@@ -1579,10 +1563,11 @@ mod tests {
     #[test]
     fn generated_subscriptions_preserve_the_resume_cursor_and_filter_shape() {
         assert_eq!(
-            subscription_params(42, &["workspace.created", "pane.focused"]).unwrap(),
+            hide_herdr_client::subscription_params(42, &["workspace.created", "pane.focused"])
+                .unwrap(),
             json!({"after_sequence": 42, "subscriptions": [{"type": "workspace.created"}, {"type": "pane.focused"}]})
         );
-        assert!(subscription_params(42, &["not.a.subscription"]).is_err());
+        assert!(hide_herdr_client::subscription_params(42, &["not.a.subscription"]).is_err());
     }
 
     #[test]

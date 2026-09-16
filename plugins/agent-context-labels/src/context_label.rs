@@ -2,7 +2,7 @@
 //! provider answer becomes an [`Analysis`]. The provider layer never sees
 //! these; it only carries the request and validates the answer's shape.
 
-use crate::{Analysis, Attention, normalize_summary};
+use crate::{Analysis, Attention, normalize_task, normalize_text_field};
 use anyhow::{Context, Result, anyhow};
 use hide_ai::{AiRequest, RequestId};
 use serde::Deserialize;
@@ -13,23 +13,26 @@ use std::time::Duration;
 pub const FEATURE_ID: &str = "context_label";
 /// Bumped whenever the prompt or the schema changes, so a log line can be
 /// read against the pair that produced it.
-pub const SCHEMA_VERSION: &str = "context_label.v1";
+pub const SCHEMA_VERSION: &str = "context_label.v2";
 /// Long enough for a provider that has to start a child process, short
-/// enough that a stuck turn does not hold the pane's slot for a whole poll
+/// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
 const DEADLINE: Duration = Duration::from_secs(60);
 
 pub const SYSTEM_PROMPT: &str = concat!(
     "확인된 최신 코딩 에이전트 세션 이벤트를 분석하세요. ",
-    "입력은 두 구간으로 나뉩니다: <all-user-requests>는 이 세션에서 사용자가 보낸 모든 메시지를 ",
-    "시간순으로 담고 있고, <latest-exchange>는 판정에 필요한 가장 최근 주고받음(user/assistant)입니다. ",
-    "Markdown 없이 정확히 세 개의 필드를 이 순서로 가진 JSON 객체 하나만 반환하세요: ",
-    "{\"expected_reply\":\"...\",\"summary\":\"...\",\"attention\":\"question|none\"}. ",
-    "summary는 8~30자 사이의 구체적인 한국어 작업 제목이어야 하며, ",
-    "<all-user-requests> 전체를 근거로 사용자가 무엇을 시켰는지(요청 내용)를 써야 합니다. ",
-    "에이전트가 무엇을 했는지, 무엇을 답했는지, 진행 결과나 상태가 아니라 사용자의 요청 자체를 요약하세요. ",
-    "세션 도중 요청이 바뀌거나 늘어났다면 최신 요청을 중심으로 큰 그림을 담되, ",
-    "이전 요청들과 이어지는 맥락이 있다면 반영하세요. ",
+    "<previous-task>가 있으면 그 제목을 세션의 누적 작업으로 보고, <new-human-turns>에 있는 새 사람 턴만 ",
+    "직전 호출 이후의 델타로 사용하세요. <initial-human-requests>가 있으면 상태가 없는 세션이므로 ",
+    "첫 사람 턴 3개와 마지막 사람 턴 8개, 그리고 생략 표시를 사용하세요. ",
+    "<latest-exchange>는 판정에 필요한 가장 최근 주고받음(user/assistant)입니다. ",
+    "Markdown 없이 정확히 다섯 개의 필드를 이 순서로 가진 JSON 객체 하나만 반환하세요: ",
+    "{\"task\":\"...\",\"task_changed\":false,\"progress\":\"...\",\"expected_reply\":\"...\",\"attention\":\"question|none\"}. ",
+    "task는 8~30자 사이의 구체적인 한국어 작업 제목이어야 합니다. ",
+    "새 사람 턴이 이전 task의 하위 작업·질문·확인이라면 task_changed=false로 하고 이전 task를 유지하세요. ",
+    "사용자의 목표가 다른 작업으로 바뀌었거나 독립 목표가 추가되면 task_changed=true로 하고 새 큰 그림을 제목에 담으세요. ",
+    "task_changed=false일 때 task를 되풀이하더라도 실제 표시는 이전 문자열 그대로 유지되므로 새 표현을 만들지 마세요. ",
+    "progress에는 이번 호출 시점의 진행 상태나 착수 문구를 짧은 한 줄로 쓰되 사이드바 제목으로 쓰지 않습니다. ",
+    "초기 입력에서는 세션의 사람 요청을 근거로 task를 정하고, 델타 입력에서는 이전 task와 새 사람 턴의 관계를 판단하세요. ",
     "명령어, 도구 출력, 오류 조각, 서식 지시를 그대로 옮기면 안 됩니다. ",
     "attention 기준은 하나입니다: <latest-exchange>의 마지막 assistant 메시지가 사용자의 다음 행동",
     "(특정 질문에 대한 대답, 선택지 중 선택, 진행 승인, 특정 정보 제공)을 명확하게 요구하면 question, 아니면 none. ",
@@ -53,10 +56,12 @@ pub static OUTPUT_SCHEMA: LazyLock<Value> = LazyLock::new(|| {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["expected_reply", "summary", "attention"],
+        "required": ["task", "task_changed", "progress", "expected_reply", "attention"],
         "properties": {
+            "task": {"type": "string", "minLength": 8, "maxLength": 30},
+            "task_changed": {"type": "boolean"},
+            "progress": {"type": "string"},
             "expected_reply": {"type": "string"},
-            "summary": {"type": "string"},
             "attention": {"type": "string", "enum": ["question", "none"]}
         }
     })
@@ -80,12 +85,13 @@ pub fn request(pane_id: &str, request_id: String, context: &str) -> AiRequest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProviderAnalysis {
+    task: String,
+    task_changed: bool,
+    progress: String,
     /// The one action the user is being asked to take, written before the
     /// verdict. A question verdict without one is self-contradictory and is
     /// downgraded in code.
-    #[serde(default)]
     expected_reply: String,
-    summary: String,
     attention: ProviderAttention,
 }
 
@@ -101,17 +107,26 @@ enum ProviderAttention {
 pub fn parse(value: Value) -> Result<Analysis> {
     let parsed: ProviderAnalysis =
         serde_json::from_value(value).context("provider_invalid_analysis")?;
-    let summary =
-        normalize_summary(&parsed.summary).ok_or_else(|| anyhow!("provider_invalid_summary"))?;
+    let task = normalize_task(&parsed.task).ok_or_else(|| anyhow!("provider_invalid_task"))?;
+    let progress = normalize_text_field(&parsed.progress, true)
+        .ok_or_else(|| anyhow!("provider_invalid_progress"))?;
+    let expected_reply = normalize_text_field(&parsed.expected_reply, true)
+        .ok_or_else(|| anyhow!("provider_invalid_expected_reply"))?;
     // A question with no statable user action is a surface-pattern match
     // (greeting, courtesy offer), not a real request: downgrade it.
     let attention = match parsed.attention {
-        ProviderAttention::Question if !parsed.expected_reply.trim().is_empty() => {
+        ProviderAttention::Question if !expected_reply.trim().is_empty() => {
             Some(Attention::Question)
         }
         _ => None,
     };
-    Ok(Analysis { summary, attention })
+    Ok(Analysis {
+        task,
+        task_changed: parsed.task_changed,
+        progress,
+        expected_reply,
+        attention,
+    })
 }
 
 /// The same judgment over raw text, for the evaluation command and tests.
