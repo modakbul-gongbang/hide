@@ -82,6 +82,7 @@ open /Applications/hide.app
 ```
 
 The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.9.0-preview.2026-09-15-deefc5857a5c arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
+After a successful local build, `dist/` retains only that current Hide zip/checksum pair; published historical versions remain available from GitHub Releases, and unrelated local files are preserved.
 
 ## Verify the installed app
 
