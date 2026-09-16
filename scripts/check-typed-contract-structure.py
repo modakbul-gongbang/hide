@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail when wire deserialization leaks back into the replica or domain."""
 from pathlib import Path
-import subprocess
+import re
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -12,9 +12,12 @@ def runtime_sources():
             *sorted((ROOT / 'herdr-core/src/runtime').glob('*.rs'))]
 
 def absent(pattern, text, description):
-    result = subprocess.run(['rg', '-n', pattern, '-'], input=text, text=True, capture_output=True)
-    if result.returncode != 1:
-        raise SystemExit(f'{description}:\n{result.stdout}{result.stderr}')
+    matches = [f'{line_number}:{line}'
+               for line_number, line in enumerate(text.splitlines(), 1)
+               if re.search(pattern, line)]
+    if matches:
+        details = '\n'.join(matches)
+        raise SystemExit(f'{description}:\n{details}')
 
 replica = (ROOT / 'herdr-core/src/session_sync.rs').read_text().split('#[cfg(test)]\nmod tests', 1)[0]
 absent(r'WorkspaceWire|WorkspaceWorktreeWire|TabWire|PaneWire|WireAgent|AgentListResult|SequencedEventEnvelope|Deserialize|serde_json::from_|Value::|\.get\("|\.as_array\(', replica, 'replica owns wire parsing')
@@ -34,7 +37,6 @@ for name in ['live.rs', 'remote.rs']:
     absent(r'\.pointer\(|Value::as_|\.get\("|\["[a-z_]+"\]', production, f'{name} navigates untyped JSON')
     # JSON telemetry is not a Herdr request. Every retained macro must declare
     # its component, so a new request body cannot hide among those diagnostics.
-    import re
     for macro in re.finditer(r'(?:serde_json::)?json!\s*\(\s*\{', production):
         if not re.match(r'\s*"component"\s*:', production[macro.end():]):
             raise SystemExit(f'{name} builds a handwritten JSON request at offset {macro.start()}')
