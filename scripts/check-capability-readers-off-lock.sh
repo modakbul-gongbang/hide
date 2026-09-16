@@ -26,9 +26,13 @@ worker_readers=(worktrees github disk ai)
 #    all. The test module at the end of each file is exempt: its fixtures build
 #    git repositories in a temporary directory with no runtime and no mutex.
 runtime_sources=(herdr-core/src/runtime.rs)
-if compgen -G 'herdr-core/src/runtime/*.rs' >/dev/null; then
-    runtime_sources+=(herdr-core/src/runtime/*.rs)
-fi
+for source in herdr-core/src/runtime/*.rs; do
+    [[ -f "$source" ]] || continue
+    # This file is the parent `#[cfg(test)] mod tests` body. Its fixtures
+    # intentionally create temporary repositories and are not runtime code.
+    [[ "$source" == herdr-core/src/runtime/tests.rs ]] && continue
+    runtime_sources+=("$source")
+done
 for source in "${runtime_sources[@]}" herdr-core/src/files.rs; do
     boundary="$(awk '$0 == "#[cfg(test)]" {print NR; exit}' "$source")"
     forks="$(awk -v boundary="${boundary:-0}" \
@@ -55,6 +59,8 @@ for reader in "${readers[@]}"; do
     callers="$(
         while IFS= read -r source; do
             [[ "$source" == "$module" ]] && continue
+            [[ "$source" == herdr-core/src/runtime/tests.rs ]] && continue
+            [[ "$source" == herdr-core/src/runtime/tests/* ]] && continue
             awk -v reader="$reader" '
                 /^#\[cfg\(test\)\]/ { exit }
                 $0 ~ reader "::.*Reader|" reader "_reader" { found = 1 }

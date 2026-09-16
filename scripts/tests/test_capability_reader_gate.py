@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CapabilityReaderGate(unittest.TestCase):
-    def run_gate(self, runtime_source):
+    def run_gate(self, runtime_source, test_support=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'scripts').mkdir()
@@ -26,6 +26,8 @@ class CapabilityReaderGate(unittest.TestCase):
                 + '\n' + '\n'.join(f'let Some(request) = read_{r}_request();' for r in requests)
             )
             (sources / 'runtime.rs').write_text(runtime_source)
+            if test_support is not None:
+                (runtime_modules / 'tests.rs').write_text(test_support)
             (sources / 'files.rs').write_text('// no subprocess\n#[cfg(test)]\nmod tests {}\n')
             return subprocess.run(['bash', 'scripts/check-capability-readers-off-lock.sh'],
                                   cwd=root, capture_output=True, text=True)
@@ -67,6 +69,16 @@ class CapabilityReaderGate(unittest.TestCase):
                                     cwd=root, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('herdr-core/src/runtime/projects.rs', result.stderr)
+
+    def test_test_only_runtime_support_file_is_exempt(self):
+        result = self.run_gate(
+            '#[cfg(test)]\nmod tests {}\n',
+            'fn fixture_repository() {\n'
+            '    std::process::Command::new("git");\n'
+            '    let _ = changes::ChangesReader::new();\n'
+            '}\n',
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == '__main__':
