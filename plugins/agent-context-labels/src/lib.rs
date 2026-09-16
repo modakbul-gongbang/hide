@@ -4,13 +4,16 @@ pub mod provider;
 use anyhow::{Context, Result, anyhow};
 use fs2::FileExt;
 use hide_ai::{AiError, AiResult, AiRouter, CancelToken, ProviderId};
+use hide_session::{
+    Agent as SessionAgent, SessionCursor, SessionIdentity, SessionLocator, parse_events,
+};
+pub use hide_session::{ConversationEvent as SessionEvent, EventKind, ParsedSession};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
-use std::io::{BufRead, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, LazyLock, mpsc};
@@ -21,7 +24,7 @@ pub const PLUGIN_ID: &str = "hide.agent-context-labels";
 /// Its state and config directories are moved once by [`migrate_legacy_state`].
 pub const LEGACY_PLUGIN_ID: &str = "herdr-agent-context-labels";
 /// Upper bound on the analysis context. The context normally spans the last
-/// user turn; this only guards against one enormous turn.
+/// two human turns; this also guards against one enormous turn.
 pub const MAX_ANALYSIS_CONTEXT_CHARS: usize = 4_000;
 pub const MAX_SUMMARY_CHARS: usize = 30;
 /// How many of the session's user turns feed the summary's "what was asked"
@@ -29,9 +32,6 @@ pub const MAX_SUMMARY_CHARS: usize = 30;
 /// with every new turn; this caps it to the recent history that still shapes
 /// the current task title.
 pub const MAX_USER_REQUEST_TURNS: usize = 8;
-/// Only the tail of a session file can change the current verdict, and session
-/// files reach several megabytes.
-pub const SESSION_TAIL_BYTES: u64 = 256 * 1024;
 pub const POLL_INTERVAL: Duration = Duration::from_millis(750);
 /// How long a pane waits before asking again after the provider layer reported
 /// that no provider can answer right now (not logged in, usage limit, no
@@ -39,9 +39,6 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(750);
 /// wait before the pane's next request. Without it the exhausted state was
 /// rediscovered on every poll, which once wrote 42828 identical lines in a day.
 pub const PROVIDER_RECOVERY_INTERVAL: Duration = Duration::from_secs(600);
-/// Day directories scanned when Herdr has not reported a Codex session yet.
-const CODEX_FALLBACK_DAYS: usize = 7;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Attention {
@@ -455,20 +452,6 @@ pub fn normalize_summary(raw: &str) -> Option<String> {
     Some(truncate_summary(candidate))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionEvent {
-    pub role: &'static str,
-    pub text: String,
-}
-
-#[derive(Debug, Default)]
-pub struct ParsedSession {
-    pub events: Vec<SessionEvent>,
-    /// Lines that could not be parsed, almost always a torn final line in a
-    /// file the agent is still appending to.
-    pub skipped_lines: usize,
-}
-
 static SECRET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)sk-[a-z0-9_-]{8,}|(?:api[_-]?key|token|password|secret)\s*[=:]\s*[^\s,;]+")
         .expect("valid secret expression")
@@ -487,18 +470,25 @@ static FILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
 /// block. Nothing else is dropped: the previous line filter also deleted every
 /// Markdown bullet, which is most of what an agent actually says.
 pub fn analysis_context(events: &[SessionEvent]) -> String {
+    let conversation = events
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::Human | EventKind::Assistant))
+        .collect::<Vec<_>>();
+    if conversation.is_empty() {
+        return String::new();
+    }
     // Span the last two user turns, not one: whether the final assistant
     // message is a fresh question or a wrap-up of one already answered is
     // often only visible in the preceding exchange.
-    let last = events
+    let last = conversation
         .iter()
-        .rposition(|event| event.role == "user")
+        .rposition(|event| event.kind == EventKind::Human)
         .unwrap_or(0);
-    let start = events[..last]
+    let start = conversation[..last]
         .iter()
-        .rposition(|event| event.role == "user")
+        .rposition(|event| event.kind == EventKind::Human)
         .unwrap_or(last);
-    let transcript = events[start..]
+    let transcript = conversation[start..]
         .iter()
         .map(|event| format!("{}: {}", event.role, event.text))
         .collect::<Vec<_>>()
@@ -508,9 +498,9 @@ pub fn analysis_context(events: &[SessionEvent]) -> String {
     // is a task title for the ongoing work, so it needs the arc of what was
     // asked, not just the fragment attached to the most recent exchange.
     // Capped so a long session does not grow the per-poll context forever.
-    let mut user_requests = events
+    let mut user_requests = conversation
         .iter()
-        .filter(|event| event.role == "user")
+        .filter(|event| event.kind == EventKind::Human)
         .map(|event| event.text.as_str())
         .collect::<Vec<_>>();
     if user_requests.len() > MAX_USER_REQUEST_TURNS {
@@ -522,6 +512,22 @@ pub fn analysis_context(events: &[SessionEvent]) -> String {
         "<all-user-requests>\n{user_requests}\n</all-user-requests>\n<latest-exchange>\n{transcript}\n</latest-exchange>"
     );
     redact(&strip_code_fences(&combined))
+}
+
+/// Build the same provider context for a complete provider session transcript
+/// that the watcher builds after its cursor has accumulated the same events.
+/// The legacy line-oriented input accepted by `analyze-stdin` is preserved when
+/// the input is not JSONL.
+pub fn analysis_context_from_session(agent: SessionAgent, contents: &str) -> String {
+    let trimmed = contents.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let parsed = parse_events(agent, trimmed);
+    if parsed.events.is_empty() && !trimmed.trim_start().starts_with('{') {
+        return trimmed.to_owned();
+    }
+    analysis_context(&parsed.events)
 }
 
 /// Which of a turn's two boundaries an analysis is answering.
@@ -557,7 +563,9 @@ impl AnalysisPhase {
 /// `None` means the transcript holds no user message yet, so there is no turn
 /// to analyze.
 pub fn turn_key(events: &[SessionEvent]) -> Option<u64> {
-    let last = events.iter().rposition(|event| event.role == "user")?;
+    let last = events
+        .iter()
+        .rposition(|event| event.kind == EventKind::Human)?;
     Some(context_fingerprint(&events[last].text))
 }
 
@@ -616,342 +624,133 @@ pub fn context_fingerprint(context: &str) -> u64 {
 }
 
 pub trait SessionReader {
-    fn read(&self, pane: &Pane) -> Result<ParsedSession>;
-}
-
-fn written_within(path: &Path, window: Duration) -> bool {
-    fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|modified| modified.elapsed().ok())
-        .is_some_and(|age| age <= window)
+    fn read(&mut self, pane: &Pane) -> Result<ParsedSession>;
 }
 
 pub struct LocalSessionReader {
-    home: PathBuf,
-    /// Panes whose session Herdr has not reported yet. Resolving those costs a
-    /// directory scan, so the answer is remembered for the process lifetime and
-    /// dropped as soon as the file disappears.
-    resolved: RefCell<HashMap<String, PathBuf>>,
+    locator: SessionLocator,
+    sessions: HashMap<String, PaneSessionState>,
 }
+
+struct PaneSessionState {
+    path: PathBuf,
+    cursor: SessionCursor,
+    events: std::collections::VecDeque<SessionEvent>,
+}
+
+const MAX_RETAINED_EVENTS: usize = 512;
 
 impl LocalSessionReader {
     pub fn new(home: &Path) -> Self {
         Self {
-            home: home.to_path_buf(),
-            resolved: RefCell::new(HashMap::new()),
+            locator: SessionLocator::new(home),
+            sessions: HashMap::new(),
         }
     }
 
-    fn claude_root(&self) -> PathBuf {
-        self.home.join(".claude/projects")
+    fn session_path(&mut self, pane: &Pane) -> Result<PathBuf> {
+        let identity = match pane.agent_session.as_ref() {
+            None => None,
+            Some(session) => match session.kind.as_str() {
+                "id" => Some(SessionIdentity::id(&session.value)),
+                "path" => Some(SessionIdentity::path(&session.value)),
+                _ if pane.cwd.is_some() => None,
+                _ => return Err(anyhow!("session_kind_unsupported")),
+            },
+        };
+        let agent = match pane.agent {
+            AgentKind::Claude => SessionAgent::Claude,
+            AgentKind::Codex => SessionAgent::Codex,
+        };
+        self.locator
+            .locate(&pane.id, agent, identity.as_ref(), pane.cwd.as_deref())
+            .map_err(Into::into)
     }
 
-    fn codex_root(&self) -> PathBuf {
-        self.home.join(".codex/sessions")
-    }
-
-    fn session_path(&self, pane: &Pane) -> Result<PathBuf> {
-        if let Some(session) = &pane.agent_session {
-            // A reported identity can outlive its file (resume, /clear); fall
-            // through to the cwd scan instead of pinning the pane to an error.
-            match self.reported_path(pane, session) {
-                Ok(path) => {
-                    // The pane is processed moments after it was active, so
-                    // its live session file was just written. A reported file
-                    // that stayed untouched while a sibling was written is a
-                    // stale identity, not the live conversation.
-                    if written_within(&path, Duration::from_secs(30)) {
-                        return Ok(path);
-                    }
-                    if let Some(cwd) = pane.cwd.as_deref()
-                        && let Ok(newest) = match pane.agent {
-                            AgentKind::Claude => self.newest_claude_session(cwd),
-                            AgentKind::Codex => self.newest_codex_session(cwd),
-                        }
-                        && newest != path
-                        && written_within(&newest, Duration::from_secs(30))
-                    {
-                        return Ok(newest);
-                    }
-                    return Ok(path);
+    fn retain_bounded(events: &mut std::collections::VecDeque<SessionEvent>) {
+        let human_positions = events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| (event.kind == EventKind::Human).then_some(index))
+            .collect::<Vec<_>>();
+        let human_count = human_positions.len();
+        let first_recent_human = human_count.saturating_sub(MAX_USER_REQUEST_TURNS);
+        let second_last_human = human_positions.iter().rev().nth(1).copied();
+        let mut human_seen = 0;
+        let mut retained = std::collections::VecDeque::new();
+        for (index, event) in events.drain(..).enumerate() {
+            let keep = if event.kind == EventKind::Human {
+                let keep = human_seen >= first_recent_human;
+                human_seen += 1;
+                keep
+            } else {
+                match human_positions.as_slice() {
+                    [] => false,
+                    [first_human] => index >= *first_human,
+                    _ => second_last_human.is_some_and(|boundary| index >= boundary),
                 }
-                Err(error) if pane.cwd.is_none() => return Err(error),
-                Err(_) => {}
-            }
-        }
-        let cwd = pane
-            .cwd
-            .as_deref()
-            .ok_or_else(|| anyhow!("session_cwd_unavailable"))?;
-        // Re-resolve on every read: a pane without a reported identity can
-        // start a newer session at any time, and pinning the first answer for
-        // the process lifetime left panes reading a finished conversation.
-        // Reads only happen on state changes, so the scan cost stays rare.
-        match match pane.agent {
-            AgentKind::Claude => self.newest_claude_session(cwd),
-            AgentKind::Codex => self.newest_codex_session(cwd),
-        } {
-            Ok(path) => {
-                self.resolved
-                    .borrow_mut()
-                    .insert(pane.id.clone(), path.clone());
-                Ok(path)
-            }
-            // A transient scan failure falls back to the last known file.
-            Err(error) => match self.resolved.borrow().get(&pane.id) {
-                Some(path) if path.is_file() => Ok(path.clone()),
-                _ => Err(error),
-            },
-        }
-    }
-
-    fn reported_path(&self, pane: &Pane, session: &AgentSession) -> Result<PathBuf> {
-        match session.kind.as_str() {
-            "path" => {
-                let path = PathBuf::from(&session.value);
-                path.is_file()
-                    .then_some(path)
-                    .ok_or_else(|| anyhow!("session_file_missing"))
-            }
-            "id" => match pane.agent {
-                AgentKind::Claude => self.claude_path_for_id(pane.cwd.as_deref(), &session.value),
-                AgentKind::Codex => self.codex_path_for_id(&session.value),
-            },
-            _ => Err(anyhow!("session_kind_unsupported")),
-        }
-    }
-
-    /// Claude stores one file per session under a directory named after the
-    /// working directory, so the lookup is a single stat when the cwd is known
-    /// and one shallow directory listing otherwise.
-    fn claude_path_for_id(&self, cwd: Option<&str>, id: &str) -> Result<PathBuf> {
-        let name = format!("{id}.jsonl");
-        if let Some(cwd) = cwd {
-            let direct = self.claude_root().join(project_directory(cwd)).join(&name);
-            if direct.is_file() {
-                return Ok(direct);
-            }
-        }
-        let root = self.claude_root();
-        let entries = fs::read_dir(&root).context("cannot read Claude sessions")?;
-        for entry in entries.flatten() {
-            let candidate = entry.path().join(&name);
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-        }
-        Err(anyhow!("session_file_missing"))
-    }
-
-    fn codex_path_for_id(&self, id: &str) -> Result<PathBuf> {
-        for directory in self.recent_codex_days() {
-            let Ok(entries) = fs::read_dir(&directory) else {
-                continue;
             };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy().contains(id))
-                {
-                    return Ok(path);
-                }
+            if keep {
+                retained.push_back(event);
             }
         }
-        Err(anyhow!("session_file_missing"))
-    }
+        *events = retained;
 
-    fn newest_claude_session(&self, cwd: &str) -> Result<PathBuf> {
-        let directory = self.claude_root().join(project_directory(cwd));
-        newest_by_modified(jsonl_files(&directory)).ok_or_else(|| anyhow!("session_file_missing"))
-    }
-
-    /// Codex files are laid out as sessions/YYYY/MM/DD and record their working
-    /// directory in the first `session_meta` line, so a bounded sweep of the
-    /// most recent day directories is enough.
-    fn newest_codex_session(&self, cwd: &str) -> Result<PathBuf> {
-        let mut candidates: Vec<_> = self
-            .recent_codex_days()
-            .into_iter()
-            .flat_map(|directory| jsonl_files(&directory))
-            .filter_map(|path| {
-                let modified = fs::metadata(&path).and_then(|data| data.modified()).ok()?;
-                Some((modified, path))
-            })
-            .collect();
-        // Newest first, so the usual case opens one file rather than all of them.
-        candidates.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-        candidates
-            .into_iter()
-            .map(|(_, path)| path)
-            .find(|path| codex_session_cwd(path).as_deref() == Some(cwd))
-            .ok_or_else(|| anyhow!("session_file_missing"))
-    }
-
-    fn recent_codex_days(&self) -> Vec<PathBuf> {
-        let mut days = Vec::new();
-        for year in newest_directories(&self.codex_root(), 2) {
-            for month in newest_directories(&year, 2) {
-                days.extend(newest_directories(&month, CODEX_FALLBACK_DAYS));
-            }
+        // A streaming response can contain many assistant records after the
+        // second-last Human event. Keep the required Human history and bound
+        // the rest so a pane cannot accumulate an unbounded transcript.
+        while events.len() > MAX_RETAINED_EVENTS {
+            let Some(index) = events
+                .iter()
+                .position(|event| event.kind != EventKind::Human)
+            else {
+                break;
+            };
+            events.remove(index);
         }
-        days.sort();
-        days.reverse();
-        days.truncate(CODEX_FALLBACK_DAYS);
-        days
     }
-}
-
-fn project_directory(cwd: &str) -> String {
-    cwd.replace('/', "-")
-}
-
-fn jsonl_files(directory: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|value| value == "jsonl"))
-        .collect()
-}
-
-fn newest_directories(root: &Path, limit: usize) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut directories: Vec<_> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect();
-    directories.sort();
-    directories.reverse();
-    directories.truncate(limit);
-    directories
-}
-
-fn newest_by_modified(paths: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
-    paths
-        .into_iter()
-        .filter_map(|path| {
-            let modified = fs::metadata(&path).and_then(|data| data.modified()).ok()?;
-            Some((modified, path))
-        })
-        .max_by_key(|(modified, _)| *modified)
-        .map(|(_, path)| path)
-}
-
-/// Codex records the working directory in the `session_meta` line that opens
-/// every rollout file. That line embeds the full base instructions and runs to
-/// tens of kilobytes, so it has to be read as a line rather than from a
-/// fixed-size window.
-fn codex_session_cwd(path: &Path) -> Option<String> {
-    let mut first = String::new();
-    std::io::BufReader::new(File::open(path).ok()?)
-        .read_line(&mut first)
-        .ok()?;
-    let value: serde_json::Value = serde_json::from_str(first.trim()).ok()?;
-    value
-        .pointer("/payload/cwd")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
-}
-
-/// Read only the tail of a session file. The first line is dropped unless the
-/// whole file was read, because it is almost certainly cut in half.
-fn read_tail(path: &Path, limit: u64) -> Result<String> {
-    let mut file = File::open(path).with_context(|| "cannot read raw session")?;
-    let length = file.metadata()?.len();
-    let start = length.saturating_sub(limit);
-    file.seek(SeekFrom::Start(start))?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    let text = String::from_utf8_lossy(&buffer).into_owned();
-    if start == 0 {
-        return Ok(text);
-    }
-    Ok(text
-        .split_once('\n')
-        .map_or_else(String::new, |(_, rest)| rest.to_owned()))
 }
 
 impl SessionReader for LocalSessionReader {
-    fn read(&self, pane: &Pane) -> Result<ParsedSession> {
+    fn read(&mut self, pane: &Pane) -> Result<ParsedSession> {
         let path = self.session_path(pane)?;
-        let contents = read_tail(&path, SESSION_TAIL_BYTES)?;
-        Ok(match pane.agent {
-            AgentKind::Claude => parse_claude_events(&contents),
-            AgentKind::Codex => parse_codex_events(&contents),
+        let state = self
+            .sessions
+            .entry(pane.id.clone())
+            .or_insert_with(|| PaneSessionState {
+                path: path.clone(),
+                cursor: SessionCursor::new(),
+                events: std::collections::VecDeque::new(),
+            });
+        if state.path != path {
+            state.path = path.clone();
+            state.cursor.reset();
+            state.events.clear();
+        }
+        let chunk = state.cursor.read(&path).map_err(anyhow::Error::from)?;
+        if chunk.rescan_reason.is_some() {
+            state.events.clear();
+        }
+        let parsed = parse_events(
+            match pane.agent {
+                AgentKind::Claude => SessionAgent::Claude,
+                AgentKind::Codex => SessionAgent::Codex,
+            },
+            &chunk.contents,
+        );
+        for event in parsed.events {
+            if event.kind != EventKind::Injected {
+                state.events.push_back(event);
+            }
+        }
+        Self::retain_bounded(&mut state.events);
+        Ok(ParsedSession {
+            events: state.events.iter().cloned().collect(),
+            skipped_lines: parsed.skipped_lines,
+            skipped_reasons: parsed.skipped_reasons,
+            rescan_reason: chunk.rescan_reason,
         })
     }
-}
-
-/// A session file is appended to while it is read, so one unparsable line is
-/// normal and must never discard the turns that did parse.
-fn parse_lines(
-    contents: &str,
-    mut extract: impl FnMut(&serde_json::Value) -> Option<SessionEvent>,
-) -> ParsedSession {
-    let mut parsed = ParsedSession::default();
-    for line in contents.lines().filter(|line| !line.trim().is_empty()) {
-        match serde_json::from_str::<serde_json::Value>(line) {
-            Ok(value) => parsed.events.extend(extract(&value)),
-            Err(_) => parsed.skipped_lines += 1,
-        }
-    }
-    parsed
-}
-
-fn parse_claude_events(contents: &str) -> ParsedSession {
-    parse_lines(contents, |item| {
-        let role = match item.get("type").and_then(serde_json::Value::as_str) {
-            Some("user") => "user",
-            Some("assistant") => "assistant",
-            _ => return None,
-        };
-        session_text(item.pointer("/message/content")).map(|text| SessionEvent { role, text })
-    })
-}
-
-fn parse_codex_events(contents: &str) -> ParsedSession {
-    parse_lines(contents, |item| {
-        if item.get("type").and_then(serde_json::Value::as_str) != Some("response_item") {
-            return None;
-        }
-        let payload = item.get("payload")?;
-        if payload.get("type").and_then(serde_json::Value::as_str) != Some("message") {
-            return None;
-        }
-        let role = match payload.get("role").and_then(serde_json::Value::as_str) {
-            Some("user") => "user",
-            Some("assistant") => "assistant",
-            _ => return None,
-        };
-        session_text(payload.get("content")).map(|text| SessionEvent { role, text })
-    })
-}
-
-fn session_text(content: Option<&serde_json::Value>) -> Option<String> {
-    let text = match content? {
-        serde_json::Value::String(text) => text.to_owned(),
-        serde_json::Value::Array(blocks) => blocks
-            .iter()
-            .filter_map(|block| {
-                matches!(
-                    block.get("type").and_then(serde_json::Value::as_str),
-                    Some("text" | "input_text" | "output_text")
-                )
-                .then(|| block.get("text").and_then(serde_json::Value::as_str))
-                .flatten()
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    };
-    (!text.trim().is_empty()).then_some(text)
 }
 
 #[derive(Debug, Serialize)]
@@ -1707,18 +1506,39 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 return self.report_if_changed(pane, &display);
             }
         };
+        if let Some(reason) = parsed.rescan_reason {
+            append_log(
+                &self.paths,
+                "session_rescanned",
+                Some(pane),
+                Some(reason.as_str()),
+            )?;
+        }
         if parsed.skipped_lines > 0 {
+            let reasons = parsed
+                .skipped_reasons
+                .iter()
+                .map(|(reason, count)| format!("{}={count}", reason.as_str()))
+                .collect::<Vec<_>>()
+                .join(",");
             append_log(
                 &self.paths,
                 "session_lines_skipped",
                 Some(pane),
-                Some(&format!("lines={}", parsed.skipped_lines)),
+                Some(&format!("lines={};reasons={reasons}", parsed.skipped_lines)),
             )?;
         }
         let newest_user_is_last = parsed
             .events
-            .last()
-            .is_some_and(|event| event.role == "user");
+            .iter()
+            .rev()
+            .find(|event| {
+                matches!(
+                    event.kind,
+                    EventKind::Human | EventKind::Interrupted | EventKind::Assistant
+                )
+            })
+            .is_some_and(|event| event.kind == EventKind::Human);
         // An interruption is the user's own act, not a new task: keep the last
         // summary, mark it, and spend no provider request on the torn turn.
         let interrupted = pane.agent_status != "working"
@@ -1726,8 +1546,8 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 .events
                 .iter()
                 .rev()
-                .find(|event| event.role == "user")
-                .is_some_and(|event| event.text.trim_start().starts_with("[Request interrupted"));
+                .find(|event| matches!(event.kind, EventKind::Human | EventKind::Interrupted))
+                .is_some_and(|event| event.kind == EventKind::Interrupted);
         if interrupted && !forced {
             let now = unix_time_ms()?;
             let state = self

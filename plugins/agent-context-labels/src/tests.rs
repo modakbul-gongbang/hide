@@ -2,6 +2,7 @@ use super::*;
 use hide_ai::{
     AiBackend, AiResponse, AiUsage, Availability, NoopLogSink, ProviderId, RouterConfig,
 };
+use hide_session::{parse_claude_events, parse_codex_events};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 #[cfg(unix)]
@@ -57,6 +58,14 @@ fn pane(id: &str, agent: AgentKind, status: &str) -> Pane {
     }
 }
 
+fn human_event(text: impl Into<String>) -> SessionEvent {
+    SessionEvent::new("user", EventKind::Human, 0, text)
+}
+
+fn assistant_event(text: impl Into<String>) -> SessionEvent {
+    SessionEvent::new("assistant", EventKind::Assistant, 0, text)
+}
+
 // ---------------------------------------------------------------- AC1
 
 #[test]
@@ -99,7 +108,7 @@ fn session_path_prefers_the_herdr_reported_identity() {
     fs::write(project.join(format!("{reported}.jsonl")), "").unwrap();
     fs::write(other.join("11111111-0000-0000-0000-000000000000.jsonl"), "").unwrap();
 
-    let reader = LocalSessionReader::new(root.path());
+    let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Claude, "idle");
     target.cwd = Some("/Users/example".to_owned());
     target.agent_session = Some(AgentSession::new("id", reported));
@@ -121,7 +130,7 @@ fn session_path_falls_back_to_the_newest_file_for_the_working_directory() {
     std::thread::sleep(Duration::from_millis(20));
     fs::write(&newer, "").unwrap();
 
-    let reader = LocalSessionReader::new(root.path());
+    let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Claude, "idle");
     target.cwd = Some("/Users/example".to_owned());
 
@@ -148,7 +157,7 @@ fn codex_session_falls_back_through_the_recent_day_directories() {
     fs::write(&mine, meta("/Users/example/projects/mine")).unwrap();
     assert!(fs::metadata(&mine).unwrap().len() > 16 * 1024);
 
-    let reader = LocalSessionReader::new(root.path());
+    let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Codex, "idle");
     target.cwd = Some("/Users/example/projects/mine".to_owned());
 
@@ -156,21 +165,109 @@ fn codex_session_falls_back_through_the_recent_day_directories() {
 }
 
 #[test]
-fn session_reads_only_the_tail_of_a_large_file() {
+fn session_reader_reads_the_full_file_and_keeps_the_first_recent_request() {
     let root = tempdir().unwrap();
-    let path = root.path().join("session.jsonl");
-    let filler = "{\"type\":\"user\",\"message\":{\"content\":\"오래된 내용\"}}\n";
-    let mut contents = filler.repeat(20_000);
-    contents.push_str("{\"type\":\"user\",\"message\":{\"content\":\"최신 요청\"}}\n");
-    fs::write(&path, &contents).unwrap();
-    assert!(fs::metadata(&path).unwrap().len() > SESSION_TAIL_BYTES);
+    let project = root.path().join(".claude/projects/-Users-example");
+    fs::create_dir_all(&project).unwrap();
+    let path = project.join("session.jsonl");
+    let mut contents = String::new();
+    for index in 0..40 {
+        contents.push_str(
+            &json!({
+                "type": "user",
+                "timestamp": format!("2026-09-16T00:00:{index:02}Z"),
+                "isMeta": true,
+                "message": {"content": "injected ".to_owned() + &"x".repeat(8 * 1024)},
+            })
+            .to_string(),
+        );
+        contents.push('\n');
+    }
+    for index in 0..MAX_USER_REQUEST_TURNS {
+        contents.push_str(
+            &json!({
+                "type": "user",
+                "timestamp": format!("2026-09-16T01:00:{index:02}Z"),
+                "origin": {"kind": "human"},
+                "message": {"content": format!("요청 {index}")},
+            })
+            .to_string(),
+        );
+        contents.push('\n');
+    }
+    fs::write(&path, contents).unwrap();
+    assert!(fs::metadata(&path).unwrap().len() > 256 * 1024);
 
-    let tail = read_tail(&path, SESSION_TAIL_BYTES).unwrap();
+    let mut reader = LocalSessionReader::new(root.path());
+    let mut target = pane("w1:p1", AgentKind::Claude, "working");
+    target.cwd = Some("/Users/example".to_owned());
+    target.agent_session = Some(AgentSession::new("id", "session"));
 
-    assert!(tail.len() as u64 <= SESSION_TAIL_BYTES);
-    assert!(tail.contains("최신 요청"));
-    // The first line of a tail read is cut in half and must be discarded.
-    assert!(serde_json::from_str::<serde_json::Value>(tail.lines().next().unwrap()).is_ok());
+    let parsed = reader.read(&target).unwrap();
+
+    assert_eq!(parsed.events.len(), MAX_USER_REQUEST_TURNS);
+    assert_eq!(parsed.events.first().unwrap().text, "요청 0");
+    assert_eq!(parsed.events.last().unwrap().text, "요청 7");
+}
+
+#[test]
+fn session_reader_reads_appends_and_rescans_truncated_or_replaced_files() {
+    let root = tempdir().unwrap();
+    let project = root.path().join(".claude/projects/-Users-example");
+    fs::create_dir_all(&project).unwrap();
+    let path = project.join("session.jsonl");
+    let line = |text: &str, second: u8| {
+        json!({
+            "type": "user",
+            "timestamp": format!("1970-01-01T00:00:{second:02}Z"),
+            "origin": {"kind": "human"},
+            "message": {"content": text},
+        })
+        .to_string()
+            + "\n"
+    };
+    fs::write(&path, line("첫 요청", 1)).unwrap();
+    let mut reader = LocalSessionReader::new(root.path());
+    let mut target = pane("w1:p1", AgentKind::Claude, "working");
+    target.cwd = Some("/Users/example".to_owned());
+    target.agent_session = Some(AgentSession::new("id", "session"));
+
+    assert_eq!(reader.read(&target).unwrap().events.len(), 1);
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(line("둘째 요청", 2).as_bytes())
+        .unwrap();
+    let appended = reader.read(&target).unwrap();
+    assert_eq!(appended.rescan_reason, None);
+    assert_eq!(
+        appended
+            .events
+            .iter()
+            .map(|event| event.text.as_str())
+            .collect::<Vec<_>>(),
+        ["첫 요청", "둘째 요청"]
+    );
+
+    fs::write(&path, line("새 파일 요청", 3)).unwrap();
+    let truncated = reader.read(&target).unwrap();
+    assert_eq!(
+        truncated.rescan_reason,
+        Some(hide_session::RescanReason::Truncated)
+    );
+    assert_eq!(truncated.events.len(), 1);
+    assert_eq!(truncated.events[0].text, "새 파일 요청");
+
+    let replacement = project.join("replacement.jsonl");
+    fs::write(&replacement, line("교체 파일 요청", 4)).unwrap();
+    fs::rename(&replacement, &path).unwrap();
+    let replaced = reader.read(&target).unwrap();
+    assert_eq!(
+        replaced.rescan_reason,
+        Some(hide_session::RescanReason::Replaced)
+    );
+    assert_eq!(replaced.events[0].text, "교체 파일 요청");
 }
 
 // ---------------------------------------------------------------- AC3
@@ -178,9 +275,9 @@ fn session_reads_only_the_tail_of_a_large_file() {
 #[test]
 fn skips_malformed_session_lines() {
     let torn = concat!(
-        r#"{"type":"user","message":{"content":"첫 번째 요청"}}"#,
+        r#"{"type":"user","timestamp":"1970-01-01T00:00:01Z","origin":{"kind":"human"},"message":{"content":"첫 번째 요청"}}"#,
         "\n",
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"작업했습니다."}]}}"#,
+        r#"{"type":"assistant","timestamp":"1970-01-01T00:00:02Z","message":{"content":[{"type":"text","text":"작업했습니다."}]}}"#,
         "\n",
         r#"{"type":"assistant","message":{"content":[{"type":"tex"#,
     );
@@ -193,7 +290,7 @@ fn skips_malformed_session_lines() {
     assert_eq!(parsed.events[1].text, "작업했습니다.");
 
     let codex = concat!(
-        r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"요약을 고쳐줘"}]}}"#,
+        r#"{"type":"response_item","timestamp":"1970-01-01T00:00:03Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"요약을 고쳐줘"}]}}"#,
         "\n",
         r#"{"type":"response_item","payload":{"type":"messa"#,
     );
@@ -206,23 +303,19 @@ fn skips_malformed_session_lines() {
 
 #[test]
 fn redaction_preserves_prose_and_bullets() {
-    let events = [SessionEvent {
-        role: "assistant",
-        text: concat!(
-            "세 문제 모두 대기 중입니다. 답 주시면 채점해 드릴게요.\n",
-            "- 문제 1 물 제외 가장 많이 소비되는 음료\n",
-            "- 문제 2 노벨상에 없는 분야\n",
-            "+ 추가 문항도 있습니다\n",
-            "1-②, 2-④ 이런 식으로 주셔도 됩니다.\n",
-            "api_key=supersecret\n",
-            "user@example.com\n",
-            "/Users/example/secret.txt\n",
-            "```rust\n",
-            "fn leak() { let secret = 1; }\n",
-            "```",
-        )
-        .to_owned(),
-    }];
+    let events = [assistant_event(concat!(
+        "세 문제 모두 대기 중입니다. 답 주시면 채점해 드릴게요.\n",
+        "- 문제 1 물 제외 가장 많이 소비되는 음료\n",
+        "- 문제 2 노벨상에 없는 분야\n",
+        "+ 추가 문항도 있습니다\n",
+        "1-②, 2-④ 이런 식으로 주셔도 됩니다.\n",
+        "api_key=supersecret\n",
+        "user@example.com\n",
+        "/Users/example/secret.txt\n",
+        "```rust\n",
+        "fn leak() { let secret = 1; }\n",
+        "```",
+    ))];
 
     let context = analysis_context(&events);
 
@@ -243,34 +336,13 @@ fn redaction_preserves_prose_and_bullets() {
 #[test]
 fn context_spans_the_last_two_user_turns() {
     let events = [
-        SessionEvent {
-            role: "user",
-            text: "가장 오래된 요청입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "assistant",
-            text: "가장 오래된 응답입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "user",
-            text: "직전 요청입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "assistant",
-            text: "직전 응답입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "user",
-            text: "최신 요청입니다".to_owned(),
-        },
-        SessionEvent {
-            role: "assistant",
-            text: "긴 응답 ".repeat(200),
-        },
-        SessionEvent {
-            role: "assistant",
-            text: "마지막으로 답을 기다립니다".to_owned(),
-        },
+        human_event("가장 오래된 요청입니다"),
+        assistant_event("가장 오래된 응답입니다"),
+        human_event("직전 요청입니다"),
+        assistant_event("직전 응답입니다"),
+        human_event("최신 요청입니다"),
+        assistant_event("긴 응답 ".repeat(200)),
+        assistant_event("마지막으로 답을 기다립니다"),
     ];
 
     let context = analysis_context(&events);
@@ -289,17 +361,55 @@ fn context_spans_the_last_two_user_turns() {
 }
 
 #[test]
+fn stdin_session_context_uses_the_shared_parser() {
+    let context = analysis_context_from_session(
+        hide_session::Agent::Claude,
+        include_str!("../../../hide-session/tests/fixtures/claude.jsonl"),
+    );
+
+    assert!(context.contains("첫 번째 요청"), "{context}");
+    assert!(context.contains("--quick"), "{context}");
+    assert!(context.contains("검토를 시작했습니다."), "{context}");
+    assert!(!context.contains("task-notification"), "{context}");
+    assert!(!context.contains("system-reminder"), "{context}");
+}
+
+#[test]
+fn interrupted_turn_keeps_the_previous_summary_without_a_provider_call() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let session = ScriptedSessionReader::new();
+    session.user("기존 요청");
+    session.assistant("작업을 마쳤습니다.");
+    let backend = summary_backend();
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "idle")]),
+        router_with(&backend),
+        session,
+        paths.clone(),
+    );
+
+    watcher.settle();
+    assert_eq!(backend.calls(), 1);
+    assert_eq!(watcher.last_report().summary.as_deref(), Some("작업 요약"));
+
+    watcher
+        .session_reader
+        .interrupted("[Request interrupted by user]");
+    watcher.transport.set_status("idle");
+    watcher.scan().unwrap();
+
+    assert_eq!(backend.calls(), 1);
+    assert_eq!(watcher.last_report().status, StatusIcon::Interrupted);
+    assert_eq!(watcher.last_report().summary.as_deref(), Some("작업 요약"));
+}
+
+#[test]
 fn all_user_requests_is_capped_to_the_recent_turns() {
     let mut events: Vec<SessionEvent> = Vec::new();
     for i in 0..(MAX_USER_REQUEST_TURNS + 3) {
-        events.push(SessionEvent {
-            role: "user",
-            text: format!("요청 {i}"),
-        });
-        events.push(SessionEvent {
-            role: "assistant",
-            text: format!("응답 {i}"),
-        });
+        events.push(human_event(format!("요청 {i}")));
+        events.push(assistant_event(format!("응답 {i}")));
     }
 
     let context = analysis_context(&events);
@@ -1302,14 +1412,8 @@ fn the_documented_model_is_the_one_the_code_calls() {
 /// asked the provider again on almost every poll.
 #[test]
 fn turn_identity_holds_while_output_grows_and_moves_only_at_a_boundary() {
-    let user = |text: &str| SessionEvent {
-        role: "user",
-        text: text.to_owned(),
-    };
-    let assistant = |text: &str| SessionEvent {
-        role: "assistant",
-        text: text.to_owned(),
-    };
+    let user = |text: &str| human_event(text);
+    let assistant = |text: &str| assistant_event(text);
 
     let mut events = vec![user("정렬 순서를 고쳐줘")];
     let start = turn_key(&events).unwrap();
@@ -1387,6 +1491,9 @@ fn one_turn_costs_at_most_two_provider_calls() {
 
     // The agent works and talks. This is where the old trigger bled requests.
     for chunk in ["파일을 읽는 중", "테스트 실행", "수정 적용", "커밋 완료"] {
+        watcher
+            .session_reader
+            .injected("<task-notification>background result</task-notification>");
         watcher.session_reader.assistant(chunk);
         watcher.advance_past_provider_waits();
         watcher.settle();
@@ -1710,27 +1817,35 @@ impl ScriptedSessionReader {
     }
 
     fn user(&self, text: &str) {
-        self.events.borrow_mut().push(SessionEvent {
-            role: "user",
-            text: text.to_owned(),
-        });
+        self.events.borrow_mut().push(human_event(text));
     }
 
     /// Assistant output landing mid-turn. This is the churn that used to make
     /// every poll look like a new question to ask the provider.
     fn assistant(&self, text: &str) {
-        self.events.borrow_mut().push(SessionEvent {
-            role: "assistant",
-            text: text.to_owned(),
-        });
+        self.events.borrow_mut().push(assistant_event(text));
+    }
+
+    fn injected(&self, text: &str) {
+        self.events
+            .borrow_mut()
+            .push(SessionEvent::new("user", EventKind::Injected, 0, text));
+    }
+
+    fn interrupted(&self, text: &str) {
+        self.events
+            .borrow_mut()
+            .push(SessionEvent::new("user", EventKind::Interrupted, 0, text));
     }
 }
 
 impl SessionReader for ScriptedSessionReader {
-    fn read(&self, _: &Pane) -> Result<ParsedSession> {
+    fn read(&mut self, _: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
             events: self.events.borrow().clone(),
             skipped_lines: 0,
+            skipped_reasons: Default::default(),
+            rescan_reason: None,
         })
     }
 }
@@ -1738,13 +1853,12 @@ impl SessionReader for ScriptedSessionReader {
 struct FakeSessionReader;
 
 impl SessionReader for FakeSessionReader {
-    fn read(&self, _: &Pane) -> Result<ParsedSession> {
+    fn read(&mut self, _: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
-            events: vec![SessionEvent {
-                role: "user",
-                text: "작업 요약을 생성하고 표시를 검증해줘".to_owned(),
-            }],
+            events: vec![human_event("작업 요약을 생성하고 표시를 검증해줘")],
             skipped_lines: 0,
+            skipped_reasons: Default::default(),
+            rescan_reason: None,
         })
     }
 }
@@ -1922,13 +2036,12 @@ fn a_label_request_carries_the_feature_prompt_and_schema() {
 struct StateSequenceReader;
 
 impl SessionReader for StateSequenceReader {
-    fn read(&self, pane: &Pane) -> Result<ParsedSession> {
+    fn read(&mut self, pane: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
-            events: vec![SessionEvent {
-                role: "user",
-                text: format!("새 요청 {}", pane.state_change_seq),
-            }],
+            events: vec![human_event(format!("새 요청 {}", pane.state_change_seq))],
             skipped_lines: 0,
+            skipped_reasons: Default::default(),
+            rescan_reason: None,
         })
     }
 }
