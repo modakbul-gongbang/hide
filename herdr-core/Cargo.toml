@@ -13,6 +13,7 @@ crate-type = ["rlib", "staticlib"]
 anyhow = "=1.0.104"
 hide-agent-hooks = { path = "../hide-agent-hooks" }
 hide-ai = { path = "../hide-ai" }
+hide-session = { path = "../hide-session" }
 base64 = "=0.23.1"
 libc = "=0.2.189"
 regress = "=0.12.0"
