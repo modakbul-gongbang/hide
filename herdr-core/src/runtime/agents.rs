@@ -720,6 +720,17 @@ impl Runtime {
         true
     }
 
+    /// Re-runs the read axis over the agents already in the snapshot, for the
+    /// moment the operator picks a pane without a new agent list arriving.
+    pub(super) fn refresh_pane_read_state(&mut self) -> bool {
+        let before = self.snapshot.navigator.agents.clone();
+        let mut agents = std::mem::take(&mut self.snapshot.navigator.agents);
+        self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain);
+        let changed = before != agents;
+        self.snapshot.navigator.agents = agents;
+        changed | self.refresh_inactive_groups()
+    }
+
     /// Applies the read axis to one remote target's agent rows.
     ///
     /// A pane is a pane: a remote row earns its read record the same way a

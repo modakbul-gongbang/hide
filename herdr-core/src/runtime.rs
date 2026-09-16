@@ -1096,67 +1096,6 @@ impl Runtime {
             .insert(target_id.into(), transport);
     }
 
-    /// Applies provider usage that the session-sync coordinator read outside
-    /// the runtime mutex. The two fixed rows are revisioned with the rest
-    /// snapshot, so an unchanged refresh produces no shell work.
-    /// What the changes reader should describe right now, or `None` when the
-    /// changes view and no diff tab are showing and nothing should be read at
-    /// all. This is the whole reason the reader never forks `git` on a
-    /// per-tick path.
-
-    /// Which repositories to list worktrees for, and what base branch each
-    /// branch is measured against.
-    ///
-    /// The bases come from the pull-request answer, so the first worktree read
-    /// compares against the repository default and a later one compares
-    /// against each pull request's own base. That is a changed request, which
-    /// is always due, so the correction arrives without a second trigger.
-
-    /// Combines subprocess answers with live pane and agent state, then sends
-    /// that one model to the sidebar, Git section, and summary card.
-    /// No filesystem or socket work occurs here.
-
-    /// The worktree catalog the coordinator should build the next projection
-    /// from. Held by the runtime so a rebuild triggered from anywhere uses the
-    /// same worktrees the last read produced.
-
-    /// Which repositories to look pull requests up for. Remote projects are
-    /// out of scope, and a plain folder has no repository to ask about.
-
-    /// Records that one project's pull requests must be read again.
-    ///
-    /// Repeated calls before the read happens are one refresh, not several:
-    /// the counter is the request, and an unchanged request is not re-read.
-
-    /// Worktrees whose size should be measured. An empty request while Git is
-    /// hidden is intentional: idle sidebar projection must never launch du.
-
-    /// The selected checkout, when it is one this machine owns. A remote
-    /// checkout has no card: remote worktree management is out of scope, so
-    /// nothing here describes one.
-
-    /// Puts each branch's pull request on the checkout row that shows it.
-    ///
-    /// The row badge and the card read the same value from the same place, so
-    /// the two cannot disagree about what a branch's pull request is.
-
-    /// Rebuilds the summary card from what the readers have answered.
-    ///
-    /// Everything per-checkout already lives on the checkout row; what is
-    /// assembled here is the repository's `gh` health, the one disk
-    /// measurement, and whether this worktree may be removed.
-
-    /// Re-runs the read axis over the agents already in the snapshot, for the
-    /// moment the operator picks a pane without a new agent list arriving.
-    fn refresh_pane_read_state(&mut self) -> bool {
-        let before = self.snapshot.navigator.agents.clone();
-        let mut agents = std::mem::take(&mut self.snapshot.navigator.agents);
-        self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain);
-        let changed = before != agents;
-        self.snapshot.navigator.agents = agents;
-        changed | self.refresh_inactive_groups()
-    }
-
     /// Reports the workspaces whose Herdr-named active tab the navigator
     /// could not place. Reconcile runs once a second, so only a change in the
     /// set is worth a diagnostic; repeating it every tick would grow the
@@ -1218,84 +1157,6 @@ impl Runtime {
         });
     }
 
-    /// Herdr closes a workspace with its last pane, and a project that exists
-    /// only as that Herdr workspace would vanish from the sidebar with it.
-    /// The user asked to close a pane, not to forget the project, so the
-    /// project is registered at its repository path first. The path-keyed
-    /// project id is unchanged by this, and the row stays selectable with
-    /// its "start new terminal" control once Herdr's workspace is gone.
-    fn retain_project_before_last_pane_closes(&mut self, pane_id: &str) {
-        let Some(project) = self.snapshot.navigator.workspaces.iter().find(|workspace| {
-            workspace.remote_target_id.is_none()
-                && workspace
-                    .checkouts
-                    .iter()
-                    .flat_map(|checkout| checkout.tabs.iter())
-                    .flat_map(|tab| tab.panes.iter())
-                    .any(|pane| pane.id == pane_id)
-        }) else {
-            return;
-        };
-        let pane_count = project
-            .checkouts
-            .iter()
-            .flat_map(|checkout| checkout.tabs.iter())
-            .map(|tab| tab.panes.len())
-            .sum::<usize>();
-        if project.registered || pane_count != 1 {
-            return;
-        }
-        let registration =
-            match workspace::registration(&project.path, &project.repo_name, &project.device_id) {
-                Ok(registration) => registration,
-                Err(message) => {
-                    self.set_error("workspace.retain_failed", message, false);
-                    return;
-                }
-            };
-        if self
-            .snapshot
-            .ui_state
-            .workspace_registrations
-            .iter()
-            .any(|existing| existing.id == registration.id)
-        {
-            return;
-        }
-        self.push_diagnostic(
-            "workspace.retained",
-            format!(
-                "Registered {} at {} so closing its last pane keeps the project listed",
-                registration.label, registration.path
-            ),
-        );
-        self.snapshot
-            .ui_state
-            .workspace_registrations
-            .push(registration);
-        // The project id is path-keyed, so registering changes nothing the
-        // sidebar shows right now; the sync that follows Herdr's
-        // workspace_closed rebuilds the catalog off the runtime lock.
-        self.persist_current_ui_state();
-    }
-
-    /// Reads what a file tab needs without putting anything on screen.
-    ///
-    /// The read is the only fallible part of opening a file, so it is done on
-    /// its own: a caller that changes other state can then read first and
-    /// change nothing when the file cannot be read.
-
-    /// Puts a prepared file tab on screen. Nothing here can fail on the file.
-
-    /// Restores an editor tab and the project context that owns it as one
-    /// caller-visible transition. Reopen uses the same path as a tab click so
-    /// an already-open file cannot appear over the wrong checkout.
-
-    /// Opens one Changes row in the central editor strip.
-    ///
-    /// The right panel remains the list and the tab owns the reading surface,
-    /// so closing the panel cannot make an open diff disappear.
-
     pub fn dispatch_json(&mut self, bytes: &[u8]) -> bool {
         let event = match events::decode(bytes) {
             Ok(event) => event,
@@ -1313,12 +1174,6 @@ impl Runtime {
         let released = self.track_visible_tab_attachments();
         changed || released
     }
-
-    // This keeps the lifecycle and diagnostic fields adjacent at the one
-    // failure boundary instead of splitting a correlated event into builders.
-
-    // The worker callback supplies each correlation field independently; a
-    // wrapper would only move this boundary without reducing its inputs.
 }
 
 /// One tab's panes, as the navigator draws them.

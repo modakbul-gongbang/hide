@@ -1088,4 +1088,65 @@ impl Runtime {
         self.snapshot.changes = changes;
         true
     }
+
+    /// Herdr closes a workspace with its last pane, and a project that exists
+    /// only as that Herdr workspace would vanish from the sidebar with it.
+    /// The user asked to close a pane, not to forget the project, so the
+    /// project is registered at its repository path first. The path-keyed
+    /// project id is unchanged by this, and the row stays selectable with
+    /// its "start new terminal" control once Herdr's workspace is gone.
+    pub(super) fn retain_project_before_last_pane_closes(&mut self, pane_id: &str) {
+        let Some(project) = self.snapshot.navigator.workspaces.iter().find(|workspace| {
+            workspace.remote_target_id.is_none()
+                && workspace
+                    .checkouts
+                    .iter()
+                    .flat_map(|checkout| checkout.tabs.iter())
+                    .flat_map(|tab| tab.panes.iter())
+                    .any(|pane| pane.id == pane_id)
+        }) else {
+            return;
+        };
+        let pane_count = project
+            .checkouts
+            .iter()
+            .flat_map(|checkout| checkout.tabs.iter())
+            .map(|tab| tab.panes.len())
+            .sum::<usize>();
+        if project.registered || pane_count != 1 {
+            return;
+        }
+        let registration =
+            match workspace::registration(&project.path, &project.repo_name, &project.device_id) {
+                Ok(registration) => registration,
+                Err(message) => {
+                    self.set_error("workspace.retain_failed", message, false);
+                    return;
+                }
+            };
+        if self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .any(|existing| existing.id == registration.id)
+        {
+            return;
+        }
+        self.push_diagnostic(
+            "workspace.retained",
+            format!(
+                "Registered {} at {} so closing its last pane keeps the project listed",
+                registration.label, registration.path
+            ),
+        );
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .push(registration);
+        // The project id is path-keyed, so registering changes nothing the
+        // sidebar shows right now; the sync that follows Herdr's
+        // workspace_closed rebuilds the catalog off the runtime lock.
+        self.persist_current_ui_state();
+    }
 }
