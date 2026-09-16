@@ -2461,6 +2461,18 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                         let _ =
                             append_log(&self.paths, "herdr_subscription_lost", None, Some(&detail));
                         watcher_failure(&self.paths, &mut failure_streak, &error.to_string());
+                        if matches!(
+                            error.code(),
+                            Some("event_gap" | "event_journal_unavailable")
+                        ) {
+                            // The server could not replay from this cursor.
+                            // Keep the next connection on the fresh-list path;
+                            // the zero cursor is only a marker here because the
+                            // next successful acknowledgement supplies the
+                            // authoritative sequence floor.
+                            needs_bootstrap = true;
+                            cursor = 0;
+                        }
                         if let ApiError::Remote { code, message } = &error
                             && code.contains("protocol")
                         {
