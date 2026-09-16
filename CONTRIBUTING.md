@@ -46,10 +46,10 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 
 | Gate | Protects | Local command | When it blocks you |
 | --- | --- | --- | --- |
-| `cargo fmt` | Rust formatting stays deterministic across the workspace, so reviews do not accumulate unrelated style drift | `cargo fmt --all --check` | Run the same command without `--check` and commit the machine-generated formatting separately. |
-| `cargo clippy` | Every Rust target in the workspace is warning-free, including tests and generated-contract consumers | `cargo clippy --locked --workspace --all-targets -- -D warnings` | Fix a warning when that clarifies the code; use a narrow, explained allowance when the alternative would obscure a generated or performance-sensitive boundary. |
-| `cargo test` | The core's behavior including its Herdr fixtures, the `hide-ai` router and codex backend against a fake app server, the context-label plugin, and the agent-hook crate's configuration rules | `cargo test --locked --workspace` | Fix the test or the code. A fixture that no longer matches Herdr means the pin moved; see `AGENTS.md`, Herdr API Contract. |
-| `swift test` | The shell's rendering and event contracts | `swift test --package-path macos` after the release core build | Same. `--filter <TestName>` narrows a run. |
+| `cargo fmt` | Rust formatting stays deterministic across the workspace, so reviews do not accumulate unrelated style drift | `bash scripts/verify-cargo.sh lint` (`cargo fmt --all --check`) | Run the same command without `--check` and commit the machine-generated formatting separately. |
+| `cargo clippy` | Every Rust target in the workspace is warning-free, including tests and generated-contract consumers | `bash scripts/verify-cargo.sh lint` (`cargo clippy --locked --workspace --all-targets -- -D warnings`) | Fix a warning when that clarifies the code; use a narrow, explained allowance when the alternative would obscure a generated or performance-sensitive boundary. |
+| `cargo test` | The core's behavior including its Herdr fixtures, the `hide-ai` router and codex backend against a fake app server, the context-label plugin, and the agent-hook crate's configuration rules | `bash scripts/verify-cargo.sh test` | Fix the test or the code. A fixture that no longer matches Herdr means the pin moved; see `AGENTS.md`, Herdr API Contract. |
+| `swift test` | The shell's rendering and event contracts | `bash scripts/verify-swift.sh test`, which builds the release core first | Same. `--filter <TestName>` after the mode narrows a run. |
 | right panel sections | The Workbench name never returns to a user-facing string | `bash scripts/check-right-panel-sections.sh` | The panel presents exactly Overview, Explorer, and Changes; rename, do not reintroduce. |
 | shortcut contract | The right panel toggle is `⇧⌘B` and `⌘⌥B` is advertised nowhere | `bash scripts/check-shortcut-contract.sh` | Update the catalog and every label together. |
 | harness ignore anchor | `/agents/` is ignored and `.claude/agents/` is not | `bash scripts/check-harness-ignore-anchor.sh` | Keep the leading slash on the ignore rule. |
@@ -98,7 +98,7 @@ A script that stops earning its place here is deleted rather than left unreferen
 
 | Command | Checks | Needs |
 | --- | --- | --- |
-| `bash scripts/check-hide-full.sh` | Everything CI requires plus every local gate below that runs unattended | A full build; writes `hide-full.log` under the checkout's scratch root (`scripts/build-scratch.sh`) |
+| `bash scripts/check-hide-full.sh` | Everything CI requires plus every local gate below that runs unattended | A full build; writes `target/hide-full.log` in the checkout |
 | `zsh scripts/check-herdr-contract.sh` | The full contract, including the responses only a live server answers | A running Herdr server |
 | `node scripts/check-hide-design.mjs` | `DESIGN.md` lints clean and still carries the clauses the contract names | Network, for `npx @google/design.md` |
 | `node scripts/check-hide-design-enforcement.mjs` | `design-contract.yml` still binds the real checkers, so this list cannot drift from CI | - |

@@ -20,11 +20,10 @@
 #     $ echo $?
 #     0
 #
-# That exit 0 is what made the earlier workaround in `rust-test.sh` dead code.
-# It recovered RUSTUP_HOME only inside `if ! cargo --version`, and the shim
-# never takes that branch; it pays for a download instead. `swift-test.sh` read
-# the same success and took its cargo-is-available branch after the same
-# download. Neither script was wrong about the cause, and neither one ran.
+# That exit 0 is what made two earlier, since-removed test scripts' workarounds
+# dead code. Each recovered RUSTUP_HOME only inside `if ! cargo --version`, and
+# the shim never takes that branch; it pays for a download instead. Neither
+# script was wrong about the cause, and neither one ran.
 #
 # The cost was measured rather than guessed. Every run directory under
 # `agents/runs/` had grown its own private copy: 1.3 GB of `.rustup` plus

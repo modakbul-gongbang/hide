@@ -15,12 +15,12 @@ Swift tests in `macos/Tests/HerdrMacOSTests/` cover bundled theme loading, physi
 Some renderer tests use AppKit views and bitmap drawing in-process; they do not launch and operate the complete app.
 
 ```sh
-bash scripts/rust-test.sh
-bash scripts/swift-test.sh
+bash scripts/verify-cargo.sh test
+bash scripts/verify-swift.sh test [--filter <TestName>]
 ```
 
 Both resolve the toolchain through `scripts/toolchain-env.sh`, so they reuse the machine's installed Rust under a verification HOME rather than installing a private copy into it.
-The PRD harness binds `scripts/verify-cargo.sh test` and `scripts/verify-cargo.sh build` for the same reason; its verify commands run with no shell, so the environment decision cannot live in the command string.
+The PRD harness binds the same two scripts; its verify commands run with no shell, so the environment decision cannot live in the command string.
 
 ## Scripted pet server
 

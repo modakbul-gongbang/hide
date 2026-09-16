@@ -4,7 +4,6 @@ use super::{LiveContext, control_request};
 use crate::{disk, github, model::DiskUsageSnapshot, worktrees::git};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CleanupSnapshot {
@@ -224,24 +223,16 @@ fn inspect_with_merge_proofs(
     })
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum RemovalOutcome {
-    Removed(String),
-    Partial(String),
-}
-
 fn confirm(
     review: &CleanupSnapshot,
     selected: &[String],
     mut refresh: impl FnMut() -> Result<CleanupSnapshot, String>,
-    mut remove: impl FnMut(&str) -> Result<RemovalOutcome, String>,
+    mut remove: impl FnMut(&str) -> Result<String, String>,
 ) -> CleanupSnapshot {
     let mut result = review.clone();
     result.phase = "complete".into();
     for row in &mut result.rows {
-        if !selected.contains(&row.path)
-            || matches!(row.result.as_deref(), Some("removed" | "partial"))
-        {
+        if !selected.contains(&row.path) || row.result.as_deref() == Some("removed") {
             continue;
         }
         let validation = (|| -> Result<bool, String> {
@@ -276,18 +267,12 @@ fn confirm(
             if needed {
                 remove(&row.path)
             } else {
-                Ok(RemovalOutcome::Removed(
-                    "Worktree was already removed. Branch and Git history stay.".into(),
-                ))
+                Ok("Worktree was already removed. Branch and Git history stay.".into())
             }
         });
         match removed {
-            Ok(RemovalOutcome::Removed(message)) => {
+            Ok(message) => {
                 row.result = Some("removed".into());
-                row.message = Some(message);
-            }
-            Ok(RemovalOutcome::Partial(message)) => {
-                row.result = Some("partial".into());
                 row.message = Some(message);
             }
             Err(message) => {
@@ -299,57 +284,11 @@ fn confirm(
     result
 }
 
-fn owned_scratch_root(repository_root: &Path, checkout: &Path) -> Result<Option<PathBuf>, String> {
-    let script = repository_root.join("scripts/build-scratch.sh");
-    if !script.is_file() {
-        return Ok(None);
-    }
-    let output = Command::new("bash")
-        .args([
-            "-c",
-            "set -e; . \"$1\"; printf '%s' \"$HIDE_SCRATCH_ROOT\"",
-            "hide-scratch-root",
-        ])
-        .arg(&script)
-        .current_dir(checkout)
-        .output()
-        .map_err(|error| format!("Owned test cache path could not be computed: {error}"))?;
-    if !output.status.success() {
-        let reason = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if reason.is_empty() {
-            format!(
-                "Owned test cache path could not be computed: {}",
-                output.status
-            )
-        } else {
-            format!("Owned test cache path could not be computed: {reason}")
-        });
-    }
-    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).as_ref());
-    // SAFETY: geteuid reads process identity and has no pointer or lifetime preconditions.
-    let effective_uid = unsafe { libc::geteuid() };
-    let expected_parent = PathBuf::from(format!("/tmp/hide-verify-{effective_uid}"));
-    let key = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
-    if path.parent() != Some(expected_parent.as_path())
-        || key.len() != 64
-        || !key.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(format!(
-            "Owned test cache path was outside the expected checkout cache root: {}",
-            path.display()
-        ));
-    }
-    Ok(Some(path))
-}
-
-fn remove_worktree_and_owned_scratch(
-    repository_root: &Path,
-    checkout: &Path,
-) -> Result<RemovalOutcome, String> {
-    let scratch = owned_scratch_root(repository_root, checkout)?;
+/// Removes the worktree folder and its registration, keeping the branch.
+///
+/// Every build cache the checkout owns lives inside it (`target/`,
+/// `macos/.build/`), so this one Git command is the whole cleanup.
+fn remove_worktree(repository_root: &Path, checkout: &Path) -> Result<String, String> {
     git(
         repository_root,
         &["worktree", "remove", "--", &checkout.to_string_lossy()],
@@ -363,41 +302,7 @@ fn remove_worktree_and_owned_scratch(
             "Git acknowledged removal but the folder or registration remains. Review again.".into(),
         );
     }
-    let Some(scratch) = scratch else {
-        return Ok(RemovalOutcome::Removed(
-            "Worktree folder removed. This repository defines no owned external test cache. Branch and Git history kept."
-                .into(),
-        ));
-    };
-    if !scratch.try_exists().map_err(|error| error.to_string())? {
-        return Ok(RemovalOutcome::Removed(
-            "Worktree folder removed. No owned external test cache remained. Branch and Git history kept."
-                .into(),
-        ));
-    }
-    let metadata = match std::fs::symlink_metadata(&scratch) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            return Ok(RemovalOutcome::Partial(format!(
-                "Worktree folder removed, but its owned test cache could not be inspected: {error}"
-            )));
-        }
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Ok(RemovalOutcome::Partial(format!(
-            "Worktree folder removed, but the owned test cache was not a normal directory and was kept: {}",
-            scratch.display()
-        )));
-    }
-    if let Err(error) = std::fs::remove_dir_all(&scratch) {
-        return Ok(RemovalOutcome::Partial(format!(
-            "Worktree folder removed, but its owned test cache could not be removed: {error}"
-        )));
-    }
-    Ok(RemovalOutcome::Removed(
-        "Worktree folder and owned external test cache removed. Branch and Git history kept."
-            .into(),
-    ))
+    Ok("Worktree folder and its build output removed. Branch and Git history kept.".into())
 }
 
 pub fn spawn(
@@ -426,7 +331,7 @@ pub fn spawn(
             };
             let mut answer = if let Some(selected) = selected {
                 confirm(&review, &selected, refresh, |path| {
-                    remove_worktree_and_owned_scratch(&root, Path::new(path))
+                    remove_worktree(&root, Path::new(path))
                 })
             } else {
                 match refresh() {
@@ -499,6 +404,9 @@ mod tests {
             let main = root.join("main");
             git(&main, &["init", "-b", "main"]).unwrap();
             std::fs::write(main.join("tracked"), "keep").unwrap();
+            // Build output is ignored, as in this repository, so a checkout
+            // that has been built still counts as clean and removable.
+            std::fs::write(main.join(".gitignore"), "target/\n").unwrap();
             git(&main, &["add", "."]).unwrap();
             git(
                 &main,
@@ -543,18 +451,6 @@ mod tests {
         ) -> CleanupSnapshot {
             inspect_with_merge_proofs(&self.main, current, Ok(Vec::new()), |_| Ok(proofs.clone()))
                 .unwrap()
-        }
-        fn install_scratch_script(&self) {
-            let scripts = self.main.join("scripts");
-            std::fs::create_dir_all(&scripts).unwrap();
-            std::fs::copy(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .parent()
-                    .unwrap()
-                    .join("scripts/build-scratch.sh"),
-                scripts.join("build-scratch.sh"),
-            )
-            .unwrap();
         }
     }
     impl Drop for Fixture {
@@ -719,13 +615,11 @@ mod tests {
     }
 
     #[test]
-    fn removal_deletes_only_the_selected_worktree_and_its_owned_test_cache() {
+    fn removal_deletes_the_selected_worktree_with_its_build_output_and_keeps_the_branch() {
         let f = Fixture::new();
-        f.install_scratch_script();
         let clean = f.add("with-cache");
-        let scratch = owned_scratch_root(&f.main, &clean).unwrap().unwrap();
-        std::fs::create_dir_all(scratch.join("cargo")).unwrap();
-        std::fs::write(scratch.join("cargo/artifact"), "regenerable").unwrap();
+        std::fs::create_dir_all(clean.join("target/debug")).unwrap();
+        std::fs::write(clean.join("target/debug/artifact"), "regenerable").unwrap();
         let review = f.review(&f.main, Ok(Vec::new()));
         let selected = vec![clean.to_string_lossy().into_owned()];
 
@@ -733,11 +627,10 @@ mod tests {
             &review,
             &selected,
             || Ok(f.review(&f.main, Ok(Vec::new()))),
-            |path| remove_worktree_and_owned_scratch(&f.main, Path::new(path)),
+            |path| remove_worktree(&f.main, Path::new(path)),
         );
 
         assert!(!clean.exists());
-        assert!(!scratch.exists());
         assert_eq!(
             result
                 .rows
@@ -747,60 +640,6 @@ mod tests {
             Some("removed")
         );
         assert!(git(&f.main, &["show-ref", "--verify", "refs/heads/with-cache"]).is_ok());
-    }
-
-    #[test]
-    fn repository_without_scratch_convention_keeps_ordinary_removal_behavior() {
-        let f = Fixture::new();
-        let clean = f.add("without-cache-convention");
-        let outcome = remove_worktree_and_owned_scratch(&f.main, &clean).unwrap();
-        assert!(matches!(outcome, RemovalOutcome::Removed(_)));
-        assert!(!clean.exists());
-        assert!(
-            git(
-                &f.main,
-                &[
-                    "show-ref",
-                    "--verify",
-                    "refs/heads/without-cache-convention"
-                ]
-            )
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn cache_failure_is_partial_success_and_is_not_repeated() {
-        let f = Fixture::new();
-        let clean = f.add("partial");
-        let review = f.review(&f.main, Ok(Vec::new()));
-        let selected = vec![clean.to_string_lossy().into_owned()];
-        let result = confirm(
-            &review,
-            &selected,
-            || Ok(f.review(&f.main, Ok(Vec::new()))),
-            |path| {
-                git(&f.main, &["worktree", "remove", "--", path])?;
-                Ok(RemovalOutcome::Partial(
-                    "Worktree folder removed, but its owned test cache was kept".into(),
-                ))
-            },
-        );
-        assert_eq!(
-            result
-                .rows
-                .iter()
-                .find(|row| row.path == selected[0])
-                .and_then(|row| row.result.as_deref()),
-            Some("partial")
-        );
-        let retry = confirm(
-            &result,
-            &selected,
-            || panic!("partial success must not re-read a removed worktree"),
-            |_| panic!("partial success must not repeat removal"),
-        );
-        assert_eq!(retry, result);
     }
 
     #[test]
@@ -895,7 +734,7 @@ mod tests {
                     return Err("Git refused removal".into());
                 }
                 git(&f.main, &["worktree", "remove", "--", path])
-                    .map(|_| RemovalOutcome::Removed("Worktree removed".into()))
+                    .map(|_| "Worktree removed".to_owned())
             },
         );
         assert!(!clean.exists());
@@ -925,7 +764,7 @@ mod tests {
             |path| {
                 assert_ne!(Path::new(path), clean);
                 git(&f.main, &["worktree", "remove", "--", path])
-                    .map(|_| RemovalOutcome::Removed("Worktree removed".into()))
+                    .map(|_| "Worktree removed".to_owned())
             },
         );
         assert_eq!(

@@ -348,8 +348,8 @@ Native QA must additionally inspect modifier press/release, cursor and highlight
 Use the existing suite wrappers, then the applicable gates in [CONTRIBUTING.md](../CONTRIBUTING.md):
 
 ```sh
-bash scripts/rust-test.sh
-bash scripts/swift-test.sh
+bash scripts/verify-cargo.sh test
+bash scripts/verify-swift.sh test
 python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'
 ```
 

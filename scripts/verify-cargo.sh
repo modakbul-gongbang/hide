@@ -1,38 +1,43 @@
 #!/usr/bin/env bash
-# The cargo entrypoint the PRD harness binds, as plain argv.
+# The cargo entrypoint for verification, as plain argv.
 #
-# Usage: verify-cargo.sh test | build
+# Usage: verify-cargo.sh test | lint | build
 #
-# The harness runs each verify command with execvp and no shell, so an
+# The PRD harness runs each verify command with execvp and no shell, so an
 # `ENV=value cargo ...` binding fails with ENOENT at verify time rather than at
 # configuration time, and a sealed run cannot be amended to fix it. A script is
 # the only place an environment decision can live, which is why this file exists
 # rather than a longer command string in `agents/config.json`:
 #
-#     "test":  "bash scripts/verify-cargo.sh test"
-#     "build": "bash scripts/verify-cargo.sh build"
+#     "test": "bash scripts/verify-cargo.sh test"
+#     "lint": "bash scripts/verify-cargo.sh lint"
 #
-# Tests use the checkout's scratch cache; release output stays at the fixed
-# archive path SwiftPM links. Cargo still checks freshness on every invocation.
+# Every build lands in the worktree's own `target/`, whatever CARGO_TARGET_DIR
+# the caller carries: SwiftPM links `target/release/libherdr_core.a` from that
+# fixed path, and a build directory shared between worktrees reads the other
+# checkout's artifacts as fresh. `git worktree remove` takes the cache with the
+# work. See docs/BUILD.md.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 . scripts/toolchain-env.sh
 
-. scripts/build-scratch.sh
+export CARGO_TARGET_DIR="$PWD/target"
 
 case "${1:-}" in
     test)
-        export CARGO_TARGET_DIR="$HIDE_CARGO_SCRATCH"
         exec cargo test --locked --workspace
         ;;
+    lint)
+        cargo fmt --all --check
+        exec cargo clippy --locked --workspace --all-targets -- -D warnings
+        ;;
     build)
-        export CARGO_TARGET_DIR="$PWD/target"
         exec cargo build --release --locked -p herdr-core
         ;;
     *)
-        printf 'usage: %s test|build\n' "$0" >&2
+        printf 'usage: %s test|lint|build\n' "$0" >&2
         exit 2
         ;;
 esac

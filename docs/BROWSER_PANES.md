@@ -97,8 +97,8 @@ Close browser panes from that installation before explicitly unlinking and linki
 
 ```sh
 node --test plugins/browser/browser-pane.test.mjs
-scripts/rust-test.sh
-scripts/swift-test.sh
+bash scripts/verify-cargo.sh test
+bash scripts/verify-swift.sh test
 macos/scripts/build_dev_app.sh
 ```
 

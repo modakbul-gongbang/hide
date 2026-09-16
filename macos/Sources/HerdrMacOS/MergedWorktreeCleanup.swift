@@ -45,7 +45,7 @@ struct MergedWorktreeCleanup: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 if let reason = row.message ?? row.exclusion {
                                     Label(reason, systemImage: row.result == "removed" ? "checkmark.circle" : "info.circle")
-                                        .foregroundStyle(row.result == "refused" || row.result == "partial" ? HideTheme.warning : HideTheme.secondary)
+                                        .foregroundStyle(row.result == "refused" ? HideTheme.warning : HideTheme.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                                 if let reason = row.disk.unavailableReason {

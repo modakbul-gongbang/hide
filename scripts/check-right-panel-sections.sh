@@ -16,6 +16,6 @@ if git grep -qi 'workbench' -- macos/Sources/HerdrMacOS; then
     exit 1
 fi
 
-bash scripts/swift-test.sh ChangesPresentationTests
+bash scripts/verify-swift.sh test --filter ChangesPresentationTests
 
 printf 'right panel presents exactly Overview, Explorer and Changes; no Workbench string remains\n'
