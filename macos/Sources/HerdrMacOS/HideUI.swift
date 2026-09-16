@@ -2356,6 +2356,8 @@ private struct HideTabCanvas: View {
                         isFocused: item.isFocused,
                         isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
                         isZoomed: isZoomed,
+                        isConversation: model.isConversation(for: pane.id),
+                        canShowConversation: model.canShowConversation(for: pane.id),
                         showsFork: model.canForkPane(pane),
                         activity: model.paneActivity(for: pane.id),
                         notice: model.paneNotice(for: pane.id),
@@ -2365,6 +2367,7 @@ private struct HideTabCanvas: View {
                         onReconnect: { model.reconnectPane(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) },
                         onToggleZoom: { model.togglePaneZoom(pane.id) },
+                        onToggleConversation: { model.toggleConversation(pane.id) },
                         onFork: { model.forkPaneFromHeader(pane.id) },
                         onOpenPort: { model.openPanePort($0) },
                         // A child chip, a breadcrumb step and a sibling are
@@ -2374,14 +2377,39 @@ private struct HideTabCanvas: View {
                         // split (PRD B7, D-16).
                         onSelectPane: { model.requestPaneSelection(from: pane.id, to: $0) }
                     ) {
-                        TerminalHost(
-                            bridge: model.core,
-                            paneID: pane.id,
-                            textScale: model.textScale(for: pane.id),
-                            onFocus: { model.focusPane(pane.id) },
-                            onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
-                        )
-                        .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                        if model.isConversation(for: pane.id),
+                           model.canShowConversation(for: pane.id),
+                           let agent = model.agents.first(where: { $0.paneID == pane.id }),
+                           let provider = ConversationProvider(agentKind: agent.agentKind)
+                        {
+                            ConversationPaneView(
+                                provider: provider,
+                                sessionID: model.conversationSessionID(for: pane.id),
+                                cwd: pane.cwd,
+                                agent: agent,
+                                textScale: model.textScale(for: pane.id),
+                                onShowTerminal: { model.toggleConversation(pane.id) },
+                                openLink: { model.openTerminalLink($0, paneID: pane.id) }
+                            ) {
+                                TerminalHost(
+                                    bridge: model.core,
+                                    paneID: pane.id,
+                                    textScale: model.textScale(for: pane.id),
+                                    onFocus: { model.focusPane(pane.id) },
+                                    onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                                )
+                                .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                            }
+                        } else {
+                            TerminalHost(
+                                bridge: model.core,
+                                paneID: pane.id,
+                                textScale: model.textScale(for: pane.id),
+                                onFocus: { model.focusPane(pane.id) },
+                                onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                            )
+                            .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                        }
                     }
                 }
             } else {

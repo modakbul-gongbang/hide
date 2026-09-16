@@ -3,7 +3,13 @@ import SwiftUI
 
 /// Foundation owns Markdown syntax. Native text rendering never executes HTML or fetches images.
 enum MarkdownDocument {
-    @MainActor static func render(_ source: String, scale: CGFloat) throws -> NSAttributedString {
+    @MainActor static func render(
+        _ source: String,
+        scale: CGFloat,
+        baseFontSize: CGFloat = HideTheme.Editor.documentFontSize,
+        lineSpacing: CGFloat = HideTheme.Editor.documentLineSpacing,
+        foregroundColor: NSColor = HideTheme.Native.primary
+    ) throws -> NSAttributedString {
         let parsed = try AttributedString(markdown: source)
         let output = NSMutableAttributedString()
         var previousBlock: Int?
@@ -22,9 +28,9 @@ enum MarkdownDocument {
                 output.append(NSAttributedString(string: cell && tableRow == previousTableRow ? "  |  " : "\n\n"))
             }
             let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = HideTheme.Editor.documentLineSpacing * scale
+            paragraph.lineSpacing = lineSpacing * scale
             paragraph.lineBreakMode = .byWordWrapping
-            var size = HideTheme.Editor.documentFontSize * scale
+            var size = baseFontSize * scale
             var weight: SwiftUI.Font.Weight = .regular
             var code = run.inlinePresentationIntent?.contains(.code) == true
             var prefix = ""
@@ -53,7 +59,7 @@ enum MarkdownDocument {
                 font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
             }
             var attributes: [NSAttributedString.Key: Any] = [
-                .font: font, .foregroundColor: HideTheme.Native.primary, .paragraphStyle: paragraph,
+                .font: font, .foregroundColor: foregroundColor, .paragraphStyle: paragraph,
             ]
             if let link = run.link { attributes[.link] = link }
             if run.inlinePresentationIntent?.contains(.strikethrough) == true { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }

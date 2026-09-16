@@ -31,6 +31,13 @@ use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
 
+fn conversation_agent_kind(kind: &str) -> bool {
+    matches!(
+        kind.to_ascii_lowercase().as_str(),
+        "claude" | "claude-code" | "claude_code" | "codex"
+    )
+}
+
 /// Places one checkout's tab strip.
 ///
 /// The strip is a sequence of slots. A slot an entry already held it keeps, so
@@ -1265,6 +1272,7 @@ enum ValidatedEvent {
     CreatePane(CreatePanePayload),
     ResizePane(ResizePanePayload),
     ToggleZoom(ToggleZoomPayload),
+    ToggleConversation(PaneTargetPayload),
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
@@ -4685,6 +4693,7 @@ impl Runtime {
                 &self.snapshot.ui_state.collapsed_agent_pane_ids,
             );
             self.apply_stall_escalation(&mut agents, unix_milliseconds());
+            changed |= self.sync_conversation_modes(&agents);
             if self.snapshot.navigator.agents != agents {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
@@ -5957,6 +5966,33 @@ impl Runtime {
     /// from the read axis, and the children come from the lineage, so a pass
     /// that ran earlier would publish a chip row describing a state the
     /// sidebar had already moved past.
+    fn sync_conversation_modes(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
+        let live: BTreeSet<String> = agents
+            .iter()
+            .filter(|agent| conversation_agent_kind(&agent.agent_kind))
+            .map(|agent| agent.pane_id.clone())
+            .collect();
+        let ui_state = &mut self.snapshot.ui_state;
+        let before_conversation = ui_state.conversation_pane_ids.clone();
+        let before_terminal = ui_state.terminal_pane_ids.clone();
+
+        ui_state
+            .terminal_pane_ids
+            .retain(|pane_id| live.contains(pane_id));
+        let terminal = ui_state.terminal_pane_ids.clone();
+        ui_state
+            .conversation_pane_ids
+            .retain(|pane_id| live.contains(pane_id) && !terminal.contains(pane_id));
+        for pane_id in live {
+            if !ui_state.terminal_pane_ids.contains(&pane_id) {
+                ui_state.conversation_pane_ids.insert(pane_id);
+            }
+        }
+
+        before_conversation != ui_state.conversation_pane_ids
+            || before_terminal != ui_state.terminal_pane_ids
+    }
+
     fn sync_pane_lineage(&mut self) -> bool {
         let agents = std::mem::take(&mut self.snapshot.navigator.agents);
         let diagnosis = self.hook_diagnosis.clone();
@@ -10850,6 +10886,32 @@ impl Runtime {
                 }
                 true
             }
+            ValidatedEvent::ToggleConversation(payload) => {
+                let is_agent = self.snapshot.navigator.agents.iter().any(|agent| {
+                    agent.pane_id == payload.pane_id && conversation_agent_kind(&agent.agent_kind)
+                });
+                if !is_agent {
+                    self.set_error(
+                        "conversation.unsupported_pane",
+                        format!(
+                            "Pane {} does not expose an agent conversation",
+                            payload.pane_id
+                        ),
+                        false,
+                    );
+                    return true;
+                }
+                let ui_state = &mut self.snapshot.ui_state;
+                if ui_state.terminal_pane_ids.insert(payload.pane_id.clone()) {
+                    ui_state.conversation_pane_ids.remove(&payload.pane_id);
+                } else {
+                    ui_state.terminal_pane_ids.remove(&payload.pane_id);
+                    ui_state
+                        .conversation_pane_ids
+                        .insert(payload.pane_id.clone());
+                }
+                true
+            }
             ValidatedEvent::CloseWorkspace(payload) => {
                 let _ = (payload.workspace_id, payload.confirmed);
                 false
@@ -11855,6 +11917,8 @@ impl Runtime {
                     // fields above are carried through.
                     pane_text_scales: current.pane_text_scales,
                     editor_text_scale: current.editor_text_scale,
+                    conversation_pane_ids: current.conversation_pane_ids,
+                    terminal_pane_ids: current.terminal_pane_ids,
                     pane_read_records: current.pane_read_records,
                     last_agent_kind: payload.last_agent_kind.unwrap_or(current.last_agent_kind),
                     last_agent_bypass: payload
@@ -12708,6 +12772,7 @@ fn validate_event(event: EventEnvelope) -> Result<ValidatedEvent, EventValidatio
         "create_pane" => decode!(CreatePanePayload, CreatePane),
         "resize_pane" => decode!(ResizePanePayload, ResizePane),
         "toggle_zoom" => decode!(ToggleZoomPayload, ToggleZoom),
+        "toggle_conversation" => decode!(PaneTargetPayload, ToggleConversation),
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
@@ -21081,6 +21146,105 @@ mod tests {
             "the editor zoom is persisted, so it survives a restart"
         );
         let _ = std::fs::remove_file(&state_path);
+    }
+
+    #[test]
+    fn eligible_agent_panes_default_to_conversation_and_toggle_to_terminal() {
+        let mut runtime = runtime();
+        let payload = || -> SessionSnapshotPayload {
+            serde_json::from_value(serde_json::json!({
+                "agents": [{
+                    "pane_id": "w1:p1",
+                    "workspace_label": "Fixture",
+                    "agent": "codex",
+                    "agent_status": "idle",
+                    "tokens": {"status_idle": "\u{25cb}", "activity": "0000000000002"}
+                }],
+                "workspaces": [{"workspace_id": "w1", "label": "fixture"}],
+                "panes": [{"pane_id": "w1:p1", "cwd": "/private/tmp/hide-conversation-default"}],
+                "tabs": [{"workspace_id": "w1", "tab_id": "w1:t1", "label": "1"}],
+                "layouts": [{
+                    "workspace_id": "w1",
+                    "tab_id": "w1:t1",
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "w1:p1",
+                    "panes": [{"pane_id": "w1:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                }]
+            }))
+            .expect("conversation fixture")
+        };
+        let toggle = serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "toggle_conversation",
+            "payload": {"pane_id": "w1:p1"}
+        }))
+        .expect("conversation toggle event");
+
+        runtime.ingest_session(Ok(payload()));
+        assert!(
+            runtime
+                .snapshot()
+                .ui_state
+                .conversation_pane_ids
+                .contains("w1:p1")
+        );
+        assert!(
+            !runtime
+                .snapshot()
+                .ui_state
+                .terminal_pane_ids
+                .contains("w1:p1")
+        );
+
+        assert!(runtime.dispatch_json(&toggle));
+        assert!(
+            !runtime
+                .snapshot()
+                .ui_state
+                .conversation_pane_ids
+                .contains("w1:p1")
+        );
+        assert!(
+            runtime
+                .snapshot()
+                .ui_state
+                .terminal_pane_ids
+                .contains("w1:p1")
+        );
+
+        runtime.ingest_session(Ok(payload()));
+        assert!(
+            !runtime
+                .snapshot()
+                .ui_state
+                .conversation_pane_ids
+                .contains("w1:p1")
+        );
+        assert!(
+            runtime
+                .snapshot()
+                .ui_state
+                .terminal_pane_ids
+                .contains("w1:p1")
+        );
+
+        assert!(runtime.dispatch_json(&toggle));
+        assert!(
+            runtime
+                .snapshot()
+                .ui_state
+                .conversation_pane_ids
+                .contains("w1:p1")
+        );
+        assert!(
+            !runtime
+                .snapshot()
+                .ui_state
+                .terminal_pane_ids
+                .contains("w1:p1")
+        );
     }
 
     /// The pane tree is projected separately from the navigator's agent rows.

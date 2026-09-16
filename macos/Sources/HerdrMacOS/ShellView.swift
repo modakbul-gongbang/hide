@@ -514,6 +514,8 @@ struct PaneTerminalCell<Content: View>: View {
     let isFocused: Bool
     let isKeyboardFocused: Bool
     let isZoomed: Bool
+    let isConversation: Bool
+    let canShowConversation: Bool
     let showsFork: Bool
     let activity: String
     let notice: String?
@@ -521,6 +523,7 @@ struct PaneTerminalCell<Content: View>: View {
     let onReconnect: () -> Void
     let onClose: () -> Void
     let onToggleZoom: () -> Void
+    let onToggleConversation: () -> Void
     let onFork: () -> Void
     let onOpenPort: (UInt16) -> Void
     /// Whether the session is answering. A disconnected mark says so rather
@@ -539,6 +542,8 @@ struct PaneTerminalCell<Content: View>: View {
         isFocused: Bool,
         isKeyboardFocused: Bool? = nil,
         isZoomed: Bool = false,
+        isConversation: Bool = false,
+        canShowConversation: Bool = false,
         showsFork: Bool = false,
         activity: String = "",
         notice: String? = nil,
@@ -548,6 +553,7 @@ struct PaneTerminalCell<Content: View>: View {
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
         onToggleZoom: @escaping () -> Void = {},
+        onToggleConversation: @escaping () -> Void = {},
         onFork: @escaping () -> Void = {},
         onOpenPort: @escaping (UInt16) -> Void = { _ in },
         onSelectPane: @escaping (String) -> Void = { _ in },
@@ -561,6 +567,8 @@ struct PaneTerminalCell<Content: View>: View {
         self.isFocused = isFocused
         self.isKeyboardFocused = isKeyboardFocused ?? isFocused
         self.isZoomed = isZoomed
+        self.isConversation = isConversation
+        self.canShowConversation = canShowConversation
         self.showsFork = showsFork
         self.activity = activity
         self.notice = notice
@@ -568,6 +576,7 @@ struct PaneTerminalCell<Content: View>: View {
         self.onReconnect = onReconnect
         self.onClose = onClose
         self.onToggleZoom = onToggleZoom
+        self.onToggleConversation = onToggleConversation
         self.onFork = onFork
         self.onOpenPort = onOpenPort
         self.connected = connected
@@ -592,6 +601,8 @@ struct PaneTerminalCell<Content: View>: View {
             isFocused: isFocused,
             isKeyboardFocused: isKeyboardFocused,
             isZoomed: isZoomed,
+            isConversation: isConversation,
+            canShowConversation: canShowConversation,
             forkedFrom: PaneHeaderControls.forkMark(pane.fork),
             showsFork: showsFork,
             activity: activity,
@@ -605,6 +616,7 @@ struct PaneTerminalCell<Content: View>: View {
             onReconnect: onReconnect,
             onClose: onClose,
             onToggleZoom: onToggleZoom,
+            onToggleConversation: onToggleConversation,
             onFork: onFork,
             onOpenPort: onOpenPort,
             onSelectPane: onSelectPane,
@@ -661,6 +673,8 @@ struct HideTerminalPaneCard<Content: View>: View {
     let isKeyboardFocused: Bool
     /// Herdr is showing only this pane; its siblings in the tab are hidden.
     let isZoomed: Bool
+    let isConversation: Bool
+    let canShowConversation: Bool
     /// The pane this one was forked from, when Herdr's lineage says so.
     let forkedFrom: String?
     let showsFork: Bool
@@ -684,6 +698,7 @@ struct HideTerminalPaneCard<Content: View>: View {
     let onReconnect: () -> Void
     let onClose: () -> Void
     let onToggleZoom: () -> Void
+    let onToggleConversation: () -> Void
     let onFork: () -> Void
     let onOpenPort: (UInt16) -> Void
     /// Replaces the screen with another pane in this lineage: a child chip, a
@@ -703,6 +718,8 @@ struct HideTerminalPaneCard<Content: View>: View {
         isFocused: Bool,
         isKeyboardFocused: Bool? = nil,
         isZoomed: Bool = false,
+        isConversation: Bool = false,
+        canShowConversation: Bool = false,
         forkedFrom: String? = nil,
         showsFork: Bool = false,
         activity: String = "",
@@ -716,6 +733,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         onReconnect: @escaping () -> Void = {},
         onClose: @escaping () -> Void = {},
         onToggleZoom: @escaping () -> Void = {},
+        onToggleConversation: @escaping () -> Void = {},
         onFork: @escaping () -> Void = {},
         onOpenPort: @escaping (UInt16) -> Void = { _ in },
         onSelectPane: @escaping (String) -> Void = { _ in },
@@ -731,6 +749,8 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.isFocused = isFocused
         self.isKeyboardFocused = isKeyboardFocused ?? isFocused
         self.isZoomed = isZoomed
+        self.isConversation = isConversation
+        self.canShowConversation = canShowConversation
         self.forkedFrom = forkedFrom
         self.showsFork = showsFork
         self.activity = activity
@@ -744,6 +764,7 @@ struct HideTerminalPaneCard<Content: View>: View {
         self.onReconnect = onReconnect
         self.onClose = onClose
         self.onToggleZoom = onToggleZoom
+        self.onToggleConversation = onToggleConversation
         self.onFork = onFork
         self.onOpenPort = onOpenPort
         self.onSelectPane = onSelectPane
@@ -810,6 +831,19 @@ struct HideTerminalPaneCard<Content: View>: View {
                         .foregroundStyle(HideTheme.secondary)
                         .hideTooltip("Forked from pane \(forkedFrom)")
                         .accessibilityLabel("Forked from pane \(forkedFrom)")
+                }
+
+                if canShowConversation {
+                    HideIconButton(
+                        systemImage: "text.bubble",
+                        help: isConversation ? "Show the live terminal" : "Show conversation",
+                        accessibilityLabel: isConversation ? "Show terminal for pane \(paneID)" : "Show conversation for pane \(paneID)",
+                        variant: .toolbar,
+                        isSelected: isConversation,
+                        command: .pane(.toggleConversation),
+                        paneID: paneID,
+                        action: onToggleConversation
+                    )
                 }
 
                 HideIconButton(
