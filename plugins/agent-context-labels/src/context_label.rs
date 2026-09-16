@@ -15,7 +15,7 @@ pub const FEATURE_ID: &str = "context_label";
 /// read against the pair that produced it.
 pub const SCHEMA_VERSION: &str = "context_label.v1";
 /// Long enough for a provider that has to start a child process, short
-/// enough that a stuck turn does not hold the pane's slot for a whole poll
+/// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
 const DEADLINE: Duration = Duration::from_secs(60);
 

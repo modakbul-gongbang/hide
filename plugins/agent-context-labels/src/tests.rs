@@ -5,10 +5,11 @@ use hide_ai::{
 use hide_session::{parse_claude_events, parse_codex_events};
 use serde_json::{Value, json};
 use std::cell::RefCell;
+use std::io::{BufRead, Cursor, Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 
 /// Block until the background analysis thread has produced its result, then put
@@ -36,7 +37,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         }
     }
 
-    /// One poll cycle: scan, let the provider thread finish, scan again to
+    /// One compatibility scan cycle: scan, let the provider thread finish, scan again to
     /// consume its result.
     fn settle(&mut self) {
         self.scan().unwrap();
@@ -70,8 +71,12 @@ fn assistant_event(text: impl Into<String>) -> SessionEvent {
 
 #[test]
 fn agent_list_payload_from_a_live_session_parses_without_a_second_endpoint() {
+    #[derive(Deserialize)]
+    struct AgentListFixture {
+        result: AgentListResult,
+    }
     let payload = include_str!("../tests/fixtures/agent-list.json");
-    let envelope: AgentListEnvelope = serde_json::from_str(payload).unwrap();
+    let envelope: AgentListFixture = serde_json::from_str(payload).unwrap();
     let panes: Vec<Pane> = envelope
         .result
         .agents
@@ -91,6 +96,134 @@ fn agent_list_payload_from_a_live_session_parses_without_a_second_endpoint() {
     assert!(panes.iter().any(|pane| pane.cwd.is_some()));
     assert!(panes.iter().all(|pane| pane.state_change_seq > 0));
     assert_eq!(panes.iter().filter(|pane| pane.focused).count(), 1);
+}
+
+#[test]
+fn watcher_subscribes_to_the_contract_pane_events_only() {
+    assert_eq!(
+        WATCHER_SUBSCRIPTIONS,
+        [
+            "pane.created",
+            "pane.updated",
+            "pane.closed",
+            "pane.exited",
+            "pane.focused",
+            "pane.agent_detected",
+            "pane.agent_status_changed",
+        ]
+    );
+    let params = hide_herdr_client::subscription_params_for_panes(
+        17,
+        &WATCHER_SUBSCRIPTIONS,
+        &["w1:p1".to_owned()],
+    )
+    .unwrap();
+    assert_eq!(params["after_sequence"], 17);
+    assert_eq!(params["subscriptions"].as_array().unwrap().len(), 7);
+    assert!(
+        params["subscriptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|subscription| subscription["type"].as_str().unwrap().starts_with("pane."))
+    );
+    assert_eq!(
+        params["subscriptions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|subscription| subscription["type"] == "pane.agent_status_changed")
+            .and_then(|subscription| subscription["pane_id"].as_str()),
+        Some("w1:p1")
+    );
+}
+
+#[test]
+fn event_lines_carry_sequence_and_protocol_and_errors_stay_explicit() {
+    let event = parse_watcher_subscription_line(
+        &json!({
+            "protocol": HERDR_PROTOCOL_REVISION,
+            "sequence": 42,
+            "event": "pane_agent_status_changed",
+            "data": {"type": "pane_agent_status_changed", "pane_id": "w1:p1"}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(matches!(
+        event,
+        WatcherSubscriptionLine::Event {
+            protocol: HERDR_PROTOCOL_REVISION,
+            sequence: 42,
+            kind,
+        } if kind == "pane_agent_status_changed"
+    ));
+
+    let error = parse_watcher_subscription_line(
+        r#"{"id":"herdr-core:events.subscribe","error":{"code":"event_gap","message":"sequence is no longer retained"}}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        error,
+        WatcherSubscriptionLine::Error { code, message }
+            if code == "event_gap" && message == "sequence is no longer retained"
+    ));
+}
+
+#[test]
+fn reconnect_backoff_doubles_and_stops_at_five_seconds() {
+    let mut delay = Duration::from_millis(100);
+    for expected in [200, 400, 800, 1_600, 3_200, 5_000, 5_000] {
+        delay = reconnect_delay(delay);
+        assert_eq!(delay, Duration::from_millis(expected));
+    }
+}
+
+#[test]
+fn event_driven_scan_updates_status_and_focus_without_waiting_for_a_tick() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let mut initial = pane("w1:p1", AgentKind::Claude, "working");
+    initial.focused = false;
+    let transport = FakeTransport::new(vec![initial.clone()]);
+    let mut watcher = Watcher::new(transport, no_provider(), FakeSessionReader, paths);
+
+    watcher
+        .scan_panes(&[initial.clone()], false, false)
+        .unwrap();
+    let mut changed = initial.clone();
+    changed.agent_status = "blocked".to_owned();
+    changed.state_change_seq += 1;
+    watcher
+        .scan_panes(&[changed.clone()], false, false)
+        .unwrap();
+    assert_eq!(watcher.last_report().status, StatusIcon::Approval);
+
+    changed.focused = true;
+    watcher.scan_panes(&[changed], false, false).unwrap();
+    assert!(
+        !watcher.last_report().unseen,
+        "focus clears unseen immediately"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_marker_wakes_the_single_event_loop_without_becoming_state() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let (sender, receiver) = mpsc::channel();
+    let wake = WakeSocket::start(&paths, sender).unwrap();
+
+    request_refresh(&paths).unwrap();
+    assert!(paths.refresh_request().exists());
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_secs(1)),
+        Ok(WatcherMessage::Wake)
+    ));
+
+    drop(wake);
+    assert!(!paths.wake_socket().exists());
 }
 
 // ---------------------------------------------------------------- AC2
@@ -650,8 +783,8 @@ fn an_unreadable_choice_is_logged_before_the_defaults_are_used() {
 }
 
 /// The reason is a state, not a tick. The watcher re-reads the file every
-/// `POLL_INTERVAL` and this plugin's log is never rotated, so a broken file
-/// logged on every scan would grow it without end; the reason is written when
+/// the plugin's log is never rotated, so a broken file logged on every scan
+/// would grow it without end; the reason is written when
 /// it changes, and so is the recovery.
 #[test]
 fn a_broken_choice_is_logged_once_and_its_repair_is_logged_once() {
@@ -1164,7 +1297,7 @@ fn a_refresh_request_is_consumed_once_by_the_focused_pane() {
 #[test]
 fn metadata_clears_every_status_token_it_may_own() {
     let subject = pane("w1:p1", AgentKind::Codex, "idle");
-    let args = metadata_arguments(
+    let params = metadata_params(
         &subject,
         &Display {
             summary: Some("작업 요약".into()),
@@ -1174,38 +1307,28 @@ fn metadata_clears_every_status_token_it_may_own() {
             ..Display::default()
         },
     );
+    let tokens = params["tokens"].as_object().unwrap();
 
-    assert!(args.iter().any(|item| item == "summary=작업 요약"));
-    assert!(args.iter().any(|item| item == "status_approval=!"));
-    assert!(args.iter().any(|item| item == "agent_codex=⬢"));
-    assert!(args.iter().any(|item| item == "elapsed=7s"));
+    assert_eq!(tokens["summary"], "작업 요약");
+    assert_eq!(tokens["status_approval"], "!");
+    assert_eq!(tokens["agent_codex"], "⬢");
+    assert_eq!(tokens["elapsed"], "7s");
     // Approval sits in the user-blocking group at the top of the ordering.
     // The rank digit depends on the machine's optional sort-order file, so
     // only the seen partition prefix is asserted.
-    assert!(
-        args.iter()
-            .any(|item| item.starts_with("sort_rank=1") && item.len() == "sort_rank=1x".len())
-    );
-    // Every other status token is cleared, so two icons can never render at
-    // once; the one being set is not cleared to stay under the 16-token cap.
+    assert!(tokens["sort_rank"].as_str().unwrap().starts_with('1'));
+    // Every other status token is explicitly nulled, so two icons can never
+    // render at once; the one being set remains a string.
     for token in STATUS_TOKENS {
         if token == "status_approval" {
             continue;
         }
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "--clear-token" && pair[1] == token),
-            "{token} is not cleared"
-        );
+        assert_eq!(tokens[token], Value::Null, "{token} is not cleared");
     }
     // The report never exceeds Herdr's 16-token budget.
-    let touched = args
-        .iter()
-        .filter(|a| *a == "--token" || *a == "--clear-token")
-        .count();
-    assert!(touched <= 16, "report touches {touched} tokens");
+    assert!(tokens.len() <= 16, "report touches {} tokens", tokens.len());
     // The pane title belongs to the user, not to this plugin.
-    assert!(!args.iter().any(|item| item == "--title"));
+    assert!(params.get("title").is_none());
 }
 
 #[test]
@@ -1294,7 +1417,7 @@ fn the_activity_token_is_a_fixed_width_clock_two_panes_can_be_compared_on() {
     assert!(activity_token(999) < activity_token(1_000));
     assert_eq!(activity_token(0), "0000000000000");
 
-    let args = metadata_arguments(
+    let params = metadata_params(
         &pane("w1:p1", AgentKind::Codex, "done"),
         &Display {
             status: StatusIcon::Done,
@@ -1303,13 +1426,9 @@ fn the_activity_token_is_a_fixed_width_clock_two_panes_can_be_compared_on() {
             ..Display::default()
         },
     );
-    assert!(args.iter().any(|item| item == "activity=1755000000000"));
-    // Always set, never cleared: the sidebar cannot order a pane without it.
-    assert!(
-        !args
-            .windows(2)
-            .any(|pair| pair[0] == "--clear-token" && pair[1] == "activity")
-    );
+    assert_eq!(params["tokens"]["activity"], "1755000000000");
+    // Always set, never nulled: the sidebar cannot order a pane without it.
+    assert_ne!(params["tokens"]["activity"], Value::Null);
 }
 
 #[test]
@@ -1409,7 +1528,7 @@ fn the_documented_model_is_the_one_the_code_calls() {
 
 /// The regression this whole design exists for: the old trigger hashed the
 /// context window, which grows with every token the agent emits, so a live pane
-/// asked the provider again on almost every poll.
+/// asked the provider again on almost every trigger.
 #[test]
 fn turn_identity_holds_while_output_grows_and_moves_only_at_a_boundary() {
     let user = |text: &str| human_event(text);
@@ -1477,7 +1596,7 @@ fn one_turn_costs_at_most_two_provider_calls() {
         paths.clone(),
     );
 
-    // Nothing said yet: no turn, so no call however often the watcher polls.
+    // Nothing said yet: no turn, so no call however often the watcher wakes.
     for _ in 0..3 {
         watcher.scan().unwrap();
     }
@@ -1625,7 +1744,7 @@ impl FakeTransport {
     }
 
     /// Move Herdr's lifecycle for every pane, the way the real server does
-    /// between polls.
+    /// between event-driven scans.
     fn set_status(&self, status: &str) {
         for pane in self.panes.borrow_mut().iter_mut() {
             pane.agent_status = status.to_owned();
@@ -1659,6 +1778,186 @@ impl<R: SessionReader> Watcher<FakeTransport, R> {
     fn last_report(&self) -> Display {
         self.transport.reports.borrow().last().cloned().unwrap()
     }
+}
+
+struct RecordingShutdown;
+
+impl hide_herdr_client::ConnectionShutdown for RecordingShutdown {
+    fn shutdown(&self) {}
+}
+
+struct RecordingStream {
+    incoming: Cursor<Vec<u8>>,
+    requests: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl Read for RecordingStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.incoming.read(buffer)
+    }
+}
+
+impl Write for RecordingStream {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.requests.lock().unwrap().push(buffer.to_vec());
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl hide_herdr_client::ApiStream for RecordingStream {
+    fn set_read_timeout(
+        &self,
+        _timeout: Option<Duration>,
+    ) -> std::result::Result<(), hide_herdr_client::ApiError> {
+        Ok(())
+    }
+
+    fn set_write_timeout(
+        &self,
+        _timeout: Option<Duration>,
+    ) -> std::result::Result<(), hide_herdr_client::ApiError> {
+        Ok(())
+    }
+
+    fn read_line_with_timeout(
+        &mut self,
+        _timeout: Duration,
+    ) -> std::result::Result<String, hide_herdr_client::ApiError> {
+        let mut line = String::new();
+        self.incoming
+            .read_line(&mut line)
+            .map_err(|error| hide_herdr_client::ApiError::Transport(error.to_string()))?;
+        Ok(line)
+    }
+
+    fn shutdown_handle(
+        &self,
+    ) -> std::result::Result<
+        Box<dyn hide_herdr_client::ConnectionShutdown>,
+        hide_herdr_client::ApiError,
+    > {
+        Ok(Box::new(RecordingShutdown))
+    }
+}
+
+struct RecordingConnector {
+    responses: Mutex<Vec<Vec<u8>>>,
+    requests: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl hide_herdr_client::ApiConnector for RecordingConnector {
+    fn connect(
+        &self,
+    ) -> std::result::Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError>
+    {
+        let incoming = self.responses.lock().unwrap().remove(0);
+        Ok(Box::new(RecordingStream {
+            incoming: Cursor::new(incoming),
+            requests: Arc::clone(&self.requests),
+        }))
+    }
+}
+
+#[test]
+fn socket_transport_uses_one_client_for_list_metadata_and_subscription() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let list_response = json!({
+        "id": "herdr-core:agent.list",
+        "result": {
+            "type": "agent_list",
+            "agents": [{
+                "pane_id": "w1:p1",
+                "agent": "claude",
+                "agent_status": "idle",
+                "revision": 3,
+                "state_change_seq": 9,
+                "cwd": "/tmp",
+                "focused": true,
+                "agent_session": null
+            }]
+        }
+    });
+    let report_response = json!({
+        "id": "herdr-core:pane.report_metadata",
+        "result": {"type": "pane_metadata_reported", "pane_id": "w1:p1"}
+    });
+    let subscription_response = format!(
+        "{}\n{}\n",
+        json!({
+            "id": "herdr-core:events.subscribe",
+            "result": {
+                "type": "subscription_started",
+                "host": {"host_id": "fixture", "session_id": "session"},
+                "sequence": 20,
+                "oldest_available_sequence": 1
+            }
+        }),
+        json!({
+            "protocol": HERDR_PROTOCOL_REVISION,
+            "host": {"host_id": "fixture", "session_id": "session"},
+            "sequence": 21,
+            "event": "pane_focused",
+            "data": {"type": "pane_focused", "pane_id": "w1:p1", "workspace_id": "w1"}
+        })
+    );
+    let connector = RecordingConnector {
+        responses: Mutex::new(vec![
+            list_response.to_string().into_bytes(),
+            report_response.to_string().into_bytes(),
+            subscription_response.into_bytes(),
+        ]),
+        requests: Arc::clone(&requests),
+    };
+    let socket = SocketHerdr {
+        connector: Arc::new(connector),
+        timeout: Duration::from_secs(1),
+    };
+
+    let panes = socket.panes().unwrap();
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].state_change_seq, 9);
+    socket
+        .report(
+            &panes[0],
+            &Display {
+                status: StatusIcon::Idle,
+                ..Display::default()
+            },
+        )
+        .unwrap();
+    let subscription = socket.subscribe(17, &["w1:p1".to_owned()]).unwrap();
+    assert_eq!(subscription.ack.sequence, 20);
+    let (mut reader, _shutdown) = subscription.into_parts();
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(line.contains("pane_focused"));
+
+    let requests = requests.lock().unwrap();
+    let methods = requests
+        .iter()
+        .map(|request| serde_json::from_slice::<Value>(request).unwrap()["method"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        methods,
+        [
+            json!("agent.list"),
+            json!("pane.report_metadata"),
+            json!("events.subscribe")
+        ]
+    );
+    let subscription_request: Value = serde_json::from_slice(&requests[2]).unwrap();
+    assert_eq!(subscription_request["params"]["after_sequence"], 17);
+    assert_eq!(
+        subscription_request["params"]["subscriptions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        WATCHER_SUBSCRIPTIONS.len()
+    );
 }
 
 /// A provider the test scripts: each request receives the next reply, and the
@@ -1821,7 +2120,7 @@ impl ScriptedSessionReader {
     }
 
     /// Assistant output landing mid-turn. This is the churn that used to make
-    /// every poll look like a new question to ask the provider.
+    /// every event look like a new question to ask the provider.
     fn assistant(&self, text: &str) {
         self.events.borrow_mut().push(assistant_event(text));
     }
@@ -1887,7 +2186,7 @@ fn a_repeating_failure_is_abandoned_instead_of_retried_forever() {
     assert_eq!(backend.calls(), settled_attempts);
 
     // From here nobody asks for anything, and the watcher must stay quiet
-    // rather than rediscovering the same failure on every poll.
+    // rather than rediscovering the same failure on every event.
     for _ in 0..8 {
         watcher.advance_past_provider_waits();
         watcher.settle();

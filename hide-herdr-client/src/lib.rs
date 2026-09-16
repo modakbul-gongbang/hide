@@ -316,6 +316,21 @@ pub fn subscribe_with_connector(
     subscriptions: &[&str],
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
+    subscribe_with_connector_for_panes(connector, after_sequence, subscriptions, &[], timeout)
+}
+
+/// Open an event subscription whose filters may include the pane-scoped
+/// `pane.agent_status_changed` kind.  The Herdr contract requires a
+/// `pane_id` for that filter, so callers pass the pane ids discovered from
+/// their bootstrap snapshot.  The other subscription kinds remain
+/// unparameterized.
+pub fn subscribe_with_connector_for_panes(
+    connector: &dyn ApiConnector,
+    after_sequence: u64,
+    subscriptions: &[&str],
+    pane_ids: &[String],
+    timeout: Duration,
+) -> Result<Subscription, ApiError> {
     let mut stream = connector.connect()?;
     stream.set_write_timeout(Some(timeout))?;
     let request_id = "herdr-core:events.subscribe";
@@ -323,7 +338,8 @@ pub fn subscribe_with_connector(
         stream.as_mut(),
         request_id,
         "events.subscribe",
-        subscription_params(after_sequence, subscriptions).map_err(ApiError::Malformed)?,
+        subscription_params_for_panes(after_sequence, subscriptions, pane_ids)
+            .map_err(ApiError::Malformed)?,
     )?;
 
     let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;
@@ -350,14 +366,56 @@ pub fn subscribe_with_connector(
 
 /// Encode a contract-checked `events.subscribe` parameter object.
 pub fn subscription_params(after_sequence: u64, subscriptions: &[&str]) -> Result<Value, String> {
-    let subscriptions = subscriptions
-        .iter()
-        .map(|kind| serde_json::from_value::<wire::request::Subscription>(json!({"type": kind})))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("invalid event subscription: {error}"))?;
+    encode_subscription_params(after_sequence, subscriptions, &[], false)
+}
+
+/// Encode a contract-checked `events.subscribe` parameter object, expanding
+/// pane-scoped status filters once per known pane.
+pub fn subscription_params_for_panes(
+    after_sequence: u64,
+    subscriptions: &[&str],
+    pane_ids: &[String],
+) -> Result<Value, String> {
+    encode_subscription_params(after_sequence, subscriptions, pane_ids, true)
+}
+
+fn encode_subscription_params(
+    after_sequence: u64,
+    subscriptions: &[&str],
+    pane_ids: &[String],
+    skip_empty_status_filter: bool,
+) -> Result<Value, String> {
+    let mut encoded = Vec::new();
+    for kind in subscriptions {
+        if *kind == "pane.agent_status_changed" {
+            if pane_ids.is_empty() {
+                if skip_empty_status_filter {
+                    continue;
+                }
+                return Err(
+                    "invalid event subscription: pane.agent_status_changed requires pane ids"
+                        .to_owned(),
+                );
+            }
+            for pane_id in pane_ids {
+                encoded.push(
+                    serde_json::from_value::<wire::request::Subscription>(json!({
+                        "type": kind,
+                        "pane_id": pane_id,
+                    }))
+                    .map_err(|error| format!("invalid event subscription: {error}"))?,
+                );
+            }
+        } else {
+            encoded.push(
+                serde_json::from_value::<wire::request::Subscription>(json!({"type": kind}))
+                    .map_err(|error| format!("invalid event subscription: {error}"))?,
+            );
+        }
+    }
     serde_json::to_value(wire::request::EventsSubscribeParams {
         after_sequence,
-        subscriptions,
+        subscriptions: encoded,
     })
     .map_err(|error| format!("subscription parameters could not be encoded: {error}"))
 }
@@ -620,5 +678,27 @@ mod tests {
         server.join().expect("fake server joins");
         std::fs::remove_file(&socket_path).expect("remove socket");
         std::fs::remove_dir(&root).expect("remove socket directory");
+    }
+
+    #[test]
+    fn parameterized_status_subscriptions_are_expanded_for_known_panes() {
+        let params = subscription_params_for_panes(
+            17,
+            &["pane.focused", "pane.agent_status_changed"],
+            &["w1:p1".to_owned(), "w1:p2".to_owned()],
+        )
+        .expect("contract-valid subscription filters");
+        assert_eq!(
+            params,
+            json!({
+                "after_sequence": 17,
+                "subscriptions": [
+                    {"type": "pane.focused"},
+                    {"type": "pane.agent_status_changed", "pane_id": "w1:p1"},
+                    {"type": "pane.agent_status_changed", "pane_id": "w1:p2"}
+                ]
+            })
+        );
+        assert!(subscription_params(17, &["pane.agent_status_changed"]).is_err());
     }
 }
