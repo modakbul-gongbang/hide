@@ -1071,4 +1071,21 @@ impl Runtime {
         }
         true
     }
+
+    /// Accepts a projection only while it still describes the checkout the
+    /// runtime is asking about, so a slow read against a checkout the operator
+    /// has already left cannot overwrite the current one.
+    pub fn ingest_changes(&mut self, changes: crate::model::ChangesSnapshot) -> bool {
+        let expected = self
+            .changes_request()
+            .map(|request| request.root_path.to_string_lossy().into_owned());
+        if expected != changes.root_path {
+            return false;
+        }
+        if self.snapshot.changes == changes {
+            return false;
+        }
+        self.snapshot.changes = changes;
+        true
+    }
 }
