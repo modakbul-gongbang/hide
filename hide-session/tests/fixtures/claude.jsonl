@@ -1,0 +1,7 @@
+{"type":"user","timestamp":"2026-09-16T00:00:01Z","origin":{"kind":"human"},"isMeta":false,"promptSource":"user","message":{"content":"첫 번째 요청"}}
+{"type":"user","timestamp":"2026-09-16T00:00:02Z","isMeta":true,"message":{"content":"<system-reminder>internal reminder</system-reminder>"}}
+{"type":"user","timestamp":"2026-09-16T00:00:03Z","origin":{"kind":"human"},"promptSource":"system","message":{"content":"<task-notification>background result</task-notification>"}}
+{"type":"user","timestamp":"2026-09-16T00:00:04Z","message":{"content":"Another Claude session is using this file"}}
+{"type":"user","timestamp":"2026-09-16T00:00:05Z","origin":{"kind":"human"},"message":{"content":"<command-name>/review</command-name>\n<command-args>--quick</command-args>"}}
+{"type":"user","timestamp":"2026-09-16T00:00:06Z","origin":{"kind":"human"},"message":{"content":"[Request interrupted by user]"}}
+{"type":"assistant","timestamp":"2026-09-16T00:00:07Z","message":{"content":[{"type":"text","text":"검토를 시작했습니다."}]}}

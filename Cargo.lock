@@ -47,6 +47,7 @@ dependencies = [
  "clap",
  "fs2",
  "hide-ai",
+ "hide-session",
  "regex",
  "serde",
  "serde_json",
@@ -1026,6 +1027,7 @@ dependencies = [
  "base64",
  "hide-agent-hooks",
  "hide-ai",
+ "hide-session",
  "libc",
  "regex",
  "regress 0.12.0",
@@ -1068,6 +1070,16 @@ dependencies = [
  "jsonschema",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hide-session"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

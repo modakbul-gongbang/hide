@@ -1,0 +1,6 @@
+{"type":"session_meta","timestamp":"2026-09-16T00:00:01Z","payload":{"cwd":"/Users/example","base_instructions":"redacted"}}
+{"type":"response_item","timestamp":"2026-09-16T00:00:02Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /Users/example"}]}}
+{"type":"response_item","timestamp":"2026-09-16T00:00:03Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>redacted</environment_context>"}]}}
+{"type":"response_item","timestamp":"2026-09-16T00:00:04Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>redacted</user_instructions>"}]}}
+{"type":"response_item","timestamp":"2026-09-16T00:00:05Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"실제 요청"}]}}
+{"type":"response_item","timestamp":"2026-09-16T00:00:05Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"응답"}]}}
