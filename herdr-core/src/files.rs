@@ -521,6 +521,9 @@ fn language_for(path: &Path) -> Option<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_EXPLORER_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn draft_updates_keep_unsaved_contents_in_memory() {
@@ -560,8 +563,9 @@ pub(crate) mod tests {
     }
 
     fn explorer_fixture() -> PathBuf {
+        let sequence = NEXT_EXPLORER_FIXTURE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "hide-explorer-{}-{}",
+            "hide-explorer-{}-{}-{sequence}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(UNIX_EPOCH)

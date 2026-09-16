@@ -11468,7 +11468,7 @@
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 16593,
+      "width": 21633,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -14089,6 +14089,1413 @@
     },
     {
       "type": "frame",
+      "id": "acv-main",
+      "x": 1320,
+      "y": 0,
+      "name": "Screen / Pane / Conversation - Main Claude working",
+      "width": 760,
+      "height": 520,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "acv-main-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Agent Conversation Viewer · Claude",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "acv-main-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Ledger layout. Prompt band is panel + mono; assistant is native Markdown on background. Working elapsed is blue in the 64pt rail.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "acv-main-pane",
+          "name": "Pane",
+          "width": 712,
+          "height": 360,
+          "fill": "$--color-background",
+          "stroke": "$--color-accent",
+          "strokeWidth": "$--size-hairline",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "acv-main-header",
+              "name": "Pane header",
+              "width": "fill_container",
+              "height": 28,
+              "fill": "$--color-elevated",
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "acv-main-identity",
+                  "type": "ref",
+                  "ref": "HXWFK",
+                  "name": "Agent identity",
+                  "width": "fill_container",
+                  "padding": "$--spacing-none",
+                  "descendants": {
+                    "x0h40": {
+                      "content": "Fix tab snap-back on split checkouts",
+                      "fontSize": "$--text-caption"
+                    },
+                    "EurXP": {
+                      "enabled": false
+                    },
+                    "nT97E": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "acv-main-terminal",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Show terminal",
+                  "fill": "$--color-selected-wash",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "terminal",
+                      "fill": "$--color-primary"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-main-zoom",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Zoom pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "maximize"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-main-close",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Close pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "x"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "acv-main-divider",
+              "name": "Pane divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$--color-divider"
+            },
+            {
+              "type": "frame",
+              "id": "acv-main-scroll",
+              "name": "Conversation scroll",
+              "width": "fill_container",
+              "height": 331,
+              "layout": "vertical",
+              "gap": "$--spacing-none",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "acv-main-user-1",
+                  "name": "User prompt",
+                  "width": "fill_container",
+                  "height": 54,
+                  "fill": "$--color-panel",
+                  "gap": "$--spacing-none",
+                  "padding": [
+                    "$--spacing-sm",
+                    "$--spacing-none"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "acv-main-user-1-time",
+                      "name": "Clock",
+                      "width": 64,
+                      "fill": "$--color-muted",
+                      "content": "14:31:08",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "textAlign": "right"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-main-user-1-glyph",
+                      "name": "Prompt glyph",
+                      "width": 16,
+                      "fill": "$--color-secondary",
+                      "content": ">",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-subhead"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-main-user-1-text",
+                      "name": "Prompt",
+                      "width": 600,
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "content": "tab snap-back 재현됐어. 원인 찾아줘",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "acv-main-assistant-1",
+                  "name": "Assistant response",
+                  "width": "fill_container",
+                  "height": 120,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "acv-main-assistant-1-rail",
+                      "name": "Elapsed rail",
+                      "width": 64,
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": "$--spacing-xxs",
+                      "padding": [
+                        "$--spacing-md",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "acv-main-assistant-1-clock",
+                          "name": "Clock",
+                          "fill": "$--color-muted",
+                          "content": "14:33:51",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro"
+                        },
+                        {
+                          "type": "text",
+                          "id": "acv-main-assistant-1-elapsed",
+                          "name": "Elapsed",
+                          "fill": "$--color-agent-working",
+                          "content": "● 2m 43s",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "acv-main-assistant-1-body",
+                      "name": "Markdown response",
+                      "width": 640,
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "padding": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "acv-main-assistant-1-p1",
+                          "name": "Paragraph",
+                          "fill": "$--color-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "원인은 session_sync.rs의 tab focus 확인 경로에 있습니다. split 상태에서는 pane 이벤트가 먼저 도착합니다.",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-title",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "acv-main-assistant-1-p2",
+                          "name": "Paragraph",
+                          "fill": "$--color-primary",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "pending을 checkout id로 키잉하고 pane 이벤트는 그 키를 건드리지 않게 바꾸면 됩니다.",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-title",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "acv-main-user-2",
+                  "name": "User prompt",
+                  "width": "fill_container",
+                  "height": 48,
+                  "fill": "$--color-panel",
+                  "gap": "$--spacing-none",
+                  "padding": [
+                    "$--spacing-sm",
+                    "$--spacing-none"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "acv-main-user-2-time",
+                      "name": "Clock",
+                      "width": 64,
+                      "fill": "$--color-muted",
+                      "content": "14:34:20",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "textAlign": "right"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-main-user-2-glyph",
+                      "name": "Prompt glyph",
+                      "width": 16,
+                      "fill": "$--color-secondary",
+                      "content": ">",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-subhead"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-main-user-2-text",
+                      "name": "Prompt",
+                      "width": 600,
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "content": "응, 테스트 먼저. 고친 뒤 suite 돌려줘",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "acv-main-assistant-2",
+                  "name": "Assistant response live",
+                  "width": "fill_container",
+                  "height": 80,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "acv-main-assistant-2-rail",
+                      "name": "Elapsed rail",
+                      "width": 64,
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": "$--spacing-xxs",
+                      "padding": [
+                        "$--spacing-md",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "acv-main-assistant-2-clock",
+                          "name": "Clock",
+                          "fill": "$--color-muted",
+                          "content": "14:35:02",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro"
+                        },
+                        {
+                          "type": "text",
+                          "id": "acv-main-assistant-2-elapsed",
+                          "name": "Elapsed",
+                          "fill": "$--color-agent-working",
+                          "content": "● 0:42",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-main-assistant-2-body",
+                      "name": "Markdown response",
+                      "width": 640,
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "content": "재현 테스트를 추가했고, 현재 runtime.rs의 pending 키를 바꾸는 중입니다.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-title",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "acv-codex",
+      "x": 2160,
+      "y": 0,
+      "name": "Screen / Pane / Conversation - Codex idle",
+      "width": 760,
+      "height": 420,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "acv-codex-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Agent Conversation Viewer · Codex",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "acv-codex-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "The provider changes only the badge and prompt glyph. Clock and elapsed metadata remain in the 64pt rail.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "acv-codex-pane",
+          "name": "Pane",
+          "width": 712,
+          "height": 270,
+          "fill": "$--color-background",
+          "stroke": "$--color-divider",
+          "strokeWidth": "$--size-hairline",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "acv-codex-header",
+              "name": "Pane header",
+              "width": "fill_container",
+              "height": 28,
+              "fill": "$--color-panel",
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "acv-codex-identity",
+                  "type": "ref",
+                  "ref": "HXWFK",
+                  "name": "Agent identity",
+                  "width": "fill_container",
+                  "padding": "$--spacing-none",
+                  "descendants": {
+                    "x0h40": {
+                      "content": "Design contract false positive",
+                      "fontSize": "$--text-caption"
+                    },
+                    "PCeNa": {
+                      "content": "○",
+                      "fill": "$--color-muted"
+                    },
+                    "YYqJe": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "EurXP": {
+                      "enabled": false
+                    },
+                    "nT97E": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "acv-codex-terminal",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Show terminal",
+                  "fill": "$--color-selected-wash",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "terminal",
+                      "fill": "$--color-primary"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-codex-zoom",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Zoom pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "maximize"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-codex-close",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Close pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "x"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "acv-codex-divider",
+              "name": "Pane divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$--color-divider"
+            },
+            {
+              "type": "frame",
+              "id": "acv-codex-scroll",
+              "name": "Conversation scroll",
+              "width": "fill_container",
+              "height": 241,
+              "layout": "vertical",
+              "gap": "$--spacing-none",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "acv-codex-user",
+                  "name": "User prompt",
+                  "width": "fill_container",
+                  "height": 54,
+                  "fill": "$--color-panel",
+                  "gap": "$--spacing-none",
+                  "padding": [
+                    "$--spacing-sm",
+                    "$--spacing-none"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "acv-codex-user-time",
+                      "name": "Clock",
+                      "width": 64,
+                      "fill": "$--color-muted",
+                      "content": "14:35:40",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "textAlign": "right"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-codex-user-glyph",
+                      "name": "Prompt glyph",
+                      "width": 16,
+                      "fill": "$--color-secondary",
+                      "content": "›",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-subhead"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-codex-user-text",
+                      "name": "Prompt",
+                      "width": 640,
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "content": "check-design-contract.mjs가 style literal을 잡는데 false positive 고쳐줘",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "acv-codex-assistant",
+                  "name": "Assistant response",
+                  "width": "fill_container",
+                  "height": 130,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "acv-codex-assistant-rail",
+                      "name": "Elapsed rail",
+                      "width": 64,
+                      "height": "fill_container",
+                      "layout": "vertical",
+                      "gap": "$--spacing-xxs",
+                      "padding": [
+                        "$--spacing-md",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "end",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "acv-codex-assistant-clock",
+                          "name": "Clock",
+                          "fill": "$--color-muted",
+                          "content": "14:36:04",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro"
+                        },
+                        {
+                          "type": "text",
+                          "id": "acv-codex-assistant-elapsed",
+                          "name": "Elapsed",
+                          "fill": "$--color-agent-working",
+                          "content": "● 0m 24s",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-codex-assistant-body",
+                      "name": "Markdown response",
+                      "width": 640,
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "content": "The check now scopes its rule to view files outside HideTheme.swift. It still rejects an inline Color in a view and keeps the token definition valid.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-title",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "acv-codex-user-2",
+                  "name": "User prompt",
+                  "width": "fill_container",
+                  "height": 48,
+                  "fill": "$--color-panel",
+                  "gap": "$--spacing-none",
+                  "padding": [
+                    "$--spacing-sm",
+                    "$--spacing-none"
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "acv-codex-user-2-time",
+                      "name": "Clock",
+                      "width": 64,
+                      "fill": "$--color-muted",
+                      "content": "14:36:18",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "textAlign": "right"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-codex-user-2-glyph",
+                      "name": "Prompt glyph",
+                      "width": 16,
+                      "fill": "$--color-secondary",
+                      "content": "›",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-subhead"
+                    },
+                    {
+                      "type": "text",
+                      "id": "acv-codex-user-2-text",
+                      "name": "Prompt",
+                      "width": 640,
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "content": "좋아. 커밋 메시지도 써줘",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "acv-terminal",
+      "x": 3000,
+      "y": 0,
+      "name": "Screen / Pane / Conversation - Terminal baseline",
+      "width": 760,
+      "height": 420,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "acv-terminal-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Pane · Terminal baseline",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "acv-terminal-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "The terminal remains the write surface. Conversation mode only changes the view, not the running PTY or status mark.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "acv-terminal-pane",
+          "name": "Pane",
+          "width": 712,
+          "height": 270,
+          "fill": "$--color-background",
+          "stroke": "$--color-accent",
+          "strokeWidth": "$--size-hairline",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "acv-terminal-header",
+              "name": "Pane header",
+              "width": "fill_container",
+              "height": 28,
+              "fill": "$--color-elevated",
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "acv-terminal-identity",
+                  "type": "ref",
+                  "ref": "HXWFK",
+                  "name": "Agent identity",
+                  "width": "fill_container",
+                  "padding": "$--spacing-none",
+                  "descendants": {
+                    "x0h40": {
+                      "content": "Fix tab snap-back on split checkouts",
+                      "fontSize": "$--text-caption"
+                    },
+                    "EurXP": {
+                      "enabled": false
+                    },
+                    "nT97E": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "acv-terminal-conversation",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Show conversation",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "message-square"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-terminal-zoom",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Zoom pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "maximize"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-terminal-close",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Close pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "x"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "acv-terminal-divider",
+              "name": "Pane divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$--color-divider"
+            },
+            {
+              "type": "frame",
+              "id": "acv-terminal-output",
+              "name": "PTY output",
+              "width": "fill_container",
+              "height": 241,
+              "layout": "vertical",
+              "gap": "$--spacing-xxs",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "acv-terminal-line-1",
+                  "name": "Prompt",
+                  "fill": "$--color-primary",
+                  "content": "> 응, 테스트 먼저. 그리고 고친 뒤에 suite 돌려줘",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-terminal-base"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-terminal-line-2",
+                  "name": "Tool output",
+                  "fill": "$--color-success",
+                  "content": "● Read(herdr-core/src/runtime.rs)",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-terminal-base"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-terminal-line-3",
+                  "name": "Tool output",
+                  "fill": "$--color-muted",
+                  "content": "⎿ Read 180 lines",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-terminal-base"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-terminal-line-4",
+                  "name": "Working",
+                  "fill": "$--color-agent-working",
+                  "content": "✻ Thinking… (42s)",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-terminal-base"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "acv-needs-you",
+      "x": 3840,
+      "y": 0,
+      "name": "Screen / Pane / Conversation - Needs You fallback",
+      "width": 760,
+      "height": 360,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "acv-needs-you-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Conversation · Needs You fallback",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "acv-needs-you-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Question, approval, and error keep the existing notice vocabulary and return the whole pane to the terminal for action.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "acv-needs-you-pane",
+          "name": "Pane",
+          "width": 712,
+          "height": 220,
+          "fill": "$--color-background",
+          "stroke": "$--color-divider",
+          "strokeWidth": "$--size-hairline",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "acv-needs-you-header",
+              "name": "Pane header",
+              "width": "fill_container",
+              "height": 28,
+              "fill": "$--color-panel",
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "acv-needs-you-identity",
+                  "type": "ref",
+                  "ref": "HXWFK",
+                  "name": "Agent identity",
+                  "width": "fill_container",
+                  "padding": "$--spacing-none",
+                  "descendants": {
+                    "x0h40": {
+                      "content": "Fix tab snap-back on split checkouts",
+                      "fontSize": "$--text-caption"
+                    },
+                    "PCeNa": {
+                      "content": "?",
+                      "fill": "$--color-warning"
+                    },
+                    "EurXP": {
+                      "enabled": false
+                    },
+                    "nT97E": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "acv-needs-you-conversation",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Show conversation",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "message-square"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-needs-you-close",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Close pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "x"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "acv-needs-you-divider",
+              "name": "Pane divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$--color-divider"
+            },
+            {
+              "type": "frame",
+              "id": "acv-needs-you-notice",
+              "name": "Pane notice",
+              "width": "fill_container",
+              "height": 30,
+              "fill": "$--color-elevated",
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-xs",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "acv-needs-you-warning",
+                  "name": "Warning",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "triangle-alert",
+                  "library": "lucide",
+                  "fill": "$--color-warning"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-needs-you-notice-text",
+                  "name": "Notice",
+                  "fill": "$--color-warning",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Claude is asking a question in the terminal.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-needs-you-action",
+                  "name": "Action",
+                  "fill": "$--color-primary",
+                  "content": "Show terminal  ⌘⌥C",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "acv-needs-you-terminal",
+              "name": "Terminal fallback",
+              "width": "fill_container",
+              "height": 160,
+              "layout": "vertical",
+              "gap": "$--spacing-xxs",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "acv-needs-you-line-1",
+                  "name": "Terminal prompt",
+                  "fill": "$--color-primary",
+                  "content": "> pending 키를 checkout id로 바꿨고 테스트가 통과합니다.",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-terminal-base"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-needs-you-line-2",
+                  "name": "Terminal prompt",
+                  "fill": "$--color-warning",
+                  "content": "? suite 전체를 돌릴까요, 아니면 flake를 따로 보고할까요?",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-terminal-base"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "acv-empty",
+      "x": 4680,
+      "y": 0,
+      "name": "Screen / Pane / Conversation - Empty",
+      "width": 760,
+      "height": 320,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "acv-empty-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Conversation · Empty",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "acv-empty-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "The session file has not been written yet. The terminal remains the recovery path.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "acv-empty-pane",
+          "name": "Pane",
+          "width": 712,
+          "height": 160,
+          "fill": "$--color-background",
+          "stroke": "$--color-divider",
+          "strokeWidth": "$--size-hairline",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "acv-empty-header",
+              "name": "Pane header",
+              "width": "fill_container",
+              "height": 28,
+              "fill": "$--color-panel",
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "acv-empty-identity",
+                  "type": "ref",
+                  "ref": "HXWFK",
+                  "name": "Agent identity",
+                  "width": "fill_container",
+                  "padding": "$--spacing-none",
+                  "descendants": {
+                    "x0h40": {
+                      "content": "claude",
+                      "fontSize": "$--text-caption"
+                    },
+                    "PCeNa": {
+                      "content": "○",
+                      "fill": "$--color-muted"
+                    },
+                    "EurXP": {
+                      "enabled": false
+                    },
+                    "nT97E": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "acv-empty-conversation",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Show conversation",
+                  "fill": "$--color-selected-wash",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "message-square",
+                      "fill": "$--color-primary"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-empty-close",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Close pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "x"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "acv-empty-divider",
+              "name": "Pane divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$--color-divider"
+            },
+            {
+              "type": "frame",
+              "id": "acv-empty-state",
+              "name": "Empty state",
+              "width": "fill_container",
+              "height": 130,
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "padding": "$--spacing-xl",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "acv-empty-state-title",
+                  "name": "Empty title",
+                  "fill": "$--color-secondary",
+                  "content": "No messages yet",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-headline",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-empty-state-message",
+                  "name": "Empty message",
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": 360,
+                  "content": "The conversation fills in as you exchange messages in the terminal.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "textAlign": "center"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-empty-state-action",
+                  "name": "Action",
+                  "fill": "$--color-primary",
+                  "content": "Show terminal  ⌘⌥C",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "acv-failed",
+      "x": 5520,
+      "y": 0,
+      "name": "Screen / Pane / Conversation - Failed",
+      "width": 760,
+      "height": 320,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "acv-failed-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Conversation · Failed transcript read",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "acv-failed-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "A present but unreadable session exposes its path and line, offers Retry, and leaves the terminal untouched.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "acv-failed-pane",
+          "name": "Pane",
+          "width": 712,
+          "height": 160,
+          "fill": "$--color-background",
+          "stroke": "$--color-divider",
+          "strokeWidth": "$--size-hairline",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "acv-failed-header",
+              "name": "Pane header",
+              "width": "fill_container",
+              "height": 28,
+              "fill": "$--color-panel",
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "acv-failed-identity",
+                  "type": "ref",
+                  "ref": "HXWFK",
+                  "name": "Agent identity",
+                  "width": "fill_container",
+                  "padding": "$--spacing-none",
+                  "descendants": {
+                    "x0h40": {
+                      "content": "Design contract false positive",
+                      "fontSize": "$--text-caption"
+                    },
+                    "PCeNa": {
+                      "content": "●",
+                      "fill": "$--color-agent-working"
+                    },
+                    "YYqJe": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "EurXP": {
+                      "enabled": false
+                    },
+                    "nT97E": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "acv-failed-conversation",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Show conversation",
+                  "fill": "$--color-selected-wash",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "message-square",
+                      "fill": "$--color-primary"
+                    }
+                  }
+                },
+                {
+                  "id": "acv-failed-close",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Close pane",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "x"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "rectangle",
+              "id": "acv-failed-divider",
+              "name": "Pane divider",
+              "width": "fill_container",
+              "height": 1,
+              "fill": "$--color-divider"
+            },
+            {
+              "type": "frame",
+              "id": "acv-failed-state",
+              "name": "Failed state",
+              "width": "fill_container",
+              "height": 130,
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "padding": "$--spacing-xl",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "acv-failed-state-title",
+                  "name": "Failure title",
+                  "fill": "$--color-warning",
+                  "content": "Could not read this session’s transcript",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-headline",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-failed-state-detail",
+                  "name": "Failure detail",
+                  "fill": "$--color-secondary",
+                  "textGrowth": "fixed-width",
+                  "width": 560,
+                  "content": "~/.codex/sessions/2026/09/15/rollout-…-7f3a.jsonl · line 412",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-body"
+                },
+                {
+                  "type": "text",
+                  "id": "acv-failed-state-action",
+                  "name": "Retry",
+                  "fill": "$--color-primary",
+                  "content": "Retry",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "screen-startup-protocol-mismatch",
       "name": "Screen / Startup / Protocol mismatch",
       "width": 1840,
@@ -14489,7 +15896,7 @@
           "padding": "$--spacing-lg"
         }
       ],
-      "x": 1320,
+      "x": 6360,
       "y": 0
     },
     {
@@ -14907,13 +16314,13 @@
           ]
         }
       ],
-      "x": 3240,
+      "x": 8280,
       "y": 0
     },
     {
       "type": "frame",
       "id": "Snwg0",
-      "x": 4416,
+      "x": 9456,
       "y": 0,
       "name": "Screen / Agents / My Work status groups",
       "width": 1488,
@@ -15281,7 +16688,7 @@
     {
       "type": "frame",
       "id": "Vmhg4",
-      "x": 5984,
+      "x": 11024,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -17045,7 +18452,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 6356,
+      "x": 11396,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -18523,7 +19930,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 6791,
+      "x": 11831,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -21882,7 +23289,7 @@
     {
       "type": "frame",
       "id": "eXxKb",
-      "x": 7226,
+      "x": 12266,
       "y": 0,
       "name": "Screen / Pane / Relationship modal",
       "width": 1488,
@@ -22098,7 +23505,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 8794,
+      "x": 13834,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -23722,7 +25129,7 @@
     {
       "type": "frame",
       "id": "c3Lf5",
-      "x": 9229,
+      "x": 14269,
       "y": 0,
       "name": "Screen / Overview / Project task forest",
       "width": 520,
@@ -24540,7 +25947,7 @@
     {
       "type": "frame",
       "id": "AZvEA",
-      "x": 9829,
+      "x": 14869,
       "y": 0,
       "name": "Screen / Overview / Inspect without moving",
       "width": 900,
@@ -24637,7 +26044,7 @@
     {
       "type": "frame",
       "id": "wzrRI",
-      "x": 10809,
+      "x": 15849,
       "y": 0,
       "name": "Screen / Workbench / Parent",
       "width": 1488,
@@ -25970,7 +27377,7 @@
     {
       "type": "frame",
       "id": "IhnIO",
-      "x": 12377,
+      "x": 17417,
       "y": 0,
       "name": "Screen / Workbench / Delegated child tab",
       "width": 1488,
@@ -26117,7 +27524,7 @@
     {
       "type": "frame",
       "id": "m5T3n1",
-      "x": 13945,
+      "x": 18985,
       "y": 0,
       "name": "Screen / Overview / Availability states",
       "width": 1080,
@@ -26565,7 +27972,7 @@
     {
       "type": "frame",
       "id": "n2oTPf",
-      "x": 15105,
+      "x": 20145,
       "y": 0,
       "name": "Screen / Explorer / Git in workbench",
       "width": 1488,
@@ -27550,6 +28957,38 @@
     "--size-sidebar-hierarchy-great-grandchild": {
       "type": "number",
       "value": 48
+    },
+    "--proposed-conversation-measure": {
+      "type": "number",
+      "value": 640
+    },
+    "--proposed-conversation-time-rail": {
+      "type": "number",
+      "value": 64
+    },
+    "--proposed-conversation-body-line-spacing": {
+      "type": "number",
+      "value": 6.5
+    },
+    "--proposed-conversation-turn-inset": {
+      "type": "number",
+      "value": 12
+    },
+    "--proposed-conversation-prompt-vertical-inset": {
+      "type": "number",
+      "value": 8
+    },
+    "--proposed-conversation-body": {
+      "type": "number",
+      "value": 13
+    },
+    "--proposed-conversation-glyph": {
+      "type": "number",
+      "value": 16
+    },
+    "--proposed-conversation-prompt": {
+      "type": "number",
+      "value": 12
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

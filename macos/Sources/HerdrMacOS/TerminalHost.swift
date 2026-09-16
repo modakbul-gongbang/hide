@@ -9,11 +9,28 @@ struct TerminalHost: NSViewRepresentable {
     let textScale: CGFloat
     let onFocus: @MainActor @Sendable () -> Void
     let onOpenLink: @MainActor @Sendable (String) -> Void
+    let allowsInput: Bool
     /// False on a retained canvas that is not the one showing. The NSView is
     /// hidden then, which is what makes AppKit skip its display pass; the
     /// frame, and so the PTY size, is untouched.
     @Environment(\.hideCanvasVisible) private var canvasVisible
     @Environment(\.hideTerminalPaneVisible) private var paneVisible
+
+    init(
+        bridge: CoreBridge,
+        paneID: String,
+        textScale: CGFloat,
+        onFocus: @escaping @MainActor @Sendable () -> Void,
+        onOpenLink: @escaping @MainActor @Sendable (String) -> Void,
+        allowsInput: Bool = true
+    ) {
+        self.bridge = bridge
+        self.paneID = paneID
+        self.textScale = textScale
+        self.onFocus = onFocus
+        self.onOpenLink = onOpenLink
+        self.allowsInput = allowsInput
+    }
 
     /// Pushes the core's search result into this pane's find bar.
     ///
@@ -40,7 +57,12 @@ struct TerminalHost: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(bridge: bridge, paneID: paneID, onOpenLink: onOpenLink)
+        Coordinator(
+            bridge: bridge,
+            paneID: paneID,
+            onOpenLink: onOpenLink,
+            allowsInput: allowsInput
+        )
     }
 
     func makeNSView(context: Context) -> TerminalView {
@@ -51,6 +73,7 @@ struct TerminalHost: NSViewRepresentable {
                 weight: .regular
             )
         )
+        terminal.allowsPaneInput = allowsInput
         terminal.hidePaneID = paneID
         terminal.registerForDraggedTypes([.fileURL])
         terminal.terminalContentsDidDraw = { TerminalLatency.drawn(paneID: paneID) }
@@ -71,7 +94,11 @@ struct TerminalHost: NSViewRepresentable {
         terminal.bidiHostPolicy = .legacyLeftToRight
         terminal.searchHighlightColor = HideTheme.Native.searchMatchHighlight
         terminal.setAccessibilityIdentifier("swiftterm-terminal-\(paneID)")
-        terminal.onPointerFocus = onFocus
+        if allowsInput {
+            terminal.onPointerFocus = onFocus
+        } else {
+            terminal.onPointerFocus = nil
+        }
         terminal.onOrdinaryClick = { [weak coordinator = context.coordinator] column, row, modifiers in
             coordinator?.bridge.clickTerminal(paneID: paneID, column: column, row: row, modifiers: modifiers)
         }
@@ -110,7 +137,8 @@ struct TerminalHost: NSViewRepresentable {
                     terminal?.refreshMarkedTextOverlayPosition()
                 }
             },
-            focus: { [weak terminal] in
+            focus: { [weak coordinator = context.coordinator, weak terminal] in
+                guard coordinator?.allowsInput == true else { return }
                 guard let terminal, let window = terminal.window else { return }
                 // The core names a focused pane only inside the visible tab,
                 // so a hidden view asked for the keyboard is one whose
@@ -126,7 +154,18 @@ struct TerminalHost: NSViewRepresentable {
     func updateNSView(_ terminal: TerminalView, context: Context) {
         context.coordinator.bridge = bridge
         context.coordinator.onOpenLink = onOpenLink
-        (terminal as? ImeTerminalView)?.onPointerFocus = onFocus
+        context.coordinator.allowsInput = allowsInput
+        if let terminal = terminal as? ImeTerminalView {
+            terminal.allowsPaneInput = allowsInput
+            if allowsInput {
+                terminal.onPointerFocus = onFocus
+            } else {
+                terminal.onPointerFocus = nil
+            }
+            if !allowsInput, terminal.window?.firstResponder === terminal {
+                terminal.window?.makeFirstResponder(nil)
+            }
+        }
         applyPaneFind(to: terminal)
         context.coordinator.replayGeometryIfReady(from: terminal)
         let showing = canvasVisible && paneVisible
@@ -175,6 +214,7 @@ struct TerminalHost: NSViewRepresentable {
         var bridge: CoreBridge
         let paneID: String
         var onOpenLink: @MainActor @Sendable (String) -> Void
+        var allowsInput: Bool
         var registrationID: UUID?
         weak var terminal: TerminalView?
         private var settledSize = SettledTerminalSize()
@@ -186,11 +226,13 @@ struct TerminalHost: NSViewRepresentable {
         init(
             bridge: CoreBridge,
             paneID: String,
-            onOpenLink: @escaping @MainActor @Sendable (String) -> Void
+            onOpenLink: @escaping @MainActor @Sendable (String) -> Void,
+            allowsInput: Bool
         ) {
             self.bridge = bridge
             self.paneID = paneID
             self.onOpenLink = onOpenLink
+            self.allowsInput = allowsInput
         }
 
         func send(source: TerminalView, data: ArraySlice<UInt8>) {

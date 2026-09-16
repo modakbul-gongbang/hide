@@ -48,6 +48,13 @@ struct PaneShortcutSettingsTests {
         #expect(resolution.bindings[.closePane]?.canonical == "command+shift+w")
     }
 
+    @Test func conversationUsesCommandOptionCAndRetiredTimesChordIsUnbound() {
+        #expect(PaneCommand.toggleConversation.defaultShortcut.canonical == "command+option+c")
+        #expect(PaneCommand.allCases.allSatisfy { !$0.rawValue.contains("time") })
+        let retired = keyEvent(characters: "t", keyCode: 17, modifiers: [.command, .option])
+        #expect(PaneShortcutPolicy.command(for: retired, bindings: PaneShortcutPolicy.defaults) == nil)
+    }
+
     @Test func corruptReservedOrConflictingStoredBindingsFallBackAsOneSafeSet() {
         for stored in [
             ["split_right": "not-a-chord"],

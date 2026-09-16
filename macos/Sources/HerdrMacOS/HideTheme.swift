@@ -91,6 +91,16 @@ enum HideTheme {
         static let documentFontSize: CGFloat = 15
         static let documentLineSpacing: CGFloat = 5
     }
+    enum Conversation {
+        static let measureWidth: CGFloat = 640
+        static let timeRailWidth: CGFloat = 64
+        static let bodyLineSpacing: CGFloat = 6.5
+        static let turnInset: CGFloat = 12
+        static let promptBandVerticalInset: CGFloat = 8
+        static let bodyFontSize: CGFloat = Typography.title
+        static let promptFontSize: CGFloat = Typography.subhead
+        static let promptGlyphSize: CGFloat = compactAgentBadgeSize
+    }
     enum Hint {
         static let delay: TimeInterval = 0.150
         static let tooltipDelay: TimeInterval = 0.400
@@ -159,6 +169,7 @@ enum HideTheme {
         static let accent = NSColor(HideTheme.accent)
         static let danger = NSColor(HideTheme.danger)
         static let warning = NSColor(HideTheme.warning)
+        static let agentWorking = NSColor(HideTheme.agentWorking)
         static let success = NSColor(HideTheme.success)
         static let searchMatchHighlight = NSColor(HideTheme.searchMatchHighlight)
     }

@@ -1756,6 +1756,7 @@ struct CoreUIStateSnapshot: Decodable {
     /// Per-pane content text scale. A pane the user has not zoomed is absent,
     /// so a lookup miss means the default rather than an error.
     let paneTextScales: [String: Double]
+    let conversationPaneIDs: [String]
     /// The file editor's own zoom. The editor is one surface rather than one
     /// per document, and it is not a pane, so it carries a scale of its own
     /// instead of a row in the pane-keyed map.
@@ -1794,6 +1795,7 @@ struct CoreUIStateSnapshot: Decodable {
         case fontSize = "font_size"
         case paneTextScales = "pane_text_scales"
         case editorTextScale = "editor_text_scale"
+        case conversationPaneIDs = "conversation_pane_ids"
     }
 
     init(from decoder: Decoder) throws {
@@ -1850,6 +1852,7 @@ struct CoreUIStateSnapshot: Decodable {
             forKey: .paneTextScales
         ) ?? [:]
         editorTextScale = try container.decodeIfPresent(Double.self, forKey: .editorTextScale) ?? 1
+        conversationPaneIDs = try container.decodeIfPresent([String].self, forKey: .conversationPaneIDs) ?? []
     }
 }
 
@@ -3484,6 +3487,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func togglePaneZoom(_ paneID: String) {
         dispatch(kind: "toggle_zoom", payload: ["pane_id": paneID])
+    }
+
+    func toggleConversation(_ paneID: String) {
+        dispatch(kind: "toggle_conversation", payload: ["pane_id": paneID])
     }
 
     func resizePane(_ paneID: String, direction: PaneResizeDirection, amount: Double) {

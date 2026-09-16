@@ -6,6 +6,7 @@ enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
     case splitRight = "split_right"
     case splitDown = "split_down"
     case toggleZoom = "toggle_zoom"
+    case toggleConversation = "toggle_conversation"
     case closePane = "close_pane"
     case increaseTextSize = "increase_text_size"
     case decreaseTextSize = "decrease_text_size"
@@ -18,6 +19,7 @@ enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
         case .splitRight: "Split Right"
         case .splitDown: "Split Down"
         case .toggleZoom: "Toggle Zoom"
+        case .toggleConversation: "Toggle Conversation"
         case .closePane: "Close Pane"
         case .increaseTextSize: "Increase Text Size"
         case .decreaseTextSize: "Decrease Text Size"
@@ -30,6 +32,7 @@ enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
         case .splitRight: PaneShortcut(key: "d", modifiers: [.command])
         case .splitDown: PaneShortcut(key: "d", modifiers: [.command, .shift])
         case .toggleZoom: PaneShortcut(key: "return", modifiers: [.command, .option])
+        case .toggleConversation: PaneShortcut(key: "c", modifiers: [.command, .option])
         case .closePane: PaneShortcut(key: "w", modifiers: [.command, .shift])
         // `toggleZoom` above is layout zoom - one pane filling the tab. These
         // three are text size, which is why they are not named zoom.
@@ -46,7 +49,7 @@ enum PaneCommand: String, CaseIterable, Hashable, Identifiable, Sendable {
         case .increaseTextSize: .in
         case .decreaseTextSize: .out
         case .resetTextSize: .reset
-        case .splitRight, .splitDown, .toggleZoom, .closePane: nil
+        case .splitRight, .splitDown, .toggleZoom, .toggleConversation, .closePane: nil
         }
     }
 }

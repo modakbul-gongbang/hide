@@ -2426,6 +2426,10 @@ final class ShellModel: ObservableObject {
         core.snapshot?.card ?? .empty
     }
 
+    func conversationSessionID(for paneID: String) -> String? {
+        card.panes.first(where: { $0.paneID == paneID })?.sessionID
+    }
+
     /// The agents in a checkout, tolerating no selection so the card can ask
     /// without unwrapping first.
     func agents(in checkout: CoreCheckoutSnapshot?) -> [SidebarAgent] {
@@ -2491,6 +2495,18 @@ final class ShellModel: ObservableObject {
     /// carry their own bar, so this focuses the right one and hands it AppKit's
     /// standard find action.
     func showFindInFocusedSurface() {
+        if !isRemoteContext,
+           core.snapshot?.editor.activeTabID == nil,
+           let paneID = focusedPaneID,
+           isConversation(for: paneID),
+           canShowConversation(for: paneID)
+        {
+            if let textView = NSApp.keyWindow?.contentView?.firstDescendantFindableTextView() {
+                NSApp.keyWindow?.makeFirstResponder(textView)
+            }
+            FindResponderAction.send(.showFindInterface)
+            return
+        }
         switch PaneFindPolicy.target(
             activeFileTabID: core.snapshot?.editor.activeTabID,
             focusedPaneID: focusedPaneID,
@@ -2530,6 +2546,20 @@ final class ShellModel: ObservableObject {
     /// the default rather than as a missing value.
     func textScale(for paneID: String) -> CGFloat {
         CGFloat(core.snapshot?.uiState.paneTextScales[paneID] ?? 1)
+    }
+
+    func canShowConversation(for paneID: String) -> Bool {
+        guard !isRemoteContext else { return false }
+        guard let agent = agents.first(where: { $0.paneID == paneID }) else { return false }
+        guard ConversationProvider(agentKind: agent.agentKind) != nil else { return false }
+        guard let sessionID = conversationSessionID(for: paneID) else { return false }
+        return ConversationReader.isSafeSessionIdentifier(
+            sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    func isConversation(for paneID: String) -> Bool {
+        core.snapshot?.uiState.conversationPaneIDs.contains(paneID) == true
     }
 
     var editorTextScale: CGFloat { CGFloat(core.snapshot?.uiState.editorTextScale ?? 1) }
@@ -2749,6 +2779,15 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
+    func toggleConversation(_ paneID: String) {
+        guard canShowConversation(for: paneID) else {
+            interactionNotice = "Conversation view is available only for local Claude and Codex agent panes."
+            return
+        }
+        core.toggleConversation(paneID)
+        focus(.terminal)
+    }
+
     /// Opens a port a server in this pane's directory is listening on.
     ///
     /// Chrome first, the default browser when Chrome is absent, and a stated
@@ -2863,6 +2902,12 @@ final class ShellModel: ObservableObject {
             case .splitRight: splitCurrentPane(.right)
             case .splitDown: splitCurrentPane(.down)
             case .toggleZoom: toggleCurrentPaneZoom()
+            case .toggleConversation:
+                guard let paneID = focusedPaneID else {
+                    interactionNotice = "Select an agent pane before opening its conversation."
+                    return
+                }
+                toggleConversation(paneID)
             case .closePane:
                 guard let paneID = focusedPaneID else {
                     consequenceResult = "Select a terminal pane before closing."
@@ -2886,6 +2931,8 @@ final class ShellModel: ObservableObject {
                 core.splitRemotePane(targetID: targetID, paneID: paneID, direction: .down)
             case .toggleZoom:
                 core.toggleRemotePaneZoom(targetID: targetID, paneID: paneID)
+            case .toggleConversation:
+                interactionNotice = "Conversation view is available only for local agent panes."
             case .closePane: closeCurrentPane(target: .remote(paneID: paneID))
             case .increaseTextSize, .decreaseTextSize, .resetTextSize:
                 // Unreachable: `textScaleDirection` is non-nil for exactly
