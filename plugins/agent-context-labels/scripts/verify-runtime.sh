@@ -13,6 +13,7 @@ idle_seconds="${VERIFY_IDLE_SECONDS:-60}"
 
 cleanup() {
   herdr pane report-metadata "$pane_id" --source "$source_id" \
+    --clear-token task \
     --clear-token summary \
     --clear-token status_question \
     --clear-token status_question_new \
@@ -33,7 +34,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 herdr plugin list --plugin hide.agent-context-labels --json |
-  rg '"startup"|"refresh-active-pane-summary"|"enable-automatic-summaries"|"disable-automatic-summaries"'
+  rg '"startup"|"refresh-active-pane-task"|"enable-automatic-summaries"|"disable-automatic-summaries"'
 
 # The status-changed subscription is pane-scoped in the pinned contract. The
 # watcher expands that filter from its bootstrap pane list; this probe checks
@@ -82,11 +83,11 @@ print(f"subscription-started sequence={result.get('sequence')}")
 PY
 
 herdr pane report-metadata "$pane_id" --source "$source_id" \
-  --token summary=fixture \
+  --token task=fixture \
   --token 'status_question=?' \
   --token elapsed=7s \
   --token agent_codex=codex
-herdr pane get "$pane_id" | rg '"summary":"fixture"|"status_question":"\?"|"elapsed":"7s"|"agent_codex":"codex"'
+herdr pane get "$pane_id" | rg '"task":"fixture"|"status_question":"\?"|"elapsed":"7s"|"agent_codex":"codex"'
 
 # The same action applied twice must leave the same state.
 herdr plugin action invoke disable-automatic-summaries --plugin hide.agent-context-labels >/dev/null

@@ -2,17 +2,17 @@
 
 [![Herdr](https://img.shields.io/badge/Herdr-%E2%89%A5%200.8.0-6c7086)](https://herdr.dev)
 
-Compact task summaries and attention signals for Codex and Claude Code panes in [Herdr](https://herdr.dev).
+Rolling task labels and attention signals for Codex and Claude Code panes in [Herdr](https://herdr.dev).
 
 The plugin keeps the Agents sidebar useful when several coding agents are running at once.
 Each supported pane gets a short task label, lifecycle status, agent kind, and the time since its last state change.
 
 ```text
 ○  api-client       codex
-   Retry policy cleanup       14s
+   재시도 정책 정리             14s
 
 ?  docs             claude
-   Choose installation path    2m
+   설치 경로 선택                2m
 ```
 
 <p align="center">
@@ -26,12 +26,12 @@ Each supported pane gets a short task label, lifecycle status, agent kind, and t
 
 ## What it does
 
-- Adds a maximum-30-character task summary to recognized Codex and Claude Code panes.
+- Adds an 8-to-30-character Korean task label to recognized Codex and Claude Code panes.
 - Shows question, approval, error, working, unseen completion, idle, and unknown states as compact symbols.
 - Holds one steady symbol per state; working is told apart from an unseen completion by color, not by a blink.
 - Shows compact elapsed time such as `12s`, `4m`, `2h`, or `3d`.
 - Keeps completion semantics aligned with Herdr's native `working`, `done`, `idle`, `blocked`, and `unknown` lifecycle states.
-- Uses native agent hooks for high-confidence interaction signals and the user's own logged-in Codex and Claude Code CLIs, through Hide's `hide-ai` provider layer, for task summaries and plain-text question detection.
+- Uses native agent hooks for high-confidence interaction signals and the user's own logged-in Codex and Claude Code CLIs, through Hide's `hide-ai` provider layer, for rolling task labels and plain-text question detection.
 - Publishes `sort_rank` and `activity` tokens and installs an `agent.view.set` sort on watcher start, so the sidebar orders panes by who is blocking whom: work that finished unread comes first (error, then question/approval, then a plain completion), then work still running, then everything already seen. Ties inside every group break on the `activity` clock, so the most recently active pane leads.
 - Runs one headless watcher, so no dedicated watcher pane is required.
 
@@ -80,7 +80,7 @@ This distinction drives both the color and the order, so the three interaction s
 | `$status_approval_new` | `$status_approval` | `!` |
 | `$status_error_new` | `$status_error` | `×` |
 
-Color the `_new` variants to stand out and the plain ones to recede — that is why one `?` can be bright and another grey. The remaining states (`working`, `done`, `interrupted`, `idle`, `stale`) have a single token each.
+Color the `_new` variants to stand out and the plain ones to recede - that is why one `?` can be bright and another grey. The remaining states (`working`, `done`, `interrupted`, `idle`, `stale`) have a single token each.
 
 ### Where each symbol comes from
 
@@ -99,12 +99,12 @@ Not every symbol has the same source, which matters if you skip the optional [ag
 - macOS or Linux.
 - Codex, Claude Code, or both.
 - A stable Rust toolchain with Cargo for the current source-based installation.
-- A Codex CLI that is logged in (`codex login`), for generated summaries and plain-text question detection.
+- A Codex CLI that is logged in (`codex login`), for generated task labels and plain-text question detection.
 
 There is no API key and no environment variable.
-Summaries are produced by the CLIs already logged in on this machine: `codex app-server`, the same local process the Codex CLI itself uses, and `claude -p` print mode.
+Task labels are produced by the CLIs already logged in on this machine: `codex app-server`, the same local process the Codex CLI itself uses, and `claude -p` print mode.
 Lifecycle symbols continue to work without either.
-When no provider can answer (neither CLI is installed or logged in, or both are over their usage limit), the watcher keeps existing summaries, records `analysis_provider_unavailable` with the provider state, and asks again ten minutes later.
+When no provider can answer (neither CLI is installed or logged in, or both are over their usage limit), the watcher keeps existing task labels, records `analysis_provider_unavailable` with the provider state, and asks again ten minutes later.
 
 Nothing is scraped from a terminal and no credential file is read; a provider that cannot answer is visible in the log rather than silently skipped.
 
@@ -175,10 +175,13 @@ rows = [
     { token = "$elapsed", fg = "#6c7086", dim = true },
   ],
   [
-    { token = "$summary", fg = "#74c7ec", bold = true },
+    { token = "$task", fg = "#74c7ec", bold = true },
   ],
 ]
 ```
+
+The watcher clears the old v1 `$summary` token once for each pane when it starts, then publishes `$task` in the same slot.
+If an existing configuration still names `$summary`, that row is intentionally blank until you replace it with `$task` and reload Herdr's configuration.
 
 Every status token the plugin can publish is listed above. A token you leave out is not an error, but the state it represents then renders without color, so the unread states are the ones you least want to omit.
 
@@ -245,18 +248,18 @@ Register that command for these events without replacing existing hooks:
 
 Tool-call IDs are matched before a completion clears pending attention, so an unrelated parallel tool cannot clear the wrong question or approval.
 
-The wiring is optional, but it is not cosmetic. Without it, summaries and every Herdr lifecycle symbol still work and the model still identifies direct plain-text questions, so `?` and `!` both keep appearing. What you lose is precision on two of them and one symbol entirely:
+The wiring is optional, but it is not cosmetic. Without it, task labels and every Herdr lifecycle symbol still work and the model still identifies direct plain-text questions, so `?` and `!` both keep appearing. What you lose is precision on two of them and one symbol entirely:
 
 - `×` never appears. An error verdict has no source other than the `StopFailure` hook, so a turn that ended in failure is indistinguishable from one that ended normally.
 - Every `?` is the model's reading of prose rather than a confirmed question tool, which also ranks it below a hook-confirmed question in the sidebar order.
-- `!` still arrives from Herdr's `blocked` lifecycle, just later — the hook sees a permission request before the dialog reaches the screen.
+- `!` still arrives from Herdr's `blocked` lifecycle, just later - the hook sees a permission request before the dialog reaches the screen.
 
 ## Actions
 
 The plugin registers three explicit actions and does not force any keybinding:
 
 ```bash
-herdr plugin action invoke refresh-active-pane-summary --plugin hide.agent-context-labels
+herdr plugin action invoke refresh-active-pane-task --plugin hide.agent-context-labels
 herdr plugin action invoke enable-automatic-summaries --plugin hide.agent-context-labels
 herdr plugin action invoke disable-automatic-summaries --plugin hide.agent-context-labels
 ```
@@ -270,14 +273,16 @@ An optional refresh keybinding looks like this:
 [[keys.command]]
 key = "prefix+r"
 type = "plugin_action"
-command = "hide.agent-context-labels.refresh-active-pane-summary"
-description = "refresh active pane summary"
+command = "hide.agent-context-labels.refresh-active-pane-task"
+description = "refresh active pane task"
 ```
 
-## Summary generation
+The refresh action discards the rolling task for the focused pane and asks again using the initial session view: the first three and last eight Human turns with an omission marker.
+
+## Rolling task generation
 
 Analysis is keyed to the conversation turn, identified by the user's own last message.
-A turn buys at most two provider requests: one when the user's message is the newest thing in the transcript, which names the task while the agent works, and one when the agent stops, which decides whether the pane is waiting on a reply.
+A turn buys at most two provider requests: one when the user's message is the newest thing in the transcript, which evaluates the rolling task while the agent works, and one when the agent stops, which updates progress and decides whether the pane is waiting on a reply.
 Nothing the agent emits in between triggers a request, and the attention verdict for a turn is drawn once and then held, so a pane's symbol cannot change on its own while the user is not looking at it.
 
 Keying on the turn rather than on the transcript is deliberate.
@@ -289,13 +294,16 @@ Requests go through Hide's `hide-ai` provider layer (`hide-ai/` in the same repo
 This plugin owns the prompt, the output schema, and the parsing of the answer (`src/context_label.rs`); `hide-ai` owns the provider process, availability, timeouts, retries, and duplicate suppression.
 The Codex model is `gpt-5.6-luna`, requested through `codex app-server` with an ephemeral read-only thread, the plugin's own base instructions in place of the coding-agent harness, every optional Codex feature disabled, and the output schema attached.
 The answer is validated against the schema before this plugin sees it.
-The accepted provider output is exactly one JSON object with these fields:
+The accepted provider output is exactly one JSON object with these fields, in this order:
 
 ```json
-{"expected_reply":"","summary":"Retry policy cleanup","attention":"none"}
+{"task":"재시도 정책 정리","task_changed":false,"progress":"착수","expected_reply":"","attention":"none"}
 ```
 
-`summary` is normalized to one line and at most 30 characters, and the provider is instructed to write it in Korean.
+The schema version is `context_label.v2`.
+`task` is normalized to one line and 8 to 30 characters, and the provider is instructed to write it in Korean.
+When `task_changed` is false, the watcher discards the returned spelling and keeps the previous task byte-for-byte.
+`progress` is stored for inspection and is not published to the sidebar.
 `attention` accepts only `question` or `none` because approval and error states come from native hooks rather than model inference.
 
 A request the provider refused for a reason that may clear on its own is retried by the provider layer with exponential backoff, at most four times; an answer the schema refuses is retried at most twice.
@@ -306,19 +314,19 @@ A usage limit, a missing login, or a provider that is not connected parks every 
 When more than one provider is connected, the configured priority is `codex`, then `claude`; a fallback happens only on a provider-side outage, login, usage-limit, or unsupported state, and is written to the log as `ai.fallback`.
 That fallback is sticky, so the parked provider is not asked again until its wait passes; `ai.provider.degraded` records entering it with the reason and the provider now answering, and `ai.provider.recovered` records the return.
 A request that timed out or lost its connection after submission is never re-run on another provider, because whether it completed is unknown.
-Every recorded verdict (`analysis_updated`) names the provider that answered it.
-Automatic summaries are enabled by default and the chosen setting survives watcher restarts.
+Every recorded verdict (`analysis_recorded`) names the provider that answered it and records field lengths, not conversation content.
+Automatic task analysis is enabled by default and the chosen setting survives watcher restarts.
 
 ## Privacy
 
 The plugin reads the local JSONL session reported by Herdr for each supported pane through the shared `hide-session` crate.
 The first view reads the complete file once, and later views read only complete lines appended after the remembered byte cursor.
-The context spans the last two human turns, with an upper bound of 4,000 characters.
-The all-user-requests section retains the most recent eight human turns so a long session does not lose its current task history at a 256 KiB tail boundary.
-Two turns rather than one, because whether a closing message is a fresh question or a wrap-up of one already answered is often only visible in the preceding exchange.
+When no task state exists, the initial context carries the first three and last eight Human turns with an explicit omission marker, with an upper bound of 4,000 characters.
+After the first successful call, the rolling context carries only the previous task and new Human-turn delta; the latest turn remains available for attention classification.
+The end-boundary call sends an empty delta, so it can update progress and attention without rewriting the task.
 
 The parser excludes runtime-injected user-role records such as task notifications, system reminders, skill instructions, and Codex environment instructions.
-It classifies an explicit interruption separately, so the interrupted symbol keeps the previous summary without spending a provider request on the interruption.
+It classifies an explicit interruption separately, so the interrupted symbol keeps the previous task without spending a provider request on the interruption.
 
 Before anything is sent to the provider, the plugin:
 
@@ -347,9 +355,9 @@ The important files are:
 
 | File | Contents |
 | --- | --- |
-| `display-state.json` | Last summaries, semantic attention, per-phase analyzed turns, and lifecycle timestamps. |
+| `display-state.json` | Current task, progress, task-input cursor, semantic attention, per-phase analyzed turns, and lifecycle timestamps. |
 | `hook-state.json` | Pending native-hook interaction state. |
-| `settings.json` | Automatic-summary preference. |
+| `settings.json` | Automatic task-analysis preference. |
 | `events.jsonl` | Structured operational events and failure classes. |
 
 The structured event log is restricted to the current user, and the remaining state files contain no credentials or raw conversation text.
@@ -405,7 +413,7 @@ Common event codes include `ai_provider_availability`, `raw_session_unavailable`
 | `raw_session_unavailable` | Herdr's reported session and the file on disk disagree. Send the pane one message to refresh it. |
 | `analysis_provider_unavailable` with `usage_limited` | The Codex account is over its usage window. Every pane waits for the reset the provider reported, or ten minutes. |
 | `analysis_abandoned` | The provider layer exhausted its retries for that turn; the detail carries the failure class. The next turn starts fresh, and the refresh action re-asks now. |
-| A summary looks stale | Summaries refresh once per turn, so a pane mid-turn keeps the label it was given at the start. Use the refresh action to re-ask immediately. |
+| A task label looks stale | Task labels refresh once per turn, so a pane mid-turn keeps the label it was given at the start. Use the refresh action to re-ask from the initial session view immediately. |
 | Two watchers seem to run | They cannot; a file lock guarantees one. A `watcher_already_running` log line is normal. |
 
 ## Development
