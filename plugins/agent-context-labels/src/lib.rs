@@ -31,14 +31,15 @@ pub const PLUGIN_ID: &str = "hide.agent-context-labels";
 /// The id this plugin shipped under before it moved into the Hide workspace.
 /// Its state and config directories are moved once by [`migrate_legacy_state`].
 pub const LEGACY_PLUGIN_ID: &str = "herdr-agent-context-labels";
-/// Upper bound on the analysis context. The context normally spans the last
-/// two human turns; this also guards against one enormous turn.
+/// Upper bound on the analysis context. This also guards against one enormous
+/// turn while the initial or rolling sections are being assembled.
 pub const MAX_ANALYSIS_CONTEXT_CHARS: usize = 4_000;
-pub const MAX_SUMMARY_CHARS: usize = 30;
-/// How many of the session's user turns feed the summary's "what was asked"
-/// arc. Unbounded, a long session would grow the per-event context (and cost)
-/// with every new turn; this caps it to the recent history that still shapes
-/// the current task title.
+pub const MAX_TASK_CHARS: usize = 30;
+/// The initial view includes a small head and a bounded tail of human turns.
+pub const INITIAL_FIRST_USER_TURNS: usize = 3;
+/// How many of the session's latest human turns feed the initial task context.
+/// Unbounded, a long session would grow the per-event context (and cost) with
+/// every new turn; this caps the recent history that still shapes the task.
 pub const MAX_USER_REQUEST_TURNS: usize = 8;
 /// How long a pane waits before asking again after the provider layer reported
 /// that no provider can answer right now (not logged in, usage limit, no
@@ -52,6 +53,16 @@ pub enum Attention {
     Question,
     Approval,
     Error,
+}
+
+impl Attention {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Question => "question",
+            Self::Approval => "approval",
+            Self::Error => "error",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -379,7 +390,7 @@ pub enum AttentionSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Display {
-    pub summary: Option<String>,
+    pub task: Option<String>,
     pub status: StatusIcon,
     pub sort_key: SortKey,
     pub elapsed: Option<String>,
@@ -393,7 +404,7 @@ pub struct Display {
 impl Default for Display {
     fn default() -> Self {
         Self {
-            summary: None,
+            task: None,
             status: StatusIcon::Stale,
             sort_key: SortKey::Stale,
             elapsed: None,
@@ -405,7 +416,10 @@ impl Default for Display {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Analysis {
-    pub summary: String,
+    pub task: String,
+    pub task_changed: bool,
+    pub progress: String,
+    pub expected_reply: String,
     pub attention: Option<Attention>,
 }
 
@@ -436,34 +450,43 @@ pub fn status_icon(agent_status: &str, attention: Option<Attention>) -> StatusIc
     }
 }
 
-/// Cut a summary to the display budget without splitting a word.
-pub fn truncate_summary(text: &str) -> String {
-    if text.chars().count() <= MAX_SUMMARY_CHARS {
+/// Cut a task title to the display budget without splitting a word.
+pub fn truncate_task(text: &str) -> String {
+    if text.chars().count() <= MAX_TASK_CHARS {
         return text.to_owned();
     }
-    let budget: String = text.chars().take(MAX_SUMMARY_CHARS - 1).collect();
+    let budget: String = text.chars().take(MAX_TASK_CHARS - 1).collect();
     let head = budget
         .rsplit_once(char::is_whitespace)
         .map(|(head, _)| head)
-        .filter(|head| head.chars().count() * 2 >= MAX_SUMMARY_CHARS)
+        .filter(|head| head.chars().count() * 2 >= MAX_TASK_CHARS)
         .unwrap_or(&budget);
     format!("{}…", head.trim_end())
 }
 
-pub fn normalize_summary(raw: &str) -> Option<String> {
+pub fn normalize_task(raw: &str) -> Option<String> {
     let candidate = raw
         .rsplit("</think>")
         .next()
         .unwrap_or(raw)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())?
+        .trim()
         .trim_matches(|character| matches!(character, '`' | '*' | '"' | '#'))
         .trim();
-    if candidate.chars().count() < 4 || candidate.chars().any(char::is_control) {
+    if candidate.chars().count() < 8 || candidate.chars().any(char::is_control) {
         return None;
     }
-    Some(truncate_summary(candidate))
+    Some(truncate_task(candidate))
+}
+
+/// Normalize a one-line non-title field from the provider without silently
+/// accepting a multiline answer. Empty values are valid for `progress` and
+/// `expected_reply` when the current boundary has nothing more to say.
+pub fn normalize_text_field(raw: &str, allow_empty: bool) -> Option<String> {
+    let candidate = raw.trim();
+    if (!allow_empty && candidate.is_empty()) || candidate.chars().any(char::is_control) {
+        return None;
+    }
+    Some(candidate.to_owned())
 }
 
 static SECRET: LazyLock<Regex> = LazyLock::new(|| {
@@ -477,13 +500,7 @@ static FILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?:(?:/Users|/home|/tmp|/var|/etc)/)[^\s'"`]+"#).expect("valid path expression")
 });
 
-/// Build the text handed to the provider.
-///
-/// The conversation is already restricted to user and assistant prose by the
-/// session parser, so the only structural thing worth removing is a fenced code
-/// block. Nothing else is dropped: the previous line filter also deleted every
-/// Markdown bullet, which is most of what an agent actually says.
-pub fn analysis_context(events: &[SessionEvent]) -> String {
+fn latest_exchange(events: &[SessionEvent]) -> String {
     let conversation = events
         .iter()
         .filter(|event| matches!(event.kind, EventKind::Human | EventKind::Assistant))
@@ -491,9 +508,6 @@ pub fn analysis_context(events: &[SessionEvent]) -> String {
     if conversation.is_empty() {
         return String::new();
     }
-    // Span the last two user turns, not one: whether the final assistant
-    // message is a fresh question or a wrap-up of one already answered is
-    // often only visible in the preceding exchange.
     let last = conversation
         .iter()
         .rposition(|event| event.kind == EventKind::Human)
@@ -502,28 +516,95 @@ pub fn analysis_context(events: &[SessionEvent]) -> String {
         .iter()
         .rposition(|event| event.kind == EventKind::Human)
         .unwrap_or(last);
-    let transcript = conversation[start..]
+    conversation[start..]
         .iter()
         .map(|event| format!("{}: {}", event.role, event.text))
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+}
 
-    // The session's recent user turns, not just the latest one: the summary
-    // is a task title for the ongoing work, so it needs the arc of what was
-    // asked, not just the fragment attached to the most recent exchange.
-    // Capped so a long session does not grow the per-event context forever.
-    let mut user_requests = conversation
+fn latest_turn_exchange(events: &[SessionEvent]) -> String {
+    let conversation = events
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::Human | EventKind::Assistant))
+        .collect::<Vec<_>>();
+    let Some(start) = conversation
+        .iter()
+        .rposition(|event| event.kind == EventKind::Human)
+    else {
+        return String::new();
+    };
+    conversation[start..]
+        .iter()
+        .map(|event| format!("{}: {}", event.role, event.text))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn initial_human_requests(events: &[SessionEvent]) -> Option<String> {
+    let humans = events
         .iter()
         .filter(|event| event.kind == EventKind::Human)
-        .map(|event| event.text.as_str())
         .collect::<Vec<_>>();
-    if user_requests.len() > MAX_USER_REQUEST_TURNS {
-        user_requests = user_requests.split_off(user_requests.len() - MAX_USER_REQUEST_TURNS);
+    if humans.is_empty() {
+        return None;
     }
-    let user_requests = user_requests.join("\n---\n");
 
+    let recent_start = humans.len().saturating_sub(MAX_USER_REQUEST_TURNS);
+    let first_count = humans.len().min(INITIAL_FIRST_USER_TURNS);
+    let omitted = recent_start.saturating_sub(first_count);
+    let mut requests = humans[..first_count]
+        .iter()
+        .map(|event| format!("user: {}", event.text))
+        .collect::<Vec<_>>();
+    requests.push(format!(
+        "<omitted-human-turns>{omitted}개 사람 턴 생략</omitted-human-turns>"
+    ));
+    requests.extend(
+        humans[recent_start..]
+            .iter()
+            .skip(first_count.saturating_sub(recent_start))
+            .map(|event| format!("user: {}", event.text)),
+    );
+    let requests = requests.join("\n---\n");
+    Some(format!(
+        "<initial-human-requests>\n{requests}\n</initial-human-requests>"
+    ))
+}
+
+/// Build the initial text handed to the provider. It carries the first three
+/// and last eight human turns, with an explicit omission marker between them.
+pub fn analysis_context(events: &[SessionEvent]) -> String {
+    let Some(initial) = initial_human_requests(events) else {
+        return String::new();
+    };
+    let transcript = latest_exchange(events);
+    let combined = format!("{initial}\n<latest-exchange>\n{transcript}\n</latest-exchange>");
+    redact(&strip_code_fences(&combined))
+}
+
+/// Build the rolling text for a task that already exists. Only the new Human
+/// events are supplied as task evidence; the latest exchange remains available
+/// for the attention verdict at the end boundary.
+pub fn rolling_analysis_context(
+    previous_task: &str,
+    new_human_turns: &[SessionEvent],
+    events: &[SessionEvent],
+) -> String {
+    let delta = new_human_turns
+        .iter()
+        .filter(|event| event.kind == EventKind::Human)
+        .map(|event| format!("user: {}", event.text))
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+    let delta = if delta.is_empty() {
+        "<none/>".to_owned()
+    } else {
+        delta
+    };
     let combined = format!(
-        "<all-user-requests>\n{user_requests}\n</all-user-requests>\n<latest-exchange>\n{transcript}\n</latest-exchange>"
+        "<previous-task>{previous_task}</previous-task>\n<new-human-turns>\n{delta}\n</new-human-turns>\n<latest-exchange>\n{}\n</latest-exchange>",
+        latest_turn_exchange(events)
     );
     redact(&strip_code_fences(&combined))
 }
@@ -581,6 +662,43 @@ pub fn turn_key(events: &[SessionEvent]) -> Option<u64> {
         .iter()
         .rposition(|event| event.kind == EventKind::Human)?;
     Some(context_fingerprint(&events[last].text))
+}
+
+/// A stable cursor for the last Human event that fed task analysis. The shared
+/// session cursor is a byte cursor, while this cursor is deliberately about
+/// the semantic input boundary and survives a watcher restart.
+pub fn task_input_cursor(events: &[SessionEvent]) -> Option<u64> {
+    let last = events
+        .iter()
+        .rposition(|event| event.kind == EventKind::Human)?;
+    let event = &events[last];
+    let mut hasher = DefaultHasher::new();
+    event.at_unix_ms.hash(&mut hasher);
+    event.text.hash(&mut hasher);
+    Some(hasher.finish())
+}
+
+fn new_human_turns(events: &[SessionEvent], previous_cursor: Option<u64>) -> Vec<SessionEvent> {
+    let humans = events
+        .iter()
+        .filter(|event| event.kind == EventKind::Human)
+        .cloned()
+        .collect::<Vec<_>>();
+    let Some(previous_cursor) = previous_cursor else {
+        return humans;
+    };
+    let Some(previous_index) = humans.iter().rposition(|event| {
+        let mut hasher = DefaultHasher::new();
+        event.at_unix_ms.hash(&mut hasher);
+        event.text.hash(&mut hasher);
+        hasher.finish() == previous_cursor
+    }) else {
+        // The bounded reader may have evicted the old boundary. Treat the
+        // retained Human history as the available delta instead of silently
+        // pretending that no new request arrived.
+        return humans;
+    };
+    humans.into_iter().skip(previous_index + 1).collect()
 }
 
 /// The boundary this pane is sitting on, or `None` when the turn's two calls
@@ -687,16 +805,20 @@ impl LocalSessionReader {
             .enumerate()
             .filter_map(|(index, event)| (event.kind == EventKind::Human).then_some(index))
             .collect::<Vec<_>>();
-        let human_count = human_positions.len();
-        let first_recent_human = human_count.saturating_sub(MAX_USER_REQUEST_TURNS);
         let second_last_human = human_positions.iter().rev().nth(1).copied();
-        let mut human_seen = 0;
         let mut retained = std::collections::VecDeque::new();
         for (index, event) in events.drain(..).enumerate() {
             let keep = if event.kind == EventKind::Human {
-                let keep = human_seen >= first_recent_human;
-                human_seen += 1;
-                keep
+                index
+                    < human_positions
+                        .get(INITIAL_FIRST_USER_TURNS.saturating_sub(1))
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                    || human_positions
+                        .iter()
+                        .rev()
+                        .take(MAX_USER_REQUEST_TURNS)
+                        .any(|position| *position == index)
             } else {
                 match human_positions.as_slice() {
                     [] => false,
@@ -848,13 +970,22 @@ struct DisplayStates {
 struct PersistedDisplayState {
     state_change_seq: u64,
     changed_unix_ms: u64,
-    summary: Option<String>,
+    task: Option<String>,
+    #[serde(default)]
+    progress: String,
+    /// The last Human event included in the rolling task input.
+    #[serde(default)]
+    task_input_cursor: Option<u64>,
+    /// Read once for the v1 to v2 state transition, then omitted on the next
+    /// write so the old field cannot become a second source of truth.
+    #[serde(default, rename = "summary", skip_serializing)]
+    legacy_summary: Option<String>,
     #[serde(default)]
     semantic_attention: Option<Attention>,
     /// When the semantic verdict was drawn, so a later hook signal can retire it.
     #[serde(default)]
     analysis_unix_ms: u64,
-    /// The turn whose start has already been named, so a task summary costs one
+    /// The turn whose start has already been named, so a task label costs one
     /// request per turn however long the turn runs.
     #[serde(default)]
     analysis_turn_start: Option<u64>,
@@ -910,6 +1041,33 @@ fn load_state_json<T: Default + serde::de::DeserializeOwned>(path: &Path) -> (T,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (T::default(), None),
         Err(error) => (T::default(), Some(error.to_string())),
     }
+}
+
+fn load_display_states(path: &Path) -> (DisplayStates, Option<String>, bool) {
+    let (mut states, error) = load_state_json(path);
+    if error.is_some() {
+        return (states, error, false);
+    }
+    let mut migrated = false;
+    for state in states.panes.values_mut() {
+        if state.task.is_none() {
+            if let Some(legacy_summary) = state.legacy_summary.take() {
+                state.task = normalize_legacy_task(&legacy_summary);
+                migrated = true;
+            }
+        } else if state.legacy_summary.take().is_some() {
+            migrated = true;
+        }
+    }
+    (states, None, migrated)
+}
+
+fn normalize_legacy_task(raw: &str) -> Option<String> {
+    let candidate = raw.trim();
+    if candidate.is_empty() || candidate.chars().any(char::is_control) {
+        return None;
+    }
+    Some(truncate_task(candidate))
 }
 
 fn load_hook_states(paths: &StatePaths) -> HookStates {
@@ -1145,6 +1303,12 @@ pub fn enforce_retention(paths: &StatePaths) -> Result<()> {
 pub trait HerdrTransport {
     fn panes(&self) -> Result<Vec<Pane>>;
     fn report(&self, pane: &Pane, display: &Display) -> Result<()>;
+
+    /// Clear the token published by the v1 plugin once before the v2 task
+    /// report takes ownership of the same sidebar slot.
+    fn clear_legacy_summary_token(&self, _pane: &Pane) -> Result<()> {
+        Ok(())
+    }
 }
 
 pub trait HerdrEventTransport: HerdrTransport {
@@ -1208,6 +1372,21 @@ impl HerdrTransport for SocketHerdr {
         .map(|_| ())
         .map_err(|error| anyhow!("pane.report_metadata failed: {error}"))
     }
+
+    fn clear_legacy_summary_token(&self, pane: &Pane) -> Result<()> {
+        request_with_connector(
+            self.connector.as_ref(),
+            "pane.report_metadata",
+            serde_json::json!({
+                "pane_id": pane.id,
+                "source": PLUGIN_ID,
+                "tokens": {"summary": serde_json::Value::Null},
+            }),
+            self.timeout,
+        )
+        .map(|_| ())
+        .map_err(|error| anyhow!("legacy summary token clear failed: {error}"))
+    }
 }
 
 impl HerdrEventTransport for SocketHerdr {
@@ -1258,9 +1437,9 @@ fn metadata_params(pane: &Pane, display: &Display) -> serde_json::Value {
         );
     }
     tokens.insert(
-        "summary".to_owned(),
+        "task".to_owned(),
         display
-            .summary
+            .task
             .clone()
             .map_or(serde_json::Value::Null, serde_json::Value::String),
     );
@@ -1343,7 +1522,19 @@ struct AnalysisOutcome {
     turn: u64,
     phase: AnalysisPhase,
     context_chars: usize,
+    task_input_cursor: Option<u64>,
+    initial_context: bool,
     result: std::result::Result<(ProviderId, Analysis), AnalysisFailure>,
+}
+
+struct RecordedAnalysis<'a> {
+    provider: ProviderId,
+    analysis: &'a Analysis,
+    turn: u64,
+    phase: AnalysisPhase,
+    context_chars: usize,
+    task_input_cursor: Option<u64>,
+    initial_context: bool,
 }
 
 /// One label request on the calling thread: the router's answer, then the
@@ -1377,6 +1568,9 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     analysis_in_flight: HashSet<String>,
     analysis_sender: mpsc::Sender<AnalysisOutcome>,
     analysis_receiver: mpsc::Receiver<AnalysisOutcome>,
+    /// Pane ids for which the v1 `$summary` token has already been cleared in
+    /// this watcher lifetime.
+    legacy_summary_cleared: HashSet<String>,
     /// The home whose `hide-ai` settings file this watcher follows, and the
     /// choice it last read from it. `None` for a watcher given its router
     /// directly, which is what a test does.
@@ -1389,9 +1583,25 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
 
 impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
     pub fn new(transport: T, router: Arc<AiRouter>, session_reader: R, paths: StatePaths) -> Self {
-        let (display_states, display_error) = load_state_json(&paths.display_state());
+        let (display_states, display_error, migrated) = load_display_states(&paths.display_state());
         if let Some(error) = display_error {
             let _ = append_log(&paths, "display_state_reset", None, Some(&error));
+        }
+        if migrated {
+            if let Err(error) = write_state_json(
+                &paths.display_state(),
+                &display_states,
+                "display-state-migrated",
+            ) {
+                let _ = append_log(
+                    &paths,
+                    "display_state_migration_failed",
+                    None,
+                    Some(&error.to_string()),
+                );
+            } else {
+                let _ = append_log(&paths, "display_state_migrated", None, None);
+            }
         }
         let (analysis_sender, analysis_receiver) = mpsc::channel();
         Self {
@@ -1411,6 +1621,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             analysis_in_flight: HashSet::new(),
             analysis_sender,
             analysis_receiver,
+            legacy_summary_cleared: HashSet::new(),
             ai_settings: None,
             ai_settings_failure: None,
         }
@@ -1516,11 +1727,15 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 Ok((provider, analysis)) => {
                     self.record_analysis(
                         pane,
-                        provider,
-                        &analysis,
-                        outcome.turn,
-                        outcome.phase,
-                        outcome.context_chars,
+                        RecordedAnalysis {
+                            provider,
+                            analysis: &analysis,
+                            turn: outcome.turn,
+                            phase: outcome.phase,
+                            context_chars: outcome.context_chars,
+                            task_input_cursor: outcome.task_input_cursor,
+                            initial_context: outcome.initial_context,
+                        },
                     )?;
                     self.next_analysis_at
                         .insert(pane.id.clone(), SystemTime::now());
@@ -1574,6 +1789,10 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             None => None,
         };
         for pane in panes {
+            if !self.legacy_summary_cleared.contains(&pane.id) {
+                self.transport.clear_legacy_summary_token(pane)?;
+                self.legacy_summary_cleared.insert(pane.id.clone());
+            }
             let lifecycle_changed = self.observe_lifecycle(pane, event_unix_ms, replayed_event)?;
             let revision_changed = self.revisions.get(&pane.id) != Some(&pane.revision);
             let state_changed =
@@ -1660,7 +1879,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             })
             .is_some_and(|event| event.kind == EventKind::Human);
         // An interruption is the user's own act, not a new task: keep the last
-        // summary, mark it, and spend no provider request on the torn turn.
+        // task, mark it, and spend no provider request on the torn turn.
         let interrupted = pane.agent_status != "working"
             && parsed
                 .events
@@ -1703,7 +1922,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             if forced {
                 append_log(
                     &self.paths,
-                    "summary_refresh_skipped_disabled",
+                    "task_refresh_skipped_disabled",
                     Some(pane),
                     None,
                 )?;
@@ -1712,23 +1931,19 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             return self.report_if_changed(pane, &display);
         }
 
-        let context = analysis_context(&parsed.events);
         let display = self.display_for(pane)?;
-        if context.is_empty() {
-            append_log(
-                &self.paths,
-                "analysis_skipped_empty_context",
-                Some(pane),
-                None,
-            )?;
-            return self.report_if_changed(pane, &display);
-        }
         // No user message means no turn, so there is nothing to name or judge.
         let Some(turn) = turn_key(&parsed.events) else {
             self.next_analysis_at.remove(&pane.id);
             return self.report_if_changed(pane, &display);
         };
         let persisted = self.display_states.panes.get(&pane.id);
+        let previous_task = persisted.and_then(|state| state.task.clone());
+        let previous_cursor = persisted.and_then(|state| state.task_input_cursor);
+        // A forced refresh intentionally starts from the session-wide view.
+        // A missing cursor is treated the same way, so a migrated or partially
+        // written state never turns into an incomplete rolling input.
+        let initial_context = forced || previous_task.is_none() || previous_cursor.is_none();
         let phase = if forced {
             // A refresh request is the user asking directly, so it re-answers
             // whichever boundary the pane is currently sitting on.
@@ -1749,6 +1964,29 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             self.next_analysis_at.remove(&pane.id);
             return self.report_if_changed(pane, &display);
         };
+        let context = if initial_context {
+            analysis_context(&parsed.events)
+        } else {
+            let delta = new_human_turns(&parsed.events, previous_cursor);
+            rolling_analysis_context(
+                previous_task.as_deref().unwrap_or_default(),
+                if phase == AnalysisPhase::TurnStart {
+                    &delta
+                } else {
+                    &[]
+                },
+                &parsed.events,
+            )
+        };
+        if context.is_empty() {
+            append_log(
+                &self.paths,
+                "analysis_skipped_empty_context",
+                Some(pane),
+                None,
+            )?;
+            return self.report_if_changed(pane, &display);
+        }
         if self.analysis_in_flight.contains(&pane.id) {
             return self.report_if_changed(pane, &display);
         }
@@ -1756,6 +1994,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let sender = self.analysis_sender.clone();
         let pane_id = pane.id.clone();
         let context_chars = context.chars().count();
+        let task_cursor = task_input_cursor(&parsed.events);
         // The same pane, turn, boundary and context is the same intent: a
         // repeat carries the same key to the provider and the log.
         let request_id = format!(
@@ -1782,6 +2021,8 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 turn,
                 phase,
                 context_chars,
+                task_input_cursor: task_cursor,
+                initial_context,
                 result,
             });
         });
@@ -1888,7 +2129,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         Ok(())
     }
 
-    /// Give up on one context without inventing a verdict for it: the summary
+    /// Give up on one context without inventing a verdict for it: the task
     /// and the attention already on screen stay untouched, and only the
     /// fingerprint is stored so the deduplication check stops the re-ask.
     /// Give up on a turn after the retry cap. Both phases are recorded so the
@@ -1913,15 +2154,16 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         )
     }
 
-    fn record_analysis(
-        &mut self,
-        pane: &Pane,
-        provider: ProviderId,
-        analysis: &Analysis,
-        turn: u64,
-        phase: AnalysisPhase,
-        context_chars: usize,
-    ) -> Result<()> {
+    fn record_analysis(&mut self, pane: &Pane, record: RecordedAnalysis<'_>) -> Result<()> {
+        let RecordedAnalysis {
+            provider,
+            analysis,
+            turn,
+            phase,
+            context_chars,
+            task_input_cursor,
+            initial_context,
+        } = record;
         let now = unix_time_ms()?;
         let state = self
             .display_states
@@ -1937,13 +2179,23 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         if analysis.attention.is_some() && state.semantic_attention != analysis.attention {
             state.unseen = !pane.focused;
         }
-        state.summary = Some(analysis.summary.clone());
+        let previous_task = state.task.clone();
+        let may_update_task = initial_context
+            || previous_task.is_none()
+            || (phase == AnalysisPhase::TurnStart && analysis.task_changed);
+        let task_changed =
+            may_update_task && previous_task.as_deref() != Some(analysis.task.as_str());
+        if task_changed {
+            state.task = Some(analysis.task.clone());
+        }
+        state.progress = analysis.progress.clone();
+        state.task_input_cursor = task_input_cursor.or(state.task_input_cursor);
         state.semantic_attention = analysis.attention;
         state.interrupted = false;
         match phase {
             AnalysisPhase::TurnStart => state.analysis_turn_start = Some(turn),
             // Recording the start too keeps a turn first seen at its end from
-            // going back and asking for a summary it no longer needs.
+            // going back and asking for a task it no longer needs.
             AnalysisPhase::TurnEnd => {
                 state.analysis_turn_start = Some(turn);
                 state.analysis_turn_end = Some(turn);
@@ -1958,12 +2210,17 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         // Enough to reconstruct a verdict later without recording any content.
         append_log(
             &self.paths,
-            "analysis_updated",
+            "analysis_recorded",
             Some(pane),
             Some(&format!(
-                "attention={};phase={};context_chars={context_chars};turn={turn:016x};provider={provider}",
-                analysis.attention.map_or("none", |_| "question"),
+                "phase={};task_changed={task_changed};task_chars={};progress_chars={};expected_reply_chars={};attention_chars={};context_chars={context_chars};turn={turn:016x};provider={provider}",
                 phase.label(),
+                analysis.task.chars().count(),
+                analysis.progress.chars().count(),
+                analysis.expected_reply.chars().count(),
+                analysis
+                    .attention
+                    .map_or(0, |attention| attention.as_str().len()),
             )),
         )
     }
@@ -2028,11 +2285,11 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             .map_or(0, |state| state.changed_unix_ms);
         if interrupted {
             return Ok(Display {
-                summary: self
+                task: self
                     .display_states
                     .panes
                     .get(&pane.id)
-                    .and_then(|state| state.summary.clone()),
+                    .and_then(|state| state.task.clone()),
                 status: StatusIcon::Interrupted,
                 sort_key: SortKey::Interrupted,
                 elapsed: self.elapsed_for(pane)?,
@@ -2056,11 +2313,11 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             },
         };
         Ok(Display {
-            summary: self
+            task: self
                 .display_states
                 .panes
                 .get(&pane.id)
-                .and_then(|state| state.summary.clone()),
+                .and_then(|state| state.task.clone()),
             status: status_icon(&pane.agent_status, attention.map(|(kind, _)| kind)),
             sort_key,
             elapsed: self.elapsed_for(pane)?,

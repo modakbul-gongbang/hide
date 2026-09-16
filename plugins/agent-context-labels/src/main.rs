@@ -145,13 +145,13 @@ fn analyze_once(router: &AiRouter, subject: &str, context: &str) -> Result<Strin
         .map_err(|error| anyhow!("{error}"))?;
     let analysis = context_label::parse(value)?;
     Ok(format!(
-        "provider={provider} attention={} summary={}",
+        "provider={provider} attention={} task={}",
         if analysis.attention.is_some() {
             "question"
         } else {
             "none"
         },
-        analysis.summary
+        analysis.task
     ))
 }
 
