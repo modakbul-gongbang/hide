@@ -20,7 +20,9 @@ Source it rather than writing a path; `scripts/rust-test.sh`, `verify-cargo.sh t
 
 The cost of that isolation is one full build cache per worktree, so the cache is removed with the work rather than left behind.
 `git worktree remove` takes the in-tree build output with it.
-Before removing an owned worktree, source `scripts/build-scratch.sh` there and remove its `$HIDE_SCRATCH_ROOT` after all checks using it finish; scratch output is external and Git does not remove it.
+Hide's reviewed merged-worktree cleanup detects this repository's `scripts/build-scratch.sh`, resolves it before removal, and deletes that exact `$HIDE_SCRATCH_ROOT` after Git removes the worktree.
+If the external cache cannot be removed, the worktree removal remains complete and the row reports partial success with the retained cache reason.
+Manual worktree removal still requires sourcing `scripts/build-scratch.sh` there and removing its `$HIDE_SCRATCH_ROOT` after all checks using it finish; scratch output is external and Git does not remove it.
 A worktree kept alive after its branch lands keeps its in-tree cache alive too.
 On 2026-09-09 one abandoned worktree held 5.3 GB, over half of the 10 GB across all eight.
 
@@ -46,6 +48,14 @@ The physical absolute path distinguishes worktrees even with equal basenames and
 The path is independent of a runner's `HOME` and `TMPDIR`, so another run of the same checkout reuses its cache.
 No build cache is shared between different checkouts; toolchain and downloaded dependencies remain machine-wide.
 The verification wrappers and `rust-test.sh` select these paths themselves rather than accepting `CARGO_TARGET_DIR` or the retired `HIDE_VERIFY_SWIFT_SCRATCH` override.
+
+## Local distribution retention
+
+`scripts/build-app.sh` finishes and verifies a complete versioned zip and SHA-256 sidecar in its temporary directory before publishing anything under `dist/`.
+`scripts/publish-dist-artifacts.sh` then replaces `dist/hide.app`, publishes that archive pair, and removes older files matching Hide's versioned archive names.
+The successful current zip and checksum are the only local historical pair retained; GitHub Releases owns released history, and unrelated files under `dist/` are preserved.
+A failed build or incomplete ready set leaves the previous successful bundle and archive pair untouched.
+Publishing stages every new path on `dist/`'s filesystem and moves the previous target set aside until all three final names are installed, so a command failure or handled termination signal rolls back to the previous complete set.
 
 The four harness bindings remain separate:
 

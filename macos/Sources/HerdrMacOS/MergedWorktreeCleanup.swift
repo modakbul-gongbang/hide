@@ -12,7 +12,7 @@ struct MergedWorktreeCleanup: View {
     var body: some View {
         VStack(alignment: .leading, spacing: HideTheme.spacingMD) {
             Text("Clean up merged worktrees").hideFont(size: HideTheme.Typography.title, weight: .semibold)
-            Text("Select folders to permanently remove. Only clean, unused worktrees merged into local main are eligible. Branches and Git history stay.")
+            Text("Select folders to permanently remove. Clean, unused worktrees verified as merged into local main are eligible. Any checkout-owned test cache is removed too; branches and Git history stay.")
                 .foregroundStyle(HideTheme.secondary).fixedSize(horizontal: false, vertical: true)
             if busy {
                 ProgressView(review?.phase == "removing" ? "Rechecking and removing selected folders…" : "Checking Git, panes and allocated disk…")
@@ -45,7 +45,7 @@ struct MergedWorktreeCleanup: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 if let reason = row.message ?? row.exclusion {
                                     Label(reason, systemImage: row.result == "removed" ? "checkmark.circle" : "info.circle")
-                                        .foregroundStyle(row.result == "refused" ? HideTheme.warning : HideTheme.secondary)
+                                        .foregroundStyle(row.result == "refused" || row.result == "partial" ? HideTheme.warning : HideTheme.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                                 if let reason = row.disk.unavailableReason {

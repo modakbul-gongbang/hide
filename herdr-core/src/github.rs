@@ -297,6 +297,70 @@ struct GhPullRequest {
     updated_at: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MergedPullRequestProof {
+    pub head_oid: String,
+    pub merge_oid: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhMergedPullRequestProof {
+    head_ref_oid: String,
+    merge_commit: Option<GhCommitOid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhCommitOid {
+    oid: String,
+}
+
+/// Exact commit identities for merged pull requests on one branch.
+///
+/// Cleanup uses this only when ordinary Git ancestry cannot prove that a
+/// worktree is merged. A branch name alone is never deletion evidence.
+pub(crate) fn merged_pull_request_proofs(
+    root: &Path,
+    branch: &str,
+) -> Result<Vec<MergedPullRequestProof>, String> {
+    let listed = gh(
+        Some(root),
+        &[
+            "pr",
+            "list",
+            "--state",
+            "merged",
+            "--head",
+            branch,
+            "--base",
+            "main",
+            "--limit",
+            "100",
+            "--json",
+            "headRefOid,mergeCommit",
+        ],
+    )
+    .map_err(|failure| {
+        format!(
+            "GitHub merge proof is unavailable ({}): {}",
+            failure.category, failure.reason
+        )
+    })?;
+    parse_merged_pull_request_proofs(&listed)
+}
+
+fn parse_merged_pull_request_proofs(output: &str) -> Result<Vec<MergedPullRequestProof>, String> {
+    let listed: Vec<GhMergedPullRequestProof> = serde_json::from_str(output)
+        .map_err(|error| format!("gh pr list returned merge proof Hide could not read: {error}"))?;
+    Ok(listed
+        .into_iter()
+        .map(|proof| MergedPullRequestProof {
+            head_oid: proof.head_ref_oid,
+            merge_oid: proof.merge_commit.map(|commit| commit.oid),
+        })
+        .collect())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "__typename")]
 enum GhCheck {
@@ -948,6 +1012,27 @@ esac"#,
     #[test]
     fn an_empty_list_is_a_real_answer() {
         assert_eq!(parse_pull_requests("[]").expect("empty list"), Vec::new());
+    }
+
+    #[test]
+    fn merged_pull_request_proof_keeps_exact_head_and_merge_commit_ids() {
+        let proofs = parse_merged_pull_request_proofs(
+            r#"[{"headRefOid":"branch-head","mergeCommit":{"oid":"main-merge"}},{"headRefOid":"other-head","mergeCommit":null}]"#,
+        )
+        .expect("merge proof parses");
+        assert_eq!(
+            proofs,
+            vec![
+                MergedPullRequestProof {
+                    head_oid: "branch-head".into(),
+                    merge_oid: Some("main-merge".into()),
+                },
+                MergedPullRequestProof {
+                    head_oid: "other-head".into(),
+                    merge_oid: None,
+                },
+            ]
+        );
     }
 
     #[test]

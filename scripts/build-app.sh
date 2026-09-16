@@ -23,6 +23,9 @@ hide_version=${hide_version#v}
 archive_path="$dist_root/hide-v${hide_version}-macos-arm64.zip"
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/hide-bundle.XXXXXX")
 temporary_bundle="$temporary_root/hide.app"
+archive_name=$(basename "$archive_path")
+temporary_archive="$temporary_root/$archive_name"
+temporary_checksum="$temporary_archive.sha256"
 
 cleanup() {
   rm -rf -- "$temporary_root"
@@ -108,13 +111,17 @@ install -m 644 \
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$temporary_bundle"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$temporary_bundle"
 
-mkdir -p "$dist_root"
-rm -rf -- "$bundle_path" "$archive_path" "$archive_path.sha256"
-mv "$temporary_bundle" "$bundle_path"
-/usr/bin/ditto -c -k --keepParent "$bundle_path" "$archive_path"
-archive_name=$(basename "$archive_path")
-archive_digest=$(/usr/bin/shasum -a 256 "$archive_path" | /usr/bin/awk '{print $1}')
-printf '%s  %s\n' "$archive_digest" "$archive_name" > "$archive_path.sha256"
+# Finish the complete archive pair before replacing any previous successful
+# local distribution. Publishing also prunes older Hide archive pairs while
+# preserving unrelated files in dist.
+/usr/bin/ditto -c -k --keepParent "$temporary_bundle" "$temporary_archive"
+archive_digest=$(/usr/bin/shasum -a 256 "$temporary_archive" | /usr/bin/awk '{print $1}')
+printf '%s  %s\n' "$archive_digest" "$archive_name" > "$temporary_checksum"
+zsh "$script_dir/publish-dist-artifacts.sh" \
+  "$temporary_bundle" \
+  "$temporary_archive" \
+  "$temporary_checksum" \
+  "$dist_root"
 
 print -r -- "bundle=$bundle_path"
 print -r -- "hide_version=$hide_version"

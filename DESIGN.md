@@ -1199,6 +1199,10 @@ Cleanup opens a review sheet with separate Available and Excluded groups, exact 
 Nothing is preselected and Remove is disabled until a user explicitly checks an eligible folder.
 Main/current, dirty/untracked, live-pane use, locked, nested, detached, unknown and not-confirmed-merged targets are excluded.
 Only clean, unused linked worktrees merged into local main can be removed, without force; branches and history remain.
+Ordinary merges are proven by Git ancestry.
+When squash merge leaves the branch commits outside that ancestry, the exact GitHub pull request head commit must equal the reviewed worktree HEAD and its merge commit must already be an ancestor of local main; a matching branch name, closed pull request, stale lookup, or remote-only merge is not enough.
+An inaccessible cwd from a pane whose old worktree folder is already gone does not exclude unrelated current worktrees, while an absolute stale cwd still excludes any current worktree whose path contains it.
+When a repository defines `scripts/build-scratch.sh`, successful removal also deletes the exact external verification cache derived for that checkout; repositories without that convention retain ordinary worktree removal behavior, and cache cleanup failure is shown as partial success without relabeling a removed worktree as still present.
 Confirm rechecks current Git and Herdr state before each target and refuses changed state with Review again recovery.
 Completion lists individual removed/refused outcomes; repeating the same completed intent does not repeat removal.
 Review and cancel perform no filesystem mutations.
