@@ -271,10 +271,10 @@ struct ConversationReaderTests {
 
     @Test func claudeProjectSlugWritesEveryNonAlphanumericAsHyphen() {
         // Names observed under ~/.claude/projects on a workstation.
-        #expect(ConversationReader.projectDirectory(for: "/Users/x/.claude") == "-Users-x--claude")
+        #expect(ConversationReader.projectDirectory(for: "/Users/example/.claude") == "-Users-example--claude")
         #expect(
-            ConversationReader.projectDirectory(for: "/Users/x/Library/Mobile Documents/iCloud~md~obsidian/Documents")
-                == "-Users-x-Library-Mobile-Documents-iCloud-md-obsidian-Documents"
+            ConversationReader.projectDirectory(for: "/Users/example/Library/Mobile Documents/iCloud~md~obsidian/Documents")
+                == "-Users-example-Library-Mobile-Documents-iCloud-md-obsidian-Documents"
         )
         #expect(ConversationReader.projectDirectory(for: "/tmp/herdr-ide.worktrees/a_b") == "-tmp-herdr-ide-worktrees-a-b")
     }

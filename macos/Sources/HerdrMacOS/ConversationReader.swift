@@ -427,7 +427,7 @@ struct ConversationReader: Sendable {
 
     /// Claude Code names a project directory by its working directory with
     /// every character outside `[A-Za-z0-9]` written as `-`, one per UTF-16
-    /// unit. `/Users/x/.claude` is `-Users-x--claude`; `Mobile Documents`
+    /// unit. `/Users/example/.claude` is `-Users-example--claude`; `Mobile Documents`
     /// is `Mobile-Documents`.
     static func projectDirectory(for cwd: String) -> String {
         String(utf16CodeUnits: cwd.utf16.map { unit -> unichar in
