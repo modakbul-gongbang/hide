@@ -1,4 +1,7 @@
 use super::*;
+use std::time::Duration;
+
+use crate::fake_herdr::FakeHerdr;
 
 #[path = "tests/agents_settings_remote.rs"]
 mod agents_settings_remote;
@@ -14,6 +17,24 @@ mod session_navigation;
 mod snapshot_delta;
 #[path = "tests/terminal.rs"]
 mod terminal;
+
+/// The `tab_list` Herdr answers a `tab.move` with, carrying the tabs in
+/// their new order. Only the order is read here; the other fields are
+/// what the pinned schema requires of a tab.
+fn tab_list(ids: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "type": "tab_list",
+        "tabs": ids.iter().enumerate().map(|(index, tab_id)| serde_json::json!({
+            "tab_id": tab_id,
+            "workspace_id": tab_id.split(':').next().unwrap_or_default(),
+            "number": index + 1,
+            "label": "fixture",
+            "focused": false,
+            "pane_count": 1,
+            "agent_status": "idle"
+        })).collect::<Vec<_>>()
+    })
+}
 
 fn no_worktrees() -> crate::model::WorktreeCatalogSnapshot {
     crate::model::WorktreeCatalogSnapshot::default()
