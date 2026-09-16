@@ -1,3 +1,5 @@
+use super::*;
+
 // PRD AC1-4: assertions describe the operator's tree and persisted choice,
 // independently of how the projector builds its parent index.
 fn lineage_rows() -> Vec<SidebarAgentSnapshot> {
@@ -249,18 +251,30 @@ fn ownership_marks_descendants_delegated_and_hands_an_orphan_back_to_the_operato
     let row = |rows: &[SidebarAgentSnapshot], id: &str| {
         rows.iter().find(|row| row.pane_id == id).unwrap().clone()
     };
-    assert!(!row(&rows, "parent").delegated, "a lineage root is the operator's own work");
+    assert!(
+        !row(&rows, "parent").delegated,
+        "a lineage root is the operator's own work"
+    );
     assert!(row(&rows, "child").delegated);
     assert!(row(&rows, "grandchild").delegated);
     // The delegation source the row already carried is what names the owner.
-    assert_eq!(row(&rows, "child").raised_hint.as_deref(), Some("↳ from Parent"));
+    assert_eq!(
+        row(&rows, "child").raised_hint.as_deref(),
+        Some("↳ from Parent")
+    );
 
     rows.retain(|row| row.pane_id != "parent");
     crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     let orphan = row(&rows, "child");
-    assert!(!orphan.delegated, "a lost parent returns ownership to the operator");
+    assert!(
+        !orphan.delegated,
+        "a lost parent returns ownership to the operator"
+    );
     assert!(orphan.lineage_orphan);
-    assert!(row(&rows, "grandchild").delegated, "its own descendants stay delegated");
+    assert!(
+        row(&rows, "grandchild").delegated,
+        "its own descendants stay delegated"
+    );
 }
 
 #[test]
@@ -318,7 +332,10 @@ fn the_breadcrumb_path_and_each_steps_siblings_come_out_of_the_lineage() {
     // A step's dropdown offers that layer, in the parent's own child order,
     // and includes the step itself so the current position is visible.
     assert_eq!(row("child").lineage_sibling_pane_ids, ["sibling", "child"]);
-    assert_eq!(row("sibling").lineage_sibling_pane_ids, ["sibling", "child"]);
+    assert_eq!(
+        row("sibling").lineage_sibling_pane_ids,
+        ["sibling", "child"]
+    );
     assert_eq!(row("grandchild").lineage_sibling_pane_ids, ["grandchild"]);
     assert_eq!(
         row("parent").lineage_sibling_pane_ids,
@@ -353,7 +370,10 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
     crate::sidebar::apply_lineage(&mut rows, &[], &[]);
     let child = rows.iter().find(|row| row.pane_id == "w1:p2").unwrap();
 
-    assert_eq!(child.raised_hint.as_deref(), Some("↳ from Project coordinator"));
+    assert_eq!(
+        child.raised_hint.as_deref(),
+        Some("↳ from Project coordinator")
+    );
     assert_eq!(child.spawn_origin_pane_id.as_deref(), Some("w1:p1"));
     let path = crate::sidebar::project_lineage_path(&rows, "w1:p2");
     assert_eq!(path[0].label, "Project coordinator");
@@ -362,7 +382,10 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
     assert_eq!(child.identity_label, "Hide design QA");
     let parent = rows.iter().find(|row| row.pane_id == "w1:p1").unwrap();
     assert_eq!(parent.identity_label, "Project coordinator");
-    assert_eq!(serde_json::to_value(parent).unwrap()["identity_label"], "Project coordinator");
+    assert_eq!(
+        serde_json::to_value(parent).unwrap()["identity_label"],
+        "Project coordinator"
+    );
 }
 
 // PRD D-18: the path is a function of the current list, so a child exiting
@@ -372,7 +395,10 @@ fn a_departed_ancestor_shortens_every_descendants_path_on_the_next_projection() 
     let mut rows = lineage_rows();
     crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
     assert_eq!(
-        rows.iter().find(|row| row.pane_id == "grandchild").unwrap().lineage_path_pane_ids,
+        rows.iter()
+            .find(|row| row.pane_id == "grandchild")
+            .unwrap()
+            .lineage_path_pane_ids,
         ["parent", "child"]
     );
     rows.retain(|row| row.pane_id != "child");
@@ -380,7 +406,10 @@ fn a_departed_ancestor_shortens_every_descendants_path_on_the_next_projection() 
     let grandchild = rows.iter().find(|row| row.pane_id == "grandchild").unwrap();
     assert_eq!(grandchild.lineage_path_pane_ids, Vec::<String>::new());
     assert_eq!(grandchild.lineage_parent_pane_id, None);
-    assert!(!grandchild.delegated, "an orphaned grandchild is a root of its own");
+    assert!(
+        !grandchild.delegated,
+        "an orphaned grandchild is a root of its own"
+    );
 }
 
 // PRD B5, B21-B24, B32, D-30, D-63: what a pane header is allowed to say
@@ -424,8 +453,16 @@ fn a_pane_with_children_lists_them_and_names_the_one_that_speaks_for_them() {
 
     assert!(children.instrumented);
     assert_eq!(children.uninstrumented_reason, None);
-    let labels: Vec<_> = children.chips.iter().map(|chip| chip.label.as_str()).collect();
-    assert_eq!(labels, ["Runner", "Worker"], "chips follow the lineage's own child order");
+    let labels: Vec<_> = children
+        .chips
+        .iter()
+        .map(|chip| chip.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        ["Runner", "Worker"],
+        "chips follow the lineage's own child order"
+    );
     assert!(children.chips.iter().all(|chip| chip.delegated));
     // An unread error outranks a working sibling, by the same rule the
     // Workspace summary chip uses.
@@ -437,7 +474,11 @@ fn a_pane_with_children_lists_them_and_names_the_one_that_speaks_for_them() {
     assert_eq!(children.subagents.working, Some(2));
     assert_eq!(children.subagents.done, Some(4));
     assert_eq!(children.subagents.blocked, None);
-    assert_eq!(children.chips.len(), 2, "two pane children, whatever the subagent count says");
+    assert_eq!(
+        children.chips.len(),
+        2,
+        "two pane children, whatever the subagent count says"
+    );
 }
 
 #[test]
@@ -475,7 +516,10 @@ fn an_instrumented_pane_with_no_children_is_a_different_answer_from_one_hide_can
             .is_some_and(|reason| reason.contains("Restart the agent")),
         "the operator is told which of the reasons applies"
     );
-    assert!(silent.subagents.working.is_none(), "an unknown count is never a zero");
+    assert!(
+        silent.subagents.working.is_none(),
+        "an unknown count is never a zero"
+    );
 
     // The hook only ever answered for in-process subagents. Pane children come
     // from Herdr's lineage, so an uninstrumented parent still lists them.
@@ -523,7 +567,10 @@ fn an_agent_hide_has_no_adapter_for_says_so_instead_of_guessing_a_runtime() {
         children.uninstrumented_reason.as_deref(),
         Some("Child information is unavailable for this pane.")
     );
-    assert!(children.uninstrumented_label.is_some(), "the mark carries an accessible name");
+    assert!(
+        children.uninstrumented_label.is_some(),
+        "the mark carries an accessible name"
+    );
 }
 
 #[test]
@@ -535,12 +582,18 @@ fn the_breadcrumb_is_the_ancestors_then_the_pane_with_each_layers_siblings() {
     );
     let path = crate::sidebar::project_lineage_path(&rows, "child");
     assert_eq!(
-        path.iter().map(|step| step.pane_id.as_str()).collect::<Vec<_>>(),
+        path.iter()
+            .map(|step| step.pane_id.as_str())
+            .collect::<Vec<_>>(),
         ["parent", "child"]
     );
     assert!(path[0].siblings.is_empty());
     assert_eq!(
-        path[1].siblings.iter().map(|s| s.pane_id.as_str()).collect::<Vec<_>>(),
+        path[1]
+            .siblings
+            .iter()
+            .map(|s| s.pane_id.as_str())
+            .collect::<Vec<_>>(),
         ["sibling", "child"],
         "the step's dropdown offers that layer, including where the operator is"
     );
@@ -625,14 +678,14 @@ fn a_tab_holding_only_delegated_children_is_kept_off_the_strip() {
         .expect("the child's own tab");
     assert!(child_tab.delegated);
     assert!(
-        !checkout
-            .strip
-            .iter()
-            .any(|entry| entry.source_id == "t2"),
+        !checkout.strip.iter().any(|entry| entry.source_id == "t2"),
         "the delegated tab is off the strip"
     );
     assert!(
-        checkout.tabs.iter().any(|tab| tab.id.as_deref() == Some("t2")),
+        checkout
+            .tabs
+            .iter()
+            .any(|tab| tab.id.as_deref() == Some("t2")),
         "and still in the checkout, so the sidebar and breadcrumb reach it"
     );
 }
@@ -659,7 +712,10 @@ fn a_move_herdr_declined_is_an_error_rather_than_a_silent_success() {
     // successful request moved anything.
     let refused = crate::wire::move_outcome(false, Some("SameTab".to_owned()), None)
         .expect_err("a refusal is not a move");
-    assert!(refused.contains("declined") && refused.contains("SameTab"), "got {refused}");
+    assert!(
+        refused.contains("declined") && refused.contains("SameTab"),
+        "got {refused}"
+    );
     assert!(
         crate::wire::move_outcome(false, None, Some("t2".to_owned())).is_err(),
         "an unchanged move is a refusal even when a tab id came back"
@@ -719,7 +775,11 @@ fn a_delegated_childs_demand_and_completion_stay_off_the_operators_groups() {
             .unwrap_or_else(|| panic!("{id} is a row"))
     };
 
-    assert_eq!(row("child").group, "seen", "a child's question is its parent's");
+    assert_eq!(
+        row("child").group,
+        "seen",
+        "a child's question is its parent's"
+    );
     assert_eq!(
         row("grandchild").group,
         "seen",
@@ -856,7 +916,10 @@ fn the_stall_clock_holds_its_reading_while_the_server_is_away() {
         "half an hour offline is not half an hour stuck"
     );
     assert_eq!(
-        rows.iter().find(|row| row.pane_id == "parent").unwrap().stall_level,
+        rows.iter()
+            .find(|row| row.pane_id == "parent")
+            .unwrap()
+            .stall_level,
         "",
         "and no threshold is crossed on the strength of that gap"
     );
@@ -886,7 +949,10 @@ fn a_state_change_restarts_the_wait_rather_than_extending_it() {
     assert_eq!(runtime.stall_clocks["child"].stalled_ms, 0);
     runtime.apply_stall_escalation(&mut rows, 20 * 60_000);
     assert_eq!(
-        rows.iter().find(|row| row.pane_id == "parent").unwrap().stall_level,
+        rows.iter()
+            .find(|row| row.pane_id == "parent")
+            .unwrap()
+            .stall_level,
         "soft",
         "six minutes into the new wait, not twenty into the old one"
     );
@@ -1325,13 +1391,31 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
     let parent = pane("w1:p1").children.expect("the parent has a session");
     assert!(parent.instrumented);
     assert_eq!(
-        parent.chips.iter().map(|chip| chip.label.as_str()).collect::<Vec<_>>(),
-        ["정체 임계값을 물어보는 중", "구현 중: 계보 투영과 위임 표시"],
+        parent
+            .chips
+            .iter()
+            .map(|chip| chip.label.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "정체 임계값을 물어보는 중",
+            "구현 중: 계보 투영과 위임 표시"
+        ],
         "chips follow the lineage's own child order"
     );
-    assert_eq!(parent.representative.as_ref().unwrap().label, "정체 임계값을 물어보는 중");
-    assert_eq!((parent.subagents.working, parent.subagents.done), (Some(2), Some(4)));
-    assert!(pane("w1:p2").lineage_path.iter().any(|step| step.label == "delegating the orchestrator wo"));
+    assert_eq!(
+        parent.representative.as_ref().unwrap().label,
+        "정체 임계값을 물어보는 중"
+    );
+    assert_eq!(
+        (parent.subagents.working, parent.subagents.done),
+        (Some(2), Some(4))
+    );
+    assert!(
+        pane("w1:p2")
+            .lineage_path
+            .iter()
+            .any(|step| step.label == "delegating the orchestrator wo")
+    );
 
     // A pane Hide cannot see into, and the reason a restart would fix it.
     let unseen = pane("w1:p4").children.expect("it has a session");
@@ -1366,7 +1450,9 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
     // Overview reads the same rows. A catalog is handed in directly because
     // the real one comes from `git`, which a projection test does not run,
     // and Overview draws the focused checkout's project.
-    let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0].id.clone();
+    let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .id
+        .clone();
     runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
     runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
     let workspace_id = runtime.snapshot.navigator.workspaces[0].id.clone();

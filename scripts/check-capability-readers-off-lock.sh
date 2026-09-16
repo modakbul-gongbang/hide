@@ -21,13 +21,20 @@ readers=(changes ports worktrees github disk ai)
 # event.
 worker_readers=(worktrees github disk ai)
 
-# 1. The module that holds the mutex, and the file module it calls
-#    synchronously while holding it, execute no subprocess at all. The test
-#    module at the end of each file is exempt: its fixtures build git
-#    repositories in a temporary directory with no runtime and no mutex.
-for module in runtime files; do
-    source="herdr-core/src/${module}.rs"
-    boundary="$(grep -n '^#\[cfg(test)\]' "$source" | head -1 | cut -d: -f1)"
+# 1. The module that holds the mutex, its runtime submodules, and the file
+#    module it calls synchronously while holding it, execute no subprocess at
+#    all. The test module at the end of each file is exempt: its fixtures build
+#    git repositories in a temporary directory with no runtime and no mutex.
+runtime_sources=(herdr-core/src/runtime.rs)
+for source in herdr-core/src/runtime/*.rs; do
+    [[ -f "$source" ]] || continue
+    # This file is the parent `#[cfg(test)] mod tests` body. Its fixtures
+    # intentionally create temporary repositories and are not runtime code.
+    [[ "$source" == herdr-core/src/runtime/tests.rs ]] && continue
+    runtime_sources+=("$source")
+done
+for source in "${runtime_sources[@]}" herdr-core/src/files.rs; do
+    boundary="$(awk '$0 == "#[cfg(test)]" {print NR; exit}' "$source")"
     forks="$(awk -v boundary="${boundary:-0}" \
         'boundary > 0 && NR >= boundary { exit } /Command::new/ { print FILENAME ":" NR ": " $0 }' \
         "$source")"
@@ -52,6 +59,8 @@ for reader in "${readers[@]}"; do
     callers="$(
         while IFS= read -r source; do
             [[ "$source" == "$module" ]] && continue
+            [[ "$source" == herdr-core/src/runtime/tests.rs ]] && continue
+            [[ "$source" == herdr-core/src/runtime/tests/* ]] && continue
             awk -v reader="$reader" '
                 /^#\[cfg\(test\)\]/ { exit }
                 $0 ~ reader "::.*Reader|" reader "_reader" { found = 1 }
