@@ -218,16 +218,14 @@ fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
         "the block scoping the runtime guard must close before serialization: {body}"
     );
 
-    let source =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"))
-            .expect("the runtime source");
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime/snapshot_delta.rs"),
+    )
+    .expect("the snapshot delta source");
     let locked_half = source
         .split_once("pub fn snapshot_delta_payload(")
         .expect("the payload function")
-        .1
-        .split_once("\n    pub fn ")
-        .expect("the function after it")
-        .0;
+        .1;
     assert!(
         !locked_half.contains("serde_json"),
         "the half that runs under the lock must not serialize: {locked_half}"
