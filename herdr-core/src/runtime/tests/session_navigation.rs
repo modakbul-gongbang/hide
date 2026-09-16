@@ -1,6 +1,105 @@
 use super::*;
 
 #[test]
+fn eligible_agent_panes_default_to_conversation_and_toggle_to_terminal() {
+    let mut runtime = runtime();
+    let payload = || -> SessionSnapshotPayload {
+        serde_json::from_value(serde_json::json!({
+            "agents": [{
+                "pane_id": "w1:p1",
+                "workspace_label": "Fixture",
+                "agent": "codex",
+                "agent_status": "idle",
+                "tokens": {"status_idle": "\u{25cb}", "activity": "0000000000002"}
+            }],
+            "workspaces": [{"workspace_id": "w1", "label": "fixture"}],
+            "panes": [{"pane_id": "w1:p1", "cwd": "/private/tmp/hide-conversation-default"}],
+            "tabs": [{"workspace_id": "w1", "tab_id": "w1:t1", "label": "1"}],
+            "layouts": [{
+                "workspace_id": "w1",
+                "tab_id": "w1:t1",
+                "zoomed": false,
+                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                "focused_pane_id": "w1:p1",
+                "panes": [{"pane_id": "w1:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                "splits": []
+            }]
+        }))
+        .expect("conversation fixture")
+    };
+    let toggle = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "toggle_conversation",
+        "payload": {"pane_id": "w1:p1"}
+    }))
+    .expect("conversation toggle event");
+
+    runtime.ingest_session(Ok(payload()));
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .conversation_pane_ids
+            .contains("w1:p1")
+    );
+    assert!(
+        !runtime
+            .snapshot()
+            .ui_state
+            .terminal_pane_ids
+            .contains("w1:p1")
+    );
+
+    assert!(runtime.dispatch_json(&toggle));
+    assert!(
+        !runtime
+            .snapshot()
+            .ui_state
+            .conversation_pane_ids
+            .contains("w1:p1")
+    );
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .terminal_pane_ids
+            .contains("w1:p1")
+    );
+
+    runtime.ingest_session(Ok(payload()));
+    assert!(
+        !runtime
+            .snapshot()
+            .ui_state
+            .conversation_pane_ids
+            .contains("w1:p1")
+    );
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .terminal_pane_ids
+            .contains("w1:p1")
+    );
+
+    assert!(runtime.dispatch_json(&toggle));
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .conversation_pane_ids
+            .contains("w1:p1")
+    );
+    assert!(
+        !runtime
+            .snapshot()
+            .ui_state
+            .terminal_pane_ids
+            .contains("w1:p1")
+    );
+}
+
+#[test]
 fn local_tab_creation_acknowledgement_preserves_the_created_pane_focus() {
     let mut runtime = runtime();
     runtime.snapshot.terminal.pane_id = Some("w1:p1".to_owned());
