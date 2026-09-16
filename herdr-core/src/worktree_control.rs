@@ -483,7 +483,7 @@ fn open_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::herdr_api::{ApiError, ApiStream};
+    use hide_herdr_client::{ApiError, ApiStream};
     use std::collections::VecDeque;
     use std::os::unix::net::UnixStream;
 

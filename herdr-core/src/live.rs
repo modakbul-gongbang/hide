@@ -20,12 +20,6 @@ use serde_json::{Value, json};
 use crate::ffi::ChangeNotifier;
 use crate::find::PaneFindOptions;
 use crate::fork::{ForkRequest, fork_arguments};
-use crate::herdr_api::{
-    ApiConnector, ApiError, UnixSocketConnector, request_with_connector,
-    request_with_correlation_id,
-};
-#[cfg(test)]
-use crate::herdr_api::{HERDR_PROTOCOL_REVISION, request};
 use crate::model::{
     EditorDocumentSnapshot, PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
     WorkspaceRegistration, WorkspaceSnapshot,
@@ -40,6 +34,12 @@ use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
 };
 use crate::workspace;
+use hide_herdr_client::{
+    ApiConnector, ApiError, UnixSocketConnector, request_with_connector,
+    request_with_correlation_id,
+};
+#[cfg(test)]
+use hide_herdr_client::{HERDR_PROTOCOL_REVISION, request};
 
 #[path = "worktree_cleanup.rs"]
 pub(crate) mod cleanup;

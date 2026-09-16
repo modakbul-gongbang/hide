@@ -9478,7 +9478,7 @@ impl Runtime {
     pub(crate) fn ingest_close_effect_result(
         &mut self,
         request: &live::CloseEffectRequest,
-        result: Result<(), crate::herdr_api::ApiError>,
+        result: Result<(), hide_herdr_client::ApiError>,
     ) -> bool {
         let target_id = match &request.target {
             live::CloseCaptureTarget::Pane { pane_id } => pane_id,
@@ -9493,7 +9493,7 @@ impl Runtime {
                     format!("Captured user close {}", request.key),
                 );
             }
-            Err(crate::herdr_api::ApiError::Remote { code, message }) => {
+            Err(hide_herdr_client::ApiError::Remote { code, message }) => {
                 self.consume_recent_closed(&request.key);
                 if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
                     self.panes_closing.remove(pane_id);
@@ -13782,8 +13782,8 @@ mod tests {
             }),
             files: RemoteFileListSnapshot::idle(),
         });
-        let connector: Arc<dyn crate::herdr_api::ApiConnector> = Arc::new(
-            crate::herdr_api::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+        let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+            hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
         );
         runtime.install_remote_control(RemoteControlContext::new(
             "mini",
@@ -14897,13 +14897,13 @@ mod tests {
     #[test]
     fn overview_inspection_does_not_focus_or_repeat_publish() {
         struct CountConnections(std::sync::mpsc::Sender<()>);
-        impl crate::herdr_api::ApiConnector for CountConnections {
+        impl hide_herdr_client::ApiConnector for CountConnections {
             fn connect(
                 &self,
-            ) -> Result<Box<dyn crate::herdr_api::ApiStream>, crate::herdr_api::ApiError>
+            ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError>
             {
                 let _ = self.0.send(());
-                Err(crate::herdr_api::ApiError::Transport(
+                Err(hide_herdr_client::ApiError::Transport(
                     "fixture refused".into(),
                 ))
             }
@@ -15431,7 +15431,7 @@ mod tests {
             herdr_bin: None,
             runtime: std::sync::Weak::new(),
             notifier: crate::ffi::ChangeNotifier::noop(),
-            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+            api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
         });
         runtime
     }
@@ -16802,7 +16802,7 @@ mod tests {
             herdr_bin: None,
             runtime: std::sync::Weak::new(),
             notifier: crate::ffi::ChangeNotifier::noop(),
-            api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+            api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
         });
         (runtime, checkout_id)
     }
@@ -17079,8 +17079,8 @@ mod tests {
             }),
             files: RemoteFileListSnapshot::idle(),
         });
-        let connector: Arc<dyn crate::herdr_api::ApiConnector> =
-            Arc::new(crate::herdr_api::UnixSocketConnector::new(
+        let connector: Arc<dyn hide_herdr_client::ApiConnector> =
+            Arc::new(hide_herdr_client::UnixSocketConnector::new(
                 "/tmp/herdr-core-remote-focus-never-connect.sock",
             ));
         runtime.install_remote_control(RemoteControlContext::new(
@@ -22732,7 +22732,7 @@ mod tests {
                     tab_id: "tab:first".to_owned(),
                 },
             },
-            Err(crate::herdr_api::ApiError::Remote {
+            Err(hide_herdr_client::ApiError::Remote {
                 code: "refused".to_owned(),
                 message: "close refused".to_owned(),
             }),
@@ -22748,8 +22748,8 @@ mod tests {
     #[test]
     fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
         for error in [
-            crate::herdr_api::ApiError::Transport("acknowledgement timed out".to_owned()),
-            crate::herdr_api::ApiError::Malformed("acknowledgement was invalid".to_owned()),
+            hide_herdr_client::ApiError::Transport("acknowledgement timed out".to_owned()),
+            hide_herdr_client::ApiError::Malformed("acknowledgement was invalid".to_owned()),
         ] {
             let mut runtime = runtime();
             runtime.push_recent_closed(closed_file("first", "/repo/first.rs"));

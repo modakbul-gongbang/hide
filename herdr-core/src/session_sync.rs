@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use crate::wire::{self, parse_subscription_line, protocol_mismatch};
 
 use crate::ffi::ChangeNotifier;
-use crate::herdr_api::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, HostScope};
 use crate::live::{LiveContext, SessionFetchError};
 use crate::model::{
     CheckoutSnapshot, PaneSnapshot, RemotePaneLayoutFrame, RemotePaneLayoutSnapshot,
@@ -25,6 +24,7 @@ use crate::sidebar::{
     SessionTabPayload, SessionWorkspacePayload,
 };
 use crate::workspace;
+use hide_herdr_client::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, HostScope};
 
 const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -165,7 +165,7 @@ enum CoordinatorMessage {
 
 struct ActiveSubscription {
     generation: u64,
-    shutdown: Box<dyn herdr_api::ConnectionShutdown>,
+    shutdown: Box<dyn hide_herdr_client::ConnectionShutdown>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -644,7 +644,7 @@ fn open_subscription(
     generation: &mut u64,
     has_projection: bool,
 ) -> Result<ActiveSubscription, ConnectFailure> {
-    let subscription = herdr_api::subscribe_with_connector(
+    let subscription = hide_herdr_client::subscribe_with_connector(
         context.api_connector.as_ref(),
         replica.cursor,
         TOPOLOGY_SUBSCRIPTIONS,
@@ -679,7 +679,7 @@ fn open_subscription(
 }
 
 fn spawn_subscription_reader(
-    subscription: herdr_api::Subscription,
+    subscription: hide_herdr_client::Subscription,
     generation: u64,
     sender: Sender<CoordinatorMessage>,
 ) -> Result<ActiveSubscription, String> {
@@ -738,7 +738,7 @@ fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, Session
             socket_path.display()
         )));
     }
-    let result = herdr_api::request_with_connector(
+    let result = hide_herdr_client::request_with_connector(
         context.api_connector.as_ref(),
         "session.snapshot",
         json!({}),
@@ -757,7 +757,7 @@ fn fetch_agents(context: &SessionSyncContext) -> Result<Vec<ProjectedAgent>, Ses
             socket_path.display()
         )));
     }
-    let result = herdr_api::request_with_connector(
+    let result = hide_herdr_client::request_with_connector(
         context.api_connector.as_ref(),
         "agent.list",
         json!({}),
@@ -3226,7 +3226,7 @@ mod tests {
             herdr_bin: None,
             runtime: Arc::downgrade(runtime),
             notifier: crate::ffi::ChangeNotifier::noop(),
-            api_connector: Arc::new(herdr_api::UnixSocketConnector::new(socket_path)),
+            api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(socket_path)),
         };
         SessionSyncContext::local(&live)
     }

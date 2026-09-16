@@ -4,7 +4,6 @@ use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
-#[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -12,18 +11,46 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// Herdr API protocol revision this core speaks. A mismatch is a hard,
-/// explicit failure instead of a partially working sidebar.
-pub const HERDR_PROTOCOL_REVISION: u64 = crate::herdr_contract::HERDR_PROTOCOL_REVISION as u64;
+/// The canonical schema copied from the pinned Herdr binary.
+pub const HERDR_API_SCHEMA_JSON: &str = include_str!("../../contracts/herdr-api.schema.json");
 
-#[cfg(test)]
+include!(concat!(env!("OUT_DIR"), "/herdr_contract.rs"));
+
+/// Herdr API protocol revision this client speaks. A mismatch is a hard,
+/// explicit failure instead of a partially working sidebar.
+pub const HERDR_PROTOCOL_REVISION: u64 = HERDR_PROTOCOL_REVISION_SCHEMA as u64;
+
+#[allow(
+    dead_code,
+    clippy::derivable_impls,
+    clippy::enum_variant_names,
+    clippy::large_enum_variant
+)]
+pub mod wire {
+    pub mod request {
+        include!(concat!(env!("OUT_DIR"), "/herdr_request.rs"));
+    }
+    pub mod success_response {
+        include!(concat!(env!("OUT_DIR"), "/herdr_success_response.rs"));
+    }
+    pub mod event {
+        include!(concat!(env!("OUT_DIR"), "/herdr_event.rs"));
+    }
+    pub mod subscription_event {
+        include!(concat!(env!("OUT_DIR"), "/herdr_subscription_event.rs"));
+    }
+    pub mod error_response {
+        include!(concat!(env!("OUT_DIR"), "/herdr_error_response.rs"));
+    }
+}
+
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub(crate) trait ConnectionShutdown: Send {
+pub trait ConnectionShutdown: Send {
     fn shutdown(&self);
 }
 
-pub(crate) trait ApiStream: Read + Write + Send {
+pub trait ApiStream: Read + Write + Send {
     fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError>;
 
     fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), ApiError>;
@@ -33,12 +60,12 @@ pub(crate) trait ApiStream: Read + Write + Send {
     fn shutdown_handle(&self) -> Result<Box<dyn ConnectionShutdown>, ApiError>;
 }
 
-pub(crate) trait ApiConnector: Send + Sync {
+pub trait ApiConnector: Send + Sync {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct UnixSocketConnector {
+pub struct UnixSocketConnector {
     socket_path: PathBuf,
 }
 
@@ -148,13 +175,13 @@ impl ApiStream for UnixStream {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) struct HostScope {
+pub struct HostScope {
     pub host_id: String,
     pub session_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ApiError {
+pub enum ApiError {
     Transport(String),
     Remote { code: String, message: String },
     Malformed(String),
@@ -194,15 +221,15 @@ struct ResponseEnvelope {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-pub(crate) struct SubscriptionStarted {
+pub struct SubscriptionStarted {
     #[serde(rename = "type")]
-    kind: String,
+    pub kind: String,
     pub host: HostScope,
     pub sequence: u64,
     pub oldest_available_sequence: u64,
 }
 
-pub(crate) struct Subscription {
+pub struct Subscription {
     pub ack: SubscriptionStarted,
     reader: BufReader<Box<dyn ApiStream>>,
     shutdown: Box<dyn ConnectionShutdown>,
@@ -214,14 +241,12 @@ impl Subscription {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn request(socket_path: &Path, method: &str, params: Value) -> Result<Value, String> {
+pub fn request(socket_path: &Path, method: &str, params: Value) -> Result<Value, String> {
     request_with_timeout(socket_path, method, params, API_TIMEOUT)
         .map_err(|error| format!("{method} failed: {error}"))
 }
 
-#[cfg(test)]
-pub(crate) fn request_with_timeout(
+pub fn request_with_timeout(
     socket_path: &Path,
     method: &str,
     params: Value,
@@ -235,7 +260,7 @@ pub(crate) fn request_with_timeout(
     )
 }
 
-pub(crate) fn request_with_connector(
+pub fn request_with_connector(
     connector: &dyn ApiConnector,
     method: &str,
     params: Value,
@@ -256,7 +281,7 @@ pub(crate) fn request_with_connector(
 /// mutation idempotency. Callers may use it to correlate one reopen stage in
 /// diagnostics, but must reconcile an ambiguous transport failure before
 /// submitting that external effect again.
-pub(crate) fn request_with_correlation_id(
+pub fn request_with_correlation_id(
     connector: &dyn ApiConnector,
     request_id: &str,
     method: &str,
@@ -271,8 +296,7 @@ pub(crate) fn request_with_correlation_id(
     response_result(response, request_id)
 }
 
-#[cfg(test)]
-pub(crate) fn subscribe(
+pub fn subscribe(
     socket_path: &Path,
     after_sequence: u64,
     subscriptions: &[&str],
@@ -286,7 +310,7 @@ pub(crate) fn subscribe(
     )
 }
 
-pub(crate) fn subscribe_with_connector(
+pub fn subscribe_with_connector(
     connector: &dyn ApiConnector,
     after_sequence: u64,
     subscriptions: &[&str],
@@ -299,8 +323,7 @@ pub(crate) fn subscribe_with_connector(
         stream.as_mut(),
         request_id,
         "events.subscribe",
-        crate::wire::subscription_params(after_sequence, subscriptions)
-            .map_err(ApiError::Malformed)?,
+        subscription_params(after_sequence, subscriptions).map_err(ApiError::Malformed)?,
     )?;
 
     let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;
@@ -323,6 +346,20 @@ pub(crate) fn subscribe_with_connector(
         reader,
         shutdown,
     })
+}
+
+/// Encode a contract-checked `events.subscribe` parameter object.
+pub fn subscription_params(after_sequence: u64, subscriptions: &[&str]) -> Result<Value, String> {
+    let subscriptions = subscriptions
+        .iter()
+        .map(|kind| serde_json::from_value::<wire::request::Subscription>(json!({"type": kind})))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("invalid event subscription: {error}"))?;
+    serde_json::to_value(wire::request::EventsSubscribeParams {
+        after_sequence,
+        subscriptions,
+    })
+    .map_err(|error| format!("subscription parameters could not be encoded: {error}"))
 }
 
 fn write_request(

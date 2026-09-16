@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "herdr-core",
+    "hide-herdr-client",
     "hide-agent-hooks",
     "hide-ai",
     "hide-session",

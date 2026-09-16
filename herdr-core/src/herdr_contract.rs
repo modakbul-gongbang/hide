@@ -1,12 +1,12 @@
-//! Generated Herdr API contract boundary.
+//! Compatibility view of the canonical Herdr contract for core callers.
 //!
-//! `contracts/herdr-api.schema.json` is copied from Herdr's generated schema.
-//! The build script derives constants from that artifact so production code
-//! never carries an independently maintained protocol number.
+//! The generated contract and wire types live in `hide-herdr-client`. Core
+//! keeps this tiny module so its public schema assertions and domain protocol
+//! checks remain in the core crate while importing one source of truth.
 
-pub const HERDR_API_SCHEMA_JSON: &str = include_str!("../../contracts/herdr-api.schema.json");
-
-include!(concat!(env!("OUT_DIR"), "/herdr_contract.rs"));
+pub const HERDR_API_SCHEMA_JSON: &str = hide_herdr_client::HERDR_API_SCHEMA_JSON;
+pub const HERDR_PROTOCOL_REVISION: u32 = hide_herdr_client::HERDR_PROTOCOL_REVISION as u32;
+pub const HERDR_API_SCHEMA_VERSION: u32 = hide_herdr_client::HERDR_API_SCHEMA_VERSION;
 
 #[cfg(test)]
 mod tests {
@@ -42,31 +42,5 @@ mod tests {
              hide cannot run on this Herdr until the core stops reading them \
              or a Herdr that carries them is pinned"
         );
-    }
-}
-
-// These types are generated from the pinned external schema. Their names,
-// defaults, and value layout follow that contract rather than local style.
-#[allow(
-    dead_code,
-    clippy::derivable_impls,
-    clippy::enum_variant_names,
-    clippy::large_enum_variant
-)]
-pub(crate) mod wire {
-    pub mod request {
-        include!(concat!(env!("OUT_DIR"), "/herdr_request.rs"));
-    }
-    pub mod success_response {
-        include!(concat!(env!("OUT_DIR"), "/herdr_success_response.rs"));
-    }
-    pub mod event {
-        include!(concat!(env!("OUT_DIR"), "/herdr_event.rs"));
-    }
-    pub mod subscription_event {
-        include!(concat!(env!("OUT_DIR"), "/herdr_subscription_event.rs"));
-    }
-    pub mod error_response {
-        include!(concat!(env!("OUT_DIR"), "/herdr_error_response.rs"));
     }
 }

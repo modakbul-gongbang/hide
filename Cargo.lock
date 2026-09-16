@@ -47,6 +47,7 @@ dependencies = [
  "clap",
  "fs2",
  "hide-ai",
+ "hide-herdr-client",
  "hide-session",
  "regex",
  "serde",
@@ -1027,6 +1028,7 @@ dependencies = [
  "base64",
  "hide-agent-hooks",
  "hide-ai",
+ "hide-herdr-client",
  "hide-session",
  "libc",
  "regex",
@@ -1039,7 +1041,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "trash",
- "typify",
  "ureq",
 ]
 
@@ -1070,6 +1071,16 @@ dependencies = [
  "jsonschema",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hide-herdr-client"
+version = "0.1.0"
+dependencies = [
+ "regress 0.12.0",
+ "serde",
+ "serde_json",
+ "typify",
 ]
 
 [[package]]
