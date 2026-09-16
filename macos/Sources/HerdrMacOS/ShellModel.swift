@@ -2552,9 +2552,10 @@ final class ShellModel: ObservableObject {
         guard !isRemoteContext else { return false }
         guard let agent = agents.first(where: { $0.paneID == paneID }) else { return false }
         guard ConversationProvider(agentKind: agent.agentKind) != nil else { return false }
-        guard let sessionID = conversationSessionID(for: paneID),
-              !sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        return true
+        guard let sessionID = conversationSessionID(for: paneID) else { return false }
+        return ConversationReader.isSafeSessionIdentifier(
+            sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
     func isConversation(for paneID: String) -> Bool {

@@ -1,6 +1,12 @@
 import AppKit
 import SwiftTerm
 
+enum ConversationInputPolicy {
+    static func terminalInputAllowed(isConversation: Bool) -> Bool {
+        !isConversation
+    }
+}
+
 /// Pure decision table for terminal byte delivery while an IME composition is
 /// being handled.
 ///
@@ -130,6 +136,7 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     let pointerRouting = TerminalPointerRoutingState()
     var onPointerFocus: (() -> Void)?
     var hidePaneID: String?
+    var allowsPaneInput = true
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         !isHiddenOrHasHiddenAncestor && TerminalFileDrop.accepts(sender.draggingPasteboard) ? .copy : []
@@ -140,7 +147,7 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     }
 
     @discardableResult func pasteDroppedFiles(_ board: NSPasteboard) -> Bool {
-        guard !isHiddenOrHasHiddenAncestor, onPointerFocus != nil else { return false }
+        guard allowsPaneInput, !isHiddenOrHasHiddenAncestor, onPointerFocus != nil else { return false }
         do {
             let bytes = try TerminalFileDrop.input(from: board, bracketedPaste: getTerminal().bracketedPasteMode)
             onPointerFocus?()
@@ -205,7 +212,8 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
 
     /// Consulted by the terminal delegate before bytes are forwarded.
     func shouldDeliverToPane(_ bytes: ArraySlice<UInt8>) -> Bool {
-        CompositionInputPolicy.shouldDeliver(
+        guard allowsPaneInput else { return false }
+        return CompositionInputPolicy.shouldDeliver(
             bytes: bytes,
             composingAtEvent: composingAtEvent,
             isPlainBackspaceEvent: plainBackspaceEvent

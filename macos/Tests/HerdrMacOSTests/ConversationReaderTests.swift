@@ -269,6 +269,199 @@ struct ConversationReaderTests {
         #expect(workingMetadata?.isWorking == true)
     }
 
+    @Test func claudeProjectSlugWritesEveryNonAlphanumericAsHyphen() {
+        // Names observed under ~/.claude/projects on a workstation.
+        #expect(ConversationReader.projectDirectory(for: "/Users/x/.claude") == "-Users-x--claude")
+        #expect(
+            ConversationReader.projectDirectory(for: "/Users/x/Library/Mobile Documents/iCloud~md~obsidian/Documents")
+                == "-Users-x-Library-Mobile-Documents-iCloud-md-obsidian-Documents"
+        )
+        #expect(ConversationReader.projectDirectory(for: "/tmp/herdr-ide.worktrees/a_b") == "-tmp-herdr-ide-worktrees-a-b")
+    }
+
+    @Test func claudeReaderResolvesASlugWithSpacesAndUnderscores() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent(".claude/projects/-tmp-My-Project-v2-0", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try #"{"type":"assistant","message":{"role":"assistant","content":"Hi"}}"#
+            .write(to: directory.appendingPathComponent("s.jsonl"), atomically: true, encoding: .utf8)
+
+        let result = ConversationReader(homeDirectory: root).read(
+            provider: .claude,
+            sessionID: "s",
+            cwd: "/tmp/My Project_v2.0"
+        )
+        guard case let .loaded(_, messages) = result else {
+            Issue.record("expected the slug to resolve, got \(result)")
+            return
+        }
+        #expect(messages.map(\.text) == ["Hi"])
+    }
+
+    @Test func safeSessionIdentifierRuleRefusesAnythingAPathWouldInterpret() {
+        #expect(ConversationReader.isSafeSessionIdentifier("01a0a077-9b97-7042-964a-e7975a95bff2"))
+        #expect(ConversationReader.isSafeSessionIdentifier("session_1"))
+        for unsafe in ["", ".", "..", "../x", "a/b", "/abs", "a\\b", "a\0b", "x/.."] {
+            #expect(!ConversationReader.isSafeSessionIdentifier(unsafe), "accepted \(unsafe.debugDescription)")
+        }
+    }
+
+    @Test func readerRejectsCodexSessionPathTraversal() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent(".codex/sessions/2026/09/15", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":"must not load"}}"#
+            .write(to: root.appendingPathComponent("escaped.jsonl"), atomically: true, encoding: .utf8)
+
+        let result = ConversationReader(homeDirectory: root).read(
+            provider: .codex,
+            sessionID: "../../../escaped",
+            cwd: "/tmp/project"
+        )
+        guard case let .empty(path) = result else {
+            Issue.record("expected traversal to resolve to an empty safe path, got \(result)")
+            return
+        }
+        #expect(path.hasSuffix("/.codex/sessions/unknown-session.jsonl"))
+    }
+
+    @Test func missingLedgerIsEmptyButAnUnreadableOneIsFailed() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let reader = ConversationReader(homeDirectory: root)
+
+        let missing = reader.read(provider: .claude, sessionID: "s", cwd: "/tmp/project")
+        guard case .empty = missing else {
+            Issue.record("expected a missing ledger to read as empty, got \(missing)")
+            return
+        }
+        let missingCodex = reader.read(provider: .codex, sessionID: "s", cwd: "/tmp/project")
+        guard case .empty = missingCodex else {
+            Issue.record("expected a missing Codex tree to read as empty, got \(missingCodex)")
+            return
+        }
+
+        // Root can read anything, so the permission half has no meaning there.
+        guard geteuid() != 0 else { return }
+        let fileManager = FileManager.default
+
+        let claudeProject = root.appendingPathComponent(".claude/projects/-tmp-project", isDirectory: true)
+        try fileManager.createDirectory(at: claudeProject, withIntermediateDirectories: true)
+        try "".write(to: claudeProject.appendingPathComponent("s.jsonl"), atomically: true, encoding: .utf8)
+        try fileManager.setAttributes([.posixPermissions: 0], ofItemAtPath: claudeProject.path)
+        defer { try? fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claudeProject.path) }
+        let sealedDirectory = reader.read(provider: .claude, sessionID: "s", cwd: "/tmp/project")
+        guard case let .failed(path, line, reason) = sealedDirectory else {
+            Issue.record("expected an unreadable project directory to fail, got \(sealedDirectory)")
+            return
+        }
+        #expect(path.hasSuffix("/-tmp-project/s.jsonl"))
+        #expect(line == 0)
+        #expect(reason == "Permission denied")
+
+        let sealedFile = root.appendingPathComponent(".claude/projects/-tmp-other/t.jsonl")
+        try fileManager.createDirectory(at: sealedFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try #"{"type":"assistant","message":{"role":"assistant","content":"Hi"}}"#
+            .write(to: sealedFile, atomically: true, encoding: .utf8)
+        try fileManager.setAttributes([.posixPermissions: 0], ofItemAtPath: sealedFile.path)
+        let unreadableFile = reader.read(provider: .claude, sessionID: "t", cwd: "/tmp/other")
+        guard case let .failed(_, _, fileReason) = unreadableFile else {
+            Issue.record("expected an unreadable ledger to fail, got \(unreadableFile)")
+            return
+        }
+        #expect(fileReason == "Conversation file could not be read")
+
+        let codexDay = root.appendingPathComponent(".codex/sessions/2026/09/15", isDirectory: true)
+        try fileManager.createDirectory(at: codexDay, withIntermediateDirectories: true)
+        try fileManager.setAttributes([.posixPermissions: 0], ofItemAtPath: codexDay.path)
+        defer { try? fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codexDay.path) }
+        let sealedCodex = reader.read(provider: .codex, sessionID: "u", cwd: "/tmp/project")
+        guard case let .failed(codexPath, _, codexReason) = sealedCodex else {
+            Issue.record("expected an unreadable Codex day directory to fail, got \(sealedCodex)")
+            return
+        }
+        #expect(codexPath.hasSuffix("/.codex/sessions/2026/09/15"))
+        #expect(!codexReason.isEmpty)
+    }
+
+    @Test func codexLookupVisitsOnlyTheNewestDayDirectories() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sessions = root.appendingPathComponent(".codex/sessions", isDirectory: true)
+        let record = #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":"Found"}}"#
+        // One more day than the lookup visits, newest first; the target sits
+        // in the oldest one, just past the window.
+        let dayCount = ConversationReader.codexLookupDayLimit + 1
+        for index in 0..<dayCount {
+            let day = sessions.appendingPathComponent(String(format: "2026/08/%02d", dayCount - index), isDirectory: true)
+            try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        }
+        let stale = sessions.appendingPathComponent("2026/08/01/rollout-2026-08-01T00-00-00-old.jsonl")
+        try record.write(to: stale, atomically: true, encoding: .utf8)
+        try "not a date".write(to: sessions.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+
+        let reader = ConversationReader(homeDirectory: root)
+        let outside = reader.read(provider: .codex, sessionID: "old", cwd: "/tmp/project")
+        guard case .empty = outside else {
+            Issue.record("expected a rollout past the day window to read as empty, got \(outside)")
+            return
+        }
+
+        let recent = sessions.appendingPathComponent(String(format: "2026/08/%02d/rollout-2026-08-15T00-00-00-new.jsonl", dayCount))
+        try record.write(to: recent, atomically: true, encoding: .utf8)
+        let inside = reader.read(provider: .codex, sessionID: "new", cwd: "/tmp/project")
+        guard case let .loaded(path, messages) = inside else {
+            Issue.record("expected the newest day's rollout to load, got \(inside)")
+            return
+        }
+        #expect(URL(fileURLWithPath: path).standardizedFileURL.path == recent.standardizedFileURL.path)
+        #expect(messages.map(\.text) == ["Found"])
+    }
+
+    @Test func initialReadOfALargeLedgerIsBoundedToItsTail() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent(".claude/projects/-tmp-project", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let path = directory.appendingPathComponent("big.jsonl")
+
+        let early = #"{"type":"assistant","message":{"role":"assistant","content":"early"}}"# + "\n"
+        let filler = #"{"type":"progress","message":{"content":""# + String(repeating: "x", count: 4096) + "\"}}\n"
+        var body = early
+        while body.utf8.count <= Int(ConversationReader.initialReadLimit) + filler.utf8.count {
+            body += filler
+        }
+        body += #"{"type":"user","message":{"role":"user","content":"late question"}}"# + "\n"
+        try body.write(to: path, atomically: true, encoding: .utf8)
+
+        let reader = ConversationReader(homeDirectory: root)
+        let first = reader.read(provider: .claude, sessionID: "big", cwd: "/tmp/project")
+        guard case let .loaded(_, messages) = first else {
+            Issue.record("expected the tail to load, got \(first)")
+            return
+        }
+        #expect(messages.map(\.text) == ["late question"])
+
+        try append(#"{"type":"assistant","message":{"role":"assistant","content":"late answer"}}"# + "\n", to: path)
+        let appended = reader.read(provider: .claude, sessionID: "big", cwd: "/tmp/project")
+        guard case let .loaded(_, appendedMessages) = appended else {
+            Issue.record("expected the appended record to load, got \(appended)")
+            return
+        }
+        #expect(appendedMessages.map(\.text) == ["late question", "late answer"])
+
+        try append("broken\n", to: path)
+        let broken = reader.read(provider: .claude, sessionID: "big", cwd: "/tmp/project")
+        guard case let .failed(_, line, reason) = broken else {
+            Issue.record("expected the malformed tail to fail, got \(broken)")
+            return
+        }
+        #expect(line == 0)
+        #expect(reason.hasPrefix("Invalid JSONL record at byte "))
+    }
+
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("conversation-reader-\(UUID().uuidString)", isDirectory: true)

@@ -27,12 +27,6 @@ use crate::sidebar::{
 use crate::workspace;
 
 const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
-// Core teardown runs on the shell's owner thread. It must acknowledge the
-// stop request promptly rather than wait behind an in-flight API or reader
-// operation; the coordinator only holds a Weak runtime reference, so a
-// worker that misses this grace period can finish detached after the core is
-// gone.
-const COORDINATOR_SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(100);
@@ -152,25 +146,12 @@ pub(crate) struct SessionSyncHandle {
 impl Drop for SessionSyncHandle {
     fn drop(&mut self) {
         let _ = self.sender.send(CoordinatorMessage::Stop);
-        let Some(worker) = self.worker.take() else {
-            return;
-        };
-        let deadline = Instant::now() + COORDINATOR_SHUTDOWN_GRACE;
-        while !worker.is_finished() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(1));
-        }
-        if worker.is_finished() {
-            if worker.join().is_err() {
-                crate::diagnostic!(json!({
-                    "component": "session_sync",
-                    "kind": "coordinator.join_failed",
-                }));
-            }
-        } else {
+        if let Some(worker) = self.worker.take()
+            && worker.join().is_err()
+        {
             crate::diagnostic!(json!({
                 "component": "session_sync",
-                "kind": "coordinator.detached_on_shutdown",
-                "grace_ms": COORDINATOR_SHUTDOWN_GRACE.as_millis(),
+                "kind": "coordinator.join_failed",
             }));
         }
     }
@@ -4259,7 +4240,7 @@ mod tests {
         let runtime = runtime_for_fixture(&socket_path, &state_path);
         let context = context_for_fixture(&runtime, &socket_path);
         let handle = spawn(context, None).expect("start session sync");
-        wait_until(Instant::now() + Duration::from_secs(10), || {
+        wait_until(Instant::now() + Duration::from_secs(3), || {
             resumed.load(Ordering::Acquire)
                 && runtime
                     .lock()
@@ -4364,7 +4345,7 @@ mod tests {
         let runtime = runtime_for_fixture(&socket_path, &state_path);
         let context = context_for_fixture(&runtime, &socket_path);
         let handle = spawn(context, None).expect("start session sync");
-        wait_until(Instant::now() + Duration::from_secs(10), || {
+        wait_until(Instant::now() + Duration::from_secs(3), || {
             let snapshot = runtime.lock().expect("runtime lock").snapshot().clone();
             snapshot.status.herdr.state == "connected"
                 && snapshot

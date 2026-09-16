@@ -50,6 +50,9 @@ private struct ConversationReadCheckpoint: @unchecked Sendable {
     let result: ConversationReadResult
     let scanOffset: UInt64
     let nextLine: Int
+    /// False when the first read opened a tail window, so `nextLine` counts
+    /// from that window and a failure is reported by byte offset instead.
+    let linesAreAbsolute: Bool
 }
 
 private final class ConversationReadCache: @unchecked Sendable {
@@ -114,9 +117,25 @@ struct ConversationReader: Sendable {
         self.homeDirectory = homeDirectory
     }
 
+    /// Bytes an initial read takes from the end of a ledger. A long session's
+    /// file grows past this; the operator sees its tail, and later refreshes
+    /// read only what was appended, so the bound is paid once per file.
+    static let initialReadLimit: UInt64 = 2 * 1024 * 1024
+
+    /// Codex names a rollout by date, `sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl`.
+    /// A lookup visits the newest day directories only, so a years-old
+    /// tree is never walked to answer for a session started today.
+    static let codexLookupDayLimit = 14
+
     func read(provider: ConversationProvider, sessionID: String?, cwd: String) -> ConversationReadResult {
-        guard let path = resolvePath(provider: provider, sessionID: sessionID, cwd: cwd) else {
+        let path: URL
+        switch resolvePath(provider: provider, sessionID: sessionID, cwd: cwd) {
+        case let .found(url):
+            path = url
+        case .missing:
             return .empty(path: expectedPath(provider: provider, sessionID: sessionID, cwd: cwd).path)
+        case let .unreadable(url, reason):
+            return .failed(path: url.path, line: 0, reason: reason)
         }
         guard let signature = fileSignature(for: path) else {
             return .failed(path: path.path, line: 0, reason: "Conversation file could not be read")
@@ -151,7 +170,9 @@ struct ConversationReader: Sendable {
 
     private enum ParseOutcome {
         case success(ParsedConversation)
-        case failure(line: Int)
+        /// `line` counts from the window the parse started in; it is absolute
+        /// only when that window began at byte 0. `offset` is absolute always.
+        case failure(line: Int, offset: UInt64)
     }
 
     private enum LineOutcome {
@@ -165,13 +186,31 @@ struct ConversationReader: Sendable {
         provider: ConversationProvider,
         signature: ConversationFileSignature
     ) -> ConversationReadResult {
-        guard let data = readData(from: path, offset: 0) else {
+        let byteCount = UInt64(max(0, signature.byteCount))
+        let tailed = byteCount > Self.initialReadLimit
+        let startOffset = tailed ? byteCount - Self.initialReadLimit : 0
+        guard var data = readData(from: path, offset: startOffset) else {
             return .failed(path: path.path, line: 0, reason: "Conversation file could not be read")
         }
+        var baseOffset = startOffset
+        if tailed {
+            // The window opens mid-record; everything up to the first newline
+            // belongs to a record whose beginning was not read.
+            guard let newline = data.firstIndex(of: 0x0A) else {
+                return .failed(
+                    path: path.path,
+                    line: 0,
+                    reason: "No complete record in the last \(Self.initialReadLimit) bytes"
+                )
+            }
+            let skipped = data.distance(from: data.startIndex, to: data.index(after: newline))
+            data = Data(data[data.index(after: newline)...])
+            baseOffset += UInt64(skipped)
+        }
 
-        switch parse(data: data, provider: provider, baseOffset: 0, startLine: 1, messages: []) {
-        case let .failure(line):
-            return .failed(path: path.path, line: line, reason: "Invalid JSONL record")
+        switch parse(data: data, provider: provider, baseOffset: baseOffset, startLine: 1, messages: []) {
+        case let .failure(line, offset):
+            return invalidRecord(path: path, line: line, offset: offset, linesAreAbsolute: !tailed)
         case let .success(parsed):
             let result = result(from: parsed.messages, path: path)
             Self.cache.store(
@@ -179,7 +218,8 @@ struct ConversationReader: Sendable {
                     signature: signature,
                     result: result,
                     scanOffset: parsed.scanOffset,
-                    nextLine: parsed.nextLine
+                    nextLine: parsed.nextLine,
+                    linesAreAbsolute: !tailed
                 ),
                 for: path.path
             )
@@ -213,8 +253,13 @@ struct ConversationReader: Sendable {
             startLine: checkpoint.nextLine,
             messages: messages
         ) {
-        case let .failure(line):
-            return .failed(path: path.path, line: line, reason: "Invalid JSONL record")
+        case let .failure(line, offset):
+            return invalidRecord(
+                path: path,
+                line: line,
+                offset: offset,
+                linesAreAbsolute: checkpoint.linesAreAbsolute
+            )
         case let .success(parsed):
             let result = result(from: parsed.messages, path: path)
             Self.cache.store(
@@ -222,12 +267,19 @@ struct ConversationReader: Sendable {
                     signature: signature,
                     result: result,
                     scanOffset: parsed.scanOffset,
-                    nextLine: parsed.nextLine
+                    nextLine: parsed.nextLine,
+                    linesAreAbsolute: checkpoint.linesAreAbsolute
                 ),
                 for: path.path
             )
             return result
         }
+    }
+
+    private func invalidRecord(path: URL, line: Int, offset: UInt64, linesAreAbsolute: Bool) -> ConversationReadResult {
+        linesAreAbsolute
+            ? .failed(path: path.path, line: line, reason: "Invalid JSONL record")
+            : .failed(path: path.path, line: 0, reason: "Invalid JSONL record at byte \(offset)")
     }
 
     private func result(from messages: [ConversationMessage], path: URL) -> ConversationReadResult {
@@ -255,7 +307,7 @@ struct ConversationReader: Sendable {
             case .ignored:
                 break
             case .invalid:
-                return .failure(line: line)
+                return .failure(line: line, offset: baseOffset + UInt64(lineStart))
             }
             cursor = data.index(after: newline)
             lineStart = cursor
@@ -314,46 +366,58 @@ struct ConversationReader: Sendable {
         }
     }
 
-    private func resolvePath(provider: ConversationProvider, sessionID: String?, cwd: String) -> URL? {
-        let fileManager = FileManager.default
+    private enum ResolvedPath {
+        case found(URL)
+        case missing
+        case unreadable(URL, reason: String)
+    }
+
+    private func resolvePath(provider: ConversationProvider, sessionID: String?, cwd: String) -> ResolvedPath {
         let root = rootURL(for: provider)
-        let identifier = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let identifier = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              Self.isSafeSessionIdentifier(identifier)
+        else { return .missing }
         switch provider {
         case .claude:
-            let project = projectDirectory(for: cwd)
-            let directory = root.appendingPathComponent(project, isDirectory: true)
-            if let identifier, isSafeSessionIdentifier(identifier) {
-                let exact = directory.appendingPathComponent("\(identifier).jsonl")
-                if fileManager.fileExists(atPath: exact.path) { return exact }
+            let exact = root
+                .appendingPathComponent(Self.projectDirectory(for: cwd), isDirectory: true)
+                .appendingPathComponent("\(identifier).jsonl")
+            switch probe(exact) {
+            case .present: return .found(exact)
+            case .missing: return .missing
+            case let .unreadable(reason): return .unreadable(exact, reason: reason)
             }
-            return nil
         case .codex:
-            guard let identifier, isSafeSessionIdentifier(identifier) else { return nil }
             let cacheKey = "\(root.path)\u{0}\(identifier)"
-            if let cached = Self.pathCache.path(for: cacheKey) { return cached }
-            guard let exact = findJSONL(named: identifier, under: root) else { return nil }
-            Self.pathCache.store(exact, for: cacheKey)
-            return exact
+            if let cached = Self.pathCache.path(for: cacheKey) { return .found(cached) }
+            let resolved = findCodexRollout(named: identifier, under: root)
+            if case let .found(exact) = resolved {
+                Self.pathCache.store(exact, for: cacheKey)
+            }
+            return resolved
         }
     }
 
     private func expectedPath(provider: ConversationProvider, sessionID: String?, cwd: String) -> URL {
         let identifier = sessionID
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .flatMap { isSafeSessionIdentifier($0) ? $0 : nil }
+            .flatMap { Self.isSafeSessionIdentifier($0) ? $0 : nil }
+        let name = identifier ?? "unknown-session"
         switch provider {
         case .claude:
-            let name = identifier.flatMap { $0.isEmpty ? nil : $0 } ?? "unknown-session"
             return rootURL(for: provider)
-                .appendingPathComponent(projectDirectory(for: cwd), isDirectory: true)
+                .appendingPathComponent(Self.projectDirectory(for: cwd), isDirectory: true)
                 .appendingPathComponent("\(name).jsonl")
         case .codex:
-            let name = identifier.flatMap { $0.isEmpty ? nil : $0 } ?? "unknown-session"
             return rootURL(for: provider).appendingPathComponent("\(name).jsonl")
         }
     }
 
-    private func isSafeSessionIdentifier(_ identifier: String) -> Bool {
+    /// A session id names one file inside a provider directory and nothing
+    /// else: no separators, no `.`/`..`, nothing a path would interpret.
+    /// The shell checks the same rule before offering the view, so an id
+    /// this refuses never reaches a read.
+    static func isSafeSessionIdentifier(_ identifier: String) -> Bool {
         guard !identifier.isEmpty, identifier != ".", identifier != ".." else { return false }
         guard !identifier.contains("/"), !identifier.contains("\\"), !identifier.contains("\0") else {
             return false
@@ -361,28 +425,111 @@ struct ConversationReader: Sendable {
         return URL(fileURLWithPath: identifier).lastPathComponent == identifier
     }
 
-    private func projectDirectory(for cwd: String) -> String {
-        cwd
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ".", with: "-")
-            .replacingOccurrences(of: "_", with: "-")
+    /// Claude Code names a project directory by its working directory with
+    /// every character outside `[A-Za-z0-9]` written as `-`, one per UTF-16
+    /// unit. `/Users/x/.claude` is `-Users-x--claude`; `Mobile Documents`
+    /// is `Mobile-Documents`.
+    static func projectDirectory(for cwd: String) -> String {
+        String(utf16CodeUnits: cwd.utf16.map { unit -> unichar in
+            switch unit {
+            case 0x30...0x39, 0x41...0x5A, 0x61...0x7A: unit
+            default: 0x2D
+            }
+        }, count: cwd.utf16.count)
     }
 
-    private func findJSONL(named identifier: String, under root: URL) -> URL? {
-        let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
-        return enumerator.compactMap { item -> URL? in
-            guard let url = item as? URL,
-                  url.pathExtension == "jsonl"
-            else { return nil }
-            let basename = url.deletingPathExtension().lastPathComponent
-            guard basename == identifier || basename.hasSuffix("-\(identifier)") else { return nil }
-            return url
-        }.first
+    private enum PathProbe {
+        case present
+        case missing
+        case unreadable(String)
+    }
+
+    /// `stat` distinguishes a path that is not there from one the process may
+    /// not look at; `fileExists` folds both into `false`.
+    private func probe(_ url: URL) -> PathProbe {
+        var info = stat()
+        if stat(url.path, &info) == 0 { return .present }
+        switch errno {
+        case ENOENT, ENOTDIR: return .missing
+        default: return .unreadable(String(cString: strerror(errno)))
+        }
+    }
+
+    private enum DirectoryListing {
+        case entries([String])
+        case missing
+        case unreadable(String)
+    }
+
+    private func list(_ url: URL) -> DirectoryListing {
+        do {
+            return .entries(try FileManager.default.contentsOfDirectory(atPath: url.path))
+        } catch let error as NSError {
+            if error.domain == NSCocoaErrorDomain, error.code == NSFileReadNoSuchFileError {
+                return .missing
+            }
+            if error.domain == NSPOSIXErrorDomain, error.code == Int(ENOENT) || error.code == Int(ENOTDIR) {
+                return .missing
+            }
+            let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+            if underlying?.domain == NSPOSIXErrorDomain,
+               underlying?.code == Int(ENOENT) || underlying?.code == Int(ENOTDIR)
+            {
+                return .missing
+            }
+            return .unreadable(error.localizedDescription)
+        }
+    }
+
+    private func findCodexRollout(named identifier: String, under root: URL) -> ResolvedPath {
+        var pending = Self.codexLookupDayLimit
+        func dated(_ entries: [String]) -> [String] {
+            entries.filter { !$0.isEmpty && $0.allSatisfy(\.isNumber) }.sorted(by: >)
+        }
+        let years: [String]
+        switch list(root) {
+        case let .entries(entries): years = dated(entries)
+        case .missing: return .missing
+        case let .unreadable(reason): return .unreadable(root, reason: reason)
+        }
+        for year in years {
+            let yearURL = root.appendingPathComponent(year, isDirectory: true)
+            let months: [String]
+            switch list(yearURL) {
+            case let .entries(entries): months = dated(entries)
+            case .missing: continue
+            case let .unreadable(reason): return .unreadable(yearURL, reason: reason)
+            }
+            for month in months {
+                let monthURL = yearURL.appendingPathComponent(month, isDirectory: true)
+                let days: [String]
+                switch list(monthURL) {
+                case let .entries(entries): days = dated(entries)
+                case .missing: continue
+                case let .unreadable(reason): return .unreadable(monthURL, reason: reason)
+                }
+                for day in days {
+                    guard pending > 0 else { return .missing }
+                    pending -= 1
+                    let dayURL = monthURL.appendingPathComponent(day, isDirectory: true)
+                    switch list(dayURL) {
+                    case let .entries(entries):
+                        if let match = entries.sorted(by: >).first(where: { name in
+                            guard name.hasSuffix(".jsonl") else { return false }
+                            let basename = String(name.dropLast(".jsonl".count))
+                            return basename == identifier || basename.hasSuffix("-\(identifier)")
+                        }) {
+                            return .found(dayURL.appendingPathComponent(match))
+                        }
+                    case .missing:
+                        continue
+                    case let .unreadable(reason):
+                        return .unreadable(dayURL, reason: reason)
+                    }
+                }
+            }
+        }
+        return .missing
     }
 
     private func fileSignature(for path: URL) -> ConversationFileSignature? {

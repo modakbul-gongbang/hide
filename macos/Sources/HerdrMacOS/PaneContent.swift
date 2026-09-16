@@ -316,6 +316,8 @@ private final class ConversationLedgerTextView: NSTextView {
     var followsBottom = true
     var textScale: CGFloat = 1
 
+    override var acceptsFirstResponder: Bool { true }
+
     func updateTextContainerWidth() {
         guard let textContainer else { return }
         let availableWidth = max(1, bounds.width)
@@ -419,6 +421,7 @@ struct ConversationLedgerView: NSViewRepresentable {
     let activity: String
     let now: Date
     let textScale: CGFloat
+    let isKeyboardFocused: Bool
     let openLink: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(openLink: openLink) }
@@ -455,6 +458,13 @@ struct ConversationLedgerView: NSViewRepresentable {
         view.textScale = textScale
         view.updateTextContainerWidth()
         view.updateFollowState()
+        if isKeyboardFocused {
+            DispatchQueue.main.async { [weak view] in
+                guard let view, let window = view.window else { return }
+                guard window.firstResponder == nil || window.firstResponder is ImeTerminalView else { return }
+                window.makeFirstResponder(view)
+            }
+        }
         let turns = ConversationLedgerFormatting.turns(
             messages: messages,
             provider: provider,
@@ -511,6 +521,7 @@ struct ConversationPaneView<TerminalFallback: View>: View {
     let cwd: String
     let agent: SidebarAgent
     let textScale: CGFloat
+    let isKeyboardFocused: Bool
     let onShowTerminal: () -> Void
     let openLink: (String) -> Void
     private let terminalFallback: () -> TerminalFallback
@@ -528,6 +539,7 @@ struct ConversationPaneView<TerminalFallback: View>: View {
         cwd: String,
         agent: SidebarAgent,
         textScale: CGFloat,
+        isKeyboardFocused: Bool = false,
         onShowTerminal: @escaping () -> Void,
         openLink: @escaping (String) -> Void,
         reader: ConversationReader = ConversationReader(),
@@ -538,6 +550,7 @@ struct ConversationPaneView<TerminalFallback: View>: View {
         self.cwd = cwd
         self.agent = agent
         self.textScale = textScale
+        self.isKeyboardFocused = isKeyboardFocused
         self.onShowTerminal = onShowTerminal
         self.openLink = openLink
         self.reader = reader
@@ -610,6 +623,7 @@ struct ConversationPaneView<TerminalFallback: View>: View {
                 activity: agent.activity,
                 now: now,
                 textScale: textScale,
+                isKeyboardFocused: isKeyboardFocused,
                 openLink: openLink
             )
             .frame(maxWidth: .infinity, alignment: .leading)

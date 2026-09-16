@@ -2388,6 +2388,7 @@ private struct HideTabCanvas: View {
                                 cwd: pane.cwd,
                                 agent: agent,
                                 textScale: model.textScale(for: pane.id),
+                                isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
                                 onShowTerminal: { model.toggleConversation(pane.id) },
                                 openLink: { model.openTerminalLink($0, paneID: pane.id) }
                             ) {
@@ -2396,7 +2397,8 @@ private struct HideTabCanvas: View {
                                     paneID: pane.id,
                                     textScale: model.textScale(for: pane.id),
                                     onFocus: { model.focusPane(pane.id) },
-                                    onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                                    onOpenLink: { model.openTerminalLink($0, paneID: pane.id) },
+                                    allowsInput: ConversationInputPolicy.terminalInputAllowed(isConversation: true)
                                 )
                                 .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
                             }
