@@ -620,12 +620,12 @@ fn cleanup_review_without_live_state_is_visible_and_never_deletes() {
 #[test]
 fn overview_inspection_does_not_focus_or_repeat_publish() {
     struct CountConnections(std::sync::mpsc::Sender<()>);
-    impl crate::herdr_api::ApiConnector for CountConnections {
+    impl hide_herdr_client::ApiConnector for CountConnections {
         fn connect(
             &self,
-        ) -> Result<Box<dyn crate::herdr_api::ApiStream>, crate::herdr_api::ApiError> {
+        ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError> {
             let _ = self.0.send(());
-            Err(crate::herdr_api::ApiError::Transport(
+            Err(hide_herdr_client::ApiError::Transport(
                 "fixture refused".into(),
             ))
         }

@@ -1503,7 +1503,7 @@ fn rejected_close_removes_only_its_reserved_item() {
                 tab_id: "tab:first".to_owned(),
             },
         },
-        Err(crate::herdr_api::ApiError::Remote {
+        Err(hide_herdr_client::ApiError::Remote {
             code: "refused".to_owned(),
             message: "close refused".to_owned(),
         }),
@@ -1519,8 +1519,8 @@ fn rejected_close_removes_only_its_reserved_item() {
 #[test]
 fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
     for error in [
-        crate::herdr_api::ApiError::Transport("acknowledgement timed out".to_owned()),
-        crate::herdr_api::ApiError::Malformed("acknowledgement was invalid".to_owned()),
+        hide_herdr_client::ApiError::Transport("acknowledgement timed out".to_owned()),
+        hide_herdr_client::ApiError::Malformed("acknowledgement was invalid".to_owned()),
     ] {
         let mut runtime = runtime();
         runtime.push_recent_closed(closed_file("first", "/repo/first.rs"));

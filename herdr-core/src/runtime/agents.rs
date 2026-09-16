@@ -821,7 +821,7 @@ impl Runtime {
         )
     }
 
-    fn sync_conversation_modes(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
+    pub(super) fn sync_conversation_modes(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
         let live: BTreeSet<String> = agents
             .iter()
             .filter(|agent| conversation_agent_kind(&agent.agent_kind))

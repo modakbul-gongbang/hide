@@ -709,7 +709,7 @@ impl Runtime {
     pub(crate) fn ingest_close_effect_result(
         &mut self,
         request: &live::CloseEffectRequest,
-        result: Result<(), crate::herdr_api::ApiError>,
+        result: Result<(), hide_herdr_client::ApiError>,
     ) -> bool {
         let target_id = match &request.target {
             live::CloseCaptureTarget::Pane { pane_id } => pane_id,
@@ -724,7 +724,7 @@ impl Runtime {
                     format!("Captured user close {}", request.key),
                 );
             }
-            Err(crate::herdr_api::ApiError::Remote { code, message }) => {
+            Err(hide_herdr_client::ApiError::Remote { code, message }) => {
                 self.consume_recent_closed(&request.key);
                 if let live::CloseCaptureTarget::Pane { pane_id } = &request.target {
                     self.panes_closing.remove(pane_id);

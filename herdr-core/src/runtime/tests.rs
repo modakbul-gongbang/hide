@@ -398,7 +398,7 @@ fn live_runtime() -> Runtime {
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::ffi::ChangeNotifier::noop(),
-        api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
     });
     runtime
 }
@@ -785,7 +785,7 @@ fn live_tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
         notifier: crate::ffi::ChangeNotifier::noop(),
-        api_connector: Arc::new(crate::herdr_api::UnixSocketConnector::new(&socket_path)),
+        api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
     });
     (runtime, checkout_id)
 }
