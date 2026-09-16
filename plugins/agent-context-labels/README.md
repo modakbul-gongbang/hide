@@ -40,10 +40,17 @@ The data flow is intentionally small:
 ```text
 Herdr agent lifecycle ────────────────┐
 Claude/Codex hooks ── attention ──────┼─> pane metadata tokens ─> Agents sidebar
+hook/refresh marker ─> watcher.sock ───┘
+Herdr events.subscribe ─> event loop ──┘
 local session JSONL ─> redact ─> hide-ai ─> codex app-server / claude -p ─┘
 ```
 
 Native hook state wins over semantic question detection, and both win over the ordinary Herdr lifecycle display.
+
+The watcher keeps one Herdr socket subscription open for pane lifecycle events.
+The contract requires a `pane_id` for `pane.agent_status_changed`, so the watcher expands that filter for every currently known pane and refreshes the subscription when the pane set changes.
+Each connection starts with one `agent.list` bootstrap and resumes from the acknowledged event sequence after reconnecting.
+The only idle work is the next elapsed-label boundary; hook and refresh commands wake the loop through `watcher.sock` without creating a second state writer.
 
 ## Status symbols
 
@@ -274,7 +281,7 @@ A turn buys at most two provider requests: one when the user's message is the ne
 Nothing the agent emits in between triggers a request, and the attention verdict for a turn is drawn once and then held, so a pane's symbol cannot change on its own while the user is not looking at it.
 
 Keying on the turn rather than on the transcript is deliberate.
-An earlier version hashed the sanitized session window and re-asked whenever that hash moved; because the window grows with every token an agent emits, a busy pane asked again on nearly every poll, and one day the request budget was spent by midday.
+An earlier version hashed the sanitized session window and re-asked whenever that hash moved; because the window grows with every token an agent emits, a busy pane asked again on nearly every status check, and one day the request budget was spent by midday.
 
 Slow provider calls run outside the status loop, so lifecycle and elapsed-time updates continue while a request is in flight.
 
