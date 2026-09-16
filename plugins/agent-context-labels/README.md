@@ -304,9 +304,14 @@ Automatic summaries are enabled by default and the chosen setting survives watch
 
 ## Privacy
 
-The plugin reads the local JSONL session reported by Herdr for each supported pane.
-The context spans the last two user turns, with an upper bound of 4,000 characters.
+The plugin reads the local JSONL session reported by Herdr for each supported pane through the shared `hide-session` crate.
+The first view reads the complete file once, and later views read only complete lines appended after the remembered byte cursor.
+The context spans the last two human turns, with an upper bound of 4,000 characters.
+The all-user-requests section retains the most recent eight human turns so a long session does not lose its current task history at a 256 KiB tail boundary.
 Two turns rather than one, because whether a closing message is a fresh question or a wrap-up of one already answered is often only visible in the preceding exchange.
+
+The parser excludes runtime-injected user-role records such as task notifications, system reminders, skill instructions, and Codex environment instructions.
+It classifies an explicit interruption separately, so the interrupted symbol keeps the previous summary without spending a provider request on the interruption.
 
 Before anything is sent to the provider, the plugin:
 
@@ -318,6 +323,8 @@ Before anything is sent to the provider, the plugin:
 
 Raw prompts, raw model output, and credentials are not written to plugin logs.
 Operational logs contain structured event names, pane IDs, agent kinds, request ids, provider names, stable failure classes, context length, and fingerprints rather than conversation text.
+When a session is truncated or atomically replaced, `session_rescanned` records the pane and reason.
+When a relevant line is malformed or has an invalid timestamp, `session_lines_skipped` records the count and reason category without the line body.
 The Codex thread is ephemeral, so `~/.codex/sessions` receives nothing from these requests.
 
 Local runtime data is stored under:
@@ -375,7 +382,14 @@ printf 'user: run the build\nassistant: The build finished. Shall I deploy?' \
   | ../../target/release/hide-agent-context-labels analyze-stdin
 ```
 
-Common event codes include `ai_provider_availability`, `raw_session_unavailable`, `analysis_provider_unavailable`, `analysis_abandoned`, and the provider layer's `ai.attempt`, `ai.request.finished`, `ai.fallback`, and `ai.daily_rollup`.
+For a raw Claude or Codex session JSONL file, pass its format so the command uses the same session parser as the watcher:
+
+```bash
+cat ~/.claude/projects/<cwd-slug>/<session>.jsonl \
+  | ../../target/release/hide-agent-context-labels analyze-stdin --agent claude
+```
+
+Common event codes include `ai_provider_availability`, `raw_session_unavailable`, `session_rescanned`, `session_lines_skipped`, `analysis_provider_unavailable`, `analysis_abandoned`, and the provider layer's `ai.attempt`, `ai.request.finished`, `ai.fallback`, and `ai.daily_rollup`.
 
 | Symptom | Cause and fix |
 | --- | --- |

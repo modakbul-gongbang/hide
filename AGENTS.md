@@ -12,6 +12,7 @@ Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host 
 - `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. It projects Herdr-owned pane topology and owns Hide's UI state; the shell owns neither.
 - `hide-agent-hooks/` - the only code that writes a configuration file the operator owns (each agent runtime's hook file). A separate crate because a `settings.json` write must never sit behind the render lock; see `docs/agent-hooks.md`.
 - `hide-ai/` - the provider boundary for background AI features, backed by the user's own logged-in CLIs; see `docs/AI_PROVIDERS.md`.
+- `hide-session/` - shared local Claude and Codex session location, incremental reading, and conversation parsing used by the plugin and core usage fallback.
 - `plugins/` - Herdr plugins shipped from this repository, each installable on its own with `herdr plugin install <owner>/<repo>/plugins/<name>`: `browser/` and `agent-context-labels/`.
 - `spikes/swift-shell-pivot/` - the Stage 0 spike and its `VERDICTS.md`, a frozen record; do not edit it to reflect later changes.
 
