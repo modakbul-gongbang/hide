@@ -20,11 +20,12 @@ git -C "$repo_root" diff --quiet HEAD -- \
     macos/Sources/HerdrMacOS/PetView.swift \
     macos/Sources/HerdrMacOS/PetWindow.swift
 
-if git -C "$repo_root" diff --unified=0 HEAD -- macos/Sources/HerdrMacOS/HideUI.swift | /usr/bin/grep -q '^@@ .* -636,'; then
+if git -C "$repo_root" grep -qF -- 'struct HideSidebar: View' macos/Sources/HerdrMacOS/HideUI.swift; then
     printf 'HideSidebar implementation still lives in HideUI.swift\n' >&2
     exit 1
 fi
 
 test -f "$macos_root/Sources/HerdrMacOS/HideSidebar.swift"
+test -f "$macos_root/Sources/HerdrMacOS/HideTerminalSurface.swift"
 
 printf 'workbench ownership boundary verified\n'
