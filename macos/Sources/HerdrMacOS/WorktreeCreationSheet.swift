@@ -1,8 +1,4 @@
-import AppKit
-import Foundation
 import SwiftUI
-
-
 
 struct WorktreeCreationSheet: View {
     @EnvironmentObject private var model: ShellModel

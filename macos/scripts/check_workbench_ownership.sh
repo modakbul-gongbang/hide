@@ -19,7 +19,8 @@ git -C "$repo_root" diff --quiet HEAD -- \
     macos/Sources/HerdrMacOS/PetView.swift \
     macos/Sources/HerdrMacOS/PetWindow.swift
 
-if git -C "$repo_root" grep -qF -- 'struct HideSidebar: View' macos/Sources/HerdrMacOS/HideUI.swift; then
+if git -C "$repo_root" ls-files --error-unmatch macos/Sources/HerdrMacOS/HideUI.swift >/dev/null 2>&1 \
+    && git -C "$repo_root" grep -qF -- 'struct HideSidebar: View' macos/Sources/HerdrMacOS/HideUI.swift; then
     printf 'HideSidebar implementation still lives in HideUI.swift\n' >&2
     exit 1
 fi
@@ -27,5 +28,11 @@ fi
 test -f "$macos_root/Sources/HerdrMacOS/HideSidebar.swift"
 test -f "$macos_root/Sources/HerdrMacOS/HideTerminalSurface.swift"
 test -f "$macos_root/Sources/HerdrMacOS/ShellRootView.swift"
+test -f "$macos_root/Sources/HerdrMacOS/WorktreeCreationSheet.swift"
+
+if git -C "$repo_root" ls-files --error-unmatch macos/Sources/HerdrMacOS/HideUI.swift >/dev/null 2>&1; then
+    printf 'obsolete HideUI.swift remains tracked\n' >&2
+    exit 1
+fi
 
 printf 'workbench ownership boundary verified\n'
