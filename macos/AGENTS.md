@@ -11,6 +11,9 @@ Do not restate those contracts here.
 - Keep snapshot DTO decoding in the responsibility-owned `CoreBridge*Snapshot.swift` files.
   Keep delta application, C ABI bridging, and terminal delivery coordination in `CoreBridge.swift`.
 - Keep application coordination and snapshot observation in `ShellModel.swift`.
+- Keep tab-strip and recent-navigation presentation models in `ShellModelNavigation.swift`.
+- Keep pane-selection lifecycle state and pure transition policy in `ShellModelPaneSelection.swift`.
+  Keep Herdr dispatch and snapshot settlement coordination in `ShellModel.swift`.
 - Keep launch-time executable and environment resolution in `RuntimeEnvironment.swift`.
 - Views read snapshot-backed values, render them, and dispatch the event that represents the user's intent.
 - Do not mirror a core-owned value as independent SwiftUI authority.
