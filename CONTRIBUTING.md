@@ -36,7 +36,7 @@ zsh scripts/check-herdr-contract.sh --schema-only   # needs a Herdr CLI on PATH 
 ```
 
 Then open the pull request against `main` and answer the template.
-`main` accepts squash merges only, and the `verify` check has to pass; there is no way around it, including for maintainers.
+`main` accepts pull-request merges, and the `verify` check has to pass; this repository currently uses merge commits, and there is no way around branch protection, including for maintainers.
 
 ## CI gates
 

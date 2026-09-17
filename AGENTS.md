@@ -18,7 +18,7 @@ Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host 
 
 ## Before Opening A Pull Request
 
-`main` takes squash merges through pull requests only, and the `verify` workflow has to pass; no one, maintainer included, can push around it.
+`main` takes pull-request merges only, and the `verify` workflow has to pass; this repository currently uses merge commits, and no one, maintainer included, can push around branch protection.
 `CONTRIBUTING.md` lists every gate with its local command; run the lanes the diff touches before opening the pull request, and change a gate that is wrong in the same pull request with the reason in the description.
 Answer the template's `Risk surface`, `Review focus` and `Breaking change` from the diff, not from intent, and delete the lines that do not apply rather than filling them with "N/A".
 
@@ -153,7 +153,7 @@ A `ref` from a `Screen /` board resolves to the master inside its sheet.
 Each state row is a `ref` of the master with `descendants` overrides (`enabled: false` hides a slot, `<refId>/<childId>` reaches into a nested ref), never a redrawn copy, so a change to the master reaches every state.
 The states are the ones the code produces and the spec line says where (`ChangedFileRow`, `HideIconButton`); a state the app cannot reach is not drawn.
 
-There is no band for a feature's design, because `main` takes a PRD and its implementation in one squash merge and nothing runs at the merge to move a board.
+There is no band for a feature's design, because `main` takes a PRD and its implementation in one pull-request merge and nothing runs at the merge to move a board.
 A PRD draws the screen it changes as the `Screen /` board itself, one frame per state the data can produce; on that branch the board is the target until the code catches up, and on `main` it is what was built.
 The target is kept outside the canvas: the PRD commit's `hide.pen`, and the boards exported to `agents/runs/<slug>/design/` when implementation starts.
 A component the design needs and does not have is drawn under a `Proposed /` name and recorded in the PRD's Decisions table, so the addition is a decision a reviewer sees rather than a shape that appeared.
