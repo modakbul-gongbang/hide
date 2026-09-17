@@ -157,13 +157,13 @@ impl Drop for SessionSyncHandle {
     }
 }
 
-enum CoordinatorMessage {
+pub(crate) enum CoordinatorMessage {
     Stop,
     SubscriptionLine { generation: u64, line: String },
     SubscriptionEnded { generation: u64, message: String },
 }
 
-struct ActiveSubscription {
+pub(crate) struct ActiveSubscription {
     generation: u64,
     shutdown: Box<dyn hide_herdr_client::ConnectionShutdown>,
     worker: Option<JoinHandle<()>>,
@@ -187,12 +187,13 @@ impl ActiveSubscription {
 mod coordinator;
 mod projection;
 mod replica;
+mod subscription;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use coordinator::spawn;
 #[cfg(test)]
-pub(crate) use coordinator::{agent_tick_needs_publish, connect_failure_from_api};
+pub(crate) use coordinator::agent_tick_needs_publish;
+pub(crate) use coordinator::spawn;
 pub(crate) use projection::{
     ProjectedAgent, ProjectedPane, ProjectedTab, ProjectedWorkspace, ProjectedWorktree,
     ProjectionState, non_blank, project_snapshot,
@@ -202,3 +203,8 @@ pub(crate) use replica::{
 };
 #[cfg(test)]
 pub(crate) use replica::{SNAPSHOT_FIELDS_THE_REPLICA_READS, remote_tab_id};
+#[cfg(test)]
+pub(crate) use subscription::connect_failure_from_api;
+pub(crate) use subscription::{
+    connect_from_cursor, connect_from_snapshot, fetch_agents, log_sync_failure, stop_subscription,
+};

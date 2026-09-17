@@ -9,7 +9,7 @@ A document's location or an old PRD citation does not make it current authority.
 | Question | Read | Executable authority or enforcement |
 | --- | --- | --- |
 | Working rules, routing, and the invariants that hold everywhere | [AGENTS.md](../AGENTS.md) | `herdr-core/`, `macos/`, relevant local rules |
-| Architecture, Herdr versus core ownership, the wire boundary and its schema gaps, the bundled runtime | [ARCHITECTURE.md](ARCHITECTURE.md) | `herdr-core/src/runtime.rs`, `session_sync/{coordinator,projection,replica}.rs`, `wire.rs`, `HerdrRuntimeResolver`, contract and boundary tests |
+| Architecture, Herdr versus core ownership, the wire boundary and its schema gaps, the bundled runtime | [ARCHITECTURE.md](ARCHITECTURE.md) | `herdr-core/src/runtime.rs`, `session_sync/{coordinator,projection,replica,subscription}.rs`, `wire.rs`, `HerdrRuntimeResolver`, contract and boundary tests |
 | Build output, worktree caches, toolchain reuse, the harness verify entrypoints | [BUILD.md](BUILD.md) | `scripts/toolchain-env.sh`, `verify-cargo.sh`, `verify-swift.sh`, `scripts/tests/test_toolchain_reuse.py`, `test_verification_builds.py` |
 | Rust implementation conventions | [herdr-core/AGENTS.md](../herdr-core/AGENTS.md) | `herdr-core/src/`, `herdr-core/tests/` |
 | Swift implementation conventions | [macos/AGENTS.md](../macos/AGENTS.md) | `macos/Sources/HerdrMacOS/`, `macos/Tests/HerdrMacOSTests/` |
