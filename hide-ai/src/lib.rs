@@ -8,6 +8,7 @@
 mod claude;
 mod codex;
 mod log;
+mod process;
 mod router;
 mod schema;
 pub mod settings;
@@ -15,6 +16,7 @@ pub mod settings;
 pub use claude::{ClaudeCliBackend, ClaudeConfig};
 pub use codex::{CodexAppServerBackend, CodexConfig};
 pub use log::{AiLogEvent, AiLogSink, NoopLogSink};
+pub use process::ProcessMeasurement;
 pub use router::{AiRouter, Degraded, ProviderState, RouterConfig};
 pub use settings::{AiSettings, PROVIDERS};
 
@@ -193,6 +195,14 @@ pub enum AiError {
     Internal(String),
     /// The provider has no stable contract; see `Availability::Unsupported`.
     Unsupported(String),
+    /// A resource cap was crossed before the request was submitted (a
+    /// concurrency or per-minute limit) or measured after it (the
+    /// app-server's descendant or resident-size cap). It is a refusal:
+    /// nothing new was submitted, so a retry is safe, but it does not move to
+    /// another provider - the cap is this account's, not this provider's
+    /// fault. `cap` names which limit; `measured` is the value that crossed
+    /// it.
+    OverBudget { cap: &'static str, measured: u64 },
     /// No connected provider; carries each provider's availability.
     NoProvider(Vec<(ProviderId, Availability)>),
 }
@@ -210,6 +220,7 @@ impl AiError {
             Self::Transient(_) => "transient",
             Self::Internal(_) => "internal",
             Self::Unsupported(_) => "unsupported",
+            Self::OverBudget { .. } => "over_budget",
             Self::NoProvider(_) => "no_provider",
         }
     }
@@ -228,6 +239,9 @@ impl fmt::Display for AiError {
             | Self::Transient(reason)
             | Self::Internal(reason)
             | Self::Unsupported(reason) => write!(f, "{}:{reason}", self.class()),
+            Self::OverBudget { cap, measured } => {
+                write!(f, "over_budget:{cap};measured={measured}")
+            }
             Self::NoProvider(states) => {
                 f.write_str("no_provider")?;
                 for (provider, state) in states {
@@ -289,4 +303,18 @@ pub trait AiBackend: Send + Sync {
     /// answers, so nothing above this layer keeps a model list of its own.
     fn models(&self) -> ModelCatalog;
     fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError>;
+
+    /// The process measurement taken during the last [`AiBackend::execute`]:
+    /// the resident child's descendant count and size. A backend that owns no
+    /// resident process, or one on a platform without the kernel query,
+    /// answers `Unavailable`, which the router logs as such rather than as a
+    /// zero.
+    fn last_measurement(&self) -> ProcessMeasurement {
+        ProcessMeasurement::Unavailable
+    }
+
+    /// Ends the backend's resident process so the next request starts a fresh
+    /// one. The router calls this when the process cap is crossed. A backend
+    /// with no resident process does nothing.
+    fn restart(&self) {}
 }

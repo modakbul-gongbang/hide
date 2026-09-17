@@ -6,7 +6,7 @@ use agent_context_labels::{
 };
 use anyhow::{Context, Result, anyhow};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use hide_ai::{AiResult, AiRouter, CancelToken, ProviderId};
+use hide_ai::{AiResult, AiRouter, CancelToken, ProcessMeasurement, ProviderId};
 use hide_session::Agent as SessionAgent;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -222,13 +222,24 @@ fn main() -> Result<()> {
             ];
             let context = analysis_context(&events);
             let verdict = analyze_once(&router, "verify", &context)?;
+            // The app-server's descendant count is what the process cap is
+            // enforced against, so the verification prints it (D-09d).
+            let descendants = match router.process_measurement(provider) {
+                ProcessMeasurement::Available {
+                    descendants,
+                    rss_bytes,
+                    ..
+                } => format!("descendants={descendants};rss_bytes={rss_bytes}"),
+                ProcessMeasurement::Unavailable => "descendants=unavailable".to_owned(),
+            };
             append_log(
                 &paths,
                 "live_provider_verified",
                 None,
-                Some(&format!("provider={provider}")),
+                Some(&format!("provider={provider};{descendants}")),
             )?;
             println!("provider {provider} accepted: {verdict}");
+            println!("app-server {descendants}");
             Ok(())
         }
     }

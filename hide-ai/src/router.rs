@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -8,7 +8,8 @@ use serde_json::Value;
 use crate::log::{AiLogEvent, AiLogSink};
 use crate::schema;
 use crate::{
-    AiBackend, AiError, AiRequest, AiResult, Availability, CancelToken, ModelCatalog, ProviderId,
+    AiBackend, AiError, AiRequest, AiResult, Availability, CancelToken, ModelCatalog,
+    ProcessMeasurement, ProviderId,
 };
 
 /// Retry and selection policy. The defaults carry the label plugin's proven
@@ -26,6 +27,25 @@ pub struct RouterConfig {
     /// Cooldown applied when a provider reports a usage limit without a
     /// reset time.
     pub default_cooldown: Duration,
+    /// Budget caps (resident-process practice, rule 4). Crossing one is a
+    /// reported `OverBudget` failure, never a larger number. The values are
+    /// measured constants, not settings: a background feature peaked at 20
+    /// requests a minute and a healthy codex tree at one or two descendants
+    /// (2026-09-17).
+    ///
+    /// - `max_in_flight`: requests running at once across the router.
+    /// - `max_per_minute`: requests started in any 60-second window.
+    /// - `max_app_server_descendants`: children under the codex app-server
+    ///   after a turn.
+    /// - `max_app_server_rss_bytes`: resident size of the app-server tree.
+    pub max_in_flight: usize,
+    pub max_per_minute: usize,
+    pub max_app_server_descendants: usize,
+    pub max_app_server_rss_bytes: u64,
+    /// How many consecutive over-budget restarts of the app-server are allowed
+    /// before the request fails with `ProviderUnavailable(app_server_restart_cap)`.
+    /// A request that completes under the cap resets the count.
+    pub max_consecutive_restarts: u32,
 }
 
 impl Default for RouterConfig {
@@ -37,6 +57,11 @@ impl Default for RouterConfig {
             max_transient_attempts: 4,
             max_invalid_output_attempts: 2,
             default_cooldown: Duration::from_secs(600),
+            max_in_flight: 1,
+            max_per_minute: 30,
+            max_app_server_descendants: 4,
+            max_app_server_rss_bytes: 1024 * 1024 * 1024,
+            max_consecutive_restarts: 3,
         }
     }
 }
@@ -133,6 +158,9 @@ struct FlightGuard<'a> {
     key: DedupKey,
     flight: Arc<InFlight>,
     settled: bool,
+    /// Set once the router admits this leader against the concurrency cap, so
+    /// its slot is released on every exit path including a panic.
+    admitted: bool,
 }
 
 impl FlightGuard<'_> {
@@ -152,6 +180,9 @@ impl Drop for FlightGuard<'_> {
         if !self.settled {
             self.settle(Err(AiError::Internal("leader_panicked".to_owned())));
         }
+        if self.admitted {
+            self.router.release();
+        }
     }
 }
 
@@ -163,6 +194,14 @@ struct Rollup {
 
 struct State {
     in_flight: HashMap<DedupKey, Arc<InFlight>>,
+    /// Distinct intents running at once, for the concurrency cap. Joiners of an
+    /// existing intent do not count; only a leader increments it.
+    in_flight_count: usize,
+    /// Start times of recently admitted requests, for the per-minute cap.
+    recent_starts: VecDeque<Instant>,
+    /// Consecutive over-budget restarts of the app-server, per provider. A
+    /// request that completes under the cap clears it.
+    restart_streak: HashMap<ProviderId, u32>,
     cooldown_until: HashMap<ProviderId, Instant>,
     availability: HashMap<ProviderId, (Availability, Instant)>,
     /// The selected provider a degradation event has already been logged
@@ -205,6 +244,9 @@ impl AiRouter {
             sleep,
             state: Mutex::new(State {
                 in_flight: HashMap::new(),
+                in_flight_count: 0,
+                recent_starts: VecDeque::new(),
+                restart_streak: HashMap::new(),
                 cooldown_until: HashMap::new(),
                 availability: HashMap::new(),
                 announced_degraded: None,
@@ -261,6 +303,19 @@ impl AiRouter {
         self.lock().availability.clear();
     }
 
+    /// The process measurement the named provider took during its last turn,
+    /// so a verification command can report the app-server's descendant count.
+    /// A provider that is not registered, or owns no resident process, answers
+    /// `Unavailable`.
+    pub fn process_measurement(&self, provider: ProviderId) -> ProcessMeasurement {
+        self.backends
+            .iter()
+            .find(|backend| backend.id() == provider)
+            .map_or(ProcessMeasurement::Unavailable, |backend| {
+                backend.last_measurement()
+            })
+    }
+
     /// Runs the request on the selected provider and returns the validated
     /// answer with the provider that produced it. Every failure is typed;
     /// see [`AiError`] for which ones the router retries or moves.
@@ -295,10 +350,60 @@ impl AiRouter {
             key,
             flight,
             settled: false,
+            admitted: false,
         };
+        // The concurrency and per-minute caps are checked before the request
+        // is submitted; crossing one is a refusal, safe to retry, and it does
+        // not move to another provider (the cap is the account's, not the
+        // provider's). It is not counted against a specific provider.
+        if let Err(over) = self.admit() {
+            self.log(request, |event| {
+                event.event = "ai.budget.exceeded";
+                event.outcome_class = Some(over.class());
+                event.detail = Some(over.to_string());
+            });
+            guard.settle(Err(over.clone()));
+            return Err(over);
+        }
+        guard.admitted = true;
         let result = self.execute_selected(request, cancel);
         guard.settle(result.clone());
         result
+    }
+
+    /// Admits one leader against the concurrency and per-minute caps, counting
+    /// it atomically so a race cannot slip a second past the limit.
+    fn admit(&self) -> Result<(), AiError> {
+        let mut state = self.lock();
+        if state.in_flight_count >= self.config.max_in_flight {
+            return Err(AiError::OverBudget {
+                cap: "in_flight",
+                measured: state.in_flight_count as u64 + 1,
+            });
+        }
+        let now = Instant::now();
+        let window = Duration::from_secs(60);
+        while state
+            .recent_starts
+            .front()
+            .is_some_and(|start| now.duration_since(*start) >= window)
+        {
+            state.recent_starts.pop_front();
+        }
+        if state.recent_starts.len() >= self.config.max_per_minute {
+            return Err(AiError::OverBudget {
+                cap: "per_minute",
+                measured: state.recent_starts.len() as u64 + 1,
+            });
+        }
+        state.in_flight_count += 1;
+        state.recent_starts.push_back(now);
+        Ok(())
+    }
+
+    fn release(&self) {
+        let mut state = self.lock();
+        state.in_flight_count = state.in_flight_count.saturating_sub(1);
     }
 
     /// Emits the daily rollup for the day that just ended, if any. Called on
@@ -390,7 +495,14 @@ impl AiRouter {
                     ),
                 ),
             };
-            self.finish(request, provider, &Err(error.clone()), started, 0);
+            self.finish(
+                request,
+                provider,
+                &Err(error.clone()),
+                started,
+                0,
+                ProcessMeasurement::Unavailable,
+            );
             return Err(error);
         }
 
@@ -406,6 +518,9 @@ impl AiRouter {
                 });
             }
             let outcome = self.execute_on(backend.as_ref(), request, cancel);
+            // The measurement the backend took during the turn goes on this
+            // request's finished line, whichever way it ended.
+            let measurement = backend.last_measurement();
             match outcome {
                 Ok((value, attempt)) => {
                     let result = AiResult { provider, value };
@@ -415,6 +530,7 @@ impl AiRouter {
                         &Ok(result.clone()),
                         started,
                         attempt,
+                        measurement,
                     );
                     return Ok(result);
                 }
@@ -425,6 +541,7 @@ impl AiRouter {
                         &Err(error.clone()),
                         started,
                         attempt,
+                        measurement,
                     );
                     // Only a refusal moves on: the provider never took the
                     // request, so another provider repeats nothing.
@@ -474,6 +591,12 @@ impl AiRouter {
                         event.attempt = Some(attempt);
                         event.output_tokens = response.usage.output_tokens;
                     });
+                    // A turn that answered still fails if the process it ran in
+                    // crossed the cap: crossing a cap is a reported failure,
+                    // not a larger number (resident-process practice, rule 4).
+                    if let Some(error) = self.enforce_process_budget(backend, request) {
+                        return Err((error, attempt));
+                    }
                     return Ok((response.value, attempt));
                 }
                 Err(error) => {
@@ -516,6 +639,7 @@ impl AiRouter {
                         }
                         AiError::Cancelled
                         | AiError::Unsupported(_)
+                        | AiError::OverBudget { .. }
                         | AiError::NoProvider(_)
                         | AiError::Internal(_) => 0,
                     };
@@ -644,6 +768,7 @@ impl AiRouter {
         result: &Result<AiResult, AiError>,
         started: Instant,
         attempt: u8,
+        measurement: ProcessMeasurement,
     ) {
         let class = match result {
             Ok(_) => "ok",
@@ -655,8 +780,29 @@ impl AiRouter {
             event.outcome_class = Some(class);
             event.duration_ms = Some(started.elapsed().as_millis() as u64);
             event.attempt = Some(attempt);
+            let mut detail = Vec::new();
             if let Err(error) = result {
-                event.detail = Some(error.to_string());
+                detail.push(error.to_string());
+            }
+            match measurement {
+                ProcessMeasurement::Available {
+                    app_server_pid,
+                    descendants,
+                    rss_bytes,
+                } => {
+                    event.app_server_pid = Some(app_server_pid);
+                    event.descendants = Some(descendants);
+                    event.rss_bytes = Some(rss_bytes);
+                }
+                // A codex request whose process could not be measured says so
+                // rather than logging a zero that reads as a healthy tree.
+                ProcessMeasurement::Unavailable if provider == Some(ProviderId::Codex) => {
+                    detail.push("measurement=unavailable".to_owned());
+                }
+                ProcessMeasurement::Unavailable => {}
+            }
+            if !detail.is_empty() {
+                event.detail = Some(detail.join(";"));
             }
         });
         if let Some(provider) = provider {
@@ -664,6 +810,61 @@ impl AiRouter {
             *state.rollup.counts.entry((provider, class)).or_insert(0) += 1;
         }
         self.flush_rollup();
+    }
+
+    /// Enforces the codex app-server's descendant and resident-size caps after
+    /// a turn. Under the cap resets the consecutive-restart count; over it logs
+    /// `ai.app_server.over_budget`, restarts the app-server, and fails the
+    /// request - with `ProviderUnavailable(app_server_restart_cap)` once the
+    /// restarts stop clearing. A provider that cannot be measured is not
+    /// capped.
+    fn enforce_process_budget(
+        &self,
+        backend: &dyn AiBackend,
+        request: &AiRequest,
+    ) -> Option<AiError> {
+        let provider = backend.id();
+        let ProcessMeasurement::Available {
+            app_server_pid,
+            descendants,
+            rss_bytes,
+        } = backend.last_measurement()
+        else {
+            return None;
+        };
+        let over = if descendants > self.config.max_app_server_descendants {
+            Some(("app_server_descendants", descendants as u64))
+        } else if rss_bytes > self.config.max_app_server_rss_bytes {
+            Some(("app_server_rss", rss_bytes))
+        } else {
+            None
+        };
+        let Some((cap, measured)) = over else {
+            // A completed request under the cap returns the restart count.
+            self.lock().restart_streak.remove(&provider);
+            return None;
+        };
+        let streak = {
+            let mut state = self.lock();
+            let entry = state.restart_streak.entry(provider).or_insert(0);
+            *entry += 1;
+            *entry
+        };
+        self.log(request, |event| {
+            event.event = "ai.app_server.over_budget";
+            event.provider = Some(provider);
+            event.outcome_class = Some("over_budget");
+            event.app_server_pid = Some(app_server_pid);
+            event.descendants = Some(descendants);
+            event.rss_bytes = Some(rss_bytes);
+            event.detail = Some(format!("cap={cap};measured={measured};restart_streak={streak}"));
+        });
+        backend.restart();
+        if streak >= self.config.max_consecutive_restarts {
+            Some(AiError::ProviderUnavailable("app_server_restart_cap".to_owned()))
+        } else {
+            Some(AiError::OverBudget { cap, measured })
+        }
     }
 
     fn log(&self, request: &AiRequest, fill: impl FnOnce(&mut AiLogEvent)) {
@@ -738,8 +939,6 @@ mod tests {
         calls: AtomicUsize,
         delay: Duration,
     }
-
-    use std::collections::VecDeque;
 
     impl Scripted {
         fn new(id: ProviderId, outcomes: Vec<Result<Value, AiError>>) -> Arc<Self> {
@@ -873,7 +1072,11 @@ mod tests {
         assert_eq!(finished[0].provider, Some(ProviderId::Codex));
         assert_eq!(finished[0].outcome_class, Some("ok"));
         assert_eq!(finished[0].request_id.as_deref(), Some("r-p1"));
-        assert!(finished[0].detail.is_none());
+        // A codex request whose process the scripted backend cannot measure
+        // records that on the line rather than a zero (B9); a real codex on
+        // macOS carries the descendant fields instead.
+        assert_eq!(finished[0].detail.as_deref(), Some("measurement=unavailable"));
+        assert!(finished[0].descendants.is_none());
     }
 
     #[test]
@@ -1477,5 +1680,154 @@ mod tests {
             assert_eq!(event.schema_version, Some("test.v1"));
             assert_eq!(event.input_chars, Some(req.input.chars().count()));
         }
+    }
+
+    /// A backend that reports a fixed process measurement and counts the
+    /// restarts the router asks of it, for the process-budget tests.
+    struct Measuring {
+        descendants: Mutex<usize>,
+        restarts: AtomicUsize,
+    }
+
+    impl Measuring {
+        fn new(descendants: usize) -> Arc<Self> {
+            Arc::new(Self {
+                descendants: Mutex::new(descendants),
+                restarts: AtomicUsize::new(0),
+            })
+        }
+    }
+
+    impl AiBackend for Measuring {
+        fn id(&self) -> ProviderId {
+            ProviderId::Codex
+        }
+        fn availability(&self) -> Availability {
+            Availability::Ready
+        }
+        fn models(&self) -> ModelCatalog {
+            ModelCatalog::Offered(Vec::new())
+        }
+        fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+            Ok(AiResponse {
+                value: json!({"summary": "ok"}),
+                usage: crate::AiUsage::default(),
+            })
+        }
+        fn last_measurement(&self) -> ProcessMeasurement {
+            ProcessMeasurement::Available {
+                app_server_pid: 42,
+                descendants: *self.descendants.lock().unwrap(),
+                rss_bytes: 0,
+            }
+        }
+        fn restart(&self) {
+            self.restarts.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A second concurrent intent is refused by the concurrency cap without
+    /// touching a provider, and the first request is untouched.
+    #[test]
+    fn a_second_concurrent_request_is_over_budget_in_flight() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Arc::new(Scripted {
+            id: ProviderId::Codex,
+            availability: Mutex::new(Availability::Ready),
+            probes: AtomicUsize::new(0),
+            outcomes: Mutex::new(vec![ok("first")].into()),
+            calls: AtomicUsize::new(0),
+            delay: Duration::from_millis(300),
+        });
+        let router = Arc::new(make_router(vec![codex.clone()], sink.clone()));
+        let leader = {
+            let router = Arc::clone(&router);
+            std::thread::spawn(move || router.execute(&request("a", "x"), &CancelToken::new()))
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        let rejected = router
+            .execute(&request("b", "y"), &CancelToken::new())
+            .unwrap_err();
+        match rejected {
+            AiError::OverBudget { cap, .. } => assert_eq!(cap, "in_flight"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(leader.join().unwrap().unwrap().value["summary"], "first");
+        assert_eq!(codex.calls(), 1, "the rejected request never reached a provider");
+        assert_eq!(sink.events("ai.budget.exceeded").len(), 1);
+    }
+
+    /// The per-minute cap refuses the request that crosses it, and only that
+    /// one; the ones under the cap all run.
+    #[test]
+    fn requests_past_the_per_minute_cap_are_over_budget() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Scripted::new(ProviderId::Codex, vec![ok("a"), ok("b")]);
+        let config = RouterConfig {
+            max_per_minute: 2,
+            backoff_base: Duration::from_millis(1),
+            ..RouterConfig::default()
+        };
+        let router = AiRouter::with_sleep(vec![codex.clone()], config, sink, Box::new(|_| {}));
+        assert!(router.execute(&request("a", "1"), &CancelToken::new()).is_ok());
+        assert!(router.execute(&request("b", "2"), &CancelToken::new()).is_ok());
+        match router
+            .execute(&request("c", "3"), &CancelToken::new())
+            .unwrap_err()
+        {
+            AiError::OverBudget { cap, .. } => assert_eq!(cap, "per_minute"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(codex.calls(), 2);
+    }
+
+    /// Crossing the descendant cap restarts the app-server and fails the
+    /// request; three consecutive restarts escalate to the restart cap, and a
+    /// request that completes under the cap clears the streak.
+    #[test]
+    fn the_process_cap_restarts_then_caps_consecutive_restarts() {
+        let sink = Arc::new(Recorder::default());
+        let over = Measuring::new(RouterConfig::default().max_app_server_descendants + 1);
+        let router = make_router(vec![over.clone()], sink);
+        // First two crossings are over-budget restarts.
+        for _ in 0..2 {
+            match router
+                .execute(&request("s", &format!("{}", rand_input())), &CancelToken::new())
+                .unwrap_err()
+            {
+                AiError::OverBudget { cap, .. } => assert_eq!(cap, "app_server_descendants"),
+                other => panic!("{other:?}"),
+            }
+        }
+        // The third consecutive restart hits the cap.
+        match router
+            .execute(&request("s", &format!("{}", rand_input())), &CancelToken::new())
+            .unwrap_err()
+        {
+            AiError::ProviderUnavailable(reason) => assert_eq!(reason, "app_server_restart_cap"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(over.restarts.load(Ordering::SeqCst), 3);
+
+        // Under the cap now: the request succeeds and the streak resets, so a
+        // later crossing is an over-budget restart again rather than the cap.
+        *over.descendants.lock().unwrap() = 0;
+        assert!(router.execute(&request("s", "clear"), &CancelToken::new()).is_ok());
+        *over.descendants.lock().unwrap() = RouterConfig::default().max_app_server_descendants + 1;
+        match router
+            .execute(&request("s", "again"), &CancelToken::new())
+            .unwrap_err()
+        {
+            AiError::OverBudget { cap, .. } => assert_eq!(cap, "app_server_descendants"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn rand_input() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
     }
 }

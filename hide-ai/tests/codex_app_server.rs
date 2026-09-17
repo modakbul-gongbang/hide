@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use hide_ai::{
     AiBackend, AiError, AiRequest, Availability, CancelToken, CodexAppServerBackend, CodexConfig,
-    RequestId,
+    NoopLogSink, RequestId,
 };
 use serde_json::json;
 
@@ -17,11 +17,14 @@ fn fixture() -> PathBuf {
 }
 
 fn backend() -> CodexAppServerBackend {
-    CodexAppServerBackend::new(CodexConfig {
-        binary: fixture(),
-        model: "gpt-5.6-luna".to_owned(),
-        cwd: std::env::temp_dir(),
-    })
+    CodexAppServerBackend::new(
+        CodexConfig {
+            binary: fixture(),
+            model: "gpt-5.6-luna".to_owned(),
+            cwd: std::env::temp_dir(),
+        },
+        Arc::new(NoopLogSink),
+    )
 }
 
 fn request(deadline: Duration) -> AiRequest {
@@ -195,10 +198,13 @@ fn availability_reports_login_model_and_install_state() {
             Availability::Unavailable { .. }
         ));
     });
-    let missing = CodexAppServerBackend::new(CodexConfig {
-        binary: PathBuf::from("codex-binary-that-does-not-exist"),
-        ..CodexConfig::default()
-    });
+    let missing = CodexAppServerBackend::new(
+        CodexConfig {
+            binary: PathBuf::from("codex-binary-that-does-not-exist"),
+            ..CodexConfig::default()
+        },
+        Arc::new(NoopLogSink),
+    );
     assert_eq!(missing.availability(), Availability::NotInstalled);
     let missing: Arc<dyn AiBackend> = Arc::new(missing);
     assert!(matches!(
