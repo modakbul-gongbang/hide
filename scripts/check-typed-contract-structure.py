@@ -11,6 +11,11 @@ def runtime_sources():
     return [ROOT / 'herdr-core/src/runtime.rs',
             *sorted((ROOT / 'herdr-core/src/runtime').glob('*.rs'))]
 
+
+def session_sync_sources():
+    return [ROOT / 'herdr-core/src/session_sync.rs',
+            *sorted((ROOT / 'herdr-core/src/session_sync').glob('*.rs'))]
+
 def absent(pattern, text, description):
     matches = [f'{line_number}:{line}'
                for line_number, line in enumerate(text.splitlines(), 1)
@@ -19,12 +24,12 @@ def absent(pattern, text, description):
         details = '\n'.join(matches)
         raise SystemExit(f'{description}:\n{details}')
 
-replica = (ROOT / 'herdr-core/src/session_sync.rs').read_text().split('#[cfg(test)]\nmod tests', 1)[0]
+replica = (ROOT / 'herdr-core/src/session_sync/replica.rs').read_text()
 absent(r'WorkspaceWire|WorkspaceWorktreeWire|TabWire|PaneWire|WireAgent|AgentListResult|SequencedEventEnvelope|Deserialize|serde_json::from_|Value::|\.get\("|\.as_array\(', replica, 'replica owns wire parsing')
 for path in [*runtime_sources(),
              ROOT / 'herdr-core/src/domain.rs',
              ROOT / 'herdr-core/src/sidebar.rs',
-             ROOT / 'herdr-core/src/session_sync.rs']:
+             *session_sync_sources()]:
     text = path.read_text()
     absent(r'herdr_contract::wire|OUT_DIR|res::SessionSnapshot|ev::EventData',
            text, f'{path.relative_to(ROOT)} references generated types')

@@ -19,12 +19,14 @@ class TypedContractStructure(unittest.TestCase):
             (root / 'scripts').mkdir()
             sources = root / 'herdr-core' / 'src'
             (sources / 'runtime').mkdir(parents=True)
+            (sources / 'session_sync').mkdir()
             shutil.copy2(ROOT / 'scripts/check-typed-contract-structure.py',
                          root / 'scripts')
             for name in ('runtime.rs', 'domain.rs', 'sidebar.rs', 'session_sync.rs',
                          'live.rs', 'remote.rs', 'wire.rs', 'herdr_contract.rs'):
                 (sources / name).write_text('')
             (sources / 'runtime' / 'events.rs').write_text(runtime_module_text)
+            (sources / 'session_sync' / 'replica.rs').write_text(runtime_module_text)
             return subprocess.run(
                 [sys.executable, 'scripts/check-typed-contract-structure.py'],
                 cwd=root, capture_output=True, text=True,

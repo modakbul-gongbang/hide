@@ -1,0 +1,1239 @@
+//! Coordinates Herdr snapshot bootstrap, topology subscriptions, and capability readers.
+
+use super::*;
+
+pub(crate) fn spawn(
+    context: SessionSyncContext,
+    usage_paths: Option<crate::usage::UsagePaths>,
+) -> Result<SessionSyncHandle, String> {
+    let (sender, receiver) = channel();
+    let worker_sender = sender.clone();
+    let worker = thread::Builder::new()
+        .name("herdr-core-session-sync".to_owned())
+        .spawn(move || run_coordinator(context, usage_paths, receiver, worker_sender))
+        .map_err(|error| format!("session sync worker could not be started: {error}"))?;
+    Ok(SessionSyncHandle {
+        sender,
+        worker: Some(worker),
+    })
+}
+
+fn run_coordinator(
+    context: SessionSyncContext,
+    usage_paths: Option<crate::usage::UsagePaths>,
+    receiver: Receiver<CoordinatorMessage>,
+    sender: Sender<CoordinatorMessage>,
+) {
+    let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
+    let mut replica: Option<SessionReplica> = None;
+    let mut subscription: Option<ActiveSubscription> = None;
+    let mut subscription_generation = 0_u64;
+    let mut needs_bootstrap = true;
+    let mut reconnect_at = Instant::now();
+    let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
+    let mut next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+    let mut catalog_cache: Option<CatalogCache> = None;
+    // The hook-install state is two small file reads of this machine's own
+    // configuration, so the local coordinator takes it once before the first
+    // connect. It is not a poll: it changes only when the operator installs,
+    // reinstalls or removes, and each of those republishes it (PRD B36).
+    if context.is_local()
+        && let Some(home) = home_path.as_deref()
+    {
+        install_agent_hooks_on_first_run(home);
+        publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+    }
+    // Kept for the counter sweep below, which runs on a fresh snapshot.
+    let hook_home = context.is_local().then(|| home_path.clone()).flatten();
+    let mut usage_reader = usage_paths.map(crate::usage::ProviderUsageReader::new);
+    // Git reads describe this machine's checkouts, so only the local
+    // coordinator runs one.
+    let mut changes_reader = context.is_local().then(crate::changes::ChangesReader::new);
+    // A listening port is this machine's, so only the local coordinator looks.
+    let mut ports_reader = context.is_local().then(crate::ports::PortsReader::new);
+    // The three project-panel readers describe this machine's repositories:
+    // its worktrees, its `gh` login's view of their pull requests, and one
+    // checkout's size on this disk. All three run their subprocess on a worker
+    // thread, so a slow `gh` or `du` costs no coordinator latency.
+    let mut worktree_reader = context
+        .is_local()
+        .then(crate::worktrees::WorktreeReader::new);
+    let mut github_reader = context.is_local().then(crate::github::GithubReader::new);
+    let mut disk_reader = context.is_local().then(crate::disk::DiskReader::new);
+    // The provider probe starts a `codex app-server` child and runs
+    // `claude auth status`, so it is a reader like the three above and it
+    // reads nothing at all while the Background AI group is off screen.
+    let mut ai_reader = context.is_local().then(crate::ai::AiReader::new);
+    if let Some(home) = hook_home.as_deref() {
+        publish_ai_settings(&context, home);
+    }
+
+    loop {
+        if context.runtime.upgrade().is_none() {
+            stop_subscription(&mut subscription);
+            return;
+        }
+
+        if subscription.is_none() && Instant::now() >= reconnect_at {
+            let has_projection = replica.is_some();
+            let attempt = match (needs_bootstrap, replica.as_ref()) {
+                (false, Some(current)) => {
+                    connect_from_cursor(&context, current, &sender, &mut subscription_generation)
+                }
+                _ => connect_from_snapshot(
+                    &context,
+                    &sender,
+                    &mut subscription_generation,
+                    has_projection,
+                )
+                .map(|(next_replica, next_subscription)| {
+                    replica = Some(next_replica);
+                    next_subscription
+                }),
+            };
+
+            match attempt {
+                Ok(next_subscription) => {
+                    subscription = Some(next_subscription);
+                    reconnect_delay = RECONNECT_INITIAL_DELAY;
+                    next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+                    if replica
+                        .as_ref()
+                        .is_some_and(SessionReplica::ready_to_publish)
+                        && !publish_replica(&context, replica.as_ref().unwrap(), &mut catalog_cache)
+                    {
+                        stop_subscription(&mut subscription);
+                        return;
+                    }
+                    if let (Some(home), Some(current)) = (hook_home.as_deref(), replica.as_ref()) {
+                        sweep_subagent_counters(home, current);
+                    }
+                    needs_bootstrap = false;
+                }
+                Err(failure) => {
+                    log_sync_failure(&context, "connect.failed", replica.as_ref(), &failure.error);
+                    needs_bootstrap |= failure.needs_bootstrap;
+                    if !publish_failure(&context, failure.error) {
+                        return;
+                    }
+                    reconnect_at = Instant::now() + reconnect_delay;
+                    reconnect_delay = next_reconnect_delay(reconnect_delay);
+                }
+            }
+        }
+
+        if subscription.is_some() && Instant::now() >= next_agent_refresh {
+            next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+            match fetch_agents(&context) {
+                Ok(agents) => {
+                    let current = replica
+                        .as_mut()
+                        .expect("active subscription always has a replica");
+                    let publish =
+                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref())
+                            || stall_tick_needs_publish(&context);
+                    if publish {
+                        current.replace_agents(agents);
+                        if current.ready_to_publish()
+                            && !publish_replica(&context, current, &mut catalog_cache)
+                        {
+                            stop_subscription(&mut subscription);
+                            return;
+                        }
+                    }
+                }
+                Err(error) => {
+                    log_sync_failure(&context, "agent_refresh.failed", replica.as_ref(), &error);
+                    stop_subscription(&mut subscription);
+                    if !publish_failure(&context, stale_if_projected(replica.as_ref(), error)) {
+                        return;
+                    }
+                    reconnect_at = Instant::now() + reconnect_delay;
+                    reconnect_delay = next_reconnect_delay(reconnect_delay);
+                }
+            }
+        }
+
+        if let Some(reader) = usage_reader.as_mut() {
+            let Some(activity) = read_usage_activity(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(provider_usage) = reader.read_if_due(activity)
+                && !publish_provider_usage(&context, provider_usage)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        if let Some(reader) = changes_reader.as_mut() {
+            // The request is read under a brief lock; the `git` calls that
+            // answer it happen after the guard is dropped.
+            let Some(request) = read_changes_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(changes) = reader.read_if_due(request)
+                && !publish_changes(&context, changes)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        // An install the operator approved. The file write happens here,
+        // outside every lock, and the diagnosis is read back afterwards so
+        // the screen shows what the file now says rather than what was asked
+        // for (PRD B28, D-31).
+        if let Some(home) = hook_home.as_deref() {
+            let Some(requested) = take_agent_hook_installs(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if !requested.is_empty() {
+                // An install the operator pressed for reports back to the
+                // operator. The diagnosis that follows reads the file, so a
+                // refusal that never reached the file would otherwise leave
+                // the screen unchanged and the press unanswered (PRD B28,
+                // engineering rule 4).
+                let mut refusal = None;
+                for runtime in requested {
+                    refusal = install_agent_hook(home, runtime).or(refusal);
+                }
+                publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+                if let Some(refusal) = refusal
+                    && let Some(core) = context.runtime.upgrade()
+                    && let Ok(mut locked) = core.lock()
+                {
+                    locked.set_error("agent_hooks.install_refused", refusal.message(), false);
+                }
+            }
+        }
+
+        if let Some(reader) = ports_reader.as_mut() {
+            // `lsof` runs here, outside every lock; only the result is handed
+            // in.
+            if let Some(ports) = reader.read_if_due()
+                && !publish_ports(&context, ports)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        if let Some(reader) = worktree_reader.as_mut() {
+            let Some(request) = read_worktrees_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(catalog) = reader.read_if_due(request) {
+                // New worktree facts change which rows exist and what they
+                // say, so the catalog is rebuilt rather than only stored.
+                match publish_worktrees(&context, catalog) {
+                    None => {
+                        stop_subscription(&mut subscription);
+                        return;
+                    }
+                    Some(true) => {
+                        if let Some(current) = replica.as_ref()
+                            && current.ready_to_publish()
+                            && !publish_replica(&context, current, &mut catalog_cache)
+                        {
+                            stop_subscription(&mut subscription);
+                            return;
+                        }
+                    }
+                    Some(false) => {}
+                }
+            }
+        }
+
+        if let Some(reader) = github_reader.as_mut() {
+            let Some(request) = read_github_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(github) = reader.read_if_due(request)
+                && !publish_github(&context, github)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        if let Some(reader) = disk_reader.as_mut() {
+            let Some(request) = read_disk_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            if let Some(disk) = reader.read_if_due(request)
+                && !publish_disk_usage(&context, disk)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        if let Some(reader) = ai_reader.as_mut() {
+            let Some((request, queued_settings)) = read_ai_request(&context) else {
+                stop_subscription(&mut subscription);
+                return;
+            };
+            // The settings write is file I/O, so it happens here rather than
+            // under the runtime mutex that took the operator's choice.
+            if let Some(settings) = queued_settings {
+                // The choice has already been taken out of the runtime, so a
+                // home this process could not resolve must not swallow it in
+                // silence; it is the same failure as a refused write and it
+                // reaches the same line on the group.
+                let saved = match hook_home.as_deref() {
+                    Some(home) => save_ai_settings(&context, home, &settings),
+                    None => {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "ai_settings",
+                            "kind": "settings.write_skipped",
+                            "message": "no home directory on this session",
+                        }));
+                        report_ai_settings_failure(
+                            &context,
+                            "The choice could not be saved (no home directory); \
+                             it applies to this session only"
+                                .to_string(),
+                        )
+                    }
+                };
+                if !saved {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
+            if let Some(background_ai) = reader.read_if_due(request)
+                && !publish_background_ai(&context, background_ai)
+            {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+
+        let timeout = coordinator_wait(subscription.is_some(), reconnect_at, next_agent_refresh);
+        match receiver.recv_timeout(timeout) {
+            Ok(CoordinatorMessage::Stop) => {
+                stop_subscription(&mut subscription);
+                return;
+            }
+            Ok(CoordinatorMessage::SubscriptionLine { generation, line }) => {
+                if subscription.as_ref().map(|active| active.generation) != Some(generation) {
+                    continue;
+                }
+                match parse_subscription_line(&line) {
+                    Ok(SubscriptionLine::Event(event)) => {
+                        let current = replica
+                            .as_mut()
+                            .expect("active subscription always has a replica");
+                        match current.apply(event) {
+                            Ok(outcome) => {
+                                if outcome.refresh_agents {
+                                    next_agent_refresh = Instant::now();
+                                }
+                                if outcome.refresh_worktrees && !request_worktree_refresh(&context)
+                                {
+                                    stop_subscription(&mut subscription);
+                                    return;
+                                }
+                                if outcome.publish
+                                    && !publish_replica(&context, current, &mut catalog_cache)
+                                {
+                                    stop_subscription(&mut subscription);
+                                    return;
+                                }
+                            }
+                            Err(error) => {
+                                log_sync_failure(&context, "event.rejected", Some(current), &error);
+                                stop_subscription(&mut subscription);
+                                needs_bootstrap = true;
+                                if !publish_failure(&context, error) {
+                                    return;
+                                }
+                                reconnect_at = Instant::now() + reconnect_delay;
+                                reconnect_delay = next_reconnect_delay(reconnect_delay);
+                            }
+                        }
+                    }
+                    Ok(SubscriptionLine::Error { code, message }) => {
+                        let event_gap = code == "event_gap" || code == "event_journal_unavailable";
+                        let cursor = replica.as_ref().map(|current| current.cursor);
+                        crate::diagnostic!(json!({
+                            "component": "session_sync",
+                            "kind": "subscription.error",
+                            "target": context.log_target(),
+                            "code": code,
+                            "sequence": cursor,
+                            "message": message,
+                        }));
+                        stop_subscription(&mut subscription);
+                        needs_bootstrap = event_gap;
+                        let error = SessionFetchError::Stale(format!(
+                            "Herdr event stream failed with {code}: {message}"
+                        ));
+                        if !publish_failure(&context, error) {
+                            return;
+                        }
+                        reconnect_at = Instant::now() + reconnect_delay;
+                        reconnect_delay = next_reconnect_delay(reconnect_delay);
+                    }
+                    Err(error) => {
+                        log_sync_failure(
+                            &context,
+                            "subscription.malformed",
+                            replica.as_ref(),
+                            &error,
+                        );
+                        stop_subscription(&mut subscription);
+                        needs_bootstrap = true;
+                        if !publish_failure(&context, error) {
+                            return;
+                        }
+                        reconnect_at = Instant::now() + reconnect_delay;
+                        reconnect_delay = next_reconnect_delay(reconnect_delay);
+                    }
+                }
+            }
+            Ok(CoordinatorMessage::SubscriptionEnded {
+                generation,
+                message,
+            }) => {
+                if subscription.as_ref().map(|active| active.generation) != Some(generation) {
+                    continue;
+                }
+                stop_subscription(&mut subscription);
+                let cursor = replica.as_ref().map(|current| current.cursor).unwrap_or(0);
+                let error = SessionFetchError::Stale(format!(
+                    "Herdr event stream disconnected after sequence {cursor}: {message}"
+                ));
+                log_sync_failure(
+                    &context,
+                    "subscription.disconnected",
+                    replica.as_ref(),
+                    &error,
+                );
+                if !publish_failure(&context, error) {
+                    return;
+                }
+                reconnect_at = Instant::now() + reconnect_delay;
+                reconnect_delay = next_reconnect_delay(reconnect_delay);
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                stop_subscription(&mut subscription);
+                return;
+            }
+        }
+    }
+}
+
+fn connect_from_snapshot(
+    context: &SessionSyncContext,
+    sender: &Sender<CoordinatorMessage>,
+    generation: &mut u64,
+    has_projection: bool,
+) -> Result<(SessionReplica, ActiveSubscription), ConnectFailure> {
+    let replica = fetch_replica(context).map_err(|error| ConnectFailure {
+        error,
+        needs_bootstrap: true,
+    })?;
+    let subscription = open_subscription(context, &replica, sender, generation, has_projection)?;
+    Ok((replica, subscription))
+}
+
+fn connect_from_cursor(
+    context: &SessionSyncContext,
+    replica: &SessionReplica,
+    sender: &Sender<CoordinatorMessage>,
+    generation: &mut u64,
+) -> Result<ActiveSubscription, ConnectFailure> {
+    open_subscription(context, replica, sender, generation, true)
+}
+
+fn open_subscription(
+    context: &SessionSyncContext,
+    replica: &SessionReplica,
+    sender: &Sender<CoordinatorMessage>,
+    generation: &mut u64,
+    has_projection: bool,
+) -> Result<ActiveSubscription, ConnectFailure> {
+    let subscription = hide_herdr_client::subscribe_with_connector(
+        context.api_connector.as_ref(),
+        replica.cursor,
+        TOPOLOGY_SUBSCRIPTIONS,
+        SYNC_REQUEST_TIMEOUT,
+    )
+    .map_err(|error| connect_failure_from_api(error, has_projection, replica.cursor))?;
+    if subscription.ack.host != replica.host {
+        return Err(ConnectFailure {
+            error: SessionFetchError::Stale(format!(
+                "Herdr subscription host {:?} does not match snapshot host {:?}",
+                subscription.ack.host, replica.host
+            )),
+            needs_bootstrap: true,
+        });
+    }
+    if subscription.ack.sequence < replica.cursor {
+        return Err(ConnectFailure {
+            error: SessionFetchError::Stale(format!(
+                "Herdr subscription sequence {} is behind snapshot sequence {}",
+                subscription.ack.sequence, replica.cursor
+            )),
+            needs_bootstrap: true,
+        });
+    }
+    *generation = generation.saturating_add(1);
+    spawn_subscription_reader(subscription, *generation, sender.clone()).map_err(|message| {
+        ConnectFailure {
+            error: SessionFetchError::Unreachable(message),
+            needs_bootstrap: false,
+        }
+    })
+}
+
+fn spawn_subscription_reader(
+    subscription: hide_herdr_client::Subscription,
+    generation: u64,
+    sender: Sender<CoordinatorMessage>,
+) -> Result<ActiveSubscription, String> {
+    let (mut reader, shutdown) = subscription.into_parts();
+    let worker = thread::Builder::new()
+        .name("herdr-core-event-reader".to_owned())
+        .spawn(move || {
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        let _ = sender.send(CoordinatorMessage::SubscriptionEnded {
+                            generation,
+                            message: "socket reached EOF".to_owned(),
+                        });
+                        return;
+                    }
+                    Ok(_) => {
+                        if sender
+                            .send(CoordinatorMessage::SubscriptionLine { generation, line })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sender.send(CoordinatorMessage::SubscriptionEnded {
+                            generation,
+                            message: format!("socket read failed: {error}"),
+                        });
+                        return;
+                    }
+                }
+            }
+        })
+        .map_err(|error| format!("subscription reader could not be started: {error}"))?;
+    Ok(ActiveSubscription {
+        generation,
+        shutdown,
+        worker: Some(worker),
+    })
+}
+
+fn stop_subscription(subscription: &mut Option<ActiveSubscription>) {
+    if let Some(active) = subscription.take() {
+        active.stop();
+    }
+}
+
+fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, SessionFetchError> {
+    if let SessionSyncTarget::Local { socket_path } = &context.target
+        && !socket_path.exists()
+    {
+        return Err(SessionFetchError::SocketMissing(format!(
+            "Herdr socket file does not exist at {}; the herdr server is not running",
+            socket_path.display()
+        )));
+    }
+    let result = hide_herdr_client::request_with_connector(
+        context.api_connector.as_ref(),
+        "session.snapshot",
+        json!({}),
+        SYNC_REQUEST_TIMEOUT,
+    )
+    .map_err(session_error_from_api)?;
+    SessionReplica::from_decoded(wire::snapshot_response(result)?)
+}
+
+fn fetch_agents(context: &SessionSyncContext) -> Result<Vec<ProjectedAgent>, SessionFetchError> {
+    if let SessionSyncTarget::Local { socket_path } = &context.target
+        && !socket_path.exists()
+    {
+        return Err(SessionFetchError::SocketMissing(format!(
+            "Herdr socket file does not exist at {}; the herdr server is not running",
+            socket_path.display()
+        )));
+    }
+    let result = hide_herdr_client::request_with_connector(
+        context.api_connector.as_ref(),
+        "agent.list",
+        json!({}),
+        SYNC_REQUEST_TIMEOUT,
+    )
+    .map_err(session_error_from_api)?;
+    wire::agents_response(result)
+}
+
+/// Whether an agent refresh has to republish the projection.
+///
+/// An `agent.list` identical to the one already held projects to the same
+/// sidebar, so recomputing it would rebuild the whole projection and the
+/// workspace catalog for a wire that did not move. `ProjectedAgent` is exactly the
+/// projection's input - deserializing already drops the fields the projection
+/// never reads - so equality here is equality of the projection.
+///
+/// The catalog is the other reason a tick must publish. It is rebuilt inside
+/// `publish_replica` on its own refresh window, and on an idle session this
+/// tick is the only thing that calls it, so a skip that ignored the window
+/// would freeze every branch and dirty mark in the navigator.
+pub(crate) fn agent_tick_needs_publish(
+    replica: &SessionReplica,
+    agents: &[ProjectedAgent],
+    catalog_cache: Option<&CatalogCache>,
+) -> bool {
+    replica.state.agents != agents
+        || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+}
+
+/// Installs Hide's hooks the first time this machine runs Hide, and never
+/// again on its own.
+///
+/// Only a runtime that is here and carries no hook of Hide's is installed
+/// into. An outdated hook is left alone and asked about in the Settings
+/// diagnosis, and a runtime whose configuration could not be read is not
+/// written to on a guess (PRD B25, B28, D-31).
+fn install_agent_hooks_on_first_run(home: &std::path::Path) {
+    match hide_agent_hooks::claim_first_run(home) {
+        Ok(false) => return,
+        Ok(true) => {}
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "first_run.unavailable",
+                "message": error.to_string(),
+            }));
+            return;
+        }
+    }
+    for row in hide_agent_hooks::Diagnosis::read(home).runtimes {
+        if matches!(row.status, hide_agent_hooks::HookStatus::NotInstalled) {
+            install_agent_hook(home, row.runtime);
+        }
+    }
+}
+
+/// Reads the approved installs out under a brief lock. `None` means the core
+/// is gone and the coordinator should stop.
+fn take_agent_hook_installs(
+    context: &SessionSyncContext,
+) -> Option<Vec<hide_agent_hooks::AgentRuntime>> {
+    let runtime = context.runtime.upgrade()?;
+    let requested = runtime.lock().ok()?.take_agent_hook_installs();
+    drop(runtime);
+    Some(requested)
+}
+
+/// Writes one runtime's hook, and records what happened either way.
+///
+/// The helper ships inside the bundle that is running, and
+/// [`hide_agent_hooks::helper_for`] refuses anything else: what goes into the
+/// hook is a path the operator's own configuration keeps and every future
+/// session of that agent runs, so a build directory is not an answer. The
+/// refusal is reported, never worked around.
+fn install_agent_hook(
+    home: &std::path::Path,
+    runtime: hide_agent_hooks::AgentRuntime,
+) -> Option<hide_agent_hooks::InstallFailure> {
+    let helper = match std::env::current_exe() {
+        Ok(executable) => hide_agent_hooks::helper_for(&executable),
+        Err(error) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.failed",
+                "runtime": runtime.id(),
+                "message": format!("Hide could not locate its own executable: {error}"),
+            }));
+            return None;
+        }
+    };
+    let helper = match helper {
+        Ok(helper) => helper,
+        Err(refusal) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.refused",
+                "runtime": runtime.id(),
+                "message": refusal.message(),
+            }));
+            return Some(refusal);
+        }
+    };
+    match hide_agent_hooks::install(runtime, home, &helper) {
+        Ok(outcome) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.completed",
+                "runtime": runtime.id(),
+                "changed": outcome.changed,
+                "preserved_entries": outcome.preserved_entries,
+            }));
+            None
+        }
+        Err(failure) => {
+            crate::diagnostic!(json!({
+                "component": "agent_hooks",
+                "kind": "install.failed",
+                "runtime": runtime.id(),
+                "message": failure.message(),
+            }));
+            Some(failure)
+        }
+    }
+}
+
+/// Drops the subagent counts of panes Herdr no longer lists.
+///
+/// A fresh `session.snapshot` is the one moment the pane set is known to be
+/// complete, so it is where the sweep belongs: a pane missing from an event
+/// stream may only be one Hide has not heard about yet. Nothing on screen
+/// depends on it - a pane with no agent projects no children at all - so this
+/// is housekeeping, and a failure is recorded rather than escalated (PRD B31,
+/// D-53).
+fn sweep_subagent_counters(home: &std::path::Path, replica: &SessionReplica) {
+    let live = replica.state.panes.iter().map(|pane| pane.pane_id.as_str());
+    match hide_agent_hooks::counters::retain(home, live) {
+        Ok(0) => {}
+        Ok(dropped) => crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "counters.swept",
+            "dropped": dropped,
+        })),
+        Err(error) => crate::diagnostic!(json!({
+            "component": "agent_hooks",
+            "kind": "counters.sweep_failed",
+            "message": error.to_string(),
+        })),
+    }
+}
+
+/// Whether a stall threshold has been crossed since the last publish.
+///
+/// A stalled agent is by definition one that reports nothing new, so
+/// `agent_tick_needs_publish` says no for exactly as long as the operator
+/// most needs to hear about it. Asking the runtime on the tick that already
+/// runs keeps the escalation on the clock without a timer of Hide's own
+/// (PRD B36). It is a pure in-memory read of the snapshot, so it holds the
+/// mutex no longer than the comparison itself.
+///
+/// Only the local coordinator asks. A remote target's rows are projected
+/// from another machine's session and are not what the local stall clocks
+/// are counting.
+fn stall_tick_needs_publish(context: &SessionSyncContext) -> bool {
+    if !matches!(context.target, SessionSyncTarget::Local { .. }) {
+        return false;
+    }
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let due = match runtime.lock() {
+        Ok(guard) => guard.stall_publish_due(),
+        Err(_) => false,
+    };
+    drop(runtime);
+    due
+}
+
+fn publish_replica(
+    context: &SessionSyncContext,
+    replica: &SessionReplica,
+    catalog_cache: &mut Option<CatalogCache>,
+) -> bool {
+    if let SessionSyncTarget::Remote { target_id, .. } = &context.target {
+        let projection = replica.project_remote(target_id);
+        let (fetched, excluded) = match projection {
+            Ok((session, excluded)) => (Ok(session), excluded),
+            Err(error) => (Err(error), Vec::new()),
+        };
+        for exclusion in excluded {
+            crate::diagnostic!(json!({
+                "component": "remote_session",
+                "kind": "agent.excluded",
+                "target": target_id,
+                "pane_id": exclusion.pane_id,
+                "source_index": exclusion.source_index,
+                "message": exclusion.reason,
+            }));
+        }
+        let Some(runtime) = context.runtime.upgrade() else {
+            return false;
+        };
+        let changed = match runtime.lock() {
+            Ok(mut guard) => guard.ingest_remote_session(target_id, fetched),
+            Err(_) => return false,
+        };
+        drop(runtime);
+        if changed {
+            context.notifier.notify();
+        }
+        return true;
+    }
+
+    let payload = replica.project();
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let (registrations, worktrees, scratch_root) = match runtime.lock() {
+        Ok(guard) => (
+            guard.snapshot().ui_state.workspace_registrations.clone(),
+            guard.worktree_catalog(),
+            guard.scratch_root(),
+        ),
+        Err(_) => return false,
+    };
+    drop(runtime);
+
+    let spaces = Runtime::session_spaces(&payload, &scratch_root);
+    let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
+        cache.registrations == registrations
+            && cache.spaces == spaces
+            && cache.worktrees == worktrees
+            && cache.built_at.elapsed() < CATALOG_REFRESH_INTERVAL
+    });
+    if !cache_is_fresh {
+        let workspaces = workspace::build_catalog(&registrations, &spaces, &worktrees);
+        let roots = workspace::root_index(&spaces);
+        *catalog_cache = Some(CatalogCache {
+            registrations: registrations.clone(),
+            spaces,
+            worktrees,
+            workspaces,
+            roots,
+            built_at: Instant::now(),
+        });
+    }
+    let cache = catalog_cache
+        .as_ref()
+        .expect("catalog cache is filled on a miss");
+    let precomputed = PrecomputedCatalog {
+        registrations,
+        workspaces: cache.workspaces.clone(),
+        roots: cache.roots.clone(),
+    };
+
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_session_with_catalog(Ok(payload), Some(precomputed)),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn publish_failure(context: &SessionSyncContext, error: SessionFetchError) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => match &context.target {
+            SessionSyncTarget::Local { .. } => guard.ingest_session_with_catalog(Err(error), None),
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.ingest_remote_session(target_id, Err(error))
+            }
+        },
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn publish_provider_usage(
+    context: &SessionSyncContext,
+    provider_usage: Vec<crate::model::ProviderUsageSnapshot>,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_provider_usage(provider_usage),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::UsageActivity> {
+    let runtime = context.runtime.upgrade()?;
+    runtime.lock().ok().map(|guard| guard.usage_activity())
+}
+
+/// Hands the runtime the hook-install judgement, which was read on this
+/// thread rather than under the mutex.
+fn publish_hook_diagnosis(
+    context: &SessionSyncContext,
+    diagnosis: hide_agent_hooks::Diagnosis,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_hook_diagnosis(diagnosis),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+/// Reads what the changes view needs, holding the runtime mutex only for the
+/// read itself. `None` means the runtime is gone.
+fn read_changes_request(
+    context: &SessionSyncContext,
+) -> Option<Option<crate::changes::ChangesRequest>> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.changes_request();
+    drop(runtime);
+    Some(request)
+}
+
+fn publish_changes(context: &SessionSyncContext, changes: crate::model::ChangesSnapshot) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_changes(changes),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+/// Reads what the worktree reader needs, holding the runtime mutex only for
+/// the read itself. `None` means the runtime is gone.
+fn read_worktrees_request(
+    context: &SessionSyncContext,
+) -> Option<crate::worktrees::WorktreeRequest> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.worktrees_request();
+    drop(runtime);
+    Some(request)
+}
+
+fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::GithubRequest> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.github_request();
+    drop(runtime);
+    Some(request)
+}
+
+fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRequest> {
+    let runtime = context.runtime.upgrade()?;
+    let request = runtime.lock().ok()?.disk_request();
+    drop(runtime);
+    Some(request)
+}
+
+/// What the provider probe should ask, and any choice waiting to be written.
+///
+/// Both come out of one lock acquisition rather than two. The coordinator
+/// takes this lock once per wake for each reader it drives, and a settings
+/// write is rare enough that it does not deserve a wake of its own.
+fn read_ai_request(
+    context: &SessionSyncContext,
+) -> Option<(crate::ai::AiRequest, Option<hide_ai::AiSettings>)> {
+    let runtime = context.runtime.upgrade()?;
+    let read = {
+        let mut guard = runtime.lock().ok()?;
+        (guard.ai_request(), guard.take_ai_settings_save())
+    };
+    drop(runtime);
+    Some(read)
+}
+
+/// Reads the operator's saved background AI choice once at startup.
+///
+/// A file that is not there means nobody has chosen, so the defaults stand
+/// and nothing is reported. A file that exists and cannot be read is stated
+/// once, here, and the defaults are used with that reason attached rather
+/// than in silence.
+fn publish_ai_settings(context: &SessionSyncContext, home: &std::path::Path) {
+    let path = hide_ai::settings::settings_path(home);
+    let (settings, chosen, reason) = match hide_ai::settings::load(home) {
+        Ok(settings) => (settings, path.exists(), None),
+        Err(error) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "ai_settings",
+                "kind": "settings.unreadable",
+                "message": error.to_string(),
+            }));
+            (
+                hide_ai::AiSettings::default(),
+                false,
+                Some(format!(
+                    "The saved choice could not be read ({error}); the defaults are in use"
+                )),
+            )
+        }
+    };
+    let Some(runtime) = context.runtime.upgrade() else {
+        return;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_ai_settings(settings, chosen, reason),
+        Err(_) => return,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+}
+
+/// Writes a choice the runtime queued. `false` means the runtime is gone.
+fn save_ai_settings(
+    context: &SessionSyncContext,
+    home: &std::path::Path,
+    settings: &hide_ai::AiSettings,
+) -> bool {
+    let Err(error) = hide_ai::settings::save(home, settings) else {
+        return true;
+    };
+    crate::diagnostic!(serde_json::json!({
+        "component": "ai_settings",
+        "kind": "settings.write_failed",
+        "message": error.to_string(),
+    }));
+    report_ai_settings_failure(
+        context,
+        format!("The choice could not be saved ({error}); it applies to this session only"),
+    )
+}
+
+/// Puts the reason a choice was not written on the group that took it, and
+/// reports whether the coordinator can carry on. A choice the runtime has
+/// already handed over is gone either way; what this decides is whether the
+/// operator is told.
+fn report_ai_settings_failure(context: &SessionSyncContext, message: String) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.report_ai_settings_failure(message),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+/// Invalidates the local reader when Herdr reports a worktree topology event.
+/// This only changes an in-memory generation while the mutex is held; the git
+/// read itself starts later on `WorktreeReader`'s background worker.
+fn request_worktree_refresh(context: &SessionSyncContext) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    match runtime.lock() {
+        Ok(mut guard) => guard.refresh_worktrees(),
+        Err(_) => return false,
+    }
+    context.notifier.notify();
+    true
+}
+
+/// Stores a worktree catalog. `None` means the runtime is gone; `Some(true)`
+/// means the rows changed and the navigator catalog must be rebuilt.
+fn publish_worktrees(
+    context: &SessionSyncContext,
+    catalog: crate::model::WorktreeCatalogSnapshot,
+) -> Option<bool> {
+    let runtime = context.runtime.upgrade()?;
+    let changed = runtime.lock().ok()?.ingest_worktrees(catalog);
+    drop(runtime);
+    Some(changed)
+}
+
+fn publish_github(context: &SessionSyncContext, github: crate::model::GithubSnapshot) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_github(github),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn publish_disk_usage(
+    context: &SessionSyncContext,
+    disk: Vec<crate::model::DiskUsageSnapshot>,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_disk_usage(disk),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn publish_background_ai(
+    context: &SessionSyncContext,
+    background_ai: crate::model::BackgroundAiSnapshot,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_background_ai(background_ai),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn publish_ports(
+    context: &SessionSyncContext,
+    ports: crate::model::ListeningPortsSnapshot,
+) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let changed = match runtime.lock() {
+        Ok(mut guard) => guard.ingest_listening_ports(ports),
+        Err(_) => return false,
+    };
+    drop(runtime);
+    if changed {
+        context.notifier.notify();
+    }
+    true
+}
+
+fn coordinator_wait(
+    subscribed: bool,
+    reconnect_at: Instant,
+    next_agent_refresh: Instant,
+) -> Duration {
+    let now = Instant::now();
+    let deadline = if subscribed {
+        next_agent_refresh
+    } else {
+        reconnect_at
+    };
+    deadline.saturating_duration_since(now)
+}
+
+fn next_reconnect_delay(current: Duration) -> Duration {
+    current.saturating_mul(2).min(RECONNECT_MAX_DELAY)
+}
+
+fn stale_if_projected(
+    replica: Option<&SessionReplica>,
+    error: SessionFetchError,
+) -> SessionFetchError {
+    if replica.is_none() || matches!(error, SessionFetchError::Protocol { .. }) {
+        return error;
+    }
+    SessionFetchError::Stale(error.message().to_owned())
+}
+
+fn session_error_from_api(error: ApiError) -> SessionFetchError {
+    match error {
+        ApiError::Transport(message) | ApiError::Remote { message, .. } => {
+            SessionFetchError::Unreachable(message)
+        }
+        ApiError::Malformed(message) => SessionFetchError::Malformed(message),
+    }
+}
+
+pub(crate) fn connect_failure_from_api(
+    error: ApiError,
+    has_projection: bool,
+    cursor: u64,
+) -> ConnectFailure {
+    let needs_bootstrap = matches!(
+        error.code(),
+        Some("event_gap" | "event_journal_unavailable")
+    ) || matches!(error, ApiError::Malformed(_));
+    let session_error = match error {
+        ApiError::Malformed(message) => SessionFetchError::Malformed(message),
+        ApiError::Remote { code, message }
+            if code == "event_gap" || code == "event_journal_unavailable" =>
+        {
+            SessionFetchError::Stale(format!(
+                "Herdr event stream cannot resume after sequence {cursor}: {message}"
+            ))
+        }
+        ApiError::Transport(message) | ApiError::Remote { message, .. } if has_projection => {
+            SessionFetchError::Stale(message)
+        }
+        ApiError::Transport(message) | ApiError::Remote { message, .. } => {
+            SessionFetchError::Unreachable(message)
+        }
+    };
+    ConnectFailure {
+        error: session_error,
+        needs_bootstrap,
+    }
+}
+
+fn log_sync_failure(
+    context: &SessionSyncContext,
+    kind: &str,
+    replica: Option<&SessionReplica>,
+    error: &SessionFetchError,
+) {
+    crate::diagnostic!(json!({
+        "component": "session_sync",
+        "kind": kind,
+        "target": context.log_target(),
+        "state": error.state(),
+        "sequence": replica.map(|current| current.cursor),
+        "message": error.message(),
+    }));
+}
+
+pub(crate) struct ConnectFailure {
+    pub(crate) error: SessionFetchError,
+    pub(crate) needs_bootstrap: bool,
+}

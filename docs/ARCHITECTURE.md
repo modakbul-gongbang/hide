@@ -9,7 +9,7 @@ The code is the executable authority: `herdr-core/src/` for the core, `macos/Sou
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in (`herdr_core_dispatch`) and pulls state out (`herdr_core_snapshot`) when the change notifier announces.
-The event sync coordinator (`session_sync.rs`) bootstraps from `session.snapshot`, resumes ordered topology updates through `events.subscribe`, and refreshes agent telemetry with `agent.list` once per second.
+The event sync coordinator (`session_sync/coordinator.rs`) bootstraps from `session.snapshot`, resumes ordered topology updates through `events.subscribe`, and refreshes agent telemetry with `agent.list` once per second.
 A tick whose `agent.list` is unchanged publishes nothing, so an idle session recomputes no projection; the catalog's own refresh window still publishes, because the rebuild can only happen inside `publish_replica`.
 The Git context refreshes local worktree state only when repository metadata, tracked paths, or Herdr worktree topology changes; disk usage refreshes when the section opens or its header refresh is pressed, and all three layers run outside the runtime mutex.
 Pull requests also load once when a local Git project first appears in the sidebar and refresh from that project's menu or PR popover; these scoped requests reuse the same background reader, cache and generation coalescing.
@@ -102,7 +102,7 @@ No reopen notice uses the shell's modal interaction alert.
 The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`, and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
 `hide-herdr-client/build.rs` turns the five sub-schemas into Rust modules under `hide_herdr_client::wire` at build time; generated source stays in `OUT_DIR` and is never committed.
 `herdr-core/src/wire.rs` is the only core boundary that converts generated values into the core's projection and event inputs; shared request and subscription encoding lives in `hide-herdr-client`.
-Do not write new wire deserialization structs in `session_sync.rs` or import generated types into domain, runtime or sidebar code.
+Do not write new wire deserialization structs in `session_sync/replica.rs` or import generated types into domain, runtime or sidebar code.
 The pinned event schema currently omits protocol, host and sequence: only the boundary's minimal metadata envelope is handwritten, and its schema-gap test requires deletion when the fork declares those fields.
 Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them.
 The envelope `id` is request correlation, never retry identity; mutation convergence must use an operation context on a method whose pinned schema actually carries one, or reconcile the resulting topology before retrying a method that does not.
