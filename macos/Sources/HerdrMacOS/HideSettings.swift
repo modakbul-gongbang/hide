@@ -589,10 +589,23 @@ private struct HideAgentHookSettings: View {
                     HideAgentHookRow(
                         runtime: runtime,
                         showsDivider: index < hooks.runtimes.count - 1
+                            || hooks.lastReportFailure != nil
                             || !hooks.sessionsPredatingInstall.isEmpty,
                         onInstall: { onInstall(runtime.id) }
                     )
                 }
+            }
+
+            if let failure = hooks.lastReportFailure {
+                // The hook ran and Herdr did not take its report. Every pane
+                // then reads as uninstrumented, and a restart changes nothing,
+                // so the failure comes before the restart advice below.
+                HideSettingsNote(
+                    text: failure,
+                    systemImage: "exclamationmark.triangle",
+                    color: HideTheme.danger,
+                    showsDivider: !hooks.sessionsPredatingInstall.isEmpty
+                )
             }
 
             ForEach(Array(hooks.sessionsPredatingInstall.enumerated()), id: \.element.id) { index, pane in

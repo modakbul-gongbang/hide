@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use hide_agent_hooks::counters;
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::report;
-use hide_agent_hooks::runtime::{HookEvent, hook_source_id};
+use hide_agent_hooks::runtime::HookEvent;
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -50,7 +50,7 @@ fn main() -> ExitCode {
 
 fn usage() -> String {
     "usage: hide-agent-hooks hook --event <SessionStart|SubagentStart|SubagentStop|Stop> \
-     [--source <id>]\n       hide-agent-hooks doctor [--json]"
+     [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
 }
 
@@ -79,8 +79,15 @@ fn run_hook(arguments: &[String]) {
     let Ok(counters) = counters::apply(&home, &pane_id, event) else {
         return;
     };
-    let source = argument_value("--source", arguments).unwrap_or_else(hook_source_id);
-    let _ = report::report(&pane_id, &source, counters);
+    // `--source` on the command line is the install marker the diagnosis
+    // reads out of the hook file; the report's own source is fixed in
+    // `report::metadata_source`, because Herdr refuses the marker's `@`.
+    let socket_path = report::socket_path(&home);
+    let outcome = report::report(&socket_path, &pane_id, counters);
+    // The outcome is written down rather than surfaced here: a hook's
+    // stderr reaches nobody, and the record is what `doctor` and Settings
+    // show (engineering rule 10).
+    let _ = report::record_outcome(&home, &pane_id, event, &socket_path, &outcome);
 }
 
 fn run_doctor(arguments: &[String]) -> Result<String, String> {

@@ -170,7 +170,6 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             pane_text_scales: stored.pane_text_scales,
             editor_text_scale: stored.editor_text_scale,
             conversation_pane_ids: Default::default(),
-            terminal_pane_ids: Default::default(),
             pane_read_records: stored.pane_read_records,
             last_agent_kind: stored.last_agent_kind,
             last_agent_bypass: stored.last_agent_bypass,

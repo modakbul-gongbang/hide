@@ -1062,6 +1062,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
                 current_version: hide_agent_hooks::HOOK_VERSION,
             },
         ],
+        last_report_failure: None,
     }));
 
     let hooks = &runtime.snapshot.status.agent_hooks;
@@ -1098,6 +1099,39 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
         hooks.sessions_predating_install[0].message
     );
     assert_eq!(hooks.sessions_predating_install[0].label, "Older");
+    assert_eq!(
+        hooks.last_report_failure, None,
+        "a hook whose last report landed has no failure to show"
+    );
+
+    // A hook that ran and was refused by Herdr looks, pane by pane, exactly
+    // like a session that started first. The recorded failure is what the
+    // Settings screen shows instead of the restart advice.
+    let mut refused = runtime
+        .hook_diagnosis
+        .clone()
+        .expect("diagnosis was ingested");
+    refused.last_report_failure = Some(hide_agent_hooks::report::ReportFailure {
+        pane_id: "w1:p2".to_owned(),
+        event: "SessionStart".to_owned(),
+        socket_path: "/fixture/herdr.sock".to_owned(),
+        error: "invalid_metadata_source: metadata source may contain only ASCII letters".to_owned(),
+        at_unix_ms: 1,
+    });
+    assert!(runtime.ingest_hook_diagnosis(refused));
+    let message = runtime
+        .snapshot
+        .status
+        .agent_hooks
+        .last_report_failure
+        .clone()
+        .expect("the refusal reaches the snapshot");
+    assert!(
+        message.contains("/fixture/herdr.sock")
+            && message.contains("w1:p2")
+            && message.contains("invalid_metadata_source"),
+        "got {message:?}"
+    );
 }
 
 // PRD B28, D-31: Hide installs on approval, never on its own initiative, and
@@ -1369,6 +1403,7 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
                 current_version: hide_agent_hooks::HOOK_VERSION,
             },
         ],
+        last_report_failure: None,
     });
 
     let pane = |id: &str| {

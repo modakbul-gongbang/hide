@@ -29,6 +29,11 @@ use hide_herdr_client::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, H
 const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const ASYNC_OPERATION_TICK_INTERVAL: Duration = Duration::from_millis(250);
+/// How often the hook diagnosis is read back while the Settings agents tab
+/// is on screen. A hook report that failed is written by the hook helper,
+/// in another process, and this is the only way the screen the tooltip
+/// sends the operator to can learn of it.
+const HOOK_DIAGNOSIS_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
