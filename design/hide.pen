@@ -10023,7 +10023,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "28pt identity + known children only: 24pt row. First child uses status, provider and body title; +N inspects remaining children. Titles come from canonical metadata. Zero / one / many and 240pt Korean states reuse this master.",
+          "content": "28pt identity + known children only: 24pt row. First child uses status, provider and body title; +N inspects remaining children. Titles come from canonical metadata. Zero / one / many and 240pt Korean states reuse this master. Core async operation state stays in the pane header; unknown activity blocks close until Check status completes.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -11116,7 +11116,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "One core request ID owns Pending, unavailable, and failed outcomes. Retry creates a new request only after the prior outcome settles. No state changes pane geometry.",
+          "content": "One core operation record owns Pending, unavailable, failed and unknown outcomes. Topology confirmation settles geometry; transport success alone does not. Retry creates a new request only after the prior outcome settles, and unknown close exposes read-only Check status.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -14119,7 +14119,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "Ledger layout. Prompt band is panel + mono; assistant is native Markdown on background. Working elapsed is blue in the 64pt rail.",
+          "content": "Ledger layout. Prompt band is panel + mono; assistant is native Markdown on background. Working elapsed is blue in the 64pt rail. Pane and tab mutations keep target-scoped activity and failure inline; unknown activity shows Check status before close.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
