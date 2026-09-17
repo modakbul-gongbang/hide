@@ -170,19 +170,88 @@ struct CoreRecentClosedSnapshot: Decodable, Equatable {
     let topLabel: String?
     let restoring: Bool
     let notices: [CoreRecentClosedNotice]
+    let pending: [CoreRecentClosedPending]
+    let canReopen: Bool
+    let reopenBlockedReason: String?
 
     static let empty = CoreRecentClosedSnapshot(
         count: 0,
         topLabel: nil,
         restoring: false,
-        notices: []
+        notices: [],
+        pending: [],
+        canReopen: false,
+        reopenBlockedReason: nil
     )
+
+    init(
+        count: Int,
+        topLabel: String?,
+        restoring: Bool,
+        notices: [CoreRecentClosedNotice],
+        pending: [CoreRecentClosedPending],
+        canReopen: Bool,
+        reopenBlockedReason: String?
+    ) {
+        self.count = count
+        self.topLabel = topLabel
+        self.restoring = restoring
+        self.notices = notices
+        self.pending = pending
+        self.canReopen = canReopen
+        self.reopenBlockedReason = reopenBlockedReason
+    }
 
     enum CodingKeys: String, CodingKey {
         case count
         case topLabel = "top_label"
         case restoring
         case notices
+        case pending
+        case canReopen = "can_reopen"
+        case reopenBlockedReason = "reopen_blocked_reason"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        count = try container.decodeIfPresent(Int.self, forKey: .count) ?? 0
+        topLabel = try container.decodeIfPresent(String.self, forKey: .topLabel)
+        restoring = try container.decodeIfPresent(Bool.self, forKey: .restoring) ?? false
+        notices = try container.decodeIfPresent([CoreRecentClosedNotice].self, forKey: .notices) ?? []
+        pending = try container.decodeIfPresent([CoreRecentClosedPending].self, forKey: .pending) ?? []
+        canReopen = try container.decodeIfPresent(Bool.self, forKey: .canReopen) ?? (count > 0 && !restoring && pending.isEmpty)
+        reopenBlockedReason = try container.decodeIfPresent(String.self, forKey: .reopenBlockedReason)
+    }
+}
+
+struct CoreRecentClosedPending: Decodable, Equatable {
+    let key: String
+    let targetID: String
+    let label: String
+    let phase: String
+    let checking: Bool
+    let message: String?
+    let retryable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case targetID = "target_id"
+        case label
+        case phase
+        case checking
+        case message
+        case retryable
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        targetID = try container.decode(String.self, forKey: .targetID)
+        label = try container.decode(String.self, forKey: .label)
+        phase = try container.decode(String.self, forKey: .phase)
+        checking = try container.decodeIfPresent(Bool.self, forKey: .checking) ?? false
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        retryable = try container.decodeIfPresent(Bool.self, forKey: .retryable) ?? false
     }
 }
 

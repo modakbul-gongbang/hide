@@ -134,6 +134,8 @@ private struct HideTabCanvas: View {
                         isFocused: item.isFocused,
                         isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
                         isZoomed: isZoomed,
+                        activity: model.paneActivity(for: pane.id),
+                        notice: model.paneNotice(for: pane.id),
                         onFocus: { model.focusPane(pane.id) },
                         onToggleZoom: { model.togglePaneZoom(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) }
@@ -144,6 +146,8 @@ private struct HideTabCanvas: View {
                         status: "ready", isFocused: item.isFocused,
                         isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
                         isZoomed: isZoomed,
+                        activity: model.paneActivity(for: pane.id),
+                        notice: model.paneNotice(for: pane.id),
                         onFocus: { model.focusPane(pane.id) },
                         onClose: { model.closePaneFromHeader(pane.id) },
                         onToggleZoom: { model.togglePaneZoom(pane.id) }

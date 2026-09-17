@@ -809,7 +809,12 @@ struct HideTerminalPaneCard<Content: View>: View {
                 }
                 .buttonStyle(HideInteractiveButtonStyle())
                 .accessibilityLabel(
-                    ["Focus \(kind) pane \(title) (\(paneID))", agent.map { "\($0.agentKind), \($0.statusLabel)" }]
+                    [
+                        "Focus \(kind) pane \(title) (\(paneID))",
+                        agent.map { "\($0.agentKind), \($0.statusLabel)" },
+                        activity.isEmpty ? nil : activity,
+                        notice,
+                    ]
                         .compactMap { $0 }
                         .joined(separator: ", ")
                 )
@@ -888,7 +893,14 @@ struct HideTerminalPaneCard<Content: View>: View {
                 HideIconButton(
                     systemImage: "xmark",
                     help: closeHelp,
-                    accessibilityLabel: "Close pane \(paneID)",
+                    accessibilityLabel: [
+                        "Close pane \(paneID)",
+                        closeHelp,
+                        activity.isEmpty ? nil : activity,
+                        notice,
+                    ]
+                        .compactMap { $0 }
+                        .joined(separator: ", "),
                     variant: .toolbar,
                     command: .pane(.closePane),
                     paneID: paneID,

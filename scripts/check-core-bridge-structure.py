@@ -68,6 +68,7 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
         ("struct", "CoreRestSnapshot", "internal"),
         ("struct", "CoreRecentClosedSnapshot", "internal"),
         ("struct", "CoreRecentClosedNotice", "internal"),
+        ("struct", "CoreRecentClosedPending", "internal"),
         ("struct", "CorePaneFindSnapshot", "internal"),
         ("struct", "CorePetSnapshot", "internal"),
         ("struct", "CorePetBadges", "internal"),
@@ -79,6 +80,7 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
     ),
     "CoreBridgeStatusSnapshot.swift": (
         ("struct", "CoreStatusSnapshot", "internal"),
+        ("struct", "CoreAsyncOperation", "internal"),
         ("struct", "CorePaneFocusRequest", "internal"),
         ("struct", "CoreBackgroundAI", "internal"),
         ("struct", "CoreBackgroundAIProvider", "internal"),

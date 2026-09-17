@@ -188,6 +188,7 @@ final class ShellModel: ObservableObject {
     private var handledTaskOperationIDs: Set<UInt64> = []
     private var pendingScratchChat: (provider: AgentProvider, message: String, bypass: Bool)?
     @Published var interactionNotice: String?
+    @Published private(set) var interactionStatusRefreshAvailable = false
     @Published var herdrProtocolMismatch: HerdrProtocolMismatchDetails?
     /// When the last reported fork failure happened, so one failure is raised
     /// once rather than on every snapshot that still carries it.
@@ -229,6 +230,8 @@ final class ShellModel: ObservableObject {
     private var remoteSubscription: AnyCancellable?
     private var pendingPaneCloseTarget: PaneCloseTarget?
     private var pendingTabCloseTarget: TabCloseTarget?
+    private var pendingCloseScopePaneIDs: [String]?
+    private var pendingCloseApprovalFingerprint: String?
     private var lastRemoteDevice: CoreDeviceSnapshot?
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
@@ -299,13 +302,24 @@ final class ShellModel: ObservableObject {
 
     private func observeRecentClosed(in snapshot: CoreSnapshot?) {
         let state = snapshot?.recentClosed ?? .empty
+        let visiblePaneIDs = Set(
+            (snapshot?.navigator.workspaces ?? [])
+                .flatMap(\.checkouts)
+                .flatMap(\.tabs)
+                .flatMap(\.panes)
+                .map(\.id)
+            + (snapshot?.navigator.scratch.tabs ?? []).flatMap(\.panes).map(\.id)
+        )
         reopenPaneNotices = Dictionary(
             state.notices.compactMap { notice in
                 notice.paneID.map { ($0, notice.message) }
             },
             uniquingKeysWith: { _, newest in newest }
         )
-        reopenTabNotice = state.notices.last(where: { $0.paneID == nil })?.message
+        reopenTabNotice = state.notices.last(where: { notice in
+            guard let paneID = notice.paneID else { return true }
+            return !visiblePaneIDs.contains(paneID)
+        })?.message
         panesReopening = state.restoring
             ? Set(state.notices.compactMap(\.paneID))
             : []
@@ -358,23 +372,134 @@ final class ShellModel: ObservableObject {
     /// What a pane is doing right now, shown after its name in the header.
     func paneActivity(for paneID: String) -> String {
         if panesReopening.contains(paneID) { return " · reopening…" }
+        if let operation = asyncOperation(targetID: paneID) {
+            return asyncOperationActivity(operation)
+        }
         return panesForking.contains(paneID) ? " · forking…" : ""
     }
 
     /// A failure that belongs to one pane, shown in that pane rather than in
     /// a dialog.
     func paneNotice(for paneID: String) -> String? {
-        reopenPaneNotices[paneID] ?? paneNotices[paneID]
+        reopenPaneNotices[paneID] ?? asyncOperationNotice(asyncOperation(targetID: paneID)) ?? paneNotices[paneID]
     }
 
     var canReopenClosed: Bool {
         guard let recent = core.snapshot?.recentClosed else { return false }
-        return recent.count > 0 && !recent.restoring
+        return recent.canReopen
     }
 
     func reopenClosed() {
         guard canReopenClosed else { return }
         core.reopenClosed()
+    }
+
+    private var asyncOperations: [CoreAsyncOperation] {
+        core.snapshot?.status.asyncOperations ?? []
+    }
+
+    private func asyncOperation(targetID: String) -> CoreAsyncOperation? {
+        asyncOperations.last(where: { $0.targetID == targetID })
+    }
+
+    private func asyncOperationActivity(_ operation: CoreAsyncOperation) -> String {
+        switch operation.phase {
+        case "unknown":
+            let closeStatusCheckInFlight = core.snapshot?.recentClosed.pending.contains {
+                $0.key == operation.id && $0.checking
+            } == true
+            return closeStatusCheckInFlight ? " · checking…" : " · status check needed"
+        case "failed", "refused":
+            return ""
+        default:
+            switch operation.kind {
+            case "pane.close", "tab.close": return " · closing…"
+            case "pane.split": return " · splitting…"
+            case "pane.zoom": return " · zooming…"
+            case "pane.resize": return " · resizing…"
+            case "tab.move": return " · moving…"
+            default: return " · working…"
+            }
+        }
+    }
+
+    private func asyncOperationNotice(_ operation: CoreAsyncOperation?) -> String? {
+        guard let operation,
+              ["failed", "refused", "unknown"].contains(operation.phase)
+        else { return nil }
+        return operation.message
+    }
+
+    private func asyncIdentityIDs(for tab: ShellTabItem) -> Set<String> {
+        var ids = Set([tab.id])
+        if case .herdr(let coreTab) = tab.kind, let sourceID = coreTab.id {
+            ids.insert(sourceID)
+        }
+        return ids
+    }
+
+    private func tabAsyncOperation(for tab: ShellTabItem) -> CoreAsyncOperation? {
+        let tabIDs = asyncIdentityIDs(for: tab)
+        return asyncOperations.last(where: { operation in
+            tabIDs.contains(operation.targetID) || tabIDs.contains(operation.scopeID)
+        })
+    }
+
+    func tabActivity(for tab: ShellTabItem) -> String {
+        guard let operation = tabAsyncOperation(for: tab) else { return "" }
+        return asyncOperationActivity(operation)
+    }
+
+    func tabNotice(for tab: ShellTabItem) -> String? {
+        asyncOperationNotice(tabAsyncOperation(for: tab))
+    }
+
+    var asyncTabNotice: String? {
+        guard let operation = asyncOperations.reversed().first(where: { operation in
+            ["failed", "refused", "unknown"].contains(operation.phase)
+                && unifiedTabs.contains { tab in
+                    let tabIDs = asyncIdentityIDs(for: tab)
+                    return tabIDs.contains(operation.targetID) || tabIDs.contains(operation.scopeID)
+                }
+        }) else { return nil }
+        return operation.message
+    }
+
+    private var pendingClose: CoreRecentClosedPending? {
+        core.snapshot?.recentClosed.pending.last
+    }
+
+    var pendingCloseStatusChecking: Bool {
+        pendingClose?.checking == true
+    }
+
+    var pendingCloseNeedsStatusCheck: Bool {
+        pendingClose?.phase == "unknown"
+    }
+
+    var pendingCloseNotice: String? {
+        guard let pendingClose else { return nil }
+        if pendingClose.checking { return "Checking whether the close completed…" }
+        if let message = pendingClose.message { return message }
+        switch pendingClose.phase {
+        case "preparing", "capturing": return "Preparing close…"
+        case "transmitting": return "Closing…"
+        case "awaiting_topology": return "Confirming close…"
+        case "unknown": return "Close result needs checking."
+        default: return nil
+        }
+    }
+
+    func checkLatestCloseStatus() {
+        guard let pendingClose, pendingCloseNeedsStatusCheck, !pendingCloseStatusChecking else { return }
+        core.checkCloseStatus(pendingClose.key)
+    }
+
+    func refreshInteractionStatus() {
+        guard interactionStatusRefreshAvailable else { return }
+        interactionStatusRefreshAvailable = false
+        interactionNotice = nil
+        core.refreshStatus()
     }
 
     var workspaces: [CoreWorkspaceSnapshot] {
@@ -1870,6 +1995,7 @@ final class ShellModel: ObservableObject {
 
     func clearInteractionNotice() {
         interactionNotice = nil
+        interactionStatusRefreshAvailable = false
     }
 
     func dismissHerdrProtocolMismatch() {
@@ -2470,13 +2596,27 @@ final class ShellModel: ObservableObject {
             target = .local(tabID: tabID)
         }
         let destructiveTargets = tab.panes.map { destructiveTarget(for: $0) }
+        if let unknownTarget = destructiveTargets.first(where: \.requiresStatusCheck) {
+            pendingTabCloseTarget = nil
+            pendingCloseScopePaneIDs = nil
+            pendingCloseApprovalFingerprint = nil
+            consequenceNotice = nil
+            presentActivityStatusUnknown(label: unknownTarget.label)
+            return
+        }
         let notice = ConsequencePolicy.notice(kind: .tab, targets: destructiveTargets)
         consequenceResult = nil
         if notice.requiresConfirmation {
             pendingTabCloseTarget = target
+            pendingCloseScopePaneIDs = tab.panes.map(\.id).sorted()
+            pendingCloseApprovalFingerprint = closeApprovalFingerprint(
+                paneIDs: pendingCloseScopePaneIDs ?? []
+            )
             consequenceNotice = notice
         } else {
             pendingTabCloseTarget = nil
+            pendingCloseScopePaneIDs = nil
+            pendingCloseApprovalFingerprint = nil
             executeTabClose(target, confirmed: false)
             consequenceResult = "Close requested for tab \(tab.label ?? tabID)."
         }
@@ -2561,8 +2701,14 @@ final class ShellModel: ObservableObject {
             statusLabel: agent?.statusLabel ?? "Idle",
             requiresCloseConfirmation: contentConsequence != nil || (agent?.requiresCloseConfirmation ?? false),
             summary: contentConsequence ?? agent?.summary ?? "No working or attention state is reported for this pane.",
+            requiresStatusCheck: pane.requiresCloseStatusCheck || (agent?.requiresCloseStatusCheck ?? false),
             contentConsequence: contentConsequence
         )
+    }
+
+    private func presentActivityStatusUnknown(label: String) {
+        interactionStatusRefreshAvailable = true
+        interactionNotice = "Activity status for \(label) is unknown. Check status before closing."
     }
 
     private func closeCurrentPane(target closeTarget: PaneCloseTarget) {
@@ -2575,13 +2721,27 @@ final class ShellModel: ObservableObject {
             return
         }
         let target = destructiveTarget(for: pane)
+        if target.requiresStatusCheck {
+            pendingPaneCloseTarget = nil
+            pendingCloseScopePaneIDs = nil
+            pendingCloseApprovalFingerprint = nil
+            consequenceNotice = nil
+            presentActivityStatusUnknown(label: target.label)
+            return
+        }
         let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
         consequenceResult = nil
         if notice.requiresConfirmation {
             pendingPaneCloseTarget = closeTarget
+            pendingCloseScopePaneIDs = closeScopePaneIDs(for: paneID)
+            pendingCloseApprovalFingerprint = closeApprovalFingerprint(
+                paneIDs: pendingCloseScopePaneIDs ?? []
+            )
             consequenceNotice = notice
         } else {
             pendingPaneCloseTarget = nil
+            pendingCloseScopePaneIDs = nil
+            pendingCloseApprovalFingerprint = nil
             executePaneClose(closeTarget, confirmed: false)
             consequenceResult = "Close requested for idle pane \(paneID)."
         }
@@ -2690,6 +2850,8 @@ final class ShellModel: ObservableObject {
     func previewConsequence(_ kind: DestructiveTargetKind) {
         pendingPaneCloseTarget = nil
         pendingTabCloseTarget = nil
+        pendingCloseScopePaneIDs = nil
+        pendingCloseApprovalFingerprint = nil
         let agents = core.snapshot?.navigator.agents ?? []
         let targets = agents.map {
             DestructiveTarget(
@@ -2697,7 +2859,8 @@ final class ShellModel: ObservableObject {
                 label: $0.workspaceLabel,
                 statusLabel: $0.statusLabel,
                 requiresCloseConfirmation: $0.requiresCloseConfirmation,
-                summary: $0.summary
+                summary: $0.summary,
+                requiresStatusCheck: $0.requiresCloseStatusCheck
             )
         }
         consequenceNotice = ConsequencePolicy.notice(kind: kind, targets: targets)
@@ -2707,8 +2870,19 @@ final class ShellModel: ObservableObject {
     func confirmConsequencePreview() {
         guard let consequenceNotice else { return }
         if let target = pendingTabCloseTarget {
+            guard closeApprovalStillMatches(target: target) else {
+                consequenceResult = nil
+                interactionNotice = "The tab changed while it was waiting for confirmation. Select it and review the close again."
+                pendingTabCloseTarget = nil
+                pendingCloseScopePaneIDs = nil
+                pendingCloseApprovalFingerprint = nil
+                self.consequenceNotice = nil
+                return
+            }
             if case .local = target, !requireLocalHerdrMutationReadiness() {
                 pendingTabCloseTarget = nil
+                pendingCloseScopePaneIDs = nil
+                pendingCloseApprovalFingerprint = nil
                 self.consequenceNotice = nil
                 return
             }
@@ -2716,8 +2890,19 @@ final class ShellModel: ObservableObject {
             consequenceResult = "Confirmed close requested for tab \(target.tabID)."
             pendingTabCloseTarget = nil
         } else if let target = pendingPaneCloseTarget {
+            guard closeApprovalStillMatches(target: target) else {
+                consequenceResult = nil
+                interactionNotice = "The tab changed while it was waiting for confirmation. Select the pane and review the close again."
+                pendingPaneCloseTarget = nil
+                pendingCloseScopePaneIDs = nil
+                pendingCloseApprovalFingerprint = nil
+                self.consequenceNotice = nil
+                return
+            }
             if case .local = target, !requireLocalHerdrMutationReadiness() {
                 pendingPaneCloseTarget = nil
+                pendingCloseScopePaneIDs = nil
+                pendingCloseApprovalFingerprint = nil
                 self.consequenceNotice = nil
                 return
             }
@@ -2730,6 +2915,8 @@ final class ShellModel: ObservableObject {
                 ? "Confirmation recorded for the prefixed verification preview. No user resource was changed."
                 : "Idle close requires no confirmation. No user resource was changed in this preview."
         }
+        pendingCloseScopePaneIDs = nil
+        pendingCloseApprovalFingerprint = nil
         self.consequenceNotice = nil
     }
 
@@ -2737,7 +2924,75 @@ final class ShellModel: ObservableObject {
         consequenceResult = "Cancelled before any process or checkout was affected."
         pendingPaneCloseTarget = nil
         pendingTabCloseTarget = nil
+        pendingCloseScopePaneIDs = nil
+        pendingCloseApprovalFingerprint = nil
         consequenceNotice = nil
+    }
+
+    private func closeScopePaneIDs(for paneID: String) -> [String]? {
+        let tab = workspaces
+            .lazy
+            .flatMap(\.checkouts)
+            .flatMap(\.tabs)
+            .first(where: { $0.panes.contains(where: { $0.id == paneID }) })
+        if let tab {
+            return tab.panes.map(\.id).sorted()
+        }
+        return scratch.tabs
+            .first(where: { $0.panes.contains(where: { $0.id == paneID }) })?
+            .panes
+            .map(\.id)
+            .sorted()
+    }
+
+    private func closeTabScopePaneIDs(for tabID: String) -> [String]? {
+        if let tab = workspaces
+            .lazy
+            .flatMap(\.checkouts)
+            .flatMap(\.tabs)
+            .first(where: { $0.id == tabID })
+        {
+            return tab.panes.map(\.id).sorted()
+        }
+        return scratch.tabs.first(where: { $0.id == tabID })?.panes.map(\.id).sorted()
+    }
+
+    private func closeApprovalFingerprint(paneIDs: [String]) -> String {
+        let panes = paneIDs.sorted().map { paneID in
+            guard let pane = paneMetadata(for: paneID) else {
+                return "missing|\(paneID)"
+            }
+            let target = destructiveTarget(for: pane)
+            return [
+                paneID,
+                target.statusLabel,
+                target.requiresCloseConfirmation ? "confirm" : "idle",
+                target.requiresStatusCheck ? "unknown" : "known",
+                target.summary,
+            ].joined(separator: "\u{1F}")
+        }
+        return [focusedPaneID ?? "none", panes.joined(separator: "\u{1E}")]
+            .joined(separator: "\u{1D}")
+    }
+
+    private func closeApprovalStillMatches(target: TabCloseTarget) -> Bool {
+        guard let expected = pendingCloseScopePaneIDs,
+              let expectedFingerprint = pendingCloseApprovalFingerprint
+        else { return false }
+        let current: [String]?
+        switch target {
+        case .local(let tabID), .remote(_, let tabID):
+            current = closeTabScopePaneIDs(for: tabID)
+        }
+        return current == expected && closeApprovalFingerprint(paneIDs: current ?? []) == expectedFingerprint
+    }
+
+    private func closeApprovalStillMatches(target: PaneCloseTarget) -> Bool {
+        guard let expected = pendingCloseScopePaneIDs,
+              let expectedFingerprint = pendingCloseApprovalFingerprint,
+              let current = closeScopePaneIDs(for: target.paneID)
+        else { return false }
+        return current == expected && closeApprovalFingerprint(paneIDs: current) == expectedFingerprint
     }
 
     private func executePaneClose(_ target: PaneCloseTarget, confirmed: Bool) {

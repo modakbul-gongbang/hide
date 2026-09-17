@@ -824,6 +824,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     /// Whether closing this pane needs confirmation first, as the core derived
     /// it for the same agent the sidebar row shows.
     let requiresCloseConfirmation: Bool
+    /// Whether activity must be refreshed before the core permits a close.
+    let requiresCloseStatusCheck: Bool
     let summary: String?
     let activityAt: UInt64?
     let fork: CorePaneFork
@@ -846,6 +848,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         case cwd
         case statusLabel = "status_label"
         case requiresCloseConfirmation = "requires_close_confirmation"
+        case requiresCloseStatusCheck = "requires_close_status_check"
         case summary
         case activityAt = "activity_at_unix_ms"
         case children
@@ -861,6 +864,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         cwd: String,
         statusLabel: String,
         requiresCloseConfirmation: Bool = false,
+        requiresCloseStatusCheck: Bool = false,
         summary: String?,
         activityAt: UInt64?,
         fork: CorePaneFork = CorePaneFork(),
@@ -876,6 +880,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.cwd = cwd
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
+        self.requiresCloseStatusCheck = requiresCloseStatusCheck
         self.summary = summary
         self.activityAt = activityAt
         self.fork = fork
@@ -900,6 +905,9 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         requiresCloseConfirmation = try container.decode(
             Bool.self, forKey: .requiresCloseConfirmation
         )
+        requiresCloseStatusCheck = try container.decodeIfPresent(
+            Bool.self, forKey: .requiresCloseStatusCheck
+        ) ?? false
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         activityAt = try container.decodeIfPresent(UInt64.self, forKey: .activityAt)
         fork = try container.decodeIfPresent(CorePaneFork.self, forKey: .fork) ?? CorePaneFork()
@@ -1109,6 +1117,8 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let statusLabel: String
     /// Whether closing this pane needs confirmation first.
     let requiresCloseConfirmation: Bool
+    /// Whether the activity status must be refreshed before closing this pane.
+    let requiresCloseStatusCheck: Bool
     let identityLabel: String
     let summary: String
     let elapsed: String
@@ -1150,6 +1160,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         emphasized: Bool = false,
         statusLabel: String = "Idle",
         requiresCloseConfirmation: Bool = false,
+        requiresCloseStatusCheck: Bool = false,
         summary: String,
         identityLabel: String? = nil,
         elapsed: String,
@@ -1170,6 +1181,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.emphasized = emphasized
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
+        self.requiresCloseStatusCheck = requiresCloseStatusCheck
         self.identityLabel = identityLabel ?? summary
         self.summary = summary
         self.elapsed = elapsed
@@ -1193,6 +1205,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         emphasized = try container.decode(Bool.self, forKey: .emphasized)
         statusLabel = try container.decode(String.self, forKey: .statusLabel)
         requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
+        requiresCloseStatusCheck = try container.decodeIfPresent(Bool.self, forKey: .requiresCloseStatusCheck) ?? false
         summary = try container.decode(String.self, forKey: .summary)
         identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel) ?? summary
         elapsed = try container.decode(String.self, forKey: .elapsed)
@@ -1227,6 +1240,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case emphasized
         case statusLabel = "status_label"
         case requiresCloseConfirmation = "requires_close_confirmation"
+        case requiresCloseStatusCheck = "requires_close_status_check"
         case identityLabel = "identity_label"
         case summary
         case elapsed

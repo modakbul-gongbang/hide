@@ -174,6 +174,11 @@ struct ShellView: View {
                 set: { if !$0 { model.clearInteractionNotice() } }
             )
         ) {
+            if model.interactionStatusRefreshAvailable {
+                Button("Check status", action: model.refreshInteractionStatus)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("hide-refresh-activity-status")
+            }
             Button("OK", action: model.clearInteractionNotice)
         } message: {
             Text(model.interactionNotice ?? "")
@@ -181,8 +186,8 @@ struct ShellView: View {
         // A close with a consequence - a browser pane, whose Chromium tab goes
         // with it, or a working agent - waits here for the operator's answer.
         // The model holds the pending target, so the header X and ⌘W share
-        // one prompt. Return closes and Esc cancels, as in the trash prompt
-        // above; dismissing by any other route cancels through the binding.
+        // one prompt. The destructive action is explicit, while Escape and
+        // the cancel action keep the pane open.
         .alert(
             model.consequenceNotice?.title ?? "",
             isPresented: Binding(
@@ -191,9 +196,9 @@ struct ShellView: View {
             ),
             presenting: model.consequenceNotice
         ) { _ in
-            Button("Close", role: .destructive, action: model.confirmConsequencePreview)
+            Button("Keep open", role: .cancel, action: model.cancelConsequencePreview)
                 .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel, action: model.cancelConsequencePreview)
+            Button("Stop work and close", role: .destructive, action: model.confirmConsequencePreview)
         } message: { notice in
             Text(notice.message)
         }
