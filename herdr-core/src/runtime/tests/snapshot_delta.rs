@@ -440,8 +440,8 @@ fn retained_views_drop_a_pane_whose_tab_left_the_session() {
 #[test]
 fn retained_views_have_no_single_canvas_keyed_by_the_visible_tab() {
     let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
-    let surface =
-        std::fs::read_to_string(shell.join("HideUI.swift")).expect("the terminal surface source");
+    let surface = std::fs::read_to_string(shell.join("HideTerminalSurface.swift"))
+        .expect("the terminal surface source");
     let presentation = std::fs::read_to_string(shell.join("ShellView.swift"))
         .expect("the pane grid presentation source");
     assert!(
@@ -541,10 +541,11 @@ fn main_window_hides_the_system_titlebar_and_keeps_its_title() {
 /// puts a control underneath a system button.
 #[test]
 fn first_row_metrics_come_from_theme_tokens_and_not_from_view_literals() {
-    let source = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS/HideUI.swift"),
-    )
-    .expect("the shell's SwiftUI source");
+    let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+    let main_surface =
+        std::fs::read_to_string(shell.join("HideMainView.swift")).expect("the main surface source");
+    let sidebar =
+        std::fs::read_to_string(shell.join("HideSidebar.swift")).expect("the sidebar source");
 
     let tokens = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS/HideTheme.swift"),
@@ -559,11 +560,11 @@ fn first_row_metrics_come_from_theme_tokens_and_not_from_view_literals() {
     }
 
     let mut offenders = Vec::new();
-    for declaration in [
-        "private struct HideTabStrip: View {",
-        "private struct HideBrandHeader: View {",
+    for (source, declaration) in [
+        (&main_surface, "private struct HideTabStrip: View {"),
+        (&sidebar, "private struct HideBrandHeader: View {"),
     ] {
-        for line in shell_view_body(&source, declaration).lines() {
+        for line in shell_view_body(source, declaration).lines() {
             let trimmed = line.trim();
             // Spacing between controls, the padding that clears the
             // traffic lights, and the row's own height. A square control
