@@ -15,10 +15,9 @@ pub const PATH_KEY: &str = "PATH";
 pub const HOME_KEY: &str = "HOME";
 pub const SSH_AUTH_SOCK_KEY: &str = "SSH_AUTH_SOCK";
 pub const HERDR_SOCKET_PATH_KEY: &str = "HERDR_SOCKET_PATH";
-pub const CLAUDE_CONFIG_DIR_KEY: &str = "CLAUDE_CONFIG_DIR";
 pub const CODEX_HOME_KEY: &str = "CODEX_HOME";
 
-pub const REGISTRY: [EnvironmentVariableSpec; 6] = [
+pub const REGISTRY: [EnvironmentVariableSpec; 5] = [
     EnvironmentVariableSpec {
         key: HOME_KEY,
         required: false,
@@ -44,12 +43,6 @@ pub const REGISTRY: [EnvironmentVariableSpec; 6] = [
         absent_behavior: "Use the default local Herdr socket path",
     },
     EnvironmentVariableSpec {
-        key: CLAUDE_CONFIG_DIR_KEY,
-        required: false,
-        format: "absolute Claude configuration-directory path",
-        absent_behavior: "Use $HOME/.claude for Claude usage credentials",
-    },
-    EnvironmentVariableSpec {
         key: CODEX_HOME_KEY,
         required: false,
         format: "absolute Codex home-directory path",
@@ -64,7 +57,6 @@ pub struct EnvironmentReport {
     pub remote_enabled: bool,
     pub chromux_enabled: bool,
     pub herdr_socket_path_override: Option<String>,
-    pub claude_config_dir: Option<PathBuf>,
     pub codex_home: Option<PathBuf>,
 }
 
@@ -91,7 +83,6 @@ fn validate_with_chromux_path(
     let mut chromux_enabled = true;
     let mut herdr_socket_path_override = None;
     let mut home_path = None;
-    let mut claude_config_dir = None;
     let mut codex_home = None;
 
     for spec in REGISTRY {
@@ -159,25 +150,6 @@ fn validate_with_chromux_path(
                     ("available", "Herdr socket override is available")
                 }
             },
-            CLAUDE_CONFIG_DIR_KEY => match value {
-                None => {
-                    claude_config_dir = home_path
-                        .as_ref()
-                        .map(|home: &PathBuf| home.join(".claude"));
-                    (
-                        "default",
-                        "Claude configuration override is absent; $HOME/.claude is used",
-                    )
-                }
-                Some(value) if value.is_empty() || !Path::new(&value).is_absolute() => (
-                    "invalid",
-                    "Claude configuration override is invalid; Claude usage credentials are unavailable",
-                ),
-                Some(value) => {
-                    claude_config_dir = Some(PathBuf::from(value));
-                    ("available", "Claude configuration override is available")
-                }
-            },
             CODEX_HOME_KEY => match value {
                 None => {
                     codex_home = home_path.as_ref().map(|home: &PathBuf| home.join(".codex"));
@@ -213,7 +185,6 @@ fn validate_with_chromux_path(
         remote_enabled,
         chromux_enabled,
         herdr_socket_path_override,
-        claude_config_dir,
         codex_home,
     }
 }
@@ -232,7 +203,7 @@ mod tests {
 
     #[test]
     fn registry_is_enumerable_and_does_not_expose_values() {
-        assert_eq!(REGISTRY.len(), 6);
+        assert_eq!(REGISTRY.len(), 5);
         assert_eq!(REGISTRY[0].key, "HOME");
         let secret_like_value = OsString::from("/private/tmp/private-agent.sock");
         let chromux_path = Path::new("/private/tmp/hide-environment-test/Library/pnpm/chromux");
@@ -265,7 +236,6 @@ mod tests {
         assert_eq!(report.statuses[3].state, "default");
         assert!(report.home_path.is_none());
         assert!(report.herdr_socket_path_override.is_none());
-        assert!(report.claude_config_dir.is_none());
         assert!(report.codex_home.is_none());
     }
 
@@ -304,7 +274,6 @@ mod tests {
     fn invalid_provider_overrides_do_not_fall_back_to_home() {
         let report = validate_with(|key| match key {
             HOME_KEY => Some(OsString::from("/private/tmp/hide-home")),
-            CLAUDE_CONFIG_DIR_KEY => Some(OsString::from("relative-claude")),
             CODEX_HOME_KEY => Some(OsString::from("relative-codex")),
             _ => None,
         });
@@ -313,9 +282,7 @@ mod tests {
             report.home_path,
             Some(PathBuf::from("/private/tmp/hide-home"))
         );
-        assert!(report.claude_config_dir.is_none());
         assert!(report.codex_home.is_none());
         assert_eq!(report.statuses[4].state, "invalid");
-        assert_eq!(report.statuses[5].state, "invalid");
     }
 }

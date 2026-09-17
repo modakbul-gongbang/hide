@@ -36,6 +36,7 @@ mod usage;
 mod wire;
 pub mod workspace;
 mod worktrees;
+mod zoneinfo;
 
 pub use ffi::{
     HerdrBytes, HerdrCore, herdr_core_create, herdr_core_destroy, herdr_core_dispatch,

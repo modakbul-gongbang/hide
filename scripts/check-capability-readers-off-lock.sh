@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The capabilities that shell out - the changes view's Git reader, the port
-# reader, the project panel's worktree, GitHub, and disk readers, and the
-# Background AI provider probe - run on the session-sync coordinator thread and
-# never under the runtime mutex or on a per-event path.
+# reader, the project panel's worktree, GitHub, and disk readers, the
+# Background AI provider probe, and the Weekly Usage reader's `claude -p
+# /usage` child - run on the session-sync coordinator thread and never under
+# the runtime mutex or on a per-event path.
 #
 # Both properties are structural, so they are asserted structurally: the
 # runtime module holds the mutex, so it must fork nothing; and the readers'
@@ -11,15 +12,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-readers=(changes ports worktrees github disk ai)
+readers=(changes ports worktrees github disk ai usage)
 
 # These readers reach the network, walk a whole tree, or start a provider CLI,
 # so they must also move the blocking part off the coordinator thread itself.
 # `gh pr list` takes seconds, `du` over a build tree takes longer, and the AI
-# probe starts a `codex app-server` child and runs `claude auth status`; run
-# inline, any of them would be that much added latency on every Herdr pane
-# event.
-worker_readers=(worktrees github disk ai)
+# probe starts a `codex app-server` child and runs `claude auth status`, and
+# the usage reader runs `claude -p /usage` for seconds; run inline, any of
+# them would be that much added latency on every Herdr pane event.
+worker_readers=(worktrees github disk ai usage)
 
 # 1. The module that holds the mutex, its runtime submodules, and the file
 #    module it calls synchronously while holding it, execute no subprocess at

@@ -11,6 +11,12 @@ null_structured_output, api_401, api_403, api_429, api_500, api_400,
 structured_output_retries, context_limit, no_result_frame, init_frame_only,
 slow, no_account, auth_broken, auth_without_field.
 FAKE_ARGS_FILE records the argument vector, FAKE_STDIN_FILE the prompt body.
+
+A `/usage` run receives a whitelisted environment, so it reads no FAKE_*
+variable. It takes its mode from a `usage-mode` file in its working directory
+(text, cost, slow, exit, is_error, not_json) and writes what it received -
+argv to `usage-args.json`, the environment's key set to `usage-env.json` -
+into that same directory.
 """
 import json
 import os
@@ -30,6 +36,39 @@ def emit(obj, code=0):
     sys.stdout.flush()
     sys.exit(code)
 
+
+USAGE_TEXT = (
+    "You are currently using your subscription to power your Claude Code usage\n\n"
+    "Current session: 4% used · resets Sep 17 at 9pm (Asia/Seoul)\n"
+    "Current week (all models): 1% used · resets Sep 24 at 1pm (Asia/Seoul)\n"
+    "Current week (Fable): 0% used · resets Sep 24 at 1pm (Asia/Seoul)\n"
+)
+COST_TEXT = "Total cost:            $0.0000\nTotal duration (API):  0s\n"
+
+if ARGS[:2] == ["-p", "/usage"]:
+    with open("usage-args.json", "w", encoding="utf-8") as handle:
+        json.dump(ARGS, handle)
+    with open("usage-env.json", "w", encoding="utf-8") as handle:
+        json.dump(sorted(os.environ), handle)
+    try:
+        with open("usage-mode", encoding="utf-8") as handle:
+            usage_mode = handle.read().strip()
+    except FileNotFoundError:
+        usage_mode = "text"
+    local = {"type": "result", "subtype": "success", "is_error": False,
+             "duration_api_ms": 0, "num_turns": 0, "total_cost_usd": 0,
+             "local_command": "usage", "session_id": "s-usage"}
+    if usage_mode == "slow":
+        time.sleep(60)
+    if usage_mode == "exit":
+        sys.stdout.write("fatal: something\n")
+        sys.exit(2)
+    if usage_mode == "not_json":
+        sys.stdout.write("Loading...\n")
+        sys.exit(0)
+    if usage_mode == "is_error":
+        emit({**local, "is_error": True, "result": "usage failed"})
+    emit({**local, "result": COST_TEXT if usage_mode == "cost" else USAGE_TEXT})
 
 if ARGS[:2] == ["auth", "status"]:
     if MODE == "auth_broken":

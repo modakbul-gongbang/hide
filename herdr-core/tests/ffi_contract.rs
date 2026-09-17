@@ -297,7 +297,6 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "SSH_AUTH_SOCK",
             "PATH",
             "HERDR_SOCKET_PATH",
-            "CLAUDE_CONFIG_DIR",
             "CODEX_HOME",
         ]
     );

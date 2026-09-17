@@ -371,7 +371,6 @@ fn runtime() -> Runtime {
             chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: None,
-            claude_config_dir: None,
             codex_home: None,
         },
     )
