@@ -527,8 +527,15 @@ impl AiBackend for CodexAppServerBackend {
             process::measure(pid)
         };
         if child_gone {
-            // The next request starts a fresh one.
-            *guard = None;
+            // Take the dead session out, release the lock, then drop it: its
+            // shutdown runs `Session::terminate` and a lost-but-not-yet-dead
+            // child can hold that for the full graceful grace, which must not
+            // block the mutex other callers (the idle reaper, `restart`, the
+            // backend's own `Drop`) wait on. The next request starts a fresh
+            // one.
+            let dead = guard.take();
+            drop(guard);
+            drop(dead);
         }
         result
     }
