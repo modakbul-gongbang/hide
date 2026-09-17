@@ -120,7 +120,7 @@ function violations(directory, structureOnly = false) {
     const emptyCount = counted['control:ContentUnavailableView'] ?? 0;
     // PetDashboard intentionally retains one system empty state. Every other
     // shell empty/error state belongs to HideEmptyState.
-    const allowedPetEmptyStates = file === 'HideUI.swift' ? 1 : 0;
+    const allowedPetEmptyStates = file === 'PetDashboard.swift' ? 1 : 0;
     if (emptyCount > allowedPetEmptyStates) {
       problems.push(`${file}: use HideEmptyState instead of ContentUnavailableView`);
     }

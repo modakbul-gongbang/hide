@@ -95,9 +95,9 @@
         "implementation:ButtonStyle": 1
       }
     },
-    "HideUI.swift": {
+    "PetDashboard.swift": {
       "kind": "legacy",
-      "reason": "The remaining shell sheet keeps one intentional PetDashboard system empty state; migrated controls use shared owners.",
+      "reason": "The Pet dashboard keeps its intentional system empty state while the shell surface uses shared controls.",
       "rules": {
         "control:ContentUnavailableView": 1
       }
