@@ -210,7 +210,10 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         let home_path = environment.home_path.clone();
         let usage_paths = crate::usage::UsagePaths {
             home: home_path.clone(),
-            claude_config_dir: environment.claude_config_dir.clone(),
+            claude_cwd: std::path::Path::new(&options.app_state_path)
+                .parent()
+                .filter(|directory| !directory.as_os_str().is_empty())
+                .map(std::path::Path::to_path_buf),
             codex_home: environment.codex_home.clone(),
         };
         let remote_enabled = environment.remote_enabled;

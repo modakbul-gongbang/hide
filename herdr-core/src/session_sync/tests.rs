@@ -198,7 +198,6 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             remote_enabled: false,
             chromux_enabled: false,
             herdr_socket_path_override: None,
-            claude_config_dir: None,
             codex_home: None,
         },
     )))
@@ -574,7 +573,6 @@ fn official_remote_session_coordinator_probe() {
             remote_enabled: true,
             chromux_enabled: false,
             herdr_socket_path_override: None,
-            claude_config_dir: None,
             codex_home: None,
         },
     )));

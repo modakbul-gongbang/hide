@@ -313,7 +313,10 @@ mod usage {
         let dir = std::env::temp_dir().join(format!(
             "hide-ai-usage-{mode}-{}-{}",
             std::process::id(),
-            std::thread::current().name().unwrap_or("t").replace("::", "-")
+            std::thread::current()
+                .name()
+                .unwrap_or("t")
+                .replace("::", "-")
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -333,7 +336,10 @@ mod usage {
     fn the_result_text_comes_back_whatever_it_says() {
         let dir = usage_dir("text");
         let text = usage_backend(&dir).usage_text(&CancelToken::new()).unwrap();
-        assert!(text.contains("Current week (all models): 1% used"), "{text}");
+        assert!(
+            text.contains("Current week (all models): 1% used"),
+            "{text}"
+        );
 
         let dir = usage_dir("cost");
         let text = usage_backend(&dir).usage_text(&CancelToken::new()).unwrap();
@@ -421,6 +427,9 @@ mod usage {
             usage_backend(&dir).usage_text(&cancel),
             Err(UsageError::Cancelled)
         );
-        assert!(started.elapsed() < Duration::from_secs(20), "the child was not killed");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the child was not killed"
+        );
     }
 }

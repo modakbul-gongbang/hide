@@ -17,6 +17,7 @@ No feature type lives in the crate, and no provider detail leaks out of it.
 
 The user's installed and logged-in CLIs are the only credentials for background AI requests.
 The background AI boundary reads no token file and adds no environment variable.
+`hide-ai` is also the only code that starts a `claude` or `codex` child: the Weekly Usage reader below asks the same `ClaudeCliBackend` for its `/usage` text rather than running the CLI itself.
 
 - `codex`: `codex app-server --listen stdio://`, the official JSON-RPC surface of the Codex CLI, driven with an ephemeral read-only thread, the feature's system prompt as the base instructions, every optional feature disabled, and the feature's output schema attached to the turn.
   The default model is `gpt-5.6-luna`.
@@ -84,23 +85,42 @@ There is no usage cap and no budget surface for background AI requests; that is 
 ## Weekly usage display
 
 The toolbar's Weekly Usage popover is a separate read-only capability owned by `herdr-core/src/usage.rs`.
-It uses the user's existing CLI logins to read each provider's seven-day account window, and it never routes a request through `hide-ai`.
+It uses the user's existing CLI logins to read each provider's seven-day account window, and it never routes a model request through `hide-ai`.
 
-For Claude Code, the core tries the configuration-specific macOS Keychain service, the legacy service, and then `.credentials.json` under `CLAUDE_CONFIG_DIR` or `~/.claude`.
-The next source is tried only when the previous Keychain item is absent; a prompt denial, Keychain error, or timeout fails closed before any credential file or provider request is read.
-For Codex, it reads `auth.json` under `CODEX_HOME` or `~/.codex`.
-An invalid explicit `CLAUDE_CONFIG_DIR` or `CODEX_HOME` disables that provider's credential read instead of falling back to `HOME`.
-The access token exists only long enough to build the HTTPS authorization header.
-Hide never refreshes, replaces, persists, logs, or includes it in a snapshot, and it never exposes the account identifier outside the request header.
-A keychain read is limited to three seconds; a prompt denial, missing credential, or 401 is shown as a sign-in-required state rather than retried or hidden.
-Only one Keychain read may be in flight, so a system prompt that outlives the timeout cannot accumulate background readers on later refresh ticks.
+For Claude Code, the core runs `claude -p "/usage" --output-format json --no-session-persistence` through `ClaudeCliBackend::usage_text` and parses the `result` text the CLI prints.
+`/usage` is a local command: the CLI authenticates against its own keychain item, makes no model turn (`duration_api_ms` 0, cost 0), and with `--no-session-persistence` leaves nothing under `~/.claude/projects/`, in `claude --resume`, or in Hide's Agent Conversation list.
+Hide holds no Claude token at any point and never opens the keychain itself; the earlier direct keychain read is gone because an ad hoc signed dev build has a new code identity on every rebuild, so macOS revoked "always allow" and the row fell to a three-second timeout.
+The child receives exactly `HOME`, `PATH`, `USER`, `LOGNAME` and `TMPDIR` (`hide_ai::USAGE_ENVIRONMENT`) and runs in Hide's state directory.
+`USER` is what lets the CLI find its keychain account; without it the CLI prints `/cost` text as if logged out.
+`HERDR_*` and `CLAUDECODE` are withheld on purpose: without `HERDR_ENV` the operator's Herdr and hide agent hooks exit early, and any other hook in the operator's `settings.json` runs as it would for any `claude -p`.
+`--bare` cannot be used, because it never reads the keychain.
+`CLAUDE_CONFIG_DIR` is no longer an environment key Hide reads: the child does not receive it, so the CLI uses its default configuration directory.
 
-The core calls the providers' read-only usage endpoints outside `Mutex<Runtime>` after a one-second launch delay.
-It refreshes every five minutes only while the main window is visible, and refreshes when an older popover is reopened.
-A 429 honors `Retry-After` in either delay-seconds or HTTP-date form, or falls back to bounded 5, 10, and 15 minute delays.
+The parser reads the `Current …` lines as `Current (session|week)( (<scope>))?: <n>% (used|left) · resets <Mon> <D> at <h>[:mm](am|pm) (<IANA zone>)`.
+`Current week (all models)` is the row, every other `Current week` line is a scoped bucket under it, `Current session` is read and dropped, and `left` is `100 - n`.
+The reset instant is the next wall-clock match in the printed zone, resolved through the system tz database (`herdr-core/src/zoneinfo.rs`); a match that passed within the last window is the reset that just passed, so the row reads as expired until the next read.
+The observed 2.1.274 output is fixed as a test fixture under `herdr-core/tests/fixtures/claude-usage/`, and the parsed reset agrees with the CLI's own `.usage-cache.json` value for the same window.
+Only English output is parsed; another locale reads as unavailable.
+
+Claude failures are classified, never shown as a zero:
+
+- `/cost` text with no `Current` line (the CLI could not read its login): `Sign in with claude to see usage`.
+- A `claude` binary not on `PATH`: a row naming the binary, looked up again on the next read.
+- A timeout (the child is killed at 30 seconds) or a child that exits non-zero or reports `is_error`: transient, so a success from the last 15 minutes stays with a `Last checked Nm ago · offline` tooltip; with nothing to keep, `Claude Code weekly usage response is unavailable`.
+- stdout that is not a result frame, or a `Current` line the parser does not know: `Claude Code weekly usage response is unavailable` at once, whatever was kept.
+- A parsed reset that has already passed: the existing expired row.
+
+The child runs on a `BackgroundRead` worker, so the coordinator thread that applies every Herdr pane event never waits on it; one child runs at a time, and dropping the reader cancels a child still running at shutdown.
+The failure event carries the provider and the failure kind only; no terminal text, token, or account identifier is logged or placed in a snapshot.
+
+For Codex, the core reads `auth.json` under `CODEX_HOME` or `~/.codex`; an invalid explicit `CODEX_HOME` disables that read instead of falling back to `HOME`.
+The access token exists only long enough to build the HTTPS authorization header, and Hide never refreshes, persists, logs, or includes it in a snapshot.
+The Codex usage endpoint is called outside `Mutex<Runtime>`; a 429 honors `Retry-After` in either delay-seconds or HTTP-date form, or falls back to bounded 5, 10, and 15 minute delays.
 An offline response keeps a non-expired success for at most 15 minutes; Codex can then fall back to the latest weekly window in a local session JSONL file.
-The previous Claude `.usage-cache.json` input is no longer read.
-Failures produce one structured event containing only provider, HTTP status, and error kind.
+
+Both providers are first read one second after launch, every five minutes while the main window is visible, and at once when a popover older than a minute is reopened.
+The previous Claude `.usage-cache.json` input is not read.
+Failures produce one structured event containing only provider, HTTP status where there is one, and error kind.
 
 ## Selection and fallback
 
@@ -179,4 +199,4 @@ Still give a development build its own home so it never writes next to the insta
   The Settings model control always offers the configured model even when it is not on the provider's list, so reaching the screen never silently changes the operator's choice.
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
-- Weekly usage in the toolbar reads the providers' usage endpoints, with Codex session JSONL as an offline fallback only; the router's daily rollup is a log line, not a popover value.
+- Weekly usage in the toolbar reads Codex's usage endpoint, with Codex session JSONL as an offline fallback only, and Claude Code's `/usage` text; the router's daily rollup is a log line, not a popover value.

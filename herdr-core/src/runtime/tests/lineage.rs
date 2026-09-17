@@ -151,7 +151,6 @@ fn lineage_collapse_persists_without_attention_expanding_it_and_prunes_on_disapp
             chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: None,
-            claude_config_dir: None,
             codex_home: None,
         },
     );
