@@ -7,6 +7,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 mod agents;
 mod editor;
 mod events;
+mod operations;
 mod projects;
 mod session;
 mod snapshot_delta;
@@ -15,6 +16,7 @@ mod terminal;
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use events::*;
+use operations::*;
 
 use crate::ffi::ChangeNotifier;
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
@@ -29,10 +31,11 @@ use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
     EditorTabKind, EditorTabSnapshot, ExplorerOperationSnapshot, LastErrorSnapshot,
     PANE_TEXT_SCALE_STEP, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
-    PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
-    RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
-    SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk,
-    TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
+    PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
+    PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
+    RightPanelSection, SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface,
+    TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot,
+    clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
@@ -123,7 +126,15 @@ struct PendingTabMove {
     /// the operator asked for. That workspace reporting exactly this order is
     /// what commits the arrangement.
     herdr_order: Vec<String>,
+    target_id: String,
     generation: u64,
+    connection_generation: u64,
+    phase: String,
+    stage: String,
+    started_at_unix_ms: u64,
+    deadline_at_unix_ms: Option<u64>,
+    message: Option<String>,
+    retryable: bool,
 }
 
 /// Translates a wanted Herdr tab order into the index `tab.move` takes.
@@ -210,6 +221,11 @@ fn reveal_expansion_paths(checkout_path: &str, path: &str, is_directory: bool) -
 
 /// How long the pet plays its waking pose after activity interrupts sleep.
 const PET_WAKING_MS: u64 = 1_200;
+
+/// The absolute lifetime of one stage of a Herdr-owned mutation: restore
+/// capture, the request itself, and the topology wait each get this long
+/// before the operation becomes a caller-visible unknown result (PRD D-08).
+const CLOSE_STAGE_TIMEOUT_MS: u64 = 5_000;
 
 /// How long a view-state notification may stay unconfirmed before Hide stops
 /// treating Herdr's answer as pending.
@@ -505,6 +521,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
                 (
                     agent.status_label.as_str(),
                     agent.requires_close_confirmation,
+                    agent.requires_close_status_check,
                 ),
             )
         })
@@ -516,7 +533,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
         .flat_map(|checkout| checkout.tabs.iter_mut())
         .flat_map(|tab| tab.panes.iter_mut())
     {
-        let Some((status_label, requires_close_confirmation)) =
+        let Some((status_label, requires_close_confirmation, requires_close_status_check)) =
             by_pane.get(pane.id.as_str()).copied()
         else {
             continue;
@@ -527,6 +544,10 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
         }
         if pane.requires_close_confirmation != requires_close_confirmation {
             pane.requires_close_confirmation = requires_close_confirmation;
+            changed = true;
+        }
+        if pane.requires_close_status_check != requires_close_status_check {
+            pane.requires_close_status_check = requires_close_status_check;
             changed = true;
         }
     }
@@ -675,6 +696,12 @@ pub struct Runtime {
     remote_terminals: HashMap<String, RemoteTerminalContext>,
     remote_file_transports: HashMap<String, RusshSftpTransport>,
     remote_control_requests: VecDeque<(String, String)>,
+    /// Remote mutations waiting for a transport answer or fresh topology,
+    /// keyed by target and request id.
+    remote_operations: HashMap<(String, String), PendingRemoteOperation>,
+    /// Advances when a remote target's session connects or drops, so a late
+    /// answer from an older connection cannot settle a newer request.
+    remote_connection_generations: HashMap<String, u64>,
     remote_tab_creations_in_flight: HashSet<(String, String, String, String)>,
     terminal_sessions: HashMap<String, TerminalSession>,
     terminal_session_generations: HashMap<String, u64>,
@@ -744,17 +771,28 @@ pub struct Runtime {
     panes_closing: HashSet<String>,
     /// User-initiated local closes, newest last. Memory only by contract.
     recent_closed: VecDeque<ClosedItem>,
-    close_captures_in_flight: HashSet<String>,
+    /// User closes in request order. A close is promoted onto
+    /// `recent_closed` only from the front of this queue and only once its
+    /// topology is confirmed, so the confirmed stack keeps the order the
+    /// operator closed things in (PRD D-11).
     close_capture_order: VecDeque<String>,
-    close_capture_results: HashMap<
-        String,
-        (
-            live::CloseCaptureRequest,
-            Result<live::CloseCaptureOutcome, String>,
-        ),
-    >,
+    close_operations: HashMap<String, PendingClose>,
+    close_status_checks_in_flight: HashSet<String>,
+    pane_operations: HashMap<String, PendingPaneOperation>,
+    /// The last complete raw layout Herdr confirmed for each tab. Mutation
+    /// operations compare fresh geometry with this value, because a model
+    /// layout has pane ids and split ratios but no PTY rectangle to confirm a
+    /// resize against.
+    confirmed_pane_layout_signatures: HashMap<String, PaneTopologySignature>,
     recent_closed_sequence: u64,
     reopen_in_flight: Option<String>,
+    /// Advances on every `set_live`, so a worker started against an earlier
+    /// local Herdr connection cannot settle an operation on the current one.
+    live_generation: u64,
+    /// A shell-requested read-only `agent.list` refresh, drained by the
+    /// coordinator on its next pass.
+    status_refresh_requested: bool,
+    next_async_operation_id: u64,
     /// Panes that were scrolled before any view reported their size. One
     /// diagnostic answers for the whole wait; a wheel burst against a pane
     /// with no size would otherwise fill the bounded diagnostics list with the
@@ -971,6 +1009,8 @@ impl Runtime {
             remote_terminals: HashMap::new(),
             remote_file_transports: HashMap::new(),
             remote_control_requests: VecDeque::new(),
+            remote_operations: HashMap::new(),
+            remote_connection_generations: HashMap::new(),
             remote_tab_creations_in_flight: HashSet::new(),
             terminal_sessions: HashMap::new(),
             terminal_session_generations: HashMap::new(),
@@ -999,11 +1039,16 @@ impl Runtime {
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             recent_closed: VecDeque::new(),
-            close_captures_in_flight: HashSet::new(),
             close_capture_order: VecDeque::new(),
-            close_capture_results: HashMap::new(),
+            close_operations: HashMap::new(),
+            close_status_checks_in_flight: HashSet::new(),
+            pane_operations: HashMap::new(),
+            confirmed_pane_layout_signatures: HashMap::new(),
             recent_closed_sequence: 0,
             reopen_in_flight: None,
+            live_generation: 0,
+            status_refresh_requested: false,
+            next_async_operation_id: 0,
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
@@ -1074,6 +1119,7 @@ impl Runtime {
     }
 
     pub fn set_live(&mut self, context: LiveContext) {
+        self.live_generation = self.live_generation.saturating_add(1);
         self.live = Some(context);
     }
 
@@ -1233,6 +1279,8 @@ fn project_layout_panes(
                     .unwrap_or_else(|| "Unknown".to_owned()),
                 requires_close_confirmation: agent
                     .is_some_and(|agent| agent.requires_close_confirmation),
+                requires_close_status_check: agent
+                    .is_some_and(|agent| agent.requires_close_status_check),
                 summary: agent
                     .map(|agent| agent.summary.clone())
                     .filter(|summary| summary != crate::sidebar::MISSING_SUMMARY),

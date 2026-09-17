@@ -518,6 +518,7 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
         cwd: cwd.to_owned(),
         status_label: "Attached".to_owned(),
         requires_close_confirmation: false,
+        requires_close_status_check: false,
         summary: None,
         activity_at_unix_ms: None,
         fork: PaneForkSnapshot::default(),
@@ -1143,6 +1144,7 @@ fn closed_file(key: &str, path: &str) -> ClosedItem {
 fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
     live::CloseCaptureRequest {
         key: key.to_owned(),
+        connection_generation: 0,
         context: ClosedContext {
             workspace_id: "workspace:0".to_owned(),
             workspace_label: "Fixture".to_owned(),

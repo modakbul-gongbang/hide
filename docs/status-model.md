@@ -11,7 +11,7 @@ What it needs from the operator, whether it is running, whether the operator has
 - Ownership: operator, delegated, escalated.
 
 `herdr-core/src/sidebar.rs` is the single owner of all four.
-It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, and whether closing the pane needs a confirmation - so no surface decides any of it a second time.
+It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
 
 Ownership is not stored anywhere.
 It is read back off the row: a row whose lineage depth is greater than zero is delegated, and a row whose stall level is `hard` is escalated regardless of depth.
@@ -59,6 +59,15 @@ A blocked pane stays in Needs You whether or not it has been read.
 The approval prompt is still on screen waiting, so it leaves the group when the prompt is answered, not when it is looked at.
 
 Done is deliberately separate from Needs You: finished-unseen is "look when you have a moment", an unread demand is "act now".
+
+## Close protection is separate from read state
+
+`requires_close_confirmation` and `requires_close_status_check` are core-derived values carried by both the sidebar agent row and its pane projection.
+The confirmation value is true for Working activity, an unresolved demand, or a blocked pane; a stopped unread completion does not create a work-interruption prompt.
+The status-check value is true only for Unknown activity with no demand and no block.
+It prevents a destructive local or remote close from guessing that an unobserved agent is idle, and the caller-visible remedy is to refresh status before closing.
+The shell presents that remedy as the existing read-only `Check status` action and keeps the destructive close confirmation separate from it.
+An unknown row still belongs to Seen for sidebar grouping, so close safety never changes the read or ownership axes.
 
 Needs You and Done are the operator's own groups, so only the operator's own rows enter them.
 A delegated row can be Working or Seen and nothing else: its question, approval, error or completion is its parent's problem, and answering it is what delegation means.
@@ -163,6 +172,7 @@ Raised Needs You and Done rows remain available, while number shortcuts skip hid
 ### Verification ownership
 
 Core status tests own the Done mark, representative priority, unique-pane counts, cross-checkout ownership, and unchanged read semantics.
+Core close tests own the separation between work confirmation and unknown-status blocking, including local and remote close refusal.
 Swift presentation tests own fixed semantic colors and the shared disconnected override.
 Native verification covers mixed states, Done-to-Idle acknowledgment, right-side disclosure, unchanged terminal selection on collapse, empty and missing workspaces, and disconnect/recovery.
 Run evidence belongs under `agents/runs/`, never in `docs/`.

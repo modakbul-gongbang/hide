@@ -598,6 +598,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "reopen_closed", payload: [:])
     }
 
+    func checkCloseStatus(_ key: String) {
+        dispatch(kind: "check_close_status", payload: ["key": key])
+    }
+
+    func refreshStatus() {
+        dispatch(kind: "refresh_status", payload: [:])
+    }
+
     /// Starts one chat and reports what happened.
     ///
     /// The four Herdr calls run on a detached task, never on the main actor

@@ -97,10 +97,16 @@ private struct HideTabStrip: View {
                                                 Image(systemName: tabIcon(tab))
                                                     .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                                             }
-                                            Text(tab.label)
+                                            Text(tab.label + model.tabActivity(for: tab))
                                                 .hideFont(size: HideTheme.Typography.body, weight: tab.active ? .semibold : .medium)
                                                 .lineLimit(1)
                                                 .frame(maxWidth: HideTheme.tabTitleMaxWidth, alignment: .leading)
+                                            if let notice = model.tabNotice(for: tab) {
+                                                Image(systemName: "exclamationmark.triangle")
+                                                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                                                    .foregroundStyle(HideTheme.warning)
+                                                    .accessibilityLabel(notice)
+                                            }
                                             if tab.dirty {
                                                 Circle()
                                                     .fill(HideTheme.secondary)
@@ -204,9 +210,9 @@ private struct HideTabStrip: View {
                 .layoutPriority(1)
             }
 
-            if let notice = model.reopenTabNotice {
+            if let notice = model.reopenTabNotice ?? model.pendingCloseNotice ?? model.asyncTabNotice {
                 HStack(spacing: HideTheme.spacingXS) {
-                    if model.core.snapshot?.recentClosed.restoring == true {
+                    if model.core.snapshot?.recentClosed.restoring == true || model.pendingCloseStatusChecking {
                         ProgressView()
                             .controlSize(.small)
                     } else {
@@ -216,6 +222,12 @@ private struct HideTabStrip: View {
                     Text(notice)
                         .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                         .lineLimit(1)
+                    if model.pendingCloseNeedsStatusCheck {
+                        Button("Check status", action: model.checkLatestCloseStatus)
+                            .buttonStyle(HideTextButtonStyle(appearance: .quiet))
+                            .disabled(model.pendingCloseStatusChecking)
+                            .accessibilityIdentifier("hide-check-close-status")
+                    }
                 }
                 .foregroundStyle(HideTheme.warning)
                 .accessibilityIdentifier("hide-reopen-notice")

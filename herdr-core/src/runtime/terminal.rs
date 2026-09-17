@@ -80,7 +80,13 @@ impl Runtime {
         self.retain_terminal_session_state(&keep);
         self.terminal_sizes.retain(|pane_id, _| keep(pane_id));
         self.terminal_view_sizes.retain(|pane_id, _| keep(pane_id));
-        self.panes_closing.retain(|pane_id| keep(pane_id));
+        let close_held_panes = self
+            .close_operations
+            .values()
+            .flat_map(|operation| operation.pane_ids.iter().cloned())
+            .collect::<HashSet<_>>();
+        self.panes_closing
+            .retain(|pane_id| keep(pane_id) || close_held_panes.contains(pane_id));
         before != self.terminal_state_len()
     }
     /// Removes the state of a pane's terminal session while the pane itself,
@@ -330,6 +336,72 @@ impl Runtime {
         result: Result<PaneControlOutcome, String>,
         elapsed_ms: u128,
     ) -> bool {
+        self.ingest_pane_control_result_with_failure(
+            action,
+            result.map_err(live::ControlFailure::Definite),
+            elapsed_ms,
+            None,
+        )
+    }
+
+    pub(crate) fn ingest_pane_control_failure_with_generation(
+        &mut self,
+        action: PaneControlAction,
+        result: Result<PaneControlOutcome, live::ControlFailure>,
+        elapsed_ms: u128,
+        connection_generation: Option<u64>,
+    ) -> bool {
+        self.ingest_pane_control_result_with_failure(
+            action,
+            result,
+            elapsed_ms,
+            connection_generation,
+        )
+    }
+
+    fn ingest_pane_control_result_with_failure(
+        &mut self,
+        action: PaneControlAction,
+        result: Result<PaneControlOutcome, live::ControlFailure>,
+        elapsed_ms: u128,
+        connection_generation: Option<u64>,
+    ) -> bool {
+        let pane_operation_id = self
+            .pane_operations
+            .iter()
+            .find(|(_, operation)| {
+                operation.kind == action.kind()
+                    && operation.target_id == action.pane_id()
+                    && operation.phase == "transmitting"
+                    && connection_generation
+                        .is_none_or(|generation| operation.connection_generation == generation)
+            })
+            .map(|(id, _)| id.clone());
+        if let Some(id) = pane_operation_id {
+            return self.ingest_pane_mutation_result(&id, result, elapsed_ms);
+        }
+        let scratch_close_key = if let PaneControlAction::Close { pane_id } = &action {
+            self.close_operations
+                .iter()
+                .find(|(_, operation)| {
+                    operation.target_id == *pane_id
+                        && operation.phase == "transmitting"
+                        && operation.request.context.checkout_id == crate::scratch::NODE_ID
+                        && connection_generation
+                            .is_none_or(|generation| operation.connection_generation == generation)
+                })
+                .map(|(key, _)| key.clone())
+        } else {
+            None
+        };
+        if let Some(key) = scratch_close_key {
+            return self.ingest_scratch_close_result(
+                &key,
+                result,
+                elapsed_ms,
+                connection_generation,
+            );
+        }
         match (action, result) {
             (
                 PaneControlAction::Project { pane_id },
@@ -384,7 +456,10 @@ impl Runtime {
                         // move (PRD B2).
                         self.push_diagnostic(
                             "lineage.relocate_failed",
-                            format!("Could not move delegated pane {pane_id}: {error}"),
+                            format!(
+                                "Could not move delegated pane {pane_id}: {}",
+                                error.message()
+                            ),
                         );
                     }
                 }
@@ -496,11 +571,12 @@ impl Runtime {
                 );
                 true
             }
-            (PaneControlAction::Project { .. }, Err(message)) => {
-                self.set_error("pane.projection_failed", message, true);
+            (PaneControlAction::Project { .. }, Err(error)) => {
+                self.set_error("pane.projection_failed", error.message().to_owned(), true);
                 true
             }
-            (PaneControlAction::Focus { pane_id }, Err(message)) => {
+            (PaneControlAction::Focus { pane_id }, Err(error)) => {
+                let message = error.message().to_owned();
                 // Hide keeps the pane it focused. The refusal is reported and
                 // the wait ends, so the next Herdr event naming another pane
                 // is read as the authority it is rather than as a late answer.
@@ -508,20 +584,64 @@ impl Runtime {
                 self.set_error("pane.focus_failed", message, true);
                 true
             }
-            (PaneControlAction::Split { .. }, Err(message)) => {
-                self.set_error("pane.split_failed", message, true);
+            (PaneControlAction::Split { .. }, Err(error)) => {
+                if error.is_ambiguous() {
+                    self.set_error(
+                        "pane.split_unknown",
+                        format!(
+                            "Pane split result is unknown; no split was resent: {}",
+                            error.message()
+                        ),
+                        true,
+                    );
+                } else {
+                    self.set_error("pane.split_failed", error.message().to_owned(), true);
+                }
                 true
             }
-            (PaneControlAction::Resize { .. }, Err(message)) => {
-                self.set_error("pane.resize_failed", message, true);
+            (PaneControlAction::Resize { .. }, Err(error)) => {
+                if error.is_ambiguous() {
+                    self.set_error(
+                        "pane.resize_unknown",
+                        format!(
+                            "Pane resize result is unknown; no resize was resent: {}",
+                            error.message()
+                        ),
+                        true,
+                    );
+                } else {
+                    self.set_error("pane.resize_failed", error.message().to_owned(), true);
+                }
                 true
             }
-            (PaneControlAction::ToggleZoom { .. }, Err(message)) => {
-                self.set_error("pane.zoom_failed", message, true);
+            (PaneControlAction::ToggleZoom { .. }, Err(error)) => {
+                if error.is_ambiguous() {
+                    self.set_error(
+                        "pane.zoom_unknown",
+                        format!(
+                            "Pane zoom result is unknown; no zoom was resent: {}",
+                            error.message()
+                        ),
+                        true,
+                    );
+                } else {
+                    self.set_error("pane.zoom_failed", error.message().to_owned(), true);
+                }
                 true
             }
-            (PaneControlAction::Close { .. }, Err(message)) => {
-                self.set_error("pane.close_failed", message, true);
+            (PaneControlAction::Close { .. }, Err(error)) => {
+                if error.is_ambiguous() {
+                    self.set_error(
+                        "pane.close_unknown",
+                        format!(
+                            "Pane close result is unknown; no close was resent: {}",
+                            error.message()
+                        ),
+                        true,
+                    );
+                } else {
+                    self.set_error("pane.close_failed", error.message().to_owned(), true);
+                }
                 true
             }
         }
@@ -683,7 +803,10 @@ impl Runtime {
         // keeps what it was showing until it is removed. Every other reason
         // still reports itself.
         if self.pane_is_going_away(pane_id) {
-            self.panes_closing.remove(pane_id);
+            let close_still_pending = self.close_operation_holds_pane(pane_id);
+            if !close_still_pending {
+                self.panes_closing.remove(pane_id);
+            }
             self.terminal_session_lifecycles.insert(
                 pane_id.to_owned(),
                 TerminalSessionLifecycle {
@@ -1483,6 +1606,14 @@ impl Runtime {
         bytes_base64: &str,
         trace: Option<crate::model::TerminalInputTrace>,
     ) {
+        if self.close_operation_holds_pane(pane_id) {
+            self.set_error(
+                "terminal.close_pending",
+                format!("Pane {pane_id} is closing; input was not sent"),
+                true,
+            );
+            return;
+        }
         let bytes = match live::decode_base64(bytes_base64) {
             Ok(bytes) => bytes,
             Err(message) => {

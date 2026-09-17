@@ -57,6 +57,11 @@ An asynchronous task still costs work and can accumulate a queue; it is not a pe
 | Terminal wheel / typing | Prompt delivery preserving routing, ordering, and signed scroll quantity | Wait for an unrelated frame; drop intentional input as a duplicate |
 | IME composition step / terminal feed while composing | Show the new marked text; re-anchor the overlay once the caret has moved | Rebuild the overlay's attribute dictionary or attributed string when neither the text nor the caret changed |
 | Drag / repaint | Update affected geometry or damaged visible content | Per-event persistence or rebuilding unchanged rows |
+| Pane/tab mutation | Create one target-scoped operation record, use the existing session coordinator for confirmation, and coalesce same-pane same-axis resize to its latest signed delta | Per-tick polling, lock-held I/O, an unbounded retry queue, or a global error publication |
+| Ambiguous close | Start one read-only status check for the close scope and settle it against the connection generation and fresh topology | Destructive close resend, reopen before absence is confirmed, or treating transport success as topology proof |
+
+The 250 ms asynchronous-operation tick advances deadlines under the coordinator lock and publishes only real state transitions; it performs no network or subprocess I/O.
+One close status check reads the current session once and fans that snapshot out to all eligible local close reservations.
 
 ### Two-level recent navigation cost contract
 
@@ -317,6 +322,9 @@ A cache that stays bounded may remove periodic destruction spikes while leaving 
   Keep keyboard delivery direct from the main-actor delegate to the writer without another asynchronous hop.
 - Announce once per burst and clear the notifier latch before taking the snapshot lock.
   Read-then-clear can swallow a concurrent change.
+- Keep async operation records bounded by active intent and conflict scope.
+  A close or topology mutation uses an absolute five-second stage deadline; expiry becomes a caller-visible unknown result and never schedules a destructive resend.
+  Status checks are read-only and are started only for an ambiguous close or an explicit status action, so unknown activity does not become a polling loop.
 
 Follow engineering principles 1, 7, 12, and 13: remove obsolete paths, reuse existing mechanisms, test observable outcomes, and fix the failure class.
 For a backing-store bug, repeated draws into fresh pixel buffers should preserve nonempty content; a test that merely approves a frame gate repeats the faulty assumption.

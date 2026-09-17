@@ -326,6 +326,7 @@ mod tests {
                         cwd: "/fixture".to_owned(),
                         status_label: "Unknown".to_owned(),
                         requires_close_confirmation: false,
+                        requires_close_status_check: false,
                         summary: None,
                         activity_at_unix_ms: None,
                         fork: Default::default(),

@@ -487,6 +487,27 @@ impl Runtime {
             return true;
         };
         let strip = checkout.strip.clone();
+        if self
+            .pending_tab_move
+            .get(&payload.checkout_id)
+            .is_some_and(|pending| {
+                matches!(
+                    pending.phase.as_str(),
+                    "transmitting" | "awaiting_topology" | "unknown"
+                )
+            })
+        {
+            self.set_error(
+                "tab.move_in_progress",
+                format!(
+                    "Tab order for checkout {} is still being confirmed; the new move was not sent",
+                    payload.checkout_id
+                ),
+                true,
+            );
+            self.sync_async_operations();
+            return false;
+        }
         let Some(from) = strip.iter().position(|entry| entry.id == payload.tab_id) else {
             self.set_error(
                 "tab.reorder_unknown",
@@ -602,6 +623,7 @@ impl Runtime {
         };
         let generation = self.next_tab_move_generation;
         self.next_tab_move_generation += 1;
+        let now = unix_milliseconds();
         self.pending_tab_move.insert(
             payload.checkout_id.clone(),
             PendingTabMove {
@@ -613,9 +635,18 @@ impl Runtime {
                 // Herdr never reports once a checkout draws tabs from two
                 // workspaces, and the drag would snap back and stay back.
                 herdr_order: desired_owned.clone(),
+                target_id: moved.source_id.clone(),
                 generation,
+                connection_generation: self.live_generation,
+                phase: "transmitting".to_owned(),
+                stage: "request".to_owned(),
+                started_at_unix_ms: now,
+                deadline_at_unix_ms: Some(now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
+                message: Some("Waiting for Herdr to confirm the tab order".to_owned()),
+                retryable: false,
             },
         );
+        self.sync_async_operations();
         self.push_diagnostic(
             "tab.move.requested",
             format!(
@@ -634,9 +665,11 @@ impl Runtime {
                 // subsequence, never the checkout's mixed order.
                 expected_order: desired_owned,
                 generation,
+                connection_generation: self.live_generation,
             },
         ) {
             self.pending_tab_move.remove(&payload.checkout_id);
+            self.sync_async_operations();
             self.set_error("tab.move_worker_failed", message, true);
         }
         true
@@ -647,6 +680,7 @@ impl Runtime {
         &mut self,
         checkout_id: &str,
         generation: u64,
+        connection_generation: u64,
         reason: String,
     ) -> bool {
         // A result from a drag a later drag has replaced must not cancel the
@@ -654,7 +688,10 @@ impl Runtime {
         if self
             .pending_tab_move
             .get(checkout_id)
-            .is_none_or(|pending| pending.generation != generation)
+            .is_none_or(|pending| {
+                pending.generation != generation
+                    || pending.connection_generation != connection_generation
+            })
         {
             return false;
         }
@@ -752,6 +789,7 @@ impl Runtime {
                 ),
             );
         }
+        self.sync_async_operations();
     }
     /// Reconciles the focused checkout, its owning workspace, root path, and
     /// active tab projection after a catalog replacement. Catalog rebuilds
@@ -1187,12 +1225,12 @@ impl Runtime {
                 self.snapshot.navigator.focused_device_id.as_deref() == Some(target_id),
             )
         });
-        let Some(status) = self
+        let Some(status_index) = self
             .snapshot
             .status
             .remote
-            .iter_mut()
-            .find(|status| status.target_id == target_id)
+            .iter()
+            .position(|status| status.target_id == target_id)
         else {
             self.set_error(
                 "remote.target_unknown",
@@ -1202,7 +1240,24 @@ impl Runtime {
             return true;
         };
 
+        let was_connected = self.snapshot.status.remote[status_index].state == "connected";
+        if (fetched.is_ok() && !was_connected) || (fetched.is_err() && was_connected) {
+            let generation = self
+                .remote_connection_generations
+                .entry(target_id.to_owned())
+                .or_insert(0);
+            *generation = generation.saturating_add(1);
+            self.push_diagnostic(
+                "remote.connection_generation_advanced",
+                format!(
+                    "Advanced remote connection generation for {target_id} after a session state transition"
+                ),
+            );
+        }
+        let status = &mut self.snapshot.status.remote[status_index];
+
         let mut changed = read_changed;
+        let mut observed_session = None;
         match fetched {
             Ok(session) => {
                 if status.state != "connected" || status.message.is_some() {
@@ -1224,6 +1279,7 @@ impl Runtime {
                     status.session = Some(session);
                     changed = true;
                 }
+                observed_session = status.session.clone();
             }
             Err(error) => {
                 if status.state != error.state()
@@ -1263,6 +1319,13 @@ impl Runtime {
         if let Some((live_pane_ids, active_pane_ids)) = pane_sets {
             changed |=
                 self.reconcile_remote_terminal_panes(target_id, &live_pane_ids, &active_pane_ids);
+        }
+        changed |= self.expire_remote_operations(unix_milliseconds());
+        if let Some(session) = observed_session.as_ref() {
+            changed |= self.observe_remote_operations(session);
+        }
+        if changed {
+            self.sync_async_operations();
         }
         changed
     }
@@ -1327,7 +1390,29 @@ impl Runtime {
         // also where a notification Herdr never answered stops being pending.
         // Doing it first lets this same update be read as an external focus
         // rather than as a late answer to a request that has gone quiet.
-        let timed_out = self.expire_pending_view_focus(unix_milliseconds());
+        let now_unix_ms = unix_milliseconds();
+        let fresh_layout_signatures = fetched.as_ref().ok().map(|payload| {
+            payload
+                .layouts
+                .iter()
+                .map(|layout| {
+                    (
+                        layout.tab_id.clone(),
+                        Self::session_layout_signature(layout),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        });
+        let timed_out = self.expire_pending_view_focus(now_unix_ms);
+        let tab_move_timed_out = self.expire_tab_moves(now_unix_ms);
+        let close_timed_out = self.expire_close_operations(now_unix_ms);
+        let pane_operation_timed_out = self.expire_pane_operations(now_unix_ms);
+        let close_topology_changed = fetched
+            .as_ref()
+            .is_ok_and(|payload| self.observe_close_topology(payload));
+        let pane_topology_changed = fetched
+            .as_ref()
+            .is_ok_and(|payload| self.observe_pane_operations(payload));
         let session_confirms_pending_pane = fetched.as_ref().ok().is_some_and(|payload| {
             let Some(pending) = self.pending_pane_focus.as_ref() else {
                 return false;
@@ -1736,7 +1821,15 @@ impl Runtime {
             );
         }
 
-        let mut changed = catalog_changed || selection_changed || timed_out || !excluded.is_empty();
+        let mut changed = catalog_changed
+            || selection_changed
+            || timed_out
+            || tab_move_timed_out
+            || close_timed_out
+            || pane_operation_timed_out
+            || close_topology_changed
+            || pane_topology_changed
+            || !excluded.is_empty();
         let (expected_protocol, received_protocol, received_version) = protocol_details
             .map(|(expected, received, version)| (Some(expected), Some(received), version))
             .unwrap_or((None, None, None));
@@ -1791,6 +1884,9 @@ impl Runtime {
             );
         }
         changed |= self.store_pane_layouts(layouts);
+        if let Some(signatures) = fresh_layout_signatures {
+            self.confirmed_pane_layout_signatures = signatures;
+        }
         if let Some(layout) = layout {
             if self.snapshot.terminal.pane_id.is_none() {
                 let pane_id = layout.focused_pane_id.clone();
@@ -1821,6 +1917,14 @@ impl Runtime {
         origin: PaneFocusOrigin,
         request_id: Option<String>,
     ) {
+        if self.close_operation_holds_pane(&pane_id) {
+            self.set_error(
+                "pane.close_pending",
+                format!("Pane {pane_id} is closing; focus was not moved back to it"),
+                true,
+            );
+            return;
+        }
         let request_id = request_id.filter(|value| !value.trim().is_empty());
         if let Some(request_id) = request_id.as_deref() {
             if self
@@ -2688,22 +2792,48 @@ impl Runtime {
         result: Result<RemoteControlOutcome, String>,
         elapsed_ms: u128,
     ) -> bool {
+        self.ingest_local_control_result_with_failure(
+            action,
+            result.map_err(live::ControlFailure::Definite),
+            elapsed_ms,
+        )
+    }
+
+    pub(crate) fn ingest_local_control_failure(
+        &mut self,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, live::ControlFailure>,
+        elapsed_ms: u128,
+    ) -> bool {
+        self.ingest_local_control_result_with_failure(action, result, elapsed_ms)
+    }
+
+    fn ingest_local_control_result_with_failure(
+        &mut self,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, live::ControlFailure>,
+        elapsed_ms: u128,
+    ) -> bool {
         let action_kind = action.kind();
         if let RemoteControlAction::MoveTab {
             checkout_id,
             tab_id,
             expected_order,
             generation,
+            connection_generation,
             ..
         } = &action
         {
             return self.ingest_tab_move_result(
-                checkout_id,
-                tab_id,
-                expected_order,
-                *generation,
+                TabMoveResultContext {
+                    checkout_id,
+                    tab_id,
+                    expected_order,
+                    generation: *generation,
+                    connection_generation: *connection_generation,
+                    elapsed_ms,
+                },
                 result,
-                elapsed_ms,
             );
         }
         match result {
@@ -2754,7 +2884,8 @@ impl Runtime {
                     "duration_ms": elapsed_ms,
                 }));
             }
-            Err(message) => {
+            Err(error) => {
+                let message = error.message().to_owned();
                 // Hide keeps the tab it made visible. The refusal is reported
                 // and the wait ends, so the next Herdr event naming another
                 // tab is read as an external focus rather than a late answer.
@@ -2796,19 +2927,55 @@ impl Runtime {
     /// stayed where it was.
     pub(super) fn ingest_tab_move_result(
         &mut self,
-        checkout_id: &str,
-        tab_id: &str,
-        expected_order: &[String],
-        generation: u64,
-        result: Result<RemoteControlOutcome, String>,
-        elapsed_ms: u128,
+        context: TabMoveResultContext<'_>,
+        result: Result<RemoteControlOutcome, live::ControlFailure>,
     ) -> bool {
+        let TabMoveResultContext {
+            checkout_id,
+            tab_id,
+            expected_order,
+            generation,
+            connection_generation,
+            elapsed_ms,
+        } = context;
+        if self
+            .pending_tab_move
+            .get(checkout_id)
+            .is_none_or(|pending| {
+                pending.generation != generation
+                    || pending.connection_generation != connection_generation
+            })
+        {
+            // The result belongs to an older drag. It is consumed without
+            // touching the newer operation or publishing a refusal for it.
+            return true;
+        }
+        let Some(pending) = self.pending_tab_move.get(checkout_id).cloned() else {
+            return true;
+        };
+        if pending.phase != "transmitting" {
+            // Once the answer has been accepted, timed out, or settled, the
+            // ordered session projection is the only authority left for this
+            // request. A duplicate or late answer cannot move the held strip.
+            return true;
+        }
+        if pending
+            .deadline_at_unix_ms
+            .is_some_and(|deadline| deadline <= unix_milliseconds())
+        {
+            return self.mark_tab_move_unknown(
+                checkout_id,
+                generation,
+                connection_generation,
+                "the response arrived after its deadline".to_owned(),
+            );
+        }
         let outcome = match result {
             Ok(RemoteControlOutcome::TabsOrdered { tab_ids }) => Ok(tab_ids),
-            Ok(RemoteControlOutcome::Acknowledged { .. }) => {
-                Err("tab.move did not report the resulting tab order".to_owned())
-            }
-            Err(message) => Err(message),
+            Ok(RemoteControlOutcome::Acknowledged { .. }) => Err(live::ControlFailure::Ambiguous(
+                "tab.move did not report the resulting tab order".to_owned(),
+            )),
+            Err(error) => Err(error),
         };
         match outcome {
             Ok(tab_ids) => {
@@ -2821,6 +2988,18 @@ impl Runtime {
                     .cloned()
                     .collect::<Vec<_>>();
                 if placed == expected_order {
+                    if let Some(pending) = self.pending_tab_move.get_mut(checkout_id)
+                        && pending.generation == generation
+                        && pending.connection_generation == connection_generation
+                    {
+                        pending.phase = "awaiting_topology".to_owned();
+                        pending.stage = "topology".to_owned();
+                        pending.message = Some(
+                            "Request accepted; waiting for the ordered Herdr event".to_owned(),
+                        );
+                        pending.retryable = false;
+                    }
+                    self.sync_async_operations();
                     self.push_diagnostic(
                         "tab.move.ready",
                         format!(
@@ -2849,11 +3028,27 @@ impl Runtime {
                 self.abandon_tab_move(
                     checkout_id,
                     generation,
+                    connection_generation,
                     format!("Herdr put tab {tab_id} somewhere else; the strip follows Herdr"),
                 );
                 true
             }
-            Err(message) => {
+            Err(error) if error.is_ambiguous() => {
+                let message = error.message().to_owned();
+                crate::diagnostic!(serde_json::json!({
+                    "component": "tab_control",
+                    "kind": "tab.move.unknown",
+                    "checkout_id": checkout_id,
+                    "tab_id": tab_id,
+                    "requested": expected_order,
+                    "message": message,
+                    "duration_ms": elapsed_ms,
+                }));
+                self.mark_tab_move_unknown(checkout_id, generation, connection_generation, message);
+                true
+            }
+            Err(error) => {
+                let message = error.message().to_owned();
                 crate::diagnostic!(serde_json::json!({
                     "component": "tab_control",
                     "kind": "tab.move.failed",
@@ -2866,6 +3061,7 @@ impl Runtime {
                 self.abandon_tab_move(
                     checkout_id,
                     generation,
+                    connection_generation,
                     format!("Herdr refused to move tab {tab_id}: {message}"),
                 );
                 true

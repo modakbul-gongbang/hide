@@ -1038,6 +1038,9 @@ The keyboard chord and Window menu item restore regardless of whether a terminal
 Restoration is one action with no confirmation: an in-flight pane uses the existing pane-header progress suffix, while a restore without a target pane uses the tab strip's compact warning line.
 Missing cwd, unavailable prior conversation, pruned Browser pane, missing file, and retryable failure states use the same warning color and inline notice vocabulary as existing pane operations, without adding a banner, card, or modal alert.
 A definitive Herdr close refusal removes its reserved reopen entry, while an unconfirmed transport or acknowledgement result keeps the entry and explains inline that Hide could not determine whether the item closed.
+Pane and tab mutations use the same target-scoped activity suffix and failure notice, so a delayed operation stays attached to the surface it affects and does not become a global alert.
+An unknown activity state stops destructive close and offers the existing read-only `Check status` action inline; it is separate from the one-time work-interruption confirmation.
+The close confirmation keeps `Keep open` as the cancel/default action and leaves `Stop work and close` as the explicit destructive choice.
 Option+1 through Option+9 select sidebar agents; Command+1 through Command+9 retain direct strip selection.
 Agent number hints follow the command registry: reveal only during an exact Option hold, ignoring Caps Lock, and clear on release or a suppressing sheet.
 Numbered agent shortcuts are handled before native text interpretation, so terminal and editor responders cannot consume the Option chord.

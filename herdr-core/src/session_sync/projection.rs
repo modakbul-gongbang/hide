@@ -54,7 +54,7 @@ pub(crate) struct ProjectedAgent {
     pub(crate) ambient: Option<Value>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectionState {
     pub(crate) focused_pane_id: Option<String>,
     /// Herdr's focused workspace, read from `session.snapshot` and kept

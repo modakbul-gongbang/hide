@@ -1459,6 +1459,7 @@ fn close_capture_completion_cannot_invert_user_close_order() {
     let mut runtime = runtime();
     let first = close_capture_request("first");
     let second = close_capture_request("second");
+    runtime.ensure_pending_close_from_request(&first);
     runtime.close_capture_order = VecDeque::from([first.key.clone(), second.key.clone()]);
 
     let (_, early_effects) = runtime.ingest_close_capture_result(
@@ -1467,8 +1468,15 @@ fn close_capture_completion_cannot_invert_user_close_order() {
             item: Some(closed_file("second", "/repo/second.rs")),
         }),
     );
-    assert!(early_effects.is_empty());
+    assert_eq!(
+        early_effects
+            .iter()
+            .map(|effect| effect.key.as_str())
+            .collect::<Vec<_>>(),
+        ["second"]
+    );
     assert_eq!(runtime.snapshot().recent_closed.count, 0);
+    assert_eq!(runtime.snapshot().recent_closed.pending.len(), 2);
 
     let (_, ordered_effects) = runtime.ingest_close_capture_result(
         &first,
@@ -1481,8 +1489,22 @@ fn close_capture_completion_cannot_invert_user_close_order() {
             .iter()
             .map(|effect| effect.key.as_str())
             .collect::<Vec<_>>(),
-        ["first", "second"]
+        ["first"]
     );
+    assert_eq!(runtime.snapshot().recent_closed.count, 0);
+    assert_eq!(runtime.snapshot().recent_closed.pending.len(), 2);
+
+    runtime.ingest_close_effect_result(&early_effects[0], Ok(()));
+    runtime.ingest_close_effect_result(&ordered_effects[0], Ok(()));
+    assert!(runtime.mark_close_topology_confirmed("first"));
+    assert!(runtime.promote_close_reservations());
+    assert_eq!(runtime.snapshot().recent_closed.count, 1);
+    assert_eq!(
+        runtime.snapshot().recent_closed.top_label.as_deref(),
+        Some("first.rs")
+    );
+    assert!(runtime.mark_close_topology_confirmed("second"));
+    assert!(runtime.promote_close_reservations());
     assert_eq!(runtime.snapshot().recent_closed.count, 2);
     assert_eq!(
         runtime.snapshot().recent_closed.top_label.as_deref(),
@@ -1499,6 +1521,7 @@ fn rejected_close_removes_only_its_reserved_item() {
     runtime.ingest_close_effect_result(
         &live::CloseEffectRequest {
             key: "first".to_owned(),
+            connection_generation: 0,
             target: live::CloseCaptureTarget::Tab {
                 tab_id: "tab:first".to_owned(),
             },
@@ -1527,6 +1550,7 @@ fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
         runtime.ingest_close_effect_result(
             &live::CloseEffectRequest {
                 key: "first".to_owned(),
+                connection_generation: 0,
                 target: live::CloseCaptureTarget::Tab {
                     tab_id: "tab:first".to_owned(),
                 },
@@ -1534,15 +1558,14 @@ fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
             Err(error),
         );
 
-        assert_eq!(runtime.snapshot().recent_closed.count, 1);
-        assert_eq!(
-            runtime.snapshot().recent_closed.top_label.as_deref(),
-            Some("first.rs")
-        );
+        assert_eq!(runtime.snapshot().recent_closed.count, 0);
+        assert_eq!(runtime.snapshot().recent_closed.pending.len(), 1);
+        assert_eq!(runtime.snapshot().recent_closed.pending[0].phase, "unknown");
+        assert!(!runtime.snapshot().recent_closed.can_reopen);
         assert!(
             runtime.snapshot().recent_closed.notices[0]
                 .message
-                .contains("could not confirm")
+                .contains("unknown")
         );
     }
 }

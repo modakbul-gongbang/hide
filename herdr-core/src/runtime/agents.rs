@@ -337,6 +337,11 @@ impl Runtime {
                 true,
             );
         };
+        let connection_generation = *self
+            .remote_connection_generations
+            .entry(target_id.clone())
+            .or_insert(0);
+        let remote_mutation = remote_mutation_descriptor(&session, &payload.request);
         let mut source_pane_id = None;
         if let Some(pane_id) = payload.request.pane_id().map(str::to_owned) {
             if pane_id.trim().is_empty() {
@@ -368,6 +373,21 @@ impl Runtime {
                     format!("Pane {pane_id} is not scoped to remote target {target_id}"),
                     false,
                 );
+            }
+            let status_unknown = matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
+                && session
+                    .agents
+                    .iter()
+                    .any(|agent| agent.pane_id == pane_id && agent.requires_close_status_check);
+            if status_unknown {
+                self.set_error(
+                    "remote.control.close_status_unknown",
+                    format!(
+                        "Pane {pane_id} on {target_id} has an unknown activity status; refresh status before closing"
+                    ),
+                    true,
+                );
+                return true;
             }
             let needs_confirmation =
                 matches!(&payload.request, RemoteControlRequest::ClosePane { .. })
@@ -516,6 +536,19 @@ impl Runtime {
                     .iter()
                     .map(|pane| pane.id.as_str())
                     .collect::<HashSet<_>>();
+                let status_unknown = session.agents.iter().any(|agent| {
+                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
+                });
+                if status_unknown {
+                    self.set_error(
+                        "remote.control.close_status_unknown",
+                        format!(
+                            "Tab {tab_id} on {target_id} has a pane whose activity status is unknown; refresh status before closing"
+                        ),
+                        true,
+                    );
+                    return true;
+                }
                 let needs_confirmation = session.agents.iter().any(|agent| {
                     pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
                 });
@@ -556,6 +589,38 @@ impl Runtime {
             );
             return true;
         }
+        let remote_operation_key = if let Some(descriptor) = remote_mutation {
+            self.remote_operations.retain(|_, operation| {
+                !(operation.scope_id == descriptor.scope_id
+                    && matches!(operation.phase.as_str(), "failed" | "refused"))
+            });
+            if self.remote_operations.values().any(|operation| {
+                operation.scope_id == descriptor.scope_id
+                    && matches!(
+                        operation.phase.as_str(),
+                        "transmitting" | "awaiting_topology" | "unknown"
+                    )
+            }) {
+                fail_request!(
+                    "remote.control.in_progress",
+                    format!(
+                        "{} is already running for {} on remote target {}",
+                        descriptor.kind, descriptor.scope_id, target_id
+                    ),
+                    false,
+                );
+            }
+            let operation_key = (target_id.clone(), request_id.clone());
+            self.insert_remote_operation(
+                &operation_key,
+                descriptor,
+                unix_milliseconds(),
+                connection_generation,
+            );
+            Some(operation_key)
+        } else {
+            None
+        };
         if self.remote_control_requests.len() == 128 {
             self.remote_control_requests.pop_front();
         }
@@ -566,7 +631,12 @@ impl Runtime {
             format!("Sending {} to {target_id}", action.kind()),
         );
         let dispatched_request_id = request_id.clone();
-        if let Err(message) = live::spawn_remote_control(context, request_id, action) {
+        if let Err(message) =
+            live::spawn_remote_control(context, request_id, action, connection_generation)
+        {
+            if let Some((operation_target, operation_request)) = remote_operation_key.as_ref() {
+                self.fail_remote_operation(operation_target, operation_request, message.clone());
+            }
             if let Some(key) = creation_key {
                 self.remote_tab_creations_in_flight.remove(&key);
             }
@@ -578,7 +648,9 @@ impl Runtime {
                     true,
                 );
             }
-            self.set_error("remote.control.worker_failed", message, true);
+            if remote_operation_key.is_none() {
+                self.set_error("remote.control.worker_failed", message, true);
+            }
         }
         true
     }
@@ -1573,11 +1645,103 @@ impl Runtime {
         result: Result<RemoteControlOutcome, String>,
         elapsed_ms: u128,
     ) -> bool {
+        self.ingest_remote_control_result_with_generation(
+            target_id, request_id, action, result, elapsed_ms, None,
+        )
+    }
+
+    pub(crate) fn ingest_remote_control_result_with_generation(
+        &mut self,
+        target_id: &str,
+        request_id: &str,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, String>,
+        elapsed_ms: u128,
+        connection_generation: Option<u64>,
+    ) -> bool {
+        self.ingest_remote_control_result_with_failure(
+            target_id,
+            request_id,
+            action,
+            result.map_err(live::ControlFailure::Definite),
+            elapsed_ms,
+            connection_generation,
+        )
+    }
+
+    pub(crate) fn ingest_remote_control_failure_with_generation(
+        &mut self,
+        target_id: &str,
+        request_id: &str,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, live::ControlFailure>,
+        elapsed_ms: u128,
+        connection_generation: Option<u64>,
+    ) -> bool {
+        self.ingest_remote_control_result_with_failure(
+            target_id,
+            request_id,
+            action,
+            result,
+            elapsed_ms,
+            connection_generation,
+        )
+    }
+
+    fn ingest_remote_control_result_with_failure(
+        &mut self,
+        target_id: &str,
+        request_id: &str,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, live::ControlFailure>,
+        elapsed_ms: u128,
+        connection_generation: Option<u64>,
+    ) -> bool {
         let action_kind = action.kind();
+        let remote_operation_key = (target_id.to_owned(), request_id.to_owned());
+        if let Some(generation) = connection_generation {
+            if self
+                .remote_connection_generations
+                .get(target_id)
+                .copied()
+                .unwrap_or(0)
+                != generation
+            {
+                self.push_diagnostic(
+                    "remote.control.stale_result",
+                    format!(
+                        "Ignored remote {action_kind} result for {target_id} from connection generation {generation}"
+                    ),
+                );
+                return false;
+            }
+            if self
+                .remote_operations
+                .get(&remote_operation_key)
+                .is_some_and(|operation| operation.connection_generation != generation)
+            {
+                return false;
+            }
+        }
+        let tracked_remote_operation = self.remote_operations.contains_key(&remote_operation_key);
         let is_pane_focus = matches!(
             &action,
             RemoteControlAction::Pane(PaneControlAction::Focus { .. })
         );
+        if self
+            .remote_operations
+            .get(&remote_operation_key)
+            .and_then(|operation| operation.deadline_at_unix_ms)
+            .is_some_and(|deadline| deadline <= unix_milliseconds())
+        {
+            let message =
+                "Remote result arrived after its deadline; no mutation was resent".to_owned();
+            self.mark_remote_operation_unknown(&remote_operation_key, message.clone());
+            if is_pane_focus {
+                self.finish_pane_focus_request_by_id(request_id, "failed", Some(message), true);
+            }
+            return true;
+        }
         if let Some(key) = remote_tab_creation_key(target_id, &action) {
             self.remote_tab_creations_in_flight.remove(&key);
         }
@@ -1586,6 +1750,13 @@ impl Runtime {
                 created_tab_id,
                 created_pane_id,
             }) => {
+                if tracked_remote_operation {
+                    self.acknowledge_remote_operation(
+                        target_id,
+                        request_id,
+                        created_pane_id.clone(),
+                    );
+                }
                 if is_pane_focus {
                     self.finish_pane_focus_request_by_id(request_id, "succeeded", None, false);
                 }
@@ -1616,6 +1787,13 @@ impl Runtime {
             // A remote target owns its tab order; `spawn_remote_control`
             // refuses the only action that reports one back.
             Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
+                if tracked_remote_operation {
+                    self.fail_remote_operation(
+                        target_id,
+                        request_id,
+                        format!("{action_kind} returned a tab-order outcome"),
+                    );
+                }
                 if is_pane_focus {
                     self.finish_pane_focus_request_by_id(
                         request_id,
@@ -1626,13 +1804,28 @@ impl Runtime {
                         true,
                     );
                 }
-                self.set_error(
-                    "remote.control.failed",
-                    format!("{action_kind} for {target_id} returned a tab order remotely"),
-                    false,
-                );
+                if !tracked_remote_operation {
+                    self.set_error(
+                        "remote.control.failed",
+                        format!("{action_kind} for {target_id} returned a tab order remotely"),
+                        false,
+                    );
+                }
             }
-            Err(message) => {
+            Err(error) => {
+                let message = error.message().to_owned();
+                if tracked_remote_operation {
+                    if error.is_ambiguous() {
+                        self.mark_remote_operation_unknown(
+                            &remote_operation_key,
+                            format!(
+                                "{message}; no mutation was resent and a fresh topology is required"
+                            ),
+                        );
+                    } else {
+                        self.fail_remote_operation(target_id, request_id, message.clone());
+                    }
+                }
                 if is_pane_focus {
                     self.finish_pane_focus_request_by_id(
                         request_id,
@@ -1641,11 +1834,13 @@ impl Runtime {
                         true,
                     );
                 }
-                self.set_error(
-                    "remote.control.failed",
-                    format!("{action_kind} for {target_id} failed: {message}"),
-                    true,
-                );
+                if !tracked_remote_operation {
+                    self.set_error(
+                        "remote.control.failed",
+                        format!("{action_kind} for {target_id} failed: {message}"),
+                        true,
+                    );
+                }
                 crate::diagnostic!(serde_json::json!({
                     "component": "remote_control",
                     "kind": "remote.control.failed",

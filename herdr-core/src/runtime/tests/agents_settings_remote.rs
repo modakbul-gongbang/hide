@@ -1594,8 +1594,8 @@ fn read_record_stops_following_a_pane_herdr_moved_focus_away_from() {
 /// from the focus its own server reports, exactly as a local pane earns one
 /// from Hide's focus. The ledger is pruned by pane id namespace, so a local
 /// sync cannot drop a remote record and one target cannot drop another's.
-/// Before this, no record survived for a remote pane and a stopped remote
-/// pane the operator had read still demanded a close confirmation.
+/// Before this, no record survived for a remote pane and the pane tree
+/// could disagree with the agent row about an unresolved close demand.
 #[test]
 fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     let mut runtime = live_runtime();
@@ -1753,8 +1753,8 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     );
     assert_eq!(
         mini["remote:mini:pane:w9:p2"],
-        ("Done".to_owned(), true, "done".to_owned()),
-        "the pane beside it is still unread"
+        ("Done".to_owned(), false, "done".to_owned()),
+        "an unread completion does not create a close prompt"
     );
     // The pane tree is what the remote pane surface reads, so the read
     // axis has to reach it and not only the agent rows.
@@ -1766,8 +1766,8 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     );
     assert_eq!(
         tree["remote:mini:pane:w9:p2"],
-        ("Done".to_owned(), true),
-        "the unread pane beside it still says so"
+        ("Done".to_owned(), false),
+        "the pane tree carries the completion protection decision"
     );
 
     runtime.ingest_session(Ok(working_payload()));
@@ -1892,8 +1892,8 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         .collect::<Vec<_>>();
     assert_eq!(
         panes,
-        vec![("plain:p1", "Idle", false), ("plain:p2", "Done", true)],
-        "the read pane is Idle and closes without a prompt; the unread one does not"
+        vec![("plain:p1", "Idle", false), ("plain:p2", "Done", false)],
+        "the read pane and the unread completion both close without a prompt"
     );
 
     for agent in &snapshot.navigator.agents {

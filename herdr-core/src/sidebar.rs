@@ -46,7 +46,7 @@ pub struct SessionTabPayload {
     pub label: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SessionLayoutPayload {
     pub workspace_id: String,
     pub tab_id: String,
@@ -65,13 +65,13 @@ pub struct SessionLayoutRect {
     pub height: u16,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SessionLayoutPanePayload {
     pub pane_id: String,
     pub rect: SessionLayoutRect,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SessionLayoutSplitPayload {
     pub direction: PaneLayoutDirection,
     pub ratio: f32,
@@ -401,10 +401,25 @@ fn agent_status_label(demand: AgentDemand, activity: AgentActivity, unread: bool
     }
 }
 
-/// Closing this pane would interrupt running work or throw away a result the
-/// operator has not read yet.
-fn agent_requires_close_confirmation(activity: AgentActivity, group: AgentGroup) -> bool {
-    activity == AgentActivity::Working || matches!(group, AgentGroup::NeedsYou | AgentGroup::Done)
+/// Closing this pane would interrupt running work or discard an unresolved
+/// demand. Read state remains a presentation axis, so an unread completion or
+/// an ordinary stopped pane cannot create a close prompt by itself.
+fn agent_requires_close_confirmation(
+    activity: AgentActivity,
+    demand: AgentDemand,
+    blocked: bool,
+) -> bool {
+    activity == AgentActivity::Working || demand != AgentDemand::None || blocked
+}
+
+/// An activity-less pane cannot safely be described as idle in a destructive
+/// confirmation. The caller must obtain a fresh status before it can close.
+fn agent_requires_close_status_check(
+    activity: AgentActivity,
+    demand: AgentDemand,
+    blocked: bool,
+) -> bool {
+    activity == AgentActivity::Unknown && demand == AgentDemand::None && !blocked
 }
 
 /// One agent that could not be read out of an otherwise valid snapshot.
@@ -854,7 +869,10 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
     agent.status_label = agent_status_label(demand, activity, unread).to_owned();
-    agent.requires_close_confirmation = agent_requires_close_confirmation(activity, group);
+    agent.requires_close_confirmation =
+        agent_requires_close_confirmation(activity, demand, agent.blocked);
+    agent.requires_close_status_check =
+        agent_requires_close_status_check(activity, demand, agent.blocked);
 }
 
 fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
@@ -912,6 +930,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         emphasized: false,
         status_label: String::new(),
         requires_close_confirmation: false,
+        requires_close_status_check: false,
         identity_label: String::new(),
         summary,
         elapsed,
@@ -1232,6 +1251,7 @@ mod tests {
                         cwd: "/fixture".to_owned(),
                         status_label: "Unknown".to_owned(),
                         requires_close_confirmation: false,
+                        requires_close_status_check: false,
                         summary: None,
                         activity_at_unix_ms: None,
                         fork: Default::default(),
@@ -1480,10 +1500,11 @@ mod tests {
         );
     }
 
-    /// AC10. Closing a pane needs confirmation exactly where the PRD says:
-    /// working, or in Needs You or Done. A read idle pane closes without one.
+    /// AC10. Closing a pane needs confirmation for running work or unresolved
+    /// demand. An unknown activity is a separate status-check outcome, not a
+    /// confirmation that guesses whether work is running.
     #[test]
-    fn axes_require_close_confirmation_for_working_needs_you_and_done() {
+    fn axes_require_close_confirmation_or_status_check_from_work_and_demand() {
         let cases = [
             (
                 AgentDemand::None,
@@ -1491,6 +1512,7 @@ mod tests {
                 false,
                 false,
                 true,
+                false,
             ),
             (
                 AgentDemand::Question,
@@ -1498,6 +1520,7 @@ mod tests {
                 true,
                 false,
                 true,
+                false,
             ),
             (
                 AgentDemand::Approval,
@@ -1505,11 +1528,20 @@ mod tests {
                 false,
                 true,
                 true,
+                false,
             ),
-            (AgentDemand::None, AgentActivity::Stopped, true, false, true),
             (
                 AgentDemand::None,
                 AgentActivity::Stopped,
+                true,
+                false,
+                false,
+                false,
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Stopped,
+                false,
                 false,
                 false,
                 false,
@@ -1519,6 +1551,7 @@ mod tests {
                 AgentActivity::Stopped,
                 false,
                 false,
+                true,
                 false,
             ),
             (
@@ -1527,14 +1560,20 @@ mod tests {
                 true,
                 false,
                 false,
+                true,
             ),
         ];
-        for (demand, activity, unread, blocked, expected) in cases {
-            let group = agent_group_for(demand, activity, unread, blocked, Ownership::Operator);
+        for (demand, activity, unread, blocked, expected, status_check) in cases {
+            let _group = agent_group_for(demand, activity, unread, blocked, Ownership::Operator);
             assert_eq!(
-                agent_requires_close_confirmation(activity, group),
+                agent_requires_close_confirmation(activity, demand, blocked),
                 expected,
                 "{demand:?} {activity:?} unread={unread} blocked={blocked}"
+            );
+            assert_eq!(
+                agent_requires_close_status_check(activity, demand, blocked),
+                status_check,
+                "status check: {demand:?} {activity:?} unread={unread} blocked={blocked}"
             );
         }
     }

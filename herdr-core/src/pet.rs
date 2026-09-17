@@ -289,6 +289,7 @@ mod tests {
             emphasized: false,
             status_label: "Idle".to_owned(),
             requires_close_confirmation: false,
+            requires_close_status_check: false,
             summary: "summary".to_owned(),
             elapsed: "1s".to_owned(),
             last_activity: "0000000000001".to_owned(),

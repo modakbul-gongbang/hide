@@ -770,6 +770,9 @@ struct DestructiveTarget: Identifiable, Equatable, Sendable {
     /// result. Decided by the core, never by a list of state names here.
     let requiresCloseConfirmation: Bool
     let summary: String
+    /// Whether the core needs a fresh activity status before this target can
+    /// be closed safely.
+    var requiresStatusCheck: Bool = false
     var contentConsequence: String? = nil
 }
 
