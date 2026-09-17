@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn registry_is_enumerable_and_does_not_expose_values() {
-        assert_eq!(REGISTRY.len(), 6);
+        assert_eq!(REGISTRY.len(), 5);
         assert_eq!(REGISTRY[0].key, "HOME");
         let secret_like_value = OsString::from("/private/tmp/private-agent.sock");
         let chromux_path = Path::new("/private/tmp/hide-environment-test/Library/pnpm/chromux");
