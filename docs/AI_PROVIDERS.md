@@ -16,12 +16,21 @@ No feature type lives in the crate, and no provider detail leaks out of it.
 ## Providers
 
 The user's installed and logged-in CLIs are the only credentials for background AI requests.
-The background AI boundary reads no token file and adds no environment variable.
+The background AI boundary reads no token file: the codex backend references the user's `auth.json` only through a symlink in the private `CODEX_HOME` it sets (see the codex bullet below), and never opens the file itself.
+The one environment variable it sets is that `CODEX_HOME`, pointing the app-server at the private directory; it adds none for claude.
 
 - `codex`: `codex app-server --listen stdio://`, the official JSON-RPC surface of the Codex CLI, driven with an ephemeral read-only thread, the feature's system prompt as the base instructions, every optional feature disabled, and the feature's output schema attached to the turn.
   The default model is `gpt-5.6-luna`.
   Availability is read from `account/read`; the thread leaves nothing in `~/.codex/sessions`.
   `codex exec` is not used.
+
+  `hide-ai` owns this process (see [Process ownership and budgets](#process-ownership-and-budgets)).
+  It runs the app-server under a private, owner-only (`0700`) `CODEX_HOME` in a temporary directory that holds nothing but a symlink to the user's `auth.json` (from the environment's `CODEX_HOME`, or `~/.codex/auth.json`), and no `config.toml`.
+  With no config the app-server starts none of the MCP servers the user's real config declares, which measurement (2026-09-17) showed `-c mcp_servers={}` and a per-thread `config` override both failed to prevent.
+  The directory is removed when the session ends; if it or the symlink cannot be created the request fails with `ProviderUnavailable(codex_home_unavailable:<stage>:<kind>)` rather than falling back to `~/.codex`.
+  The credential file is referenced through the symlink and never read; codex's own token refresh writes through it to the real file.
+  Shutdown is one graceful path on every exit (`Session::drop`, a session swap, an over-budget restart): close stdin (its EOF is the app-server's own shutdown signal and ends the whole tree), then SIGTERM, then SIGKILL, each after a three-second grace.
+  After ten idle minutes with no completed request the app-server is shut down and `ai.app_server.idle_exit` is logged; the next request starts a fresh one.
 - `claude`: `claude -p --output-format json`, print mode, one child process per request.
   Print mode is Claude Code's only official structured-output surface; there is no `app-server` equivalent in `claude --help`.
   It was excluded by decision until 2026-09-10, when that exclusion was withdrawn; terminal scraping and token reuse remain excluded, and the background AI boundary reads no credential file.
@@ -79,7 +88,34 @@ Both come from asking the provider, so no model list is written into the core or
 Asking costs child processes, so the probe is a capability reader like the project panel's: the session-sync coordinator drives it, the work runs on a worker thread, the runtime mutex is never held across it, and it asks nothing at all while the group is off screen.
 `scripts/check-capability-readers-off-lock.sh` asserts that structurally, by name.
 
-There is no usage cap and no budget surface for background AI requests; that is a decision, not a gap.
+## Process ownership and budgets
+
+A background feature asks a resident process for an answer, so `hide-ai` owns that process the way `oh-my-principle`'s resident-process practice requires: one spawn helper, one shutdown path, a child that dies with its owner, and caps that turn a leak into a reported failure rather than a larger number.
+This exists because on 2026-09-17 a single label watcher held 1,699 `codex app-server` descendants and 11.6 GB for two idle days with no signal at all.
+
+Every child the crate starts goes through one spawn helper (`hide-ai/src/process.rs`).
+The codex app-server is owned through the stdin pipe it inherits: when the owner dies, the pipe closes and the whole tree ends, which is what makes a `kill -9` of the owner leave no survivors.
+The claude backend starts one child per request and kills it on every path.
+
+The caps live in `RouterConfig` as measured constants, not settings (a setting with no value is unlimited, which is what a cap removes):
+
+| Cap | Default | Measured against |
+| --- | --- | --- |
+| `max_in_flight` | 1 | requests running at once across the router |
+| `max_per_minute` | 30 | requests admitted in any 60-second window |
+| `max_app_server_descendants` | 4 | children under the codex app-server after a turn |
+| `max_app_server_rss_bytes` | 1 GiB | resident size of the codex app-server tree |
+| `max_consecutive_restarts` | 3 | over-budget restarts before the provider is failed |
+
+The two request-rate caps are checked before a request is submitted; crossing one returns `AiError::OverBudget { cap, measured }` at once and logs `ai.budget.exceeded`.
+`OverBudget` is a refusal: it is safe to retry and it does not move to another provider, because the cap is the account's, not the provider's.
+An in-flight request and any other provider are untouched.
+
+The two process caps are measured after each codex turn (macOS `libproc`: `proc_listchildpids` and `proc_pidinfo`, no subprocess).
+Crossing one logs `ai.app_server.over_budget` with the measured value and the cap, ends the app-server through the graceful shutdown path, fails the request with `OverBudget`, and lets the next request start a fresh app-server.
+A request that completes under the cap clears the restart count; three consecutive restarts that do not clear it fail with `ProviderUnavailable(app_server_restart_cap)`.
+On a platform without the kernel query the measurement is `Unavailable`: the process caps are not enforced and the log line says `measurement=unavailable` rather than a zero.
+The context-label plugin treats `OverBudget` as an environmental failure: it keeps its last label and asks again after ten minutes, the same as any other environmental failure.
 
 ## Weekly usage display
 
@@ -148,8 +184,9 @@ The context-label plugin parks a turn for good on a settled failure and asks aga
 
 ## Logging
 
-The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.provider.degraded`, `ai.provider.recovered` and, once per UTC day, `ai.daily_rollup`.
+The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.provider.degraded`, `ai.provider.recovered`, `ai.budget.exceeded`, `ai.app_server.over_budget` and, once per UTC day, `ai.daily_rollup`; the codex backend emits `ai.app_server.idle_exit`.
 A line carries the request id, feature id, provider, outcome class, attempt, duration, input length, output tokens and schema version.
+Every codex `ai.request.finished` also carries the app-server pid and the process measurement (`app_server_pid`, `descendants`, `rss_bytes`), or `measurement=unavailable` where the platform cannot measure it.
 It never carries the prompt, the input, the generated text, a token, a file path from a transcript, or a provider thread id.
 The plugin writes these lines into its own `events.jsonl` next to its watcher events.
 
@@ -163,6 +200,7 @@ target/release/hide-agent-context-labels verify-provider --provider claude
 ```
 
 Each prints that provider's availability and one verdict for a fixed transcript with the answering provider named on it, and exits non-zero when the provider cannot answer, naming the class.
+For codex it also prints the app-server's descendant count and resident size, so a leak is visible from the command rather than only from the log.
 Only `watch` moves state left under the plugin's previous id; verification does not.
 Still give a development build its own home so it never writes next to the installed watcher: `HOME=$(mktemp -d) CODEX_HOME=~/.codex`.
 
