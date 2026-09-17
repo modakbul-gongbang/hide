@@ -104,8 +104,7 @@ fn child_pids(pid: i32) -> Vec<i32> {
         let capacity = needed as usize / std::mem::size_of::<i32>() + 16;
         let mut buffer = vec![0i32; capacity];
         let byte_len = (capacity * std::mem::size_of::<i32>()) as libc::c_int;
-        let written =
-            libc::proc_listchildpids(pid, buffer.as_mut_ptr() as *mut c_void, byte_len);
+        let written = libc::proc_listchildpids(pid, buffer.as_mut_ptr() as *mut c_void, byte_len);
         if written <= 0 {
             return Vec::new();
         }

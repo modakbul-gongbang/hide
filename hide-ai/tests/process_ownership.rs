@@ -27,7 +27,10 @@ struct Recorder(Mutex<Vec<&'static str>>);
 
 impl AiLogSink for Recorder {
     fn log(&self, event: AiLogEvent) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(event.event);
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(event.event);
     }
 }
 
@@ -243,8 +246,8 @@ fn codex_schema_has_no_thread_close() {
 fn codex_schema_snapshot_matches_the_installed_cli() {
     let dir = std::env::var("CODEX_SCHEMA_DIR")
         .expect("set CODEX_SCHEMA_DIR to a generated schema bundle");
-    let client_request =
-        std::fs::read_to_string(PathBuf::from(&dir).join("ClientRequest.json")).expect("read schema");
+    let client_request = std::fs::read_to_string(PathBuf::from(&dir).join("ClientRequest.json"))
+        .expect("read schema");
     let mut live: Vec<String> = client_request
         .split('"')
         .filter(|token| token.starts_with("thread/"))
@@ -270,7 +273,10 @@ fn codex_schema_snapshot_matches_the_installed_cli() {
 #[test]
 #[ignore = "needs a logged-in codex on PATH"]
 fn real_codex_starts_no_mcp_children() {
-    let backend = Arc::new(CodexAppServerBackend::new(CodexConfig::default(), Arc::new(NoopLogSink)));
+    let backend = Arc::new(CodexAppServerBackend::new(
+        CodexConfig::default(),
+        Arc::new(NoopLogSink),
+    ));
     let router = AiRouter::new(
         vec![backend.clone()],
         RouterConfig::default(),

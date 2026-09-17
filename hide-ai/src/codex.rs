@@ -893,7 +893,10 @@ impl Session {
             if Instant::now() >= deadline {
                 return false;
             }
-            std::thread::sleep(POLL.min(deadline - Instant::now()).max(Duration::from_millis(1)));
+            std::thread::sleep(
+                POLL.min(deadline - Instant::now())
+                    .max(Duration::from_millis(1)),
+            );
         }
     }
 }

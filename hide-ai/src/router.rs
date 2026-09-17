@@ -857,11 +857,15 @@ impl AiRouter {
             event.app_server_pid = Some(app_server_pid);
             event.descendants = Some(descendants);
             event.rss_bytes = Some(rss_bytes);
-            event.detail = Some(format!("cap={cap};measured={measured};restart_streak={streak}"));
+            event.detail = Some(format!(
+                "cap={cap};measured={measured};restart_streak={streak}"
+            ));
         });
         backend.restart();
         if streak >= self.config.max_consecutive_restarts {
-            Some(AiError::ProviderUnavailable("app_server_restart_cap".to_owned()))
+            Some(AiError::ProviderUnavailable(
+                "app_server_restart_cap".to_owned(),
+            ))
         } else {
             Some(AiError::OverBudget { cap, measured })
         }
@@ -1075,7 +1079,10 @@ mod tests {
         // A codex request whose process the scripted backend cannot measure
         // records that on the line rather than a zero (B9); a real codex on
         // macOS carries the descendant fields instead.
-        assert_eq!(finished[0].detail.as_deref(), Some("measurement=unavailable"));
+        assert_eq!(
+            finished[0].detail.as_deref(),
+            Some("measurement=unavailable")
+        );
         assert!(finished[0].descendants.is_none());
     }
 
@@ -1753,7 +1760,11 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(leader.join().unwrap().unwrap().value["summary"], "first");
-        assert_eq!(codex.calls(), 1, "the rejected request never reached a provider");
+        assert_eq!(
+            codex.calls(),
+            1,
+            "the rejected request never reached a provider"
+        );
         assert_eq!(sink.events("ai.budget.exceeded").len(), 1);
     }
 
@@ -1769,8 +1780,16 @@ mod tests {
             ..RouterConfig::default()
         };
         let router = AiRouter::with_sleep(vec![codex.clone()], config, sink, Box::new(|_| {}));
-        assert!(router.execute(&request("a", "1"), &CancelToken::new()).is_ok());
-        assert!(router.execute(&request("b", "2"), &CancelToken::new()).is_ok());
+        assert!(
+            router
+                .execute(&request("a", "1"), &CancelToken::new())
+                .is_ok()
+        );
+        assert!(
+            router
+                .execute(&request("b", "2"), &CancelToken::new())
+                .is_ok()
+        );
         match router
             .execute(&request("c", "3"), &CancelToken::new())
             .unwrap_err()
@@ -1792,7 +1811,10 @@ mod tests {
         // First two crossings are over-budget restarts.
         for _ in 0..2 {
             match router
-                .execute(&request("s", &format!("{}", rand_input())), &CancelToken::new())
+                .execute(
+                    &request("s", &format!("{}", rand_input())),
+                    &CancelToken::new(),
+                )
                 .unwrap_err()
             {
                 AiError::OverBudget { cap, .. } => assert_eq!(cap, "app_server_descendants"),
@@ -1801,7 +1823,10 @@ mod tests {
         }
         // The third consecutive restart hits the cap.
         match router
-            .execute(&request("s", &format!("{}", rand_input())), &CancelToken::new())
+            .execute(
+                &request("s", &format!("{}", rand_input())),
+                &CancelToken::new(),
+            )
             .unwrap_err()
         {
             AiError::ProviderUnavailable(reason) => assert_eq!(reason, "app_server_restart_cap"),
@@ -1812,7 +1837,11 @@ mod tests {
         // Under the cap now: the request succeeds and the streak resets, so a
         // later crossing is an over-budget restart again rather than the cap.
         *over.descendants.lock().unwrap() = 0;
-        assert!(router.execute(&request("s", "clear"), &CancelToken::new()).is_ok());
+        assert!(
+            router
+                .execute(&request("s", "clear"), &CancelToken::new())
+                .is_ok()
+        );
         *over.descendants.lock().unwrap() = RouterConfig::default().max_app_server_descendants + 1;
         match router
             .execute(&request("s", "again"), &CancelToken::new())

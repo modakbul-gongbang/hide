@@ -202,7 +202,10 @@ pub enum AiError {
     /// another provider - the cap is this account's, not this provider's
     /// fault. `cap` names which limit; `measured` is the value that crossed
     /// it.
-    OverBudget { cap: &'static str, measured: u64 },
+    OverBudget {
+        cap: &'static str,
+        measured: u64,
+    },
     /// No connected provider; carries each provider's availability.
     NoProvider(Vec<(ProviderId, Availability)>),
 }

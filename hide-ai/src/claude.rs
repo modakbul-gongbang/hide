@@ -280,7 +280,8 @@ fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     // Every child in the crate is started through the one spawn helper.
-    let mut child = crate::process::spawn(&mut command).map_err(|error| RunError::Spawn(error.kind()))?;
+    let mut child =
+        crate::process::spawn(&mut command).map_err(|error| RunError::Spawn(error.kind()))?;
 
     let Some(mut stdout) = child.stdout.take() else {
         kill(&mut child);
