@@ -45,21 +45,50 @@ jobs:
       # The tests build with the Xcode toolchain the runner ships. The
       # open-source 6.0.3 toolchain the release uses crashes in IRGen on a
       # debug build of MainWindowChrome.swift, which -O never reaches.
-      - name: Show the Swift toolchain
-        run: swift --version
+      #
+      # `core` covers everything the release archive is built from, `shell`
+      # everything SwiftPM compiles. Cargo decides freshness by mtime, which a
+      # fresh checkout always fails, so the artifact worth caching is the
+      # archive itself keyed by content: a Swift-only change hashes the same as
+      # main and restores main's archive instead of rebuilding it.
+      - name: Fingerprint the toolchains and the sources
+        id: inputs
+        run: |
+          swift --version
+          rustc --version
+          {
+            echo "rustc=$(rustc --version | cut -d' ' -f2)"
+            echo "core=${{ hashFiles('Cargo.lock', 'Cargo.toml', 'contracts/**', 'herdr-core/**', 'hide-*/**', 'plugins/agent-context-labels/**') }}"
+            echo "shell=${{ hashFiles('macos/**', '!macos/.build/**', '!macos/build/**') }}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Restore the core archive built from these sources
+        id: core-archive
+        uses: actions/cache@v6
+        with:
+          path: target/release/libherdr_core.a
+          key: core-archive-${{ runner.os }}-${{ steps.inputs.outputs.rustc }}-${{ steps.inputs.outputs.core }}
       - uses: Swatinem/rust-cache@v2
+        if: steps.core-archive.outputs.cache-hit != 'true'
         with:
           workspaces: ". -> target"
+      - name: Build the core archive the shell links
+        if: steps.core-archive.outputs.cache-hit != 'true'
+        run: bash scripts/verify-cargo.sh build
+      - name: Link the restored archive without a Cargo run
+        if: steps.core-archive.outputs.cache-hit == 'true'
+        run: echo "HIDE_CORE_ARCHIVE_PREBUILT=1" >> "$GITHUB_ENV"
+      # The key carries every Swift input so each run with a change saves a
+      # newer build; an exact hit saves nothing, and a key on Package.swift
+      # alone kept restoring the build from the last manifest change.
       - uses: actions/cache@v6
         with:
           path: macos/.build
-          key: swift-build-${{ runner.os }}-${{ hashFiles('macos/Package.swift') }}
-          restore-keys: swift-build-${{ runner.os }}-
-      - name: Build the core archive the shell links
-        # The package links target/release/libherdr_core.a as a system library.
-        run: cargo build --release --locked -p herdr-core
+          key: swift-build-${{ runner.os }}-${{ steps.inputs.outputs.shell }}-${{ steps.inputs.outputs.core }}
+          restore-keys: |
+            swift-build-${{ runner.os }}-${{ steps.inputs.outputs.shell }}-
+            swift-build-${{ runner.os }}-
       - name: Test the shell
-        run: swift test --package-path macos
+        run: bash scripts/verify-swift.sh test
       - name: Assert the shell's user-facing contracts
         # Both scripts pair a targeted test with a source search no test can
         # perform; the search half is what the full suite above does not cover.

@@ -51,12 +51,12 @@ class WrapperArguments(BuildFixture):
 @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('cargo') and shutil.which('swift'),
                      'real archive linking requires macOS, Cargo and SwiftPM')
 class RealVerificationBuilds(BuildFixture):
-    def run_wrapper(self, root, script, mode=None, *, succeeds=True, expected=41):
+    def run_wrapper(self, root, script, mode=None, *, succeeds=True, expected=41, **extra):
         home, tmp = self.base / 'runner-home', self.base / 'runner-tmp'
         home.mkdir(exist_ok=True)
         tmp.mkdir(exist_ok=True)
         env = dict(self.env, HOME=str(home), TMPDIR=str(tmp) + '/', EXPECTED=str(expected),
-                   CARGO_TARGET_DIR=str(self.base / 'must-not-use'))
+                   CARGO_TARGET_DIR=str(self.base / 'must-not-use'), **extra)
         command = ['bash', 'scripts/' + script] + ([mode] if mode else [])
         result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
         if succeeds:
@@ -146,6 +146,19 @@ import Bridge
             result = self.run_wrapper(root, script, mode, succeeds=False)
             self.assertIn('broken core', result.stderr)
             self.assertEqual(result.returncode, 101)
+
+        # CI restores the archive by content and links it without a Cargo run;
+        # the knob must never turn a missing archive into a rebuild.
+        prebuilt = dict(HIDE_CORE_ARCHIVE_PREBUILT='1')
+        bridge.write_text('@_silgen_name("fixture_value") private func coreValue() -> Int32\n'
+                          'public func value() -> Int32 { coreValue() * 2 }\n')
+        test.write_text(test.read_text().replace('#expect(value() + 1 ==', '#expect(value() =='))
+        self.run_wrapper(root, 'verify-swift.sh', 'test', expected=84, **prebuilt)
+        archive.unlink()
+        result = self.run_wrapper(root, 'verify-swift.sh', 'test', succeeds=False, expected=84,
+                                  **prebuilt)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('libherdr_core.a is missing', result.stderr)
 
 
 if __name__ == '__main__':
