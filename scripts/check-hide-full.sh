@@ -27,6 +27,7 @@ bash scripts/check-shortcut-contract.sh
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 bash scripts/check-harness-ignore-anchor.sh
 bash scripts/check-agent-asset-committed.sh
+python3 scripts/check-core-bridge-structure.py
 bash scripts/check-capability-readers-off-lock.sh
 bash scripts/check-terminal-row-cache.sh
 bash scripts/check-packaged-resource-access.sh
