@@ -1681,14 +1681,9 @@ impl Runtime {
                     );
                     return true;
                 }
-                let ui_state = &mut self.snapshot.ui_state;
-                if ui_state.terminal_pane_ids.insert(payload.pane_id.clone()) {
-                    ui_state.conversation_pane_ids.remove(&payload.pane_id);
-                } else {
-                    ui_state.terminal_pane_ids.remove(&payload.pane_id);
-                    ui_state
-                        .conversation_pane_ids
-                        .insert(payload.pane_id.clone());
+                let conversation = &mut self.snapshot.ui_state.conversation_pane_ids;
+                if !conversation.remove(&payload.pane_id) {
+                    conversation.insert(payload.pane_id.clone());
                 }
                 true
             }
@@ -2700,7 +2695,6 @@ impl Runtime {
                     pane_text_scales: current.pane_text_scales,
                     editor_text_scale: current.editor_text_scale,
                     conversation_pane_ids: current.conversation_pane_ids,
-                    terminal_pane_ids: current.terminal_pane_ids,
                     pane_read_records: current.pane_read_records,
                     last_agent_kind: payload.last_agent_kind.unwrap_or(current.last_agent_kind),
                     last_agent_bypass: payload

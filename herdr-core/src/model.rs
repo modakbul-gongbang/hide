@@ -1137,15 +1137,11 @@ pub struct UiStateSnapshot {
     /// Eligible agent panes whose terminal is replaced by the local
     /// conversation ledger. This is snapshot-only interaction state;
     /// persistence owns a separate stored representation and intentionally
-    /// omits this set. New eligible panes enter this set by default.
+    /// omits this set. A pane enters it only through `toggle_conversation`:
+    /// a new agent pane opens on its terminal, and a pane that leaves the
+    /// session leaves the set with it.
     #[serde(default)]
     pub conversation_pane_ids: BTreeSet<String>,
-    /// Eligible panes the operator explicitly switched back to the terminal.
-    /// This is not sent over the wire or persisted; it lets the core keep the
-    /// default Conversation mode stable across refreshes without treating a
-    /// terminal toggle as a new default.
-    #[serde(skip)]
-    pub terminal_pane_ids: BTreeSet<String>,
     /// What the operator had already seen on each pane, keyed by pane id.
     ///
     /// This is Hide's own record and the only authority for the read axis.
@@ -1246,7 +1242,6 @@ impl Default for UiStateSnapshot {
             pane_text_scales: BTreeMap::new(),
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
-            terminal_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
             last_agent_kind: default_agent_kind(),
             last_agent_bypass: false,

@@ -893,31 +893,20 @@ impl Runtime {
         )
     }
 
+    /// Drops the conversation choice of every pane that is no longer an
+    /// eligible agent pane. Nothing is added here: a pane shows its terminal
+    /// until the operator asks for the conversation, so the set only ever
+    /// grows through `toggle_conversation`.
     pub(super) fn sync_conversation_modes(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
         let live: BTreeSet<String> = agents
             .iter()
             .filter(|agent| conversation_agent_kind(&agent.agent_kind))
             .map(|agent| agent.pane_id.clone())
             .collect();
-        let ui_state = &mut self.snapshot.ui_state;
-        let before_conversation = ui_state.conversation_pane_ids.clone();
-        let before_terminal = ui_state.terminal_pane_ids.clone();
-
-        ui_state
-            .terminal_pane_ids
-            .retain(|pane_id| live.contains(pane_id));
-        let terminal = ui_state.terminal_pane_ids.clone();
-        ui_state
-            .conversation_pane_ids
-            .retain(|pane_id| live.contains(pane_id) && !terminal.contains(pane_id));
-        for pane_id in live {
-            if !ui_state.terminal_pane_ids.contains(&pane_id) {
-                ui_state.conversation_pane_ids.insert(pane_id);
-            }
-        }
-
-        before_conversation != ui_state.conversation_pane_ids
-            || before_terminal != ui_state.terminal_pane_ids
+        let conversation = &mut self.snapshot.ui_state.conversation_pane_ids;
+        let before = conversation.len();
+        conversation.retain(|pane_id| live.contains(pane_id));
+        before != conversation.len()
     }
 
     /// Refills every pane's child summary and breadcrumb from the final agent
