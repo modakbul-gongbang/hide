@@ -99,12 +99,16 @@ impl Zone {
             Ok(slice)
         };
         let times = take(&mut cursor, header.timecnt * 8)?
-            .chunks_exact(8)
-            .map(|chunk| i64::from_be_bytes(chunk.try_into().expect("8 bytes")))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|chunk| i64::from_be_bytes(*chunk))
             .collect::<Vec<_>>();
         let indices = take(&mut cursor, header.timecnt)?.to_vec();
         let types = take(&mut cursor, header.typecnt * 6)?
-            .chunks_exact(6)
+            .as_chunks::<6>()
+            .0
+            .iter()
             .map(|chunk| i32::from_be_bytes(chunk[..4].try_into().expect("4 bytes")))
             .collect::<Vec<_>>();
         cursor += header.charcnt + header.leapcnt * 12 + header.isstdcnt + header.isutcnt;
