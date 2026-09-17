@@ -203,6 +203,11 @@ pub(super) struct ConfirmedPanePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct CheckCloseStatusPayload {
+    pub(super) key: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct PaneTargetPayload {
     pub(super) pane_id: String,
 }
@@ -281,6 +286,19 @@ impl RemoteControlRequest {
                 ..
             }
         )
+    }
+
+    pub(super) fn mutation_kind(&self) -> Option<&'static str> {
+        match self {
+            Self::SplitPane { .. } => Some("pane.split"),
+            Self::TogglePaneZoom { .. } => Some("pane.zoom"),
+            Self::ClosePane { .. } => Some("pane.close"),
+            Self::CloseTab { .. } => Some("tab.close"),
+            Self::FocusPane { .. }
+            | Self::FocusWorkspace { .. }
+            | Self::FocusTab { .. }
+            | Self::CreateTab { .. } => None,
+        }
     }
 }
 
@@ -637,6 +655,7 @@ pub(super) enum Event {
     Key(KeyPayload),
     TerminalOutput(TerminalOutputPayload),
     SessionSnapshot(SessionSnapshotPayload),
+    RefreshStatus,
     Click(ClickPayload),
     FocusPane(FocusPaneRequestPayload),
     OpenBrowser(OpenBrowserPayload),
@@ -660,6 +679,7 @@ pub(super) enum Event {
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
+    CheckCloseStatus(CheckCloseStatusPayload),
     ReopenClosed,
     ForkPane(PaneTargetPayload),
     AgentTreeToggle(PaneTargetPayload),
@@ -763,6 +783,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "key" => decode!(KeyPayload, Key),
         "terminal_output" => decode!(TerminalOutputPayload, TerminalOutput),
         "session_snapshot" => decode!(SessionSnapshotPayload, SessionSnapshot),
+        "refresh_status" => Ok(Event::RefreshStatus),
         "click" => decode!(ClickPayload, Click),
         "focus_pane" => decode!(FocusPaneRequestPayload, FocusPane),
         "open_browser" => decode!(OpenBrowserPayload, OpenBrowser),
@@ -790,6 +811,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
+        "check_close_status" => decode!(CheckCloseStatusPayload, CheckCloseStatus),
         "reopen_closed" => Ok(Event::ReopenClosed),
         "fork_pane" => decode!(PaneTargetPayload, ForkPane),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
@@ -891,6 +913,7 @@ impl Runtime {
                 true
             }
             Event::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
+            Event::RefreshStatus => self.request_status_refresh(),
             Event::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
             Event::PetToggleVisible => {
                 let visible = !self.snapshot.ui_state.pet_visible;
@@ -1589,9 +1612,7 @@ impl Runtime {
                     format!("pane.split.{}.requested", direction.as_str()),
                     format!("Splitting pane {pane_id} {}", direction.as_str()),
                 );
-                if let Err(message) = live::spawn_pane_control(context, action) {
-                    self.set_error("pane.split_worker_failed", message, true);
-                }
+                self.begin_pane_operation(context, action);
                 true
             }
             Event::ResizePane(payload) => {
@@ -1617,16 +1638,14 @@ impl Runtime {
                     "pane.resize.requested",
                     format!("Resizing pane {pane_id} {}", direction.as_str()),
                 );
-                if let Err(message) = live::spawn_pane_control(
+                self.begin_pane_operation(
                     context,
                     PaneControlAction::Resize {
                         pane_id,
                         direction,
                         amount: payload.amount,
                     },
-                ) {
-                    self.set_error("pane.resize_worker_failed", message, true);
-                }
+                );
                 true
             }
             Event::ToggleZoom(payload) => {
@@ -1644,11 +1663,7 @@ impl Runtime {
                     "pane.zoom.requested",
                     format!("Toggling zoom for pane {pane_id}"),
                 );
-                if let Err(message) =
-                    live::spawn_pane_control(context, PaneControlAction::ToggleZoom { pane_id })
-                {
-                    self.set_error("pane.zoom_worker_failed", message, true);
-                }
+                self.begin_pane_operation(context, PaneControlAction::ToggleZoom { pane_id });
                 true
             }
             Event::ToggleConversation(payload) => {
@@ -1704,6 +1719,20 @@ impl Runtime {
                     .iter()
                     .map(|pane| pane.id.as_str())
                     .collect::<HashSet<_>>();
+                let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
+                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
+                });
+                if status_unknown {
+                    self.set_error(
+                        "tab.close_status_unknown",
+                        format!(
+                            "Tab {} has a pane whose activity status is unknown; refresh status before closing",
+                            payload.tab_id
+                        ),
+                        true,
+                    );
+                    return true;
+                }
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
                 });
@@ -1723,6 +1752,20 @@ impl Runtime {
                 self.start_close_capture(live::CloseCaptureTarget::Tab { tab_id }, tab)
             }
             Event::ClosePane(payload) => {
+                let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
+                    agent.pane_id == payload.pane_id && agent.requires_close_status_check
+                });
+                if status_unknown {
+                    self.set_error(
+                        "pane.close_status_unknown",
+                        format!(
+                            "Pane {} has an unknown activity status; refresh status before closing",
+                            payload.pane_id
+                        ),
+                        true,
+                    );
+                    return true;
+                }
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     agent.pane_id == payload.pane_id && agent.requires_close_confirmation
                 });
@@ -1747,25 +1790,7 @@ impl Runtime {
                     .flat_map(|tab| tab.panes.iter())
                     .any(|pane| pane.id == pane_id)
                 {
-                    let Some(context) = self.live.as_ref().cloned() else {
-                        self.set_error(
-                            "pane.control_unavailable",
-                            "Pane close requires a live Herdr connection",
-                            true,
-                        );
-                        return true;
-                    };
-                    self.panes_closing.insert(pane_id.clone());
-                    if let Err(message) = live::spawn_pane_control(
-                        context,
-                        PaneControlAction::Close {
-                            pane_id: pane_id.clone(),
-                        },
-                    ) {
-                        self.panes_closing.remove(&pane_id);
-                        self.set_error("pane.close_worker_failed", message, true);
-                    }
-                    return true;
+                    return self.start_scratch_close(pane_id);
                 }
                 if self.live.is_none() {
                     self.set_error(
@@ -1793,10 +1818,10 @@ impl Runtime {
                     return true;
                 };
                 self.retain_project_before_last_pane_closes(&pane_id);
-                self.panes_closing.insert(pane_id.clone());
                 self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
                 self.start_close_capture(live::CloseCaptureTarget::Pane { pane_id }, tab)
             }
+            Event::CheckCloseStatus(payload) => self.check_close_status(&payload.key),
             Event::ReopenClosed => self.reopen_closed(),
             Event::ForkPane(payload) => {
                 let pane_id = payload.pane_id;

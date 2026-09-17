@@ -41,8 +41,12 @@ impl PortsReader {
         {
             return None;
         }
+        let snapshot = read();
+        // The refresh interval starts when the sample is complete. A slow
+        // system read must not make the very next coordinator tick look due
+        // again merely because the read itself took most of the window.
         self.read_at = Some(Instant::now());
-        Some(read())
+        Some(snapshot)
     }
 }
 

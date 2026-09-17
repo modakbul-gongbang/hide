@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
@@ -28,6 +28,7 @@ use hide_herdr_client::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, H
 
 const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const ASYNC_OPERATION_TICK_INTERVAL: Duration = Duration::from_millis(250);
 const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
@@ -172,15 +173,13 @@ pub(crate) struct ActiveSubscription {
 impl ActiveSubscription {
     fn stop(mut self) {
         self.shutdown.shutdown();
-        if let Some(worker) = self.worker.take()
-            && worker.join().is_err()
-        {
-            crate::diagnostic!(json!({
-                "component": "session_sync",
-                "kind": "subscription_reader.join_failed",
-                "generation": self.generation,
-            }));
-        }
+        // A reader is blocked in its socket read. Waiting for it here made a
+        // disconnect hold the coordinator until the peer happened to close
+        // its copy, so the reconnect deadline was no longer meaningful.
+        // Shutdown wakes the socket; the detached reader's next message is
+        // ignored by its generation check, and its weak runtime reference
+        // keeps the stop path independent of the old connection.
+        let _ = self.worker.take();
     }
 }
 

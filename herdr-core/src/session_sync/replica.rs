@@ -7,6 +7,11 @@ pub(crate) struct SessionReplica {
     pub(crate) host: HostScope,
     pub(crate) cursor: u64,
     pub(crate) state: ProjectionState,
+    /// The last projection whose dependency ranges were confirmed. Pending
+    /// topology is kept in `state`, while this copy is what the runtime is
+    /// allowed to see. That lets an independent workspace move forward while
+    /// a different workspace still waits for its layout or replacement focus.
+    pub(crate) published_state: ProjectionState,
     pub(crate) pending_layouts: BTreeSet<String>,
     pub(crate) pending_workspace_closures: BTreeSet<String>,
     pub(crate) pending_active_tab_focuses: BTreeSet<String>,
@@ -50,6 +55,7 @@ impl SessionReplica {
         let replica = Self {
             host,
             cursor,
+            published_state: state.clone(),
             state,
             pending_layouts: BTreeSet::new(),
             pending_workspace_closures: BTreeSet::new(),
@@ -62,7 +68,145 @@ impl SessionReplica {
     }
 
     pub(crate) fn project(&self) -> SessionSnapshotPayload {
-        self.state.project()
+        self.published_state.project()
+    }
+
+    fn pending_workspace_ids(&self) -> HashSet<String> {
+        let mut blocked = HashSet::new();
+        for workspace_id in self
+            .pending_workspace_closures
+            .iter()
+            .chain(self.pending_active_tab_focuses.iter())
+        {
+            blocked.insert(workspace_id.clone());
+        }
+        for tab_id in &self.pending_layouts {
+            self.state
+                .tabs
+                .iter()
+                .find(|tab| &tab.tab_id == tab_id)
+                .or_else(|| {
+                    self.published_state
+                        .tabs
+                        .iter()
+                        .find(|tab| &tab.tab_id == tab_id)
+                })
+                .map(|tab| blocked.insert(tab.workspace_id.clone()));
+        }
+        blocked
+    }
+
+    fn merge_by_workspace<T: Clone>(
+        current: &[T],
+        published: &[T],
+        blocked: &HashSet<String>,
+        workspace_id: impl Fn(&T) -> &str,
+    ) -> Vec<T> {
+        let mut merged = Vec::with_capacity(current.len() + published.len());
+        for item in current {
+            if blocked.contains(workspace_id(item)) {
+                continue;
+            } else {
+                merged.push(item.clone());
+            }
+        }
+        for item in published {
+            if blocked.contains(workspace_id(item)) {
+                merged.push(item.clone());
+            }
+        }
+        merged
+    }
+
+    fn workspace_for_pane<'a>(state: &'a ProjectionState, pane_id: &str) -> Option<&'a str> {
+        state
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .map(|pane| pane.workspace_id.as_str())
+    }
+
+    fn focused_pane_for_partial_publish(&self, blocked: &HashSet<String>) -> Option<String> {
+        match self.state.focused_pane_id.as_deref() {
+            Some(pane_id) => match Self::workspace_for_pane(&self.state, pane_id) {
+                Some(workspace_id) if !blocked.contains(workspace_id) => Some(pane_id.to_owned()),
+                Some(_) => self.published_state.focused_pane_id.clone(),
+                None => None,
+            },
+            None => self
+                .published_state
+                .focused_pane_id
+                .as_deref()
+                .filter(|pane_id| {
+                    Self::workspace_for_pane(&self.published_state, pane_id)
+                        .is_some_and(|workspace_id| blocked.contains(workspace_id))
+                })
+                .map(str::to_owned),
+        }
+    }
+
+    fn focused_workspace_for_partial_publish(&self, blocked: &HashSet<String>) -> Option<String> {
+        match self.state.focused_workspace_id.as_deref() {
+            Some(workspace_id) if !blocked.contains(workspace_id) => Some(workspace_id.to_owned()),
+            Some(_) => self.published_state.focused_workspace_id.clone(),
+            None => self
+                .published_state
+                .focused_workspace_id
+                .as_deref()
+                .filter(|workspace_id| blocked.contains(*workspace_id))
+                .map(str::to_owned),
+        }
+    }
+
+    fn partial_published_state(&self) -> ProjectionState {
+        let blocked = self.pending_workspace_ids();
+        ProjectionState {
+            focused_pane_id: self.focused_pane_for_partial_publish(&blocked),
+            focused_workspace_id: self.focused_workspace_for_partial_publish(&blocked),
+            workspaces: Self::merge_by_workspace(
+                &self.state.workspaces,
+                &self.published_state.workspaces,
+                &blocked,
+                |workspace| workspace.workspace_id.as_str(),
+            ),
+            tabs: Self::merge_by_workspace(
+                &self.state.tabs,
+                &self.published_state.tabs,
+                &blocked,
+                |tab| tab.workspace_id.as_str(),
+            ),
+            panes: Self::merge_by_workspace(
+                &self.state.panes,
+                &self.published_state.panes,
+                &blocked,
+                |pane| pane.workspace_id.as_str(),
+            ),
+            layouts: Self::merge_by_workspace(
+                &self.state.layouts,
+                &self.published_state.layouts,
+                &blocked,
+                |layout| layout.workspace_id.as_str(),
+            ),
+            agents: Self::merge_by_workspace(
+                &self.state.agents,
+                &self.published_state.agents,
+                &blocked,
+                |agent| agent.workspace_id.as_str(),
+            ),
+        }
+    }
+
+    pub(crate) fn refresh_published_state(&mut self) -> Result<bool, SessionFetchError> {
+        if self.ready_to_publish() {
+            self.validate()?;
+            let changed = self.published_state != self.state;
+            self.published_state = self.state.clone();
+            return Ok(changed);
+        }
+        let next = self.partial_published_state();
+        let changed = next != self.published_state;
+        self.published_state = next;
+        Ok(changed)
     }
 
     pub(crate) fn project_remote(
@@ -73,8 +217,9 @@ impl SessionReplica {
         let agent_projection = crate::sidebar::project_agents(self.project());
         let mut agents = agent_projection.agents;
 
-        let mut pane_layouts = Vec::with_capacity(self.state.layouts.len());
-        for layout in &self.state.layouts {
+        let state = &self.published_state;
+        let mut pane_layouts = Vec::with_capacity(state.layouts.len());
+        for layout in &state.layouts {
             let area_width = f64::from(layout.area.width);
             let area_height = f64::from(layout.area.height);
             if area_width <= 0.0 || area_height <= 0.0 {
@@ -121,15 +266,13 @@ impl SessionReplica {
             });
         }
 
-        let mut workspaces = self
-            .state
+        let mut workspaces = state
             .workspaces
             .iter()
             .map(|workspace| {
                 let workspace_id = remote_workspace_id(target_id, &workspace.workspace_id);
                 let checkout_id = remote_checkout_id(target_id, &workspace.workspace_id);
-                let workspace_panes = self
-                    .state
+                let workspace_panes = state
                     .panes
                     .iter()
                     .filter(|pane| pane.workspace_id == workspace.workspace_id)
@@ -150,14 +293,13 @@ impl SessionReplica {
                     .map(|worktree| worktree.repo_name.clone())
                     .unwrap_or_else(|| workspace.label.clone());
                 let next_tab_label = crate::model::next_tab_label(
-                    self.state
+                    state
                         .tabs
                         .iter()
                         .filter(|tab| tab.workspace_id == workspace.workspace_id)
                         .map(|tab| tab.label.as_str()),
                 );
-                let tabs = self
-                    .state
+                let tabs = state
                     .tabs
                     .iter()
                     .filter(|tab| tab.workspace_id == workspace.workspace_id)
@@ -187,9 +329,10 @@ impl SessionReplica {
                                         .unwrap_or_else(|| "Attached".to_owned()),
                                     requires_close_confirmation: agent
                                         .is_some_and(|agent| agent.requires_close_confirmation),
+                                    requires_close_status_check: agent
+                                        .is_some_and(|agent| agent.requires_close_status_check),
                                     summary: agent.map(|agent| agent.summary.clone()),
-                                    activity_at_unix_ms: self
-                                        .state
+                                    activity_at_unix_ms: state
                                         .agents
                                         .iter()
                                         .find(|source| source.pane_id == pane.pane_id)
@@ -279,8 +422,7 @@ impl SessionReplica {
         // projected panes by id, and the projection carries the remote form.
         crate::project_context::sort_projects(&mut workspaces, &agents);
 
-        let active_tab_ids = self
-            .state
+        let active_tab_ids = state
             .workspaces
             .iter()
             .map(|workspace| {
@@ -291,11 +433,10 @@ impl SessionReplica {
             })
             .collect();
 
-        let focused = self
-            .state
+        let focused = state
             .focused_pane_id
             .as_deref()
-            .and_then(|pane_id| self.state.panes.iter().find(|pane| pane.pane_id == pane_id));
+            .and_then(|pane_id| state.panes.iter().find(|pane| pane.pane_id == pane_id));
         let focused_workspace_id =
             focused.map(|pane| remote_workspace_id(target_id, &pane.workspace_id));
         let focused_checkout_id =
@@ -310,8 +451,7 @@ impl SessionReplica {
                 focused_workspace_id,
                 focused_checkout_id,
                 focused_tab_id,
-                focused_pane_id: self
-                    .state
+                focused_pane_id: state
                     .focused_pane_id
                     .as_deref()
                     .map(|pane_id| remote_pane_id(target_id, pane_id)),
@@ -407,10 +547,7 @@ impl SessionReplica {
         let refresh_agents = candidate.apply_new_event(event.data)?;
         candidate.cursor = event.sequence;
         candidate.last_event = Some((event.sequence, fingerprint));
-        let publish = candidate.ready_to_publish();
-        if publish {
-            candidate.validate()?;
-        }
+        let publish = candidate.refresh_published_state()?;
         *self = candidate;
         Ok(ApplyOutcome {
             publish,

@@ -63,12 +63,46 @@ pub struct RecentClosedSnapshot {
     pub top_label: Option<String>,
     pub restoring: bool,
     pub notices: Vec<RecentClosedNoticeSnapshot>,
+    /// Close reservations whose topology is not confirmed yet. These are
+    /// deliberately separate from `count`: a pending close must not evict a
+    /// confirmed undo entry or become reopenable by accident.
+    pub pending: Vec<RecentClosedPendingSnapshot>,
+    pub can_reopen: bool,
+    pub reopen_blocked_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RecentClosedNoticeSnapshot {
     pub pane_id: Option<String>,
     pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RecentClosedPendingSnapshot {
+    pub key: String,
+    pub target_id: String,
+    pub label: String,
+    pub phase: String,
+    pub checking: bool,
+    pub message: Option<String>,
+    pub retryable: bool,
+}
+
+/// A core-owned asynchronous mutation. The shell renders this record in the
+/// existing request-scoped affordance for the subject and never infers a
+/// server confirmation from the transport response alone.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AsyncOperationSnapshot {
+    pub id: String,
+    pub kind: String,
+    pub target_id: String,
+    pub scope_id: String,
+    pub phase: String,
+    pub stage: String,
+    pub started_at_unix_ms: u64,
+    pub deadline_at_unix_ms: Option<u64>,
+    pub message: Option<String>,
+    pub retryable: bool,
 }
 
 /// What a pane search found, over the pane's whole scrollback.
@@ -319,6 +353,9 @@ pub struct SidebarAgentSnapshot {
     /// Derived: closing this pane would interrupt work or discard a result the
     /// operator has not read.
     pub requires_close_confirmation: bool,
+    /// Derived: the activity evidence is incomplete, so a destructive close
+    /// must wait for a fresh status rather than assuming the pane is idle.
+    pub requires_close_status_check: bool,
     /// Canonical task identity, distinct from the compact activity summary.
     pub identity_label: String,
     pub summary: String,
@@ -685,6 +722,8 @@ pub struct PaneSnapshot {
     /// with the agent row's own value so the header and the core cannot
     /// disagree about it.
     pub requires_close_confirmation: bool,
+    /// Whether the core needs a fresh activity status before allowing a close.
+    pub requires_close_status_check: bool,
     pub summary: Option<String>,
     pub activity_at_unix_ms: Option<u64>,
     pub fork: PaneForkSnapshot,
@@ -1731,6 +1770,10 @@ pub struct StatusSnapshot {
     pub background_ai: BackgroundAiSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
+    /// Core-owned operations which are waiting for a transport result or an
+    /// authoritative Herdr event. Keeping these beside status lets every
+    /// surface show the same bounded, target-scoped state.
+    pub async_operations: Vec<AsyncOperationSnapshot>,
     /// The core-owned outcome of the latest explicitly correlated pane-focus
     /// request. Ordinary focus events have no request id and do not replace
     /// this receipt, so a relationship control never mistakes another pane's
@@ -2101,6 +2144,7 @@ impl Snapshot {
                 background_ai: BackgroundAiSnapshot::unread(),
                 diagnostics: Vec::new(),
                 last_error: None,
+                async_operations: Vec::new(),
                 pane_focus_request: None,
             },
             pet: PetSnapshot::initial(),

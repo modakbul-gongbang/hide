@@ -401,6 +401,9 @@ pub enum RemoteControlAction {
         /// Which reorder this request belongs to, so a result that a later
         /// drag has already superseded cannot cancel the newer one.
         generation: u64,
+        /// The Herdr connection that carried the request. A late response
+        /// from an older socket cannot settle a move on a reconnected host.
+        connection_generation: u64,
     },
 }
 
@@ -425,6 +428,33 @@ pub enum RemoteControlOutcome {
     },
     /// The workspace tab order Herdr reported back, in Herdr's order.
     TabsOrdered { tab_ids: Vec<String> },
+}
+
+/// A control result is either a known refusal or an answer that may have been
+/// lost after Herdr accepted the request. The runtime must never retry the
+/// latter mutation without first reading fresh topology.
+#[derive(Clone, Debug)]
+pub(crate) enum ControlFailure {
+    Definite(String),
+    Ambiguous(String),
+}
+
+impl ControlFailure {
+    pub(crate) fn is_ambiguous(&self) -> bool {
+        matches!(self, Self::Ambiguous(_))
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        match self {
+            Self::Definite(message) | Self::Ambiguous(message) => message,
+        }
+    }
+}
+
+impl From<String> for ControlFailure {
+    fn from(message: String) -> Self {
+        Self::Definite(message)
+    }
 }
 
 #[derive(Clone)]
@@ -458,7 +488,7 @@ impl RemoteControlContext {
 fn execute_remote_control(
     connector: &dyn ApiConnector,
     action: &RemoteControlAction,
-) -> Result<RemoteControlOutcome, String> {
+) -> Result<RemoteControlOutcome, ControlFailure> {
     let (created_tab_id, created_pane_id) = match action {
         RemoteControlAction::Pane(action) => match action {
             PaneControlAction::Focus { .. }
@@ -467,7 +497,9 @@ fn execute_remote_control(
             | PaneControlAction::Close { .. } => match execute_pane_control(connector, action)? {
                 PaneControlOutcome::Acknowledged { created_pane_id } => (None, created_pane_id),
                 PaneControlOutcome::Projected { .. } => {
-                    return Err("remote pane mutation returned a layout projection".to_owned());
+                    return Err(ControlFailure::Definite(
+                        "remote pane mutation returned a layout projection".to_owned(),
+                    ));
                 }
             },
             // A remote pane is never relocated: Hide leaves another
@@ -475,11 +507,13 @@ fn execute_remote_control(
             PaneControlAction::Project { .. }
             | PaneControlAction::Resize { .. }
             | PaneControlAction::MoveToNewTab { .. } => {
-                return Err("unsupported remote pane control action".to_owned());
+                return Err(ControlFailure::Definite(
+                    "unsupported remote pane control action".to_owned(),
+                ));
             }
         },
         RemoteControlAction::FocusWorkspace { workspace_id } => {
-            control_request(
+            mutation_request(
                 connector,
                 "workspace.focus",
                 wire::workspace_target_params(workspace_id)?,
@@ -487,7 +521,7 @@ fn execute_remote_control(
             (None, None)
         }
         RemoteControlAction::FocusTab { tab_id } => {
-            control_request(connector, "tab.focus", wire::tab_target_params(tab_id)?)?;
+            mutation_request(connector, "tab.focus", wire::tab_target_params(tab_id)?)?;
             (None, None)
         }
         RemoteControlAction::CreateTab {
@@ -495,16 +529,16 @@ fn execute_remote_control(
             cwd,
             label,
         } => {
-            let result = control_request(
+            let result = mutation_request(
                 connector,
                 "tab.create",
                 wire::tab_create_params(workspace_id, cwd, label)?,
             )?;
-            let (tab_id, pane_id) = wire::created_tab(result)?;
+            let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
             (Some(tab_id), Some(pane_id))
         }
         RemoteControlAction::CloseTab { tab_id } => {
-            control_request(connector, "tab.close", wire::tab_target_params(tab_id)?)?;
+            mutation_request(connector, "tab.close", wire::tab_target_params(tab_id)?)?;
             (None, None)
         }
         RemoteControlAction::MoveTab {
@@ -515,12 +549,12 @@ fn execute_remote_control(
             // `tab.move` answers with the workspace's whole tab list in its
             // new order, so the caller can check what Herdr actually did
             // instead of assuming the request landed as asked.
-            let result = control_request(
+            let result = mutation_request(
                 connector,
                 "tab.move",
                 wire::tab_move_params(tab_id, *insert_index)?,
             )?;
-            let tab_ids = wire::moved_tabs(result)?;
+            let tab_ids = wire::moved_tabs(result).map_err(ControlFailure::Ambiguous)?;
             return Ok(RemoteControlOutcome::TabsOrdered { tab_ids });
         }
     };
@@ -533,13 +567,14 @@ fn execute_remote_control(
 fn execute_pane_control(
     connector: &dyn ApiConnector,
     action: &PaneControlAction,
-) -> Result<PaneControlOutcome, String> {
+) -> Result<PaneControlOutcome, ControlFailure> {
     if let PaneControlAction::Project { pane_id } = action {
         return fetch_pane_layout(connector, pane_id)
-            .map(|layout| PaneControlOutcome::Projected { layout });
+            .map(|layout| PaneControlOutcome::Projected { layout })
+            .map_err(ControlFailure::Definite);
     }
     if let PaneControlAction::Focus { pane_id } = action {
-        control_request(connector, "pane.focus", wire::pane_target_params(pane_id)?)?;
+        mutation_request(connector, "pane.focus", wire::pane_target_params(pane_id)?)?;
         return Ok(PaneControlOutcome::Acknowledged {
             created_pane_id: None,
         });
@@ -550,7 +585,7 @@ fn execute_pane_control(
         amount,
     } = action
     {
-        control_request(
+        mutation_request(
             connector,
             "pane.resize",
             wire::pane_resize_params(pane_id, *direction, *amount)?,
@@ -570,15 +605,15 @@ fn execute_pane_control(
             // part of the split and the pane_focused event lands the shell's
             // selection there with no second round trip.
             let params = wire::pane_split_params(pane_id, *direction, cwd.as_deref())?;
-            let result = control_request(connector, "pane.split", params)?;
-            Some(wire::split_pane(result)?)
+            let result = mutation_request(connector, "pane.split", params)?;
+            Some(wire::split_pane(result).map_err(ControlFailure::Ambiguous)?)
         }
         PaneControlAction::ToggleZoom { pane_id } => {
-            control_request(connector, "pane.zoom", wire::pane_zoom_params(pane_id)?)?;
+            mutation_request(connector, "pane.zoom", wire::pane_zoom_params(pane_id)?)?;
             None
         }
         PaneControlAction::Close { pane_id } => {
-            control_request(connector, "pane.close", wire::pane_target_params(pane_id)?)?;
+            mutation_request(connector, "pane.close", wire::pane_target_params(pane_id)?)?;
             None
         }
         PaneControlAction::MoveToNewTab {
@@ -587,10 +622,10 @@ fn execute_pane_control(
             label,
         } => {
             let params = wire::pane_move_to_new_tab_params(pane_id, workspace_id, label)?;
-            let result = control_request(connector, "pane.move", params)?;
+            let result = mutation_request(connector, "pane.move", params)?;
             // The created tab is checked here so a refusal Herdr reported as
             // an unchanged move fails the action rather than reading as done.
-            wire::moved_pane_tab(result)?;
+            wire::moved_pane_tab(result).map_err(ControlFailure::Ambiguous)?;
             None
         }
         PaneControlAction::Project { .. }
@@ -607,6 +642,23 @@ fn control_request(
 ) -> Result<Value, String> {
     request_with_connector(connector, method, params, Duration::from_secs(5))
         .map_err(|error| format!("{method} failed: {error}"))
+}
+
+fn mutation_request(
+    connector: &dyn ApiConnector,
+    method: &str,
+    params: Value,
+) -> Result<Value, ControlFailure> {
+    request_with_connector(connector, method, params, Duration::from_secs(5)).map_err(|error| {
+        match error {
+            ApiError::Remote { code, message } => {
+                ControlFailure::Definite(format!("{method} was refused: {code}: {message}"))
+            }
+            ApiError::Transport(message) | ApiError::Malformed(message) => {
+                ControlFailure::Ambiguous(format!("{method} result is unknown: {message}"))
+            }
+        }
+    })
 }
 
 fn reopen_request(
@@ -634,6 +686,9 @@ pub enum CloseCaptureTarget {
 #[derive(Clone, Debug)]
 pub struct CloseCaptureRequest {
     pub key: String,
+    /// A response from an older live connection must never settle a newer
+    /// close intent after reconnect.
+    pub connection_generation: u64,
     pub context: ClosedContext,
     pub panes: Vec<ClosedPane>,
     pub target: CloseCaptureTarget,
@@ -647,6 +702,7 @@ pub struct CloseCaptureOutcome {
 #[derive(Clone, Debug)]
 pub struct CloseEffectRequest {
     pub key: String,
+    pub connection_generation: u64,
     pub target: CloseCaptureTarget,
 }
 
@@ -761,6 +817,59 @@ fn run_close_effect(
         Duration::from_secs(5),
     )
     .map(|_| ())
+}
+
+/// A read-only fresh session check for a close whose transport result was
+/// ambiguous. It does not repeat the mutation and carries the connection
+/// generation so a late answer from an older socket cannot change current
+/// state.
+#[derive(Clone, Debug)]
+pub struct CloseStatusCheckRequest {
+    pub key: String,
+    pub target: CloseCaptureTarget,
+}
+
+pub fn spawn_close_status_check(
+    context: LiveContext,
+    key: String,
+    connection_generation: u64,
+    target: CloseCaptureTarget,
+) -> Result<(), String> {
+    spawn_close_status_checks(
+        context,
+        connection_generation,
+        vec![CloseStatusCheckRequest { key, target }],
+    )
+}
+
+/// Runs one read for all close operations waiting on the same authoritative
+/// session. The result is fanned out while the runtime lock is held, so a
+/// single fresh snapshot cannot settle one close and leave its siblings stale.
+pub fn spawn_close_status_checks(
+    context: LiveContext,
+    connection_generation: u64,
+    requests: Vec<CloseStatusCheckRequest>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-close-status-check".to_owned())
+        .spawn(move || {
+            let result = fetch_session_with_connector(context.api_connector.as_ref());
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => {
+                    guard.ingest_close_status_results(connection_generation, &requests, result)
+                }
+                Err(_) => false,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("close status worker could not be started: {error}"))
 }
 
 #[derive(Clone, Debug)]
@@ -1575,6 +1684,17 @@ fn fetch_pane_layout(
 }
 
 pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Result<(), String> {
+    spawn_pane_control_with_generation(context, action, None)
+}
+
+/// Starts a pane control worker with the connection generation that created it.
+/// The generation is part of the operation identity, so a late answer from an
+/// older Herdr socket cannot settle a newer request for the same pane.
+pub fn spawn_pane_control_with_generation(
+    context: LiveContext,
+    action: PaneControlAction,
+    connection_generation: Option<u64>,
+) -> Result<(), String> {
     let worker_name = match &action {
         PaneControlAction::Project { .. } => "herdr-core-pane-project".to_owned(),
         PaneControlAction::Focus { .. } => "herdr-core-pane-focus".to_owned(),
@@ -1598,7 +1718,12 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
                 return;
             };
             let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_pane_control_result(action, result, elapsed_ms),
+                Ok(mut guard) => guard.ingest_pane_control_failure_with_generation(
+                    action,
+                    result,
+                    elapsed_ms,
+                    connection_generation,
+                ),
                 Err(_) => return,
             };
             drop(runtime);
@@ -1800,6 +1925,7 @@ pub fn spawn_remote_control(
     context: RemoteControlContext,
     request_id: String,
     action: RemoteControlAction,
+    connection_generation: u64,
 ) -> Result<(), String> {
     let target_id = context.target_id.clone();
     let worker_name = match &action {
@@ -1850,12 +1976,13 @@ pub fn spawn_remote_control(
                 return;
             };
             let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_remote_control_result(
+                Ok(mut guard) => guard.ingest_remote_control_failure_with_generation(
                     &target_id,
                     &request_id,
                     action,
                     result,
                     elapsed_ms,
+                    Some(connection_generation),
                 ),
                 Err(_) => return,
             };
@@ -1889,7 +2016,7 @@ pub fn spawn_local_control(
                 return;
             };
             let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_local_control_result(action, result, elapsed_ms),
+                Ok(mut guard) => guard.ingest_local_control_failure(action, result, elapsed_ms),
                 Err(_) => return,
             };
             drop(runtime);

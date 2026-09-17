@@ -801,7 +801,7 @@ fn close_pane_requires_confirmation_only_while_working_or_unread() {
     let seen = snapshot(core);
     assert_eq!(
         seen["status"]["last_error"]["kind"],
-        "pane.control_unavailable"
+        "pane.close_status_unknown"
     );
 
     dispatch(
