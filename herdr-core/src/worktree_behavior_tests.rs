@@ -470,6 +470,22 @@ fn overview_close_and_idle_do_not_run_additional_git_commands() {
         }
         panic!("Reader did not settle");
     };
+    let settle_until_idle = |reader: &mut WorktreeReader, request: &WorktreeRequest| {
+        let mut idle_polls = 0;
+        for _ in 0..5000 {
+            let answered = reader.read_if_due(request.clone()).is_some();
+            if answered || !reader.is_idle() {
+                idle_polls = 0;
+            } else {
+                idle_polls += 1;
+                if idle_polls >= 3 {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!("Reader did not become idle");
+    };
     let value = settle(&mut reader, &request);
     assert!(
         value.projects[0]
@@ -477,14 +493,12 @@ fn overview_close_and_idle_do_not_run_additional_git_commands() {
             .as_ref()
             .is_some_and(|h| !h.commits.is_empty())
     );
-    // Path discovery's existing content generation needs one settling pass.
-    for _ in 0..300 {
-        reader.read_if_due(request.clone());
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    // Path discovery can schedule a follow-up read after the first answer.
+    // Wait for that work to finish before measuring the close behavior.
+    settle_until_idle(&mut reader, &request);
     let before = git_call_count(&root, "log");
     request.overview_root = None;
-    settle(&mut reader, &request);
+    settle_until_idle(&mut reader, &request);
     for _ in 0..100 {
         reader.read_if_due(request.clone());
     }
