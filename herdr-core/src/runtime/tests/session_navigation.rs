@@ -67,7 +67,8 @@ fn eligible_agent_panes_open_on_the_terminal_and_keep_the_conversation_they_aske
         }))
         .expect("conversation toggle event")
     };
-    let conversation = |runtime: &Runtime| runtime.snapshot().ui_state.conversation_pane_ids.clone();
+    let conversation =
+        |runtime: &Runtime| runtime.snapshot().ui_state.conversation_pane_ids.clone();
 
     // A new agent pane is a terminal until the operator asks otherwise.
     runtime.ingest_session(Ok(payload(&["w1:p1", "w1:p2"])));
@@ -76,11 +77,17 @@ fn eligible_agent_panes_open_on_the_terminal_and_keep_the_conversation_they_aske
 
     // Asking is one toggle, and the choice is per pane.
     assert!(runtime.dispatch_json(&toggle("w1:p1")));
-    assert_eq!(conversation(&runtime).into_iter().collect::<Vec<_>>(), ["w1:p1"]);
+    assert_eq!(
+        conversation(&runtime).into_iter().collect::<Vec<_>>(),
+        ["w1:p1"]
+    );
 
     // A refresh keeps the choice rather than treating the pane as new again.
     runtime.ingest_session(Ok(payload(&["w1:p1", "w1:p2"])));
-    assert_eq!(conversation(&runtime).into_iter().collect::<Vec<_>>(), ["w1:p1"]);
+    assert_eq!(
+        conversation(&runtime).into_iter().collect::<Vec<_>>(),
+        ["w1:p1"]
+    );
 
     // Toggling again returns the pane to its terminal.
     assert!(runtime.dispatch_json(&toggle("w1:p1")));
@@ -88,7 +95,10 @@ fn eligible_agent_panes_open_on_the_terminal_and_keep_the_conversation_they_aske
 
     // A choice does not outlive the pane that made it.
     assert!(runtime.dispatch_json(&toggle("w1:p2")));
-    assert_eq!(conversation(&runtime).into_iter().collect::<Vec<_>>(), ["w1:p2"]);
+    assert_eq!(
+        conversation(&runtime).into_iter().collect::<Vec<_>>(),
+        ["w1:p2"]
+    );
     runtime.ingest_session(Ok(payload(&["w1:p1"])));
     assert!(conversation(&runtime).is_empty());
 }

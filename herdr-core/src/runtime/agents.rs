@@ -1030,6 +1030,11 @@ impl Runtime {
                 })
                 .collect(),
             sessions_predating_install: predating,
+            last_report_failure: self
+                .hook_diagnosis
+                .as_ref()
+                .and_then(|diagnosis| diagnosis.last_report_failure.as_ref())
+                .map(|failure| failure.message()),
         };
         if self.snapshot.status.agent_hooks != hooks {
             self.snapshot.status.agent_hooks = hooks;
@@ -1393,6 +1398,14 @@ impl Runtime {
                 .map(|provider| (*provider, settings.model(*provider).to_owned()))
                 .collect(),
         }
+    }
+
+    /// Whether the Settings agents tab is on screen. The Background AI group
+    /// reports its own appearance through `ai_settings.observing`, and the
+    /// hook diagnosis shares that tab, so the one flag answers for both
+    /// readers that only work while the operator is looking.
+    pub(crate) fn settings_observed(&self) -> bool {
+        self.ai_observing
     }
 
     /// Hands a queued settings write to the caller that can perform it.

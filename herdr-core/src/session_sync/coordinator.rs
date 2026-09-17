@@ -34,6 +34,7 @@ fn run_coordinator(
     let mut defer_background_reads = true;
     let mut next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
+    let mut next_hook_diagnosis_refresh = Instant::now();
     let mut catalog_cache: Option<CatalogCache> = None;
     // The hook-install state is two small file reads of this machine's own
     // configuration, so the local coordinator takes it once before the first
@@ -265,6 +266,28 @@ fn run_coordinator(
                         && let Ok(mut locked) = core.lock()
                     {
                         locked.set_error("agent_hooks.install_refused", refusal.message(), false);
+                    }
+                }
+                // While the Settings agents tab is on screen the diagnosis is
+                // read back once a second, because the hook helper records a
+                // report it could not deliver from its own process and that
+                // record is the one thing that distinguishes "installed but
+                // refused" from "this session started first". Off screen,
+                // nothing is read.
+                if Instant::now() >= next_hook_diagnosis_refresh {
+                    next_hook_diagnosis_refresh = Instant::now() + HOOK_DIAGNOSIS_REFRESH_INTERVAL;
+                    let Some(observed) = read_settings_observed(&context) else {
+                        stop_subscription(&mut subscription);
+                        return;
+                    };
+                    if observed
+                        && !publish_hook_diagnosis(
+                            &context,
+                            hide_agent_hooks::Diagnosis::read(home),
+                        )
+                    {
+                        stop_subscription(&mut subscription);
+                        return;
                     }
                 }
             }
@@ -798,6 +821,15 @@ fn publish_provider_usage(
 fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::UsageActivity> {
     let runtime = context.runtime.upgrade()?;
     runtime.lock().ok().map(|guard| guard.usage_activity())
+}
+
+/// Whether the Settings agents tab is on screen. `None` means the runtime is
+/// gone.
+fn read_settings_observed(context: &SessionSyncContext) -> Option<bool> {
+    let runtime = context.runtime.upgrade()?;
+    let observed = runtime.lock().ok()?.settings_observed();
+    drop(runtime);
+    Some(observed)
 }
 
 /// Hands the runtime the hook-install judgement, which was read on this

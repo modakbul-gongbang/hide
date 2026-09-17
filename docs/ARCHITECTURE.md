@@ -62,7 +62,7 @@ Overview builds the current Project's task forest from the same canonical agents
 Missing parents and cycles remain visible roots, and selecting a task is shell-local inspection until an explicit Open dispatches the existing pane-selection event.
 
 What an agent has spawned in-process is not on Herdr's wire at all.
-The hook helper reports it through `herdr pane report-metadata`, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.
+The hook helper reports it through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.
 A count Hide cannot read is reported as unknown, never as zero.
 
 An attach lives only while its tab is in the last five shown.

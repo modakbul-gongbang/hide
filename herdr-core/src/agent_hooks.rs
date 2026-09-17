@@ -1,6 +1,6 @@
 //! Reading what Hide's hook wrote onto a pane.
 //!
-//! The hook helper reports through `herdr pane report-metadata`, so its
+//! The hook helper reports through `pane.report_metadata`, so its
 //! values arrive as ordinary pane tokens on the session snapshot the core
 //! already pulls. This module is the only place that reads them, the way
 //! [`crate::pane_content`] is the only place that reads the browser pane's

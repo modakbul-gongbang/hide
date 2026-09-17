@@ -1868,6 +1868,11 @@ pub struct AgentHooksSnapshot {
     /// They are the ones a restart would fix, and they are the reason the
     /// screen exists: the hook can be installed and a pane still uninstrumented.
     pub sessions_predating_install: Vec<AgentHookPaneSnapshot>,
+    /// The sentence describing the last hook report Herdr did not take, when
+    /// the most recent report failed. It is what separates "installed but
+    /// every report is refused" from the restart advice above: with it on
+    /// screen, a restart is not the fix and the sentence says what is.
+    pub last_report_failure: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
