@@ -201,6 +201,11 @@ impl WorktreeReader {
             catalog
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn is_idle(&self) -> bool {
+        self.inner.is_idle()
+    }
 }
 
 impl Default for WorktreeReader {
