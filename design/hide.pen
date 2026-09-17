@@ -28989,6 +28989,14 @@
     "--proposed-conversation-prompt": {
       "type": "number",
       "value": 12
+    },
+    "--size-settings-sheet-h-max": {
+      "type": "number",
+      "value": 820
+    },
+    "--size-settings-sheet-window-inset": {
+      "type": "number",
+      "value": 40
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

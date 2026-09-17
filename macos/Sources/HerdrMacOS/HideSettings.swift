@@ -20,6 +20,10 @@ struct HideSettingsView: View {
     /// screen that lives behind a click can be captured without driving the
     /// pointer; every other caller gets the first tab.
     var initialTab: HideSettingsTab = .general
+    /// The height of the window presenting the sheet, when it is a sheet.
+    /// The Settings scene is its own window and passes nothing, keeping the
+    /// smallest size.
+    var availableHeight: CGFloat? = nil
     @State private var tab: HideSettingsTab = .general
     @State private var accentHex = HideSettingsView.fallbackAccentHex
     @State private var fontSize = HideSettingsView.fallbackFontSize
@@ -58,13 +62,33 @@ struct HideSettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: HideTheme.settingsSheetSize.width, height: HideTheme.settingsSheetSize.height)
+        .frame(
+            width: HideTheme.settingsSheetSize.width,
+            height: HideSettingsView.sheetHeight(availableHeight: availableHeight)
+        )
         .background(HideTheme.background)
         .preferredColorScheme(.dark)
         .onAppear {
             accentHex = model.core.snapshot?.uiState.accentHex ?? HideSettingsView.fallbackAccentHex
             fontSize = model.core.snapshot?.uiState.fontSize ?? HideSettingsView.fallbackFontSize
         }
+    }
+
+    /// The sheet's height for a presenting window of `availableHeight`.
+    ///
+    /// The sheet used to be 560 points whatever the window, and the Agents
+    /// tab is taller than that: its last group sat below the fold and the
+    /// sheet's bottom edge ran through the middle of a row, which read as
+    /// the sheet being cut off. It now takes what the window offers, with
+    /// `settingsSheetWindowInset` kept clear above and below, between the
+    /// old size and `settingsSheetMaxHeight`. A window too small for even
+    /// the old size still gets the old size, which the platform clips the
+    /// same way it always did.
+    static func sheetHeight(availableHeight: CGFloat?) -> CGFloat {
+        let minimum = HideTheme.settingsSheetSize.height
+        guard let availableHeight else { return minimum }
+        let offered = availableHeight - HideTheme.settingsSheetWindowInset * 2
+        return min(max(offered, minimum), HideTheme.settingsSheetMaxHeight)
     }
 
     /// The sheet had no way out but the Escape key, which is invisible. The

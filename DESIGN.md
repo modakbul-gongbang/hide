@@ -1133,6 +1133,7 @@ A state keeps its symbol and semantic color when read, with reduced emphasis ins
 
 Search, New Agent, Settings, and file search each host the same tooltip overlay.
 Sheets use panel containers, headline titles, body or caption supporting text, and the same spacing scale.
+The Settings sheet is `settingsSheetSize` wide and grows with the presenting window from that height to `settingsSheetMaxHeight`, keeping `settingsSheetWindowInset` clear above and below, so a tab taller than the smallest size is read without a scroll on an ordinary window; the Settings scene, which is its own window, keeps the smallest size.
 The selected provider card uses an elevated fill and stronger neutral border; its status remains readable.
 Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
 

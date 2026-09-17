@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ShellView: View {
     @EnvironmentObject private var model: ShellModel
+    /// The window's content height, read for the Settings sheet, which sizes
+    /// itself to the window it is presented over.
+    @State private var contentHeight: CGFloat?
 
     var body: some View {
         ZStack {
@@ -41,6 +44,13 @@ struct ShellView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(HideTheme.background)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { contentHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, height in contentHeight = height }
+            }
+        )
         .hideOverlayHost()
         .preferredColorScheme(.dark)
         .environment(\.colorScheme, .dark)
@@ -63,7 +73,8 @@ struct ShellView: View {
             HideSettingsView(
                 model: model,
                 showsCloseButton: true,
-                initialTab: model.settingsInitialTab
+                initialTab: model.settingsInitialTab,
+                availableHeight: contentHeight
             )
             .hideOverlayHost()
         }
