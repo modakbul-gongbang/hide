@@ -8,7 +8,6 @@ git -C "$repo_root" diff --quiet HEAD -- \
     macos/Sources/HerdrMacOS/AgentBadge.swift \
     macos/Sources/HerdrMacOS/OperationalModels.swift \
     macos/Sources/HerdrMacOS/PaneShortcutSettings.swift \
-    macos/Sources/HerdrMacOS/ShellView.swift \
     macos/Sources/HerdrMacOS/TerminalHost.swift \
     macos/Sources/HerdrMacOS/ImeTerminalView.swift \
     macos/Sources/HerdrMacOS/PetAnimation.swift \
@@ -20,14 +19,20 @@ git -C "$repo_root" diff --quiet HEAD -- \
     macos/Sources/HerdrMacOS/PetView.swift \
     macos/Sources/HerdrMacOS/PetWindow.swift
 
-while IFS= read -r header; do
-    case "$header" in
-        *"struct ShellView: View"*|*"struct HideMainView: View"*|*"struct HideToolbar: View"*) ;;
-        *)
-            printf 'forbidden HideUI hunk: %s\n' "$header" >&2
-            exit 1
-            ;;
-    esac
-done < <(git -C "$repo_root" diff --unified=0 HEAD -- macos/Sources/HerdrMacOS/HideUI.swift | /usr/bin/grep '^@@' || true)
+if git -C "$repo_root" ls-files --error-unmatch macos/Sources/HerdrMacOS/HideUI.swift >/dev/null 2>&1 \
+    && git -C "$repo_root" grep -qF -- 'struct HideSidebar: View' macos/Sources/HerdrMacOS/HideUI.swift; then
+    printf 'HideSidebar implementation still lives in HideUI.swift\n' >&2
+    exit 1
+fi
+
+test -f "$macos_root/Sources/HerdrMacOS/HideSidebar.swift"
+test -f "$macos_root/Sources/HerdrMacOS/HideTerminalSurface.swift"
+test -f "$macos_root/Sources/HerdrMacOS/ShellRootView.swift"
+test -f "$macos_root/Sources/HerdrMacOS/WorktreeCreationSheet.swift"
+
+if git -C "$repo_root" ls-files --error-unmatch macos/Sources/HerdrMacOS/HideUI.swift >/dev/null 2>&1; then
+    printf 'obsolete HideUI.swift remains tracked\n' >&2
+    exit 1
+fi
 
 printf 'workbench ownership boundary verified\n'

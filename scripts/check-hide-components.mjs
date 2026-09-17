@@ -73,7 +73,8 @@ function violations(directory, structureOnly = false) {
   const overview = sources.get('CheckoutOverview.swift') ?? '';
   const cleanup = sources.get('MergedWorktreeCleanup.swift') ?? '';
   const shell = sources.get('ShellView.swift') ?? '';
-  const sidebar = sources.get('HideUI.swift') ?? '';
+  const sidebarFile = sources.has('HideSidebar.swift') ? 'HideSidebar.swift' : 'HideUI.swift';
+  const sidebar = sources.get(sidebarFile) ?? '';
   const settings = sources.get('HideSettings.swift') ?? '';
   const overviewInventory = inventory(overview);
   const shellInventory = inventory(shell);
@@ -92,7 +93,7 @@ function violations(directory, structureOnly = false) {
   const requiredChoiceGroups = [
     ['CheckoutOverview.swift', overview],
     ['ShellView.swift', shell],
-    ['HideUI.swift', sidebar],
+    [sidebarFile, sidebar],
     ['HideSettings.swift', settings],
   ];
   for (const [file, source] of requiredChoiceGroups) {
@@ -119,7 +120,7 @@ function violations(directory, structureOnly = false) {
     const emptyCount = counted['control:ContentUnavailableView'] ?? 0;
     // PetDashboard intentionally retains one system empty state. Every other
     // shell empty/error state belongs to HideEmptyState.
-    const allowedPetEmptyStates = file === 'HideUI.swift' ? 1 : 0;
+    const allowedPetEmptyStates = file === 'PetDashboard.swift' ? 1 : 0;
     if (emptyCount > allowedPetEmptyStates) {
       problems.push(`${file}: use HideEmptyState instead of ContentUnavailableView`);
     }
@@ -127,7 +128,7 @@ function violations(directory, structureOnly = false) {
   if(!structureOnly) {
     // These are the baseline files with native .help call sites. Browser pane
     // controls also inherit the common icon button's tooltip implementation.
-    const migrated=['HideUI.swift','HideSettings.swift','RightPanel.swift','ShellView.swift'];
+    const migrated=[sidebarFile,'HideSettings.swift','RightPanel.swift','ShellView.swift'];
     for(const file of migrated) if(!sources.get(file)?.includes('.hideTooltip(')) problems.push(`${file}: tooltip migration missing`);
     const count=[...sources.values()].reduce((n,s)=>n+(s.match(/\.hideTooltip\(/g)?.length??0),0);
     if(count<28)problems.push(`Expected at least 28 tooltip references, found ${count}`);
@@ -141,13 +142,16 @@ else {
   const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'hide-components-'));
   try {
     fs.cpSync(root,fixture,{recursive:true});
-    fs.appendFileSync(path.join(fixture,'HideUI.swift'),'\nstruct HideKeycap {}\n');
+    const sidebarFixture = fs.existsSync(path.join(fixture, 'HideSidebar.swift'))
+      ? 'HideSidebar.swift'
+      : 'HideUI.swift';
+    fs.appendFileSync(path.join(fixture, sidebarFixture),'\nstruct HideKeycap {}\n');
     assert(violations(fixture,structureOnly).some(s=>s.includes('duplicates HideKeycap')),'Positive duplicate fixture must fail');
     fs.appendFileSync(path.join(fixture,'CheckoutOverview.swift'),'\nlet legacy = Picker("Mode") {}.pickerStyle(.segmented)\n');
     assert(violations(fixture,structureOnly).some(s=>s.includes('stock segmented appearance')),'Reintroducing the stock choice appearance must fail');
     fs.appendFileSync(path.join(fixture,'MergedWorktreeCleanup.swift'),'\nlet legacy = Toggle("Remove").toggleStyle(.checkbox)\n');
     assert(violations(fixture,structureOnly).some(s=>s.includes('Known checkbox surface')),'Reintroducing stock checkbox appearance must fail');
-    fs.appendFileSync(path.join(fixture,'HideUI.swift'),'\nstruct PaneHeaderButton {}\n');
+    fs.appendFileSync(path.join(fixture, sidebarFixture),'\nstruct PaneHeaderButton {}\n');
     assert(violations(fixture,structureOnly).some(s=>s.includes('obsolete pane header icon button')),'Retired button fixture must fail');
   } finally {fs.rmSync(fixture,{recursive:true,force:true});}
   console.log(`Component ownership and positive duplicate fixture: PASS${structureOnly?' (structure-only invocation)':''}`);

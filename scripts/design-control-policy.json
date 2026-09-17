@@ -95,12 +95,25 @@
         "implementation:ButtonStyle": 1
       }
     },
-    "HideUI.swift": {
+    "PetDashboard.swift": {
       "kind": "legacy",
-      "reason": "The shell keeps one intentional PetDashboard system empty state and a native text editor; migrated controls use shared owners.",
+      "reason": "The Pet dashboard keeps its intentional system empty state while the shell surface uses shared controls.",
       "rules": {
-        "control:Toggle": 2,
-        "control:ContentUnavailableView": 1,
+        "control:ContentUnavailableView": 1
+      }
+    },
+    "ShellRootView.swift": {
+      "kind": "legacy",
+      "reason": "The shell root retains its native worktree deletion toggle while using the shared checkbox appearance.",
+      "rules": {
+        "control:Toggle": 1
+      }
+    },
+    "ChatComposerSheet.swift": {
+      "kind": "legacy",
+      "reason": "The chat composer retains its native text editor and CLI bypass toggle while using shared shell controls.",
+      "rules": {
+        "control:Toggle": 1,
         "control:TextEditor": 1
       }
     },
