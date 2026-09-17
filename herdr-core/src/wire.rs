@@ -1004,6 +1004,18 @@ fn nonempty_id(id: String, missing: &str) -> Result<String, String> {
         Ok(id)
     }
 }
+/// The active tab a `workspace.get` answer names. Herdr keeps a non-focused
+/// workspace's active tab as that workspace's memory and emits no event when
+/// a close moves it, so this read is how the replica learns the replacement.
+pub(crate) fn workspace_active_tab(value: Value) -> Result<String, String> {
+    let missing = "workspace.get response is missing workspace.active_tab_id";
+    match response(value, missing)? {
+        res::ResponseResult::WorkspaceInfo { workspace } => {
+            nonempty_id(workspace.active_tab_id, missing)
+        }
+        _ => Err(missing.into()),
+    }
+}
 pub(crate) fn created_workspace_pane(value: Value) -> Result<String, String> {
     let missing = "workspace.create response is missing root_pane.pane_id";
     match response(value, missing)? {

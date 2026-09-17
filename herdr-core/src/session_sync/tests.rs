@@ -864,6 +864,64 @@ fn active_tab_close_waits_for_the_authoritative_fallback_tab_focus() {
     assert_eq!(replica.state.workspaces[0].active_tab_id, "w1:t2");
 }
 
+/// Herdr moves a non-focused workspace's active tab without an event when a
+/// close removes it, so the replica settles from a `workspace.get` answer.
+/// The projection then drops the closed tab and names the replacement.
+#[test]
+fn active_tab_close_settles_from_a_workspace_read_when_no_focus_follows() {
+    let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+    replica
+        .apply(event(
+            41,
+            "tab_closed",
+            json!({"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}),
+        ))
+        .expect("active tab close event");
+    assert_eq!(
+        replica.workspaces_awaiting_active_tab(),
+        vec!["w1".to_owned()]
+    );
+
+    // A read that ran ahead of the stream names a tab it has not delivered.
+    assert!(!replica.settle_active_tab("w1", "w1:t9"));
+    assert!(!replica.ready_to_publish());
+
+    assert!(replica.settle_active_tab("w1", "w1:t2"));
+    assert!(replica.ready_to_publish());
+    assert!(replica.workspaces_awaiting_active_tab().is_empty());
+    assert!(replica.refresh_published_state().expect("valid projection"));
+    let projected = replica.project();
+    assert!(projected.tabs.iter().all(|tab| tab.tab_id != "w1:t1"));
+    assert_eq!(
+        projected.workspaces[0].active_tab_id.as_deref(),
+        Some("w1:t2")
+    );
+}
+
+/// The focused workspace still gets its replacement from `tab_focused`; a
+/// read that lands after it changes nothing.
+#[test]
+fn a_workspace_read_after_the_focus_event_changes_nothing() {
+    let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
+    replica
+        .apply(event(
+            41,
+            "tab_closed",
+            json!({"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}),
+        ))
+        .expect("active tab close event");
+    replica
+        .apply(event(
+            42,
+            "tab_focused",
+            json!({"type": "tab_focused", "tab_id": "w1:t2", "workspace_id": "w1"}),
+        ))
+        .expect("fallback tab focus event");
+    assert!(replica.workspaces_awaiting_active_tab().is_empty());
+    assert!(!replica.settle_active_tab("w1", "w1:t2"));
+    assert_eq!(replica.state.workspaces[0].active_tab_id, "w1:t2");
+}
+
 #[test]
 fn last_tab_close_waits_for_the_workspace_close_cascade() {
     let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
@@ -1222,6 +1280,101 @@ fn coordinator_resumes_from_the_last_event_without_fetching_another_snapshot() {
                 .herdr
                 .state
                 == "connected"
+    });
+
+    drop(handle);
+    server.join().expect("fake server joins");
+    remove_fixture(&root, &socket_path, &state_path);
+}
+
+/// End to end through the coordinator: Herdr reports the active tab closed
+/// and nothing else, the coordinator asks `workspace.get`, and the runtime's
+/// navigator stops listing the closed tab without waiting for a deadline.
+#[test]
+fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
+    let root = Path::new("/tmp").join(format!(
+        "herdr-core-session-active-tab-read-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).expect("create socket directory");
+    let socket_path = root.join("herdr.sock");
+    let state_path = root.join("state.json");
+    let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
+    let read_answered = Arc::new(AtomicBool::new(false));
+    let read_answered_from_server = Arc::clone(&read_answered);
+    let server = thread::spawn(move || {
+        let (mut snapshot_stream, snapshot_request) =
+            accept_request_for(&listener, "session.snapshot");
+        write_result(
+            &mut snapshot_stream,
+            &snapshot_request,
+            json!({"type": "session_snapshot", "snapshot": two_tab_snapshot()}),
+        );
+        let (mut subscription, subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        write_result(
+            &mut subscription,
+            &subscribe_request,
+            json!({
+                "type": "subscription_started",
+                "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                "sequence": 40,
+                "oldest_available_sequence": 1
+            }),
+        );
+        writeln!(
+            subscription,
+            "{}",
+            json!({
+                "protocol": HERDR_PROTOCOL_REVISION,
+                "host": {"host_id": "fixture-host", "session_id": "fixture"},
+                "sequence": 41,
+                "event": "tab_closed",
+                "data": {"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}
+            })
+        )
+        .expect("write tab_closed");
+
+        let (mut read_stream, read_request) = accept_request_for(&listener, "workspace.get");
+        assert_eq!(read_request["params"]["workspace_id"], "w1");
+        write_result(
+            &mut read_stream,
+            &read_request,
+            json!({
+                "type": "workspace_info",
+                "workspace": {
+                    "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false,
+                    "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t2",
+                    "agent_status": "idle"
+                }
+            }),
+        );
+        read_answered_from_server.store(true, Ordering::Release);
+        let mut byte = [0_u8; 1];
+        assert_eq!(subscription.read(&mut byte).expect("wait for shutdown"), 0);
+    });
+
+    let runtime = runtime_for_fixture(&socket_path, &state_path);
+    let context = context_for_fixture(&runtime, &socket_path);
+    let handle = spawn(context, None).expect("start session sync");
+    let listed_tab_ids = || -> Vec<String> {
+        runtime
+            .lock()
+            .expect("runtime lock")
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .filter_map(|tab| tab.id.clone())
+            .collect()
+    };
+    wait_until(Instant::now() + Duration::from_secs(3), || {
+        let tabs = listed_tab_ids();
+        read_answered.load(Ordering::Acquire)
+            && tabs.iter().any(|id| id == "w1:t2")
+            && tabs.iter().all(|id| id != "w1:t1")
     });
 
     drop(handle);

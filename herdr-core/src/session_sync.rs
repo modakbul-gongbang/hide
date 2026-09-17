@@ -29,6 +29,12 @@ use hide_herdr_client::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, H
 const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const ASYNC_OPERATION_TICK_INTERVAL: Duration = Duration::from_millis(250);
+/// How many `workspace.get` reads a workspace waiting for its replacement
+/// active tab gets, one per event that leaves it waiting and one per
+/// operation tick, before the replica is declared stale and rebuilt from a
+/// fresh snapshot. Eight ticks is two seconds, longer than any event the
+/// read can have run ahead of takes to arrive.
+const ACTIVE_TAB_READ_ATTEMPT_LIMIT: u32 = 8;
 /// How often the hook diagnosis is read back while the Settings agents tab
 /// is on screen. A hook report that failed is written by the hook helper,
 /// in another process, and this is the only way the screen the tooltip
@@ -210,5 +216,6 @@ pub(crate) use replica::{SNAPSHOT_FIELDS_THE_REPLICA_READS, remote_tab_id};
 #[cfg(test)]
 pub(crate) use subscription::connect_failure_from_api;
 pub(crate) use subscription::{
-    connect_from_cursor, connect_from_snapshot, fetch_agents, log_sync_failure, stop_subscription,
+    connect_from_cursor, connect_from_snapshot, fetch_agents, fetch_workspace_active_tab,
+    log_sync_failure, stop_subscription,
 };
