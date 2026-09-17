@@ -8,7 +8,6 @@ git -C "$repo_root" diff --quiet HEAD -- \
     macos/Sources/HerdrMacOS/AgentBadge.swift \
     macos/Sources/HerdrMacOS/OperationalModels.swift \
     macos/Sources/HerdrMacOS/PaneShortcutSettings.swift \
-    macos/Sources/HerdrMacOS/ShellView.swift \
     macos/Sources/HerdrMacOS/TerminalHost.swift \
     macos/Sources/HerdrMacOS/ImeTerminalView.swift \
     macos/Sources/HerdrMacOS/PetAnimation.swift \
@@ -27,5 +26,6 @@ fi
 
 test -f "$macos_root/Sources/HerdrMacOS/HideSidebar.swift"
 test -f "$macos_root/Sources/HerdrMacOS/HideTerminalSurface.swift"
+test -f "$macos_root/Sources/HerdrMacOS/ShellRootView.swift"
 
 printf 'workbench ownership boundary verified\n'

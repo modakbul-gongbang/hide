@@ -19,7 +19,7 @@ enum ShellMetrics {
     static let cardRadius: CGFloat = 10
 }
 
-// The shell's live view tree is `ShellView` in HideUI.swift. The panel views
+// The shell's live view tree is `ShellView` in ShellRootView.swift. The panel views
 // that used to live here were the pre-Hide layout and became unreachable when
 // that shell landed; they are gone rather than kept in sync with it.
 
