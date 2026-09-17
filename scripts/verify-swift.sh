@@ -15,6 +15,12 @@
 # The shell links `target/release/libherdr_core.a` from a fixed path inside the
 # worktree, so the core is built first. Swift output stays at SwiftPM's default
 # `macos/.build`, which is ignored and removed with the worktree.
+#
+# HIDE_CORE_ARCHIVE_PREBUILT=1 skips that Cargo run and links the archive as it
+# is. Only CI sets it, after restoring the archive from a cache keyed by every
+# source the archive is built from; a missing archive is then an error, never a
+# rebuild, because a rebuild there means the cache key and the sources have
+# diverged. Locally the variable stays unset and Cargo decides freshness.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -29,12 +35,20 @@ esac
 mode="$1"
 shift
 
-bash scripts/verify-cargo.sh build
+archive=target/release/libherdr_core.a
+if [[ "${HIDE_CORE_ARCHIVE_PREBUILT:-}" == "1" ]]; then
+    if [[ ! -f "$archive" ]]; then
+        printf 'HIDE_CORE_ARCHIVE_PREBUILT=1 but %s is missing\n' "$archive" >&2
+        exit 1
+    fi
+else
+    bash scripts/verify-cargo.sh build
+fi
 
 # SwiftPM's -L/-l flags do not declare the external archive as a build input.
 # As in build_dev_app.sh, a content digest makes a changed core invalidate the
 # Swift build plan, while an identical archive keeps the no-change cache hot.
-archive_digest="$(LC_ALL=C shasum -a 256 target/release/libherdr_core.a)"
+archive_digest="$(LC_ALL=C shasum -a 256 "$archive")"
 archive_digest="${archive_digest%% *}"
 
 exec swift "$mode" --package-path macos --disable-keychain --disable-sandbox \

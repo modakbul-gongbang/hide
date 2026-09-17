@@ -12,11 +12,9 @@ Run the same three lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
 
 ```sh
-cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace                   # herdr-core, hide-ai and the context-label plugin
-cargo build --release --locked -p herdr-core      # the shell links target/release/libherdr_core.a
-swift test --package-path macos
+bash scripts/verify-cargo.sh lint                # cargo fmt --check, then clippy over every target
+bash scripts/verify-cargo.sh test                # herdr-core, hide-ai and the context-label plugin
+bash scripts/verify-swift.sh test                # builds target/release/libherdr_core.a, then the shell
 bash scripts/check-right-panel-sections.sh
 bash scripts/check-shortcut-contract.sh
 bash scripts/check-harness-ignore-anchor.sh
