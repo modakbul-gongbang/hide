@@ -302,3 +302,125 @@ fn availability_reports_login_install_and_probe_state() {
         AiError::ProviderUnavailable("claude_not_installed".to_owned())
     );
 }
+
+/// A `/usage` read is the one child that gets a whitelisted environment: the
+/// child records what it received, and the record is what is asserted.
+mod usage {
+    use super::*;
+    use hide_ai::{USAGE_ENVIRONMENT, UsageError};
+
+    fn usage_dir(mode: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "hide-ai-usage-{mode}-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("t").replace("::", "-")
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("usage-mode"), mode).unwrap();
+        dir
+    }
+
+    fn usage_backend(cwd: &std::path::Path) -> ClaudeCliBackend {
+        ClaudeCliBackend::new(ClaudeConfig {
+            binary: fixture(),
+            model: "haiku".to_owned(),
+            cwd: cwd.to_path_buf(),
+        })
+    }
+
+    #[test]
+    fn the_result_text_comes_back_whatever_it_says() {
+        let dir = usage_dir("text");
+        let text = usage_backend(&dir).usage_text(&CancelToken::new()).unwrap();
+        assert!(text.contains("Current week (all models): 1% used"), "{text}");
+
+        let dir = usage_dir("cost");
+        let text = usage_backend(&dir).usage_text(&CancelToken::new()).unwrap();
+        assert!(text.starts_with("Total cost:"), "{text}");
+    }
+
+    #[test]
+    fn the_child_gets_only_the_whitelisted_environment_and_the_configured_cwd() {
+        let dir = usage_dir("text");
+        // A variable the CLI must not see, planted where the child would
+        // otherwise inherit it.
+        let _guard = MODE.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("HERDR_ENV", "1");
+            std::env::set_var("CLAUDECODE", "1");
+            std::env::set_var("FAKE_MODE", "no_account");
+        }
+        let result = usage_backend(&dir).usage_text(&CancelToken::new());
+        unsafe {
+            std::env::remove_var("HERDR_ENV");
+            std::env::remove_var("CLAUDECODE");
+            std::env::remove_var("FAKE_MODE");
+        }
+        result.unwrap();
+
+        let args: Vec<String> =
+            serde_json::from_slice(&std::fs::read(dir.join("usage-args.json")).unwrap()).unwrap();
+        assert_eq!(args, ClaudeCliBackend::usage_arguments());
+        assert_eq!(args[..2], ["-p", "/usage"]);
+        assert!(args.iter().any(|arg| arg == "--no-session-persistence"));
+
+        // The fixture's own interpreter shim adds variables of its own
+        // (`PWD`, `PYENV_*`), so the assertion is on the three planted keys
+        // that must not cross and the five that must.
+        let keys: Vec<String> =
+            serde_json::from_slice(&std::fs::read(dir.join("usage-env.json")).unwrap()).unwrap();
+        for planted in ["HERDR_ENV", "CLAUDECODE", "FAKE_MODE"] {
+            assert!(!keys.iter().any(|key| key == planted), "{planted} {keys:?}");
+        }
+        for kept in USAGE_ENVIRONMENT {
+            if std::env::var_os(kept).is_some() {
+                assert!(keys.iter().any(|key| key == kept), "{kept} {keys:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_failure_shape_is_its_own_class_and_none_carries_output() {
+        let dir = usage_dir("exit");
+        assert_eq!(
+            usage_backend(&dir).usage_text(&CancelToken::new()),
+            Err(UsageError::Failed("usage_exit_2".to_owned()))
+        );
+        let dir = usage_dir("is_error");
+        assert_eq!(
+            usage_backend(&dir).usage_text(&CancelToken::new()),
+            Err(UsageError::Failed("usage_is_error".to_owned()))
+        );
+        let dir = usage_dir("not_json");
+        assert_eq!(
+            usage_backend(&dir).usage_text(&CancelToken::new()),
+            Err(UsageError::NoResultFrame)
+        );
+        let missing = ClaudeCliBackend::new(ClaudeConfig {
+            binary: PathBuf::from("claude-binary-that-does-not-exist"),
+            ..ClaudeConfig::default()
+        });
+        assert_eq!(
+            missing.usage_text(&CancelToken::new()),
+            Err(UsageError::NotInstalled)
+        );
+    }
+
+    #[test]
+    fn a_cancelled_read_kills_the_child() {
+        let dir = usage_dir("slow");
+        let cancel = CancelToken::new();
+        let canceller = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            canceller.cancel();
+        });
+        let started = std::time::Instant::now();
+        assert_eq!(
+            usage_backend(&dir).usage_text(&cancel),
+            Err(UsageError::Cancelled)
+        );
+        assert!(started.elapsed() < Duration::from_secs(20), "the child was not killed");
+    }
+}

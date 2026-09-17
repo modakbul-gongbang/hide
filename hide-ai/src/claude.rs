@@ -17,7 +17,15 @@
 //! `--bare` is unusable here. It reads `ANTHROPIC_API_KEY` only and never the
 //! OAuth keychain, so it is incompatible with the subscription login that is
 //! the user's own credential.
+//!
+//! The same print mode answers `/usage`, a local command the CLI resolves
+//! against its own login: no model turn, no cost, and the account's weekly
+//! window as text in the result frame. That is how the toolbar's Weekly Usage
+//! reads Claude Code, so Hide itself never touches the keychain; see
+//! [`ClaudeCliBackend::usage_text`].
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -51,6 +59,17 @@ pub const MODEL_ALIASES: &[&str] = &["haiku", "sonnet", "opus", "fable"];
 /// The availability probe is a local process that reads a token file; it has
 /// no reason to take longer than this, and the router must not stall on it.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
+/// `/usage` is a local command: the measured run answers in under a second,
+/// and the bound covers a cold Node start on a loaded machine. Past it the
+/// child is killed and the popover keeps its last answer or says so.
+const USAGE_TIMEOUT: Duration = Duration::from_secs(30);
+/// The only variables a `/usage` child receives. `USER` is what lets the CLI
+/// find its keychain account (without it the CLI prints `/cost` text as if
+/// logged out); `HOME` and `PATH` locate the login and Node; `LOGNAME` and
+/// `TMPDIR` are the shell's ordinary companions. Everything else is withheld
+/// on purpose: without `HERDR_ENV` the operator's Herdr and hide hooks exit
+/// early, and without `CLAUDECODE` the CLI does not think it is nested.
+pub const USAGE_ENVIRONMENT: &[&str] = &["HOME", "PATH", "USER", "LOGNAME", "TMPDIR"];
 /// How long a child that has closed stdout is given to exit before it is
 /// killed. Its answer is already in hand at that point.
 const EXIT_GRACE: Duration = Duration::from_secs(5);
@@ -74,6 +93,44 @@ impl Default for ClaudeConfig {
             binary: PathBuf::from("claude"),
             model: DEFAULT_MODEL.to_owned(),
             cwd: std::env::temp_dir(),
+        }
+    }
+}
+
+/// Why a `/usage` read produced no text. The caller decides what each one
+/// means for the screen; no variant carries output, a token, or an account.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UsageError {
+    /// The binary is not on `PATH` (or the configured path is not a file).
+    NotInstalled,
+    /// The child outlived [`USAGE_TIMEOUT`] and was killed.
+    Timeout,
+    Cancelled,
+    /// The child could not be started, exited non-zero, or reported
+    /// `is_error`; the payload is the diagnostic token only.
+    Failed(String),
+    /// stdout was not a result frame, or the frame had no `result` text.
+    NoResultFrame,
+}
+
+/// What a child inherits from this process.
+#[derive(Clone, Copy)]
+enum ChildEnvironment {
+    /// The process environment as is; a model turn needs whatever the
+    /// operator's shell gave the app.
+    Inherit,
+    /// Exactly these variables, each copied from this process when set.
+    Only(&'static [&'static str]),
+}
+
+impl ChildEnvironment {
+    fn apply(self, command: &mut Command) {
+        if let Self::Only(keys) = self {
+            let kept = keys
+                .iter()
+                .filter_map(|key| std::env::var_os(key).map(|value| (*key, value)))
+                .collect::<BTreeMap<&str, OsString>>();
+            command.env_clear().envs(kept);
         }
     }
 }
@@ -121,6 +178,63 @@ impl ClaudeCliBackend {
         vec!["auth".to_owned(), "status".to_owned(), "--json".to_owned()]
     }
 
+    /// The argument vector a weekly-usage read is started with. `/usage` is
+    /// answered locally, so none of the model-turn flags apply; the one that
+    /// matters is `--no-session-persistence`, which keeps the read out of
+    /// `~/.claude/projects/` and every resume list.
+    pub fn usage_arguments() -> Vec<String> {
+        vec![
+            "-p".to_owned(),
+            "/usage".to_owned(),
+            "--output-format".to_owned(),
+            "json".to_owned(),
+            "--no-session-persistence".to_owned(),
+        ]
+    }
+
+    /// Runs `/usage` and returns the result frame's `result` text: the CLI's
+    /// own rendering of the account's limits, which the caller parses.
+    ///
+    /// The child gets [`USAGE_ENVIRONMENT`] and nothing else, and runs in the
+    /// configured `cwd`. The text is returned whatever it says: a CLI that
+    /// cannot read its login still exits 0 with `is_error: false` and prints
+    /// `/cost` text instead, so "logged out" is the caller's reading of the
+    /// text, not a class this function can name.
+    pub fn usage_text(&self, cancel: &CancelToken) -> Result<String, UsageError> {
+        let binary = self.resolved_binary().ok_or(UsageError::NotInstalled)?;
+        let run = run(
+            &binary,
+            &Self::usage_arguments(),
+            &self.config.cwd,
+            None,
+            ChildEnvironment::Only(USAGE_ENVIRONMENT),
+            USAGE_TIMEOUT,
+            cancel,
+        )
+        .map_err(|error| match error {
+            RunError::Deadline => UsageError::Timeout,
+            RunError::Cancelled => UsageError::Cancelled,
+            other => UsageError::Failed(other.diagnostic("usage")),
+        })?;
+        // A non-zero exit is the child failing, whatever it printed on the
+        // way down; only a child that finished is held to the frame shape.
+        if !run.succeeded() {
+            return Err(UsageError::Failed(format!("usage_exit_{}", run.exit())));
+        }
+        let frame = match serde_json::from_str::<Value>(run.stdout.trim()) {
+            Ok(frame) if frame.get("type").and_then(Value::as_str) == Some("result") => frame,
+            _ => return Err(UsageError::NoResultFrame),
+        };
+        if frame.get("is_error").and_then(Value::as_bool) == Some(true) {
+            return Err(UsageError::Failed("usage_is_error".to_owned()));
+        }
+        frame
+            .get("result")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or(UsageError::NoResultFrame)
+    }
+
     fn resolved_binary(&self) -> Option<PathBuf> {
         resolve_binary(&self.config.binary)
     }
@@ -142,6 +256,7 @@ impl AiBackend for ClaudeCliBackend {
             &Self::auth_arguments(),
             &self.config.cwd,
             None,
+            ChildEnvironment::Inherit,
             AUTH_TIMEOUT,
             &CancelToken::new(),
         ) {
@@ -197,6 +312,7 @@ impl AiBackend for ClaudeCliBackend {
             &Self::print_arguments(&self.config.model, &request.system, &request.output_schema),
             &self.config.cwd,
             Some(&request.input),
+            ChildEnvironment::Inherit,
             request.deadline,
             cancel,
         )
@@ -265,10 +381,13 @@ fn run(
     args: &[String],
     cwd: &Path,
     stdin_text: Option<&str>,
+    environment: ChildEnvironment,
     deadline: Duration,
     cancel: &CancelToken,
 ) -> Result<Run, RunError> {
-    let mut child = Command::new(binary)
+    let mut command = Command::new(binary);
+    environment.apply(&mut command);
+    let mut child = command
         .args(args)
         .current_dir(cwd)
         .stdin(if stdin_text.is_some() {
