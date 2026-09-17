@@ -17,11 +17,14 @@ class CapabilityReaderGate(unittest.TestCase):
             sources.mkdir(parents=True)
             runtime_modules = sources / 'runtime'
             runtime_modules.mkdir()
+            session_sync_modules = sources / 'session_sync'
+            session_sync_modules.mkdir()
             shutil.copy2(ROOT / 'scripts/check-capability-readers-off-lock.sh', root / 'scripts')
             for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
             requests = ('changes', 'worktrees', 'github', 'disk', 'ai')
-            (sources / 'session_sync.rs').write_text(
+            (sources / 'session_sync.rs').write_text('mod coordinator;\n')
+            (session_sync_modules / 'coordinator.rs').write_text(
                 '\n'.join(f'let {r}_reader = {r}::Reader::new();' for r in (*requests, 'ports'))
                 + '\n' + '\n'.join(f'let Some(request) = read_{r}_request();' for r in requests)
             )
@@ -52,11 +55,13 @@ class CapabilityReaderGate(unittest.TestCase):
             sources = root / 'herdr-core' / 'src'
             sources.mkdir(parents=True)
             (sources / 'runtime').mkdir()
+            (sources / 'session_sync').mkdir()
             shutil.copy2(runtime_module, root / 'scripts')
             for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
             requests = ('changes', 'worktrees', 'github', 'disk', 'ai')
-            (sources / 'session_sync.rs').write_text(
+            (sources / 'session_sync.rs').write_text('mod coordinator;\n')
+            (sources / 'session_sync' / 'coordinator.rs').write_text(
                 '\n'.join(f'let {r}_reader = {r}::Reader::new();' for r in (*requests, 'ports'))
                 + '\n' + '\n'.join(f'let Some(request) = read_{r}_request();' for r in requests)
             )

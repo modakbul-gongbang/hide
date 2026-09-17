@@ -9,7 +9,7 @@ A document's location or an old PRD citation does not make it current authority.
 | Question | Read | Executable authority or enforcement |
 | --- | --- | --- |
 | Working rules, routing, and the invariants that hold everywhere | [AGENTS.md](../AGENTS.md) | `herdr-core/`, `macos/`, relevant local rules |
-| Architecture, Herdr versus core ownership, the wire boundary and its schema gaps, the bundled runtime | [ARCHITECTURE.md](ARCHITECTURE.md) | `herdr-core/src/runtime.rs`, `session_sync.rs`, `wire.rs`, `HerdrRuntimeResolver`, contract and boundary tests |
+| Architecture, Herdr versus core ownership, the wire boundary and its schema gaps, the bundled runtime | [ARCHITECTURE.md](ARCHITECTURE.md) | `herdr-core/src/runtime.rs`, `session_sync/{coordinator,projection,replica,subscription}.rs`, `wire.rs`, `HerdrRuntimeResolver`, contract and boundary tests |
 | Build output, worktree caches, toolchain reuse, the harness verify entrypoints | [BUILD.md](BUILD.md) | `scripts/toolchain-env.sh`, `verify-cargo.sh`, `verify-swift.sh`, `scripts/tests/test_toolchain_reuse.py`, `test_verification_builds.py` |
 | Rust implementation conventions | [herdr-core/AGENTS.md](../herdr-core/AGENTS.md) | `herdr-core/src/`, `herdr-core/tests/` |
 | Swift implementation conventions | [macos/AGENTS.md](../macos/AGENTS.md) | `macos/Sources/HerdrMacOS/`, `macos/Tests/HerdrMacOSTests/` |
@@ -34,7 +34,7 @@ A document's location or an old PRD citation does not make it current authority.
 | Sidebar PR details, CI rollup, refresh and failure states | [status-model.md: GitHub status](status-model.md#github-status-in-the-workspace-row) | `github.rs`, `runtime.rs`, `CheckoutCardPresentation.swift`, native Workspace PR control |
 | Agent status, semantic colors, Workspace aggregation, and read/unread policy | [status-model.md](status-model.md) | `sidebar.rs`, `AgentRow.swift`, `SidebarPresentation.swift`, status tests |
 | Optional ambient counts and privacy | [status-model.md](status-model.md#ambient-signals-subagents-background-tasks) | `sidebar.rs::parse_ambient`, `pet.rs::ambient_totals` |
-| Ownership axis, delegated grouping, the stall clock and its thresholds | [status-model.md: the stall clock](status-model.md#the-stall-clock) | `sidebar.rs::ownership_of`, `runtime.rs` stall clocks, `session_sync.rs` agent tick |
+| Ownership axis, delegated grouping, the stall clock and its thresholds | [status-model.md: the stall clock](status-model.md#the-stall-clock) | `sidebar.rs::ownership_of`, `runtime.rs` stall clocks, `session_sync/coordinator.rs` agent tick |
 | Why a pane's children are visible or not, and the uninstrumented mark | [status-model.md: uninstrumented is not an unknown activity](status-model.md#uninstrumented-is-not-an-unknown-activity) | `hide-agent-hooks/src/diagnosis.rs`, `herdr-core/src/agent_hooks.rs`, `sidebar.rs::project_pane_children` |
 | Agent hook installation, what is written where, and the Settings diagnosis | [agent-hooks.md](agent-hooks.md) | `hide-agent-hooks/`, `StatusSnapshot.agent_hooks`, `install_agent_hooks` event |
 | Native pet window and gestures | [pet-window-macos.md](pet-window-macos.md) | `PetWindow.swift`, `PetIntegrationTests.swift` |

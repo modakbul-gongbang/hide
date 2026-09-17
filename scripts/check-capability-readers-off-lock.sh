@@ -68,7 +68,7 @@ for reader in "${readers[@]}"; do
             ' "$source"
         done < <(find herdr-core/src -name '*.rs' -type f | sort)
     )"
-    if [[ "$callers" != "herdr-core/src/session_sync.rs" ]]; then
+    if [[ "$callers" != "herdr-core/src/session_sync/coordinator.rs" ]]; then
         printf 'the %s reader is driven from outside the session-sync coordinator:\n%s\n' \
             "$reader" "$callers" >&2
         exit 1
@@ -99,7 +99,8 @@ for request in read_changes_request read_worktrees_request read_github_request r
     # The binding may destructure - one lock acquisition can answer for more
     # than the request - so what is asserted is that the request is read out of
     # a `let Some(...)` before the reader runs, not the exact binding shape.
-    if ! grep -qE "let Some\([^=]*request[^=]*\) = ${request}\(" herdr-core/src/session_sync.rs; then
+    if ! grep -qE "let Some\([^=]*request[^=]*\) = ${request}\(" \
+        herdr-core/src/session_sync/coordinator.rs; then
         printf 'the coordinator no longer reads %s before running its subprocess\n' "$request" >&2
         exit 1
     fi
