@@ -14,6 +14,13 @@ pub struct AiLogEvent {
     pub output_tokens: Option<u64>,
     pub attempt: Option<u8>,
     pub schema_version: Option<&'static str>,
+    /// The resident app-server's pid, and the process measurement taken after
+    /// the turn. Present on codex requests; `descendants`/`rss_bytes` are
+    /// `None` when the platform cannot measure, and the detail says
+    /// `measurement=unavailable` rather than logging a zero.
+    pub app_server_pid: Option<u32>,
+    pub descendants: Option<usize>,
+    pub rss_bytes: Option<u64>,
     /// Short machine-readable detail such as `from=codex;to=claude`.
     pub detail: Option<String>,
 }
@@ -31,6 +38,9 @@ impl AiLogEvent {
             output_tokens: None,
             attempt: None,
             schema_version: None,
+            app_server_pid: None,
+            descendants: None,
+            rss_bytes: None,
             detail: None,
         }
     }
