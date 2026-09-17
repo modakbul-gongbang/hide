@@ -8,7 +8,8 @@ Do not restate those contracts here.
 ## Placement and ownership
 
 - Extend the existing feature file or type that owns the behavior instead of creating a parallel owner.
-- Keep core snapshot decoding, delta application, and C ABI bridging in `CoreBridge.swift`.
+- Keep snapshot DTO decoding in the responsibility-owned `CoreBridge*Snapshot.swift` files.
+  Keep delta application, C ABI bridging, and terminal delivery coordination in `CoreBridge.swift`.
 - Keep application coordination and snapshot observation in `ShellModel.swift`.
 - Keep launch-time executable and environment resolution in `RuntimeEnvironment.swift`.
 - Views read snapshot-backed values, render them, and dispatch the event that represents the user's intent.
