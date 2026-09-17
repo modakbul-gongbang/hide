@@ -461,6 +461,46 @@ impl SessionReplica {
         ))
     }
 
+    /// Workspaces whose active tab a close removed and whose replacement Herdr
+    /// has not named. Herdr emits `tab_focused` for the replacement only when
+    /// that workspace holds its keyboard focus; in every other workspace the
+    /// new active tab is that workspace's memory and reaches Hide only through
+    /// a `workspace.get` read, which the coordinator issues for each of these.
+    pub(crate) fn workspaces_awaiting_active_tab(&self) -> Vec<String> {
+        self.pending_active_tab_focuses.iter().cloned().collect()
+    }
+
+    /// Applies a `workspace.get` answer to a workspace waiting for its
+    /// replacement active tab, and reports whether that wait ended. A
+    /// workspace a focus event already settled changes nothing. A tab the
+    /// event stream has not delivered yet means the read ran ahead of the
+    /// cursor, so the wait stays and the coordinator reads again on its
+    /// bounded tick once the stream catches up.
+    pub(crate) fn settle_active_tab(&mut self, workspace_id: &str, active_tab_id: &str) -> bool {
+        if !self.pending_active_tab_focuses.contains(workspace_id) {
+            return false;
+        }
+        let tab_known = self
+            .state
+            .tabs
+            .iter()
+            .any(|tab| tab.tab_id == active_tab_id && tab.workspace_id == workspace_id);
+        if !tab_known {
+            return false;
+        }
+        let Some(workspace) = self
+            .state
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+        else {
+            return false;
+        };
+        workspace.active_tab_id = active_tab_id.to_owned();
+        self.pending_active_tab_focuses.remove(workspace_id);
+        true
+    }
+
     pub(crate) fn ready_to_publish(&self) -> bool {
         self.pending_layouts.is_empty()
             && self.pending_workspace_closures.is_empty()

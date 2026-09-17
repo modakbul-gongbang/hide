@@ -117,7 +117,9 @@ pub(crate) fn stop_subscription(subscription: &mut Option<ActiveSubscription>) {
     }
 }
 
-fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, SessionFetchError> {
+/// A local read against a socket file that is gone is the server being
+/// down, which is its own state, not a transport error.
+fn require_local_socket(context: &SessionSyncContext) -> Result<(), SessionFetchError> {
     if let SessionSyncTarget::Local { socket_path } = &context.target
         && !socket_path.exists()
     {
@@ -126,6 +128,11 @@ fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, Session
             socket_path.display()
         )));
     }
+    Ok(())
+}
+
+fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, SessionFetchError> {
+    require_local_socket(context)?;
     let result = hide_herdr_client::request_with_connector(
         context.api_connector.as_ref(),
         "session.snapshot",
@@ -139,14 +146,7 @@ fn fetch_replica(context: &SessionSyncContext) -> Result<SessionReplica, Session
 pub(crate) fn fetch_agents(
     context: &SessionSyncContext,
 ) -> Result<Vec<ProjectedAgent>, SessionFetchError> {
-    if let SessionSyncTarget::Local { socket_path } = &context.target
-        && !socket_path.exists()
-    {
-        return Err(SessionFetchError::SocketMissing(format!(
-            "Herdr socket file does not exist at {}; the herdr server is not running",
-            socket_path.display()
-        )));
-    }
+    require_local_socket(context)?;
     let result = hide_herdr_client::request_with_connector(
         context.api_connector.as_ref(),
         "agent.list",
@@ -155,6 +155,25 @@ pub(crate) fn fetch_agents(
     )
     .map_err(session_error_from_api)?;
     wire::agents_response(result)
+}
+
+/// Reads which tab a workspace now holds as active. It is the one read the
+/// replica needs after a close removed a workspace's active tab, because
+/// Herdr names the replacement in an event only for the workspace that holds
+/// its keyboard focus (`SessionReplica::settle_active_tab`).
+pub(crate) fn fetch_workspace_active_tab(
+    context: &SessionSyncContext,
+    workspace_id: &str,
+) -> Result<String, SessionFetchError> {
+    require_local_socket(context)?;
+    let result = hide_herdr_client::request_with_connector(
+        context.api_connector.as_ref(),
+        "workspace.get",
+        wire::workspace_target_params(workspace_id).map_err(SessionFetchError::Malformed)?,
+        SYNC_REQUEST_TIMEOUT,
+    )
+    .map_err(session_error_from_api)?;
+    wire::workspace_active_tab(result).map_err(SessionFetchError::Malformed)
 }
 fn session_error_from_api(error: ApiError) -> SessionFetchError {
     match error {

@@ -26,6 +26,7 @@ fn run_coordinator(
 ) {
     let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
     let mut replica: Option<SessionReplica> = None;
+    let mut active_tab_reads: BTreeMap<String, u32> = BTreeMap::new();
     let mut subscription: Option<ActiveSubscription> = None;
     let mut subscription_generation = 0_u64;
     let mut needs_bootstrap = true;
@@ -98,6 +99,7 @@ fn run_coordinator(
             match attempt {
                 Ok(next_subscription) => {
                     subscription = Some(next_subscription);
+                    active_tab_reads.clear();
                     defer_background_reads = true;
                     reconnect_delay = RECONNECT_INITIAL_DELAY;
                     next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
@@ -206,6 +208,30 @@ fn run_coordinator(
                 drop(runtime);
                 if changed {
                     context.notifier.notify();
+                }
+            }
+            if subscription.is_some()
+                && let Some(current) = replica.as_mut()
+                && !current.workspaces_awaiting_active_tab().is_empty()
+            {
+                match settle_active_tab_reads(&context, current, &mut active_tab_reads) {
+                    Ok(true) => {
+                        if !publish_replica(&context, current, &mut catalog_cache) {
+                            stop_subscription(&mut subscription);
+                            return;
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        log_sync_failure(&context, "active_tab_read.failed", Some(current), &error);
+                        stop_subscription(&mut subscription);
+                        needs_bootstrap = true;
+                        if !publish_failure(&context, error) {
+                            return;
+                        }
+                        reconnect_at = Instant::now() + reconnect_delay;
+                        reconnect_delay = next_reconnect_delay(reconnect_delay);
+                    }
                 }
             }
         }
@@ -433,6 +459,40 @@ fn run_coordinator(
                                 {
                                     stop_subscription(&mut subscription);
                                     return;
+                                }
+                                if !current.workspaces_awaiting_active_tab().is_empty() {
+                                    match settle_active_tab_reads(
+                                        &context,
+                                        current,
+                                        &mut active_tab_reads,
+                                    ) {
+                                        Ok(true) => {
+                                            if !publish_replica(
+                                                &context,
+                                                current,
+                                                &mut catalog_cache,
+                                            ) {
+                                                stop_subscription(&mut subscription);
+                                                return;
+                                            }
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => {
+                                            log_sync_failure(
+                                                &context,
+                                                "active_tab_read.failed",
+                                                Some(current),
+                                                &error,
+                                            );
+                                            stop_subscription(&mut subscription);
+                                            needs_bootstrap = true;
+                                            if !publish_failure(&context, error) {
+                                                return;
+                                            }
+                                            reconnect_at = Instant::now() + reconnect_delay;
+                                            reconnect_delay = next_reconnect_delay(reconnect_delay);
+                                        }
+                                    }
                                 }
                             }
                             Err(error) => {
@@ -687,6 +747,51 @@ fn stall_tick_needs_publish(context: &SessionSyncContext) -> bool {
     };
     drop(runtime);
     due
+}
+
+/// Reads the replacement active tab for every workspace still waiting for
+/// one and settles the replica with the answer. Returns whether the
+/// published projection changed. A read that names a tab the event stream
+/// has not delivered keeps the workspace waiting for the next tick; a
+/// workspace still waiting after `ACTIVE_TAB_READ_ATTEMPT_LIMIT` reads is a
+/// replica that cannot converge, which the caller rebuilds from a snapshot.
+fn settle_active_tab_reads(
+    context: &SessionSyncContext,
+    replica: &mut SessionReplica,
+    attempts: &mut BTreeMap<String, u32>,
+) -> Result<bool, SessionFetchError> {
+    let waiting = replica.workspaces_awaiting_active_tab();
+    attempts.retain(|workspace_id, _| waiting.contains(workspace_id));
+    let mut settled = false;
+    for workspace_id in waiting {
+        let attempt = attempts.entry(workspace_id.clone()).or_insert(0);
+        *attempt += 1;
+        let attempt = *attempt;
+        if attempt > ACTIVE_TAB_READ_ATTEMPT_LIMIT {
+            return Err(SessionFetchError::Stale(format!(
+                "workspace {workspace_id} named no active tab the event stream knows in {ACTIVE_TAB_READ_ATTEMPT_LIMIT} reads"
+            )));
+        }
+        let active_tab_id = fetch_workspace_active_tab(context, &workspace_id)?;
+        let settled_now = replica.settle_active_tab(&workspace_id, &active_tab_id);
+        crate::diagnostic!(json!({
+            "component": "session_sync",
+            "kind": "active_tab.read",
+            "target": context.log_target(),
+            "workspace_id": workspace_id,
+            "tab_id": active_tab_id,
+            "attempt": attempt,
+            "settled": settled_now,
+        }));
+        if settled_now {
+            attempts.remove(&workspace_id);
+            settled = true;
+        }
+    }
+    if !settled {
+        return Ok(false);
+    }
+    replica.refresh_published_state()
 }
 
 fn publish_replica(
