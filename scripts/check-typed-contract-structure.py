@@ -24,7 +24,10 @@ def absent(pattern, text, description):
         details = '\n'.join(matches)
         raise SystemExit(f'{description}:\n{details}')
 
-replica = (ROOT / 'herdr-core/src/session_sync/replica.rs').read_text()
+replica = '\n'.join(
+    (ROOT / 'herdr-core/src/session_sync' / name).read_text()
+    for name in ('projection.rs', 'replica.rs')
+)
 absent(r'WorkspaceWire|WorkspaceWorktreeWire|TabWire|PaneWire|WireAgent|AgentListResult|SequencedEventEnvelope|Deserialize|serde_json::from_|Value::|\.get\("|\.as_array\(', replica, 'replica owns wire parsing')
 for path in [*runtime_sources(),
              ROOT / 'herdr-core/src/domain.rs',

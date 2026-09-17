@@ -185,6 +185,7 @@ impl ActiveSubscription {
 }
 
 mod coordinator;
+mod projection;
 mod replica;
 #[cfg(test)]
 mod tests;
@@ -192,10 +193,12 @@ mod tests;
 pub(crate) use coordinator::spawn;
 #[cfg(test)]
 pub(crate) use coordinator::{agent_tick_needs_publish, connect_failure_from_api};
+pub(crate) use projection::{
+    ProjectedAgent, ProjectedPane, ProjectedTab, ProjectedWorkspace, ProjectedWorktree,
+    ProjectionState, non_blank, project_snapshot,
+};
 pub(crate) use replica::{
-    PaneMove, ProjectedAgent, ProjectedPane, ProjectedTab, ProjectedWorkspace, ProjectedWorktree,
-    ProjectionState, ReplicaEnvelope, ReplicaEvent, SessionReplica, SubscriptionLine,
-    project_snapshot,
+    PaneMove, ReplicaEnvelope, ReplicaEvent, SessionReplica, SubscriptionLine,
 };
 #[cfg(test)]
 pub(crate) use replica::{SNAPSHOT_FIELDS_THE_REPLICA_READS, remote_tab_id};
