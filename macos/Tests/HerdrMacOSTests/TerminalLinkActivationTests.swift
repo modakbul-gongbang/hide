@@ -11,7 +11,7 @@ struct TerminalLinkActivationTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("hide-link-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         var opened: [String] = []
         var clicks = 0

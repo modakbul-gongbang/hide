@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
+mod devices;
 mod editor;
 mod events;
 mod operations;
@@ -732,7 +733,24 @@ pub struct Runtime {
     state_save_pending: bool,
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
-    remote_targets: Vec<crate::model::RemoteTarget>,
+    /// Where the SSH config that names each registered device's host lives;
+    /// `None` when the process has no usable HOME, which every connect then
+    /// reports rather than guessing a path.
+    home_path: Option<PathBuf>,
+    /// False when the SSH agent socket is unavailable at launch, which every
+    /// registered device reports as `disabled` instead of attempting SSH.
+    remote_enabled: bool,
+    /// The SSH client and coordinator of each registered device that is
+    /// connected or connecting, keyed by device id. Removing a device drops
+    /// its entry; the coordinator handle moves to `retired_remote_syncs`.
+    remote_connections: HashMap<String, devices::RemoteDeviceConnection>,
+    /// Coordinators of removed devices, waiting for the FFI layer to join
+    /// them off the runtime lock: a join under the lock would wait for a
+    /// worker that is itself waiting for the lock.
+    retired_remote_syncs: Vec<session_sync::SessionSyncHandle>,
+    /// The last connection test of each device, kept apart from the device
+    /// rows because those are rebuilt with every catalog.
+    remote_device_tests: HashMap<String, crate::model::DeviceTestSnapshot>,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
@@ -982,22 +1000,11 @@ struct RuntimeWorkerContext {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
-        let remote_targets = options.remote_targets.clone();
         let mut snapshot = Snapshot::initial(&options);
         snapshot.status.environment = environment.statuses;
-        if !environment.remote_enabled {
-            for remote in &mut snapshot.status.remote {
-                remote.state = "disabled".to_owned();
-                remote.message = Some(
-                    "Remote features are disabled because the SSH agent socket is unavailable"
-                        .to_owned(),
-                );
-            }
-        }
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         snapshot.ui_state = ui_state;
-        snapshot.navigator.devices =
-            workspace::devices(&remote_targets, &snapshot.ui_state.device_registrations);
+        snapshot.navigator.devices = workspace::devices(&snapshot.ui_state.device_registrations);
         snapshot.navigator.focused_device_id = Some(
             snapshot
                 .ui_state
@@ -1038,7 +1045,11 @@ impl Runtime {
         let mut runtime = Self {
             snapshot,
             state_path,
-            remote_targets,
+            home_path: environment.home_path,
+            remote_enabled: environment.remote_enabled,
+            remote_connections: HashMap::new(),
+            retired_remote_syncs: Vec::new(),
+            remote_device_tests: HashMap::new(),
             live: None,
             remote_controls: HashMap::new(),
             remote_terminals: HashMap::new(),
@@ -1447,31 +1458,6 @@ pub fn validate_options(options: &CoreOptions) -> Result<(), &'static str> {
         .is_some_and(|path| path.trim().is_empty())
     {
         return Err("herdr_bin_path must be null or non-empty");
-    }
-    for target in &options.remote_targets {
-        if target.id.trim().is_empty()
-            || target.label.trim().is_empty()
-            || target.ssh_alias.trim().is_empty()
-            || target.herdr_socket_path.trim().is_empty()
-        {
-            return Err("remote target fields must not be empty");
-        }
-        if !Path::new(&target.herdr_socket_path).is_absolute()
-            || target
-                .herdr_socket_path
-                .bytes()
-                .any(|byte| byte.is_ascii_control())
-        {
-            return Err("remote target herdr_socket_path must be absolute and single-line");
-        }
-    }
-    for (index, target) in options.remote_targets.iter().enumerate() {
-        if options.remote_targets[index + 1..]
-            .iter()
-            .any(|candidate| candidate.id == target.id)
-        {
-            return Err("remote target ids must be unique");
-        }
     }
     Ok(())
 }

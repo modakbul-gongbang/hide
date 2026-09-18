@@ -592,23 +592,19 @@ struct RemoteNavigationSnapshot {
 final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var phase: RuntimePhase = .idle
     @Published private(set) var isRefreshing = false
-    @Published private(set) var message = "Remote mini has not been checked yet."
+    @Published private(set) var message = "No remote device has been selected yet."
     @Published private(set) var workspaces: [RemoteWorkspaceSummary] = []
     @Published private(set) var navigation: RemoteNavigationSnapshot?
     @Published private(set) var files: [RemoteFileNode] = []
     @Published private(set) var fileState = "idle"
     @Published private(set) var fileError: String?
     @Published private(set) var checkedAt = "never"
-    @Published private(set) var targetLabel = "mini"
+    @Published private(set) var targetLabel = ""
     private var activeTargetID: String?
     private var statusesByTarget: [String: CoreRemoteStatus] = [:]
 
     var statusMessage: String {
         message
-    }
-
-    func refreshMini() {
-        refresh(targetID: "mini", label: "mini")
     }
 
     func clearNavigation() {
@@ -620,14 +616,18 @@ final class RemoteRuntimeModel: ObservableObject {
         fileState = "idle"
         fileError = nil
         phase = .idle
-        message = "Remote mini has not been checked yet."
+        message = "No remote device has been selected yet."
     }
 
     func ingest(_ statuses: [CoreRemoteStatus]) {
         statusesByTarget = Dictionary(uniqueKeysWithValues: statuses.map { ($0.targetID, $0) })
-        guard let activeTargetID,
-              let status = statusesByTarget[activeTargetID]
-        else { return }
+        guard let activeTargetID else { return }
+        guard let status = statusesByTarget[activeTargetID] else {
+            // The device was removed; a projection of a target the core no
+            // longer has would otherwise stay on screen as "Ready".
+            clearNavigation()
+            return
+        }
         apply(status)
     }
 

@@ -11,16 +11,7 @@ pub struct CoreOptions {
     pub herdr_socket_path: Option<String>,
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
-    pub remote_targets: Vec<RemoteTarget>,
     pub app_state_path: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct RemoteTarget {
-    pub id: String,
-    pub label: String,
-    pub ssh_alias: String,
-    pub herdr_socket_path: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -268,9 +259,34 @@ pub struct DeviceSnapshot {
     pub id: String,
     pub label: String,
     pub kind: String,
+    /// `local` for this Mac; for an SSH device `ready`, `unavailable` or
+    /// `disabled`, read off its remote status.
     pub state: String,
+    /// Why an SSH device is not `ready`, in the words its remote status
+    /// carries; `None` while it is.
+    pub message: Option<String>,
     pub ssh_alias: Option<String>,
     pub agent_count: u32,
+    /// The last connection test the operator asked for, or the one running.
+    pub test: Option<DeviceTestSnapshot>,
+}
+
+/// One staged connection test of an SSH device: SSH, authentication, Herdr,
+/// protocol, PTY, SFTP and Git, each with the host's answer.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeviceTestSnapshot {
+    /// `running`, `passed` or `failed`.
+    pub state: String,
+    pub checked_at_unix_ms: Option<u64>,
+    pub stages: Vec<DeviceTestStageSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeviceTestStageSnapshot {
+    pub stage: String,
+    /// `pending`, `passed` or `failed`.
+    pub state: String,
+    pub detail: String,
 }
 
 /// An agent's state on three independent axes, plus the values the shell draws
@@ -1987,14 +2003,7 @@ impl Snapshot {
                 focused_device_id: None,
                 focused_workspace_id: None,
                 focused_checkout_id: None,
-                devices: vec![DeviceSnapshot {
-                    id: "local".to_owned(),
-                    label: "This Mac".to_owned(),
-                    kind: "local".to_owned(),
-                    state: "ready".to_owned(),
-                    ssh_alias: None,
-                    agent_count: 0,
-                }],
+                devices: vec![crate::workspace::local_device()],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),
@@ -2067,17 +2076,7 @@ impl Snapshot {
                     received_protocol: None,
                     received_version: None,
                 },
-                remote: options
-                    .remote_targets
-                    .iter()
-                    .map(|target| RemoteStatusSnapshot {
-                        target_id: target.id.clone(),
-                        state: "not_connected".to_owned(),
-                        message: Some("Waiting for the first remote connection attempt".to_owned()),
-                        session: None,
-                        files: RemoteFileListSnapshot::idle(),
-                    })
-                    .collect(),
+                remote: Vec::new(),
                 chromux: ChromuxStatusSnapshot {
                     state: "not_checked".to_owned(),
                     profile: "default".to_owned(),

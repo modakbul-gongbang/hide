@@ -14,8 +14,8 @@ use std::process::Command;
 
 use crate::git_dir::{self, Repository};
 use crate::model::{
-    CheckoutSnapshot, DeviceRegistration, DeviceSnapshot, RemoteTarget, TabSnapshot,
-    WorkspaceRegistration, WorkspaceSnapshot, WorktreeCatalogSnapshot,
+    CheckoutSnapshot, DeviceRegistration, DeviceSnapshot, TabSnapshot, WorkspaceRegistration,
+    WorkspaceSnapshot, WorktreeCatalogSnapshot,
 };
 
 pub const LOCAL_DEVICE_ID: &str = "local";
@@ -26,43 +26,32 @@ pub fn local_device() -> DeviceSnapshot {
         label: "This Mac".to_owned(),
         kind: "local".to_owned(),
         state: "ready".to_owned(),
+        message: None,
         ssh_alias: None,
         agent_count: 0,
+        test: None,
     }
 }
 
-pub fn devices(
-    remote_targets: &[RemoteTarget],
-    registrations: &[DeviceRegistration],
-) -> Vec<DeviceSnapshot> {
+/// This Mac, then each device the operator registered. A remote device
+/// starts `unavailable`; `Runtime::refresh_device_snapshots` reads its state
+/// off the remote status once the connection has reported.
+pub fn devices(registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
     let mut result = vec![local_device()];
     let mut seen = HashSet::from([LOCAL_DEVICE_ID.to_owned()]);
 
-    for target in remote_targets {
-        if seen.insert(target.id.clone()) {
-            result.push(DeviceSnapshot {
-                id: target.id.clone(),
-                label: target.label.clone(),
-                kind: "remote".to_owned(),
-                state: "available".to_owned(),
-                ssh_alias: Some(target.ssh_alias.clone()),
-                agent_count: 0,
-            });
-        }
-    }
     for registration in registrations {
         if seen.insert(registration.id.clone()) {
+            let remote = registration.ssh_alias.is_some();
             result.push(DeviceSnapshot {
                 id: registration.id.clone(),
                 label: registration.label.clone(),
-                kind: if registration.ssh_alias.is_some() {
-                    "remote".to_owned()
-                } else {
-                    "local".to_owned()
-                },
-                state: "available".to_owned(),
+                kind: if remote { "remote" } else { "local" }.to_owned(),
+                state: if remote { "unavailable" } else { "available" }.to_owned(),
+                message: None,
                 ssh_alias: registration.ssh_alias.clone(),
                 agent_count: 0,
+                test: None,
             });
         }
     }

@@ -177,7 +177,6 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             schema_version: SCHEMA_VERSION,
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
-            remote_targets: Vec::new(),
             app_state_path: state_path.to_string_lossy().into_owned(),
         },
         crate::environment::EnvironmentReport {
@@ -530,71 +529,63 @@ fn remote_projection_rejects_an_empty_layout_area() {
 }
 
 #[test]
-#[ignore = "requires HERDR_TEST_SSH_ALIAS and HERDR_TEST_SOCKET_PATH"]
+#[ignore = "requires HERDR_TEST_SSH_ALIAS"]
 fn official_remote_session_coordinator_probe() {
     let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
         .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
-    let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
-        .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
     let home = std::env::var_os("HOME").expect("HOME is configured");
-    let alias = crate::remote::SshAlias::from_config_file(
-        &PathBuf::from(home).join(".ssh/config"),
-        &alias_name,
-    )
-    .expect("SSH alias resolves");
-    let client = crate::remote::RusshRemoteClient::new(alias).expect("remote client initializes");
-    let connector = client
-        .herdr_api_connector(&socket_path)
-        .expect("remote connector initializes");
     let state_path = PathBuf::from("/tmp/herdr-core-remote-coordinator-probe-state.json");
+    let _ = std::fs::remove_file(&state_path);
     let runtime = Arc::new(Mutex::new(Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,
             herdr_socket_path: None,
             herdr_bin_path: None,
-            remote_targets: vec![crate::model::RemoteTarget {
-                id: "mini".to_owned(),
-                label: "Mac mini".to_owned(),
-                ssh_alias: alias_name,
-                herdr_socket_path: socket_path,
-            }],
             app_state_path: state_path.to_string_lossy().into_owned(),
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
-            home_path: None,
+            home_path: Some(PathBuf::from(home)),
             remote_enabled: true,
             chromux_enabled: false,
             herdr_socket_path_override: None,
             codex_home: None,
         },
     )));
-    let context = SessionSyncContext::remote(
-        "mini",
-        "Mac mini",
-        Arc::new(connector),
-        Arc::downgrade(&runtime),
-        crate::ffi::ChangeNotifier::noop(),
-    );
-    let handle = spawn(context, None).expect("remote coordinator starts");
+    // The same path the shell takes: register the device, and the runtime
+    // resolves the alias, asks the host for its socket and starts the
+    // coordinator itself.
+    {
+        let mut guard = runtime.lock().expect("runtime lock");
+        guard.install_worker_context(Arc::downgrade(&runtime), crate::ffi::ChangeNotifier::noop());
+        let register_device = serde_json::to_vec(&json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "register_device",
+            "payload": { "id": "probe", "label": "Probe", "ssh_alias": alias_name }
+        }))
+        .expect("register device event");
+        assert!(guard.dispatch_json(&register_device));
+    }
 
-    wait_until(Instant::now() + Duration::from_secs(5), || {
+    wait_until(Instant::now() + Duration::from_secs(15), || {
         runtime.lock().ok().is_some_and(|runtime| {
             let status = &runtime.snapshot().status.remote[0];
             status.state == "connected" && status.session.is_some()
         })
     });
-    let runtime = runtime.lock().expect("runtime lock");
-    let status = &runtime.snapshot().status.remote[0];
-    assert_eq!(status.state, "connected");
+    let mut guard = runtime.lock().expect("runtime lock");
+    let status = &guard.snapshot().status.remote[0];
+    assert_eq!(status.state, "connected", "{:?}", status.message);
     let session = status.session.as_ref().expect("remote session projected");
     assert!(!session.agents.is_empty());
     assert_eq!(
-        runtime.snapshot().navigator.devices[1].agent_count as usize,
+        guard.snapshot().navigator.devices[1].agent_count as usize,
         session.agents.len()
     );
-    drop(runtime);
-    drop(handle);
+    assert_eq!(guard.snapshot().navigator.devices[1].state, "ready");
+    let handles = guard.take_remote_syncs();
+    drop(guard);
+    drop(handles);
 }
 
 #[test]

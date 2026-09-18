@@ -119,6 +119,16 @@ Authentication is not bundled: SSH, Herdr, Claude Code, and Codex continue to ow
 If you want to start agents from hide, install and sign in to the relevant CLI before launching the app.
 hide resolves those executables from the macOS login shell path and reports an explicit error when the selected CLI is unavailable.
 
+## Connect another Mac over SSH
+
+hide can show and drive a Herdr server on another machine.
+Open Settings, choose Devices, and add the machine with a label and the alias `~/.ssh/config` already knows it by; that alias is the only thing hide stores about it.
+Authentication stays with SSH: the alias's `IdentityFile`, or the running SSH agent, is what hide signs in with, and hide never asks for or keeps a password.
+
+The remote machine needs Herdr installed where a non-login shell finds it (`~/.local/bin`, Homebrew, or the system paths) and a running `herdr server`.
+hide asks that machine `herdr status server --json` to learn where the server socket is, so nothing about the remote user or home directory is configured on this side.
+Each device row in Settings shows whether the remote session is connected and, when it is not, the reason in the words the connection failed with; `Test` runs the SSH, authentication, Herdr, protocol, PTY, SFTP, and Git stages one after another and lists the first one that needs attention on that host.
+
 ## Update
 
 Quit hide, verify the new release archive or rebuild from the new source revision, then replace `/Applications/hide.app` with the new bundle and reopen it.
@@ -170,11 +180,15 @@ hide never substitutes the other agent when the selected executable is missing.
 
 ### Remote workspaces do not connect
 
-Confirm the SSH host works outside hide first:
+Confirm the SSH host works outside hide first, with the same alias the device was added with:
 
 ```sh
 ssh <host-alias> true
+ssh <host-alias> 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH" herdr status server --json'
 ```
 
+The second command is what hide runs to find the remote socket.
+`command not found` means Herdr is not installed there or not on a non-login shell's `PATH`; `"running":false` means the server is stopped, and running `herdr` once on that machine starts it.
+The device row in Settings carries the same answer, and `Test` names the stage that failed.
 hide delegates authentication to the existing SSH configuration and agent.
 It does not display, copy, or store a password.

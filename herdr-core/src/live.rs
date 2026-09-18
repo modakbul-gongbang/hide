@@ -67,7 +67,6 @@ pub struct LiveContext {
 pub struct RemoteTerminalContext {
     target_id: String,
     client: Arc<RusshRemoteClient>,
-    socket_path: String,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 }
@@ -76,14 +75,12 @@ impl RemoteTerminalContext {
     pub(crate) fn new(
         target_id: impl Into<String>,
         client: Arc<RusshRemoteClient>,
-        socket_path: impl Into<String>,
         runtime: Weak<Mutex<Runtime>>,
         notifier: ChangeNotifier,
     ) -> Self {
         Self {
             target_id: target_id.into(),
             client,
-            socket_path: socket_path.into(),
             runtime,
             notifier,
         }
@@ -2644,13 +2641,7 @@ impl TerminalSession {
     ) -> Result<Self, String> {
         let process = context
             .client
-            .open_terminal_session(
-                &context.socket_path,
-                source_pane_id,
-                mode.as_str(),
-                rows,
-                cols,
-            )
+            .open_terminal_session(source_pane_id, mode.as_str(), rows, cols)
             .map_err(|error| error.to_string())?;
         let (reader, transport_writer, shutdown) = process.into_parts();
         let writer = match (mode, transport_writer) {
@@ -4106,8 +4097,6 @@ mod tests {
     fn official_remote_control_fixture_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
             .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
-        let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
-            .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
         let workspace_id = std::env::var("HERDR_TEST_REMOTE_CONTROL_WORKSPACE_ID")
             .expect("HERDR_TEST_REMOTE_CONTROL_WORKSPACE_ID names the owned fixture workspace");
         let cwd = std::env::var("HERDR_TEST_REMOTE_CONTROL_CWD")
@@ -4125,9 +4114,7 @@ mod tests {
         .expect("SSH alias resolves");
         let client =
             crate::remote::RusshRemoteClient::new(alias).expect("remote client initializes");
-        let connector = client
-            .herdr_api_connector(socket_path)
-            .expect("remote connector initializes");
+        let connector = client.herdr_api_connector();
 
         let response = request_with_connector(
             &connector,

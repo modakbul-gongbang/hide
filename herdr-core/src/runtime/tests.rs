@@ -5,6 +5,8 @@ use crate::fake_herdr::FakeHerdr;
 
 #[path = "tests/agents_settings_remote.rs"]
 mod agents_settings_remote;
+#[path = "tests/devices.rs"]
+mod devices;
 #[path = "tests/editor_reopen.rs"]
 mod editor_reopen;
 #[path = "tests/lineage.rs"]
@@ -269,7 +271,6 @@ fn runtime() -> Runtime {
         schema_version: SCHEMA_VERSION,
         herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
         herdr_bin_path: None,
-        remote_targets: Vec::new(),
         app_state_path: std::env::temp_dir()
             .join(format!(
                 "herdr-core-pet-runtime-{}-{}.json",

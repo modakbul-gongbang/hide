@@ -329,10 +329,9 @@ impl Runtime {
         );
         crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.devices = workspace::devices(
-            &self.remote_targets,
-            &self.snapshot.ui_state.device_registrations,
-        );
+        self.snapshot.navigator.devices =
+            workspace::devices(&self.snapshot.ui_state.device_registrations);
+        self.refresh_device_snapshots();
         // An agent belongs to the device whose project holds its pane. The
         // project label is no longer Herdr's workspace label once a
         // registration covers the repository, so labels cannot be the key.
@@ -1226,18 +1225,12 @@ impl Runtime {
             .devices
             .iter_mut()
             .find(|device| device.id == target_id)
+            && device.agent_count != agent_count
         {
-            let device_state = if status.state == "connected" {
-                "ready"
-            } else {
-                "unavailable"
-            };
-            if device.state != device_state || device.agent_count != agent_count {
-                device.state = device_state.to_owned();
-                device.agent_count = agent_count;
-                changed = true;
-            }
+            device.agent_count = agent_count;
+            changed = true;
         }
+        changed |= self.refresh_device_snapshots();
         if let Some((live_pane_ids, active_pane_ids)) = pane_sets {
             changed |=
                 self.reconcile_remote_terminal_panes(target_id, &live_pane_ids, &active_pane_ids);
@@ -2844,10 +2837,9 @@ impl Runtime {
             &self.snapshot.navigator.agents,
         );
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.devices = workspace::devices(
-            &self.remote_targets,
-            &self.snapshot.ui_state.device_registrations,
-        );
+        self.snapshot.navigator.devices =
+            workspace::devices(&self.snapshot.ui_state.device_registrations);
+        self.refresh_device_snapshots();
         self.resync_navigator_focus();
     }
     pub(super) fn apply_workspace_expansion(
