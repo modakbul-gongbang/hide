@@ -228,7 +228,15 @@ mod tests {
     #[test]
     fn a_report_is_one_pane_report_metadata_request_and_a_success_clears_the_failure() {
         let root = scratch("request");
-        let socket = root.join("herdr.sock");
+        // A Unix socket path is capped at SUN_LEN (104 bytes on macOS), and a
+        // harness that points TMPDIR into its run directory exceeds it, so the
+        // socket alone binds under the short system root, as the
+        // hide-herdr-client socket tests do.
+        let socket_root =
+            Path::new("/tmp").join(format!("hide-agent-hooks-report-{}", std::process::id()));
+        fs::create_dir_all(&socket_root).expect("socket directory");
+        let socket = socket_root.join("herdr.sock");
+        let _ = fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).expect("bind fake socket");
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
