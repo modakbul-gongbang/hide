@@ -217,8 +217,12 @@ enum HideSearchPresentation {
     /// state, else its rolling task is not carried here, so the status word
     /// stands in. The pane id left this line for the match field and the
     /// accessibility label (PRD D-15).
+    /// PRD D-15: the state's sentence, else the rolling task when it is not
+    /// already the title, else the status word.
     static func agentSubtitle(_ agent: SidebarAgent) -> String {
-        agent.detail ?? agent.statusLabel
+        if let detail = agent.detail { return detail }
+        if let task = agent.task, task != agent.identityLabel { return task }
+        return agent.statusLabel
     }
 
     static func agentGroups(

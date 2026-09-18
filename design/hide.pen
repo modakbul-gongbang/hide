@@ -9609,7 +9609,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "One live identity: 기술 교육 콘텐츠 통합 / Codex / Working / hide · main. Search ranks matches; Recent preserves MRU; Sessions is provider-data gated.",
+          "content": "One identity everywhere: the core's identity_label (chat title → name token → Herdr agent name → task → workspace). Search subtitles the state sentence (else task, else the status word); Recent titles a one-agent tab by its agent and keeps the Herdr label otherwise.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -9621,7 +9621,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "Search result · expanded",
+          "content": "Search result · identity title, state sentence subtitle; pane id matches but is not printed",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
           "fontWeight": "normal"
@@ -9633,13 +9633,24 @@
           "name": "Search result · expanded",
           "width": "fill_container",
           "descendants": {
-            "BsCNW": {
+            "PCeNa": {
+              "content": "?",
+              "fill": "$--color-warning"
+            },
+            "x0h40": {
+              "content": "결제 멱등키 PR",
+              "fontSize": "$--text-body"
+            },
+            "X6LdE": {
               "enabled": false
             },
+            "BsCNW": {
+              "content": "A/B 선택 후 DB 마이그레이션 승인",
+              "fill": "$--color-secondary",
+              "fontSize": "$--text-caption"
+            },
             "jb7mF": {
-              "enabled": true,
-              "width": "fill_container",
-              "content": "hide · main"
+              "enabled": false
             }
           }
         },
@@ -9650,7 +9661,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "Recent Panels · compact",
+          "content": "Recent Panels · a tab holding one agent pane: that agent's identity and mark, checkout · branch below",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
           "fontWeight": "normal"
@@ -9662,13 +9673,21 @@
           "name": "Recent Panels · compact",
           "width": "fill_container",
           "descendants": {
-            "BsCNW": {
+            "PCeNa": {
+              "content": "●",
+              "fill": "$--color-agent-working"
+            },
+            "x0h40": {
+              "content": "Hook 버그 확인",
+              "fontSize": "$--text-body"
+            },
+            "EurXP": {
               "enabled": false
             },
             "jb7mF": {
               "enabled": true,
               "width": "fill_container",
-              "content": "hide · main"
+              "content": "herdr-ide · main"
             }
           }
         },
@@ -11750,35 +11769,37 @@
                     {
                       "id": "inactive-state-1-q8VhA",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / herdr-ide",
+                      "ref": "HXWFK",
+                      "name": "Row / 결제 멱등키 PR",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "!",
                           "fill": "$--color-warning"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-warning"
+                        "x0h40": {
+                          "content": "결제 멱등키 PR",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "herdr-ide"
+                        "w4jdH": {
+                          "content": "1m",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "1m"
-                        },
-                        "SOEv0": {
-                          "content": "아이콘 패밀리와 버튼 제작"
-                        },
-                        "F8l2LV": {
-                          "content": "Approval",
-                          "fill": "$--color-warning"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Approval",
+                          "fill": "$--color-warning",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "DB 마이그레이션 실행을 승인하세요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -11806,35 +11827,37 @@
                     {
                       "id": "inactive-state-1-vrp4i",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / sasu",
+                      "ref": "HXWFK",
+                      "name": "Row / 실패 관측 정보 기록",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "✓",
                           "fill": "$--color-success"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-success"
+                        "x0h40": {
+                          "content": "실패 관측 정보 기록",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "sasu"
+                        "w4jdH": {
+                          "content": "0s",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "0s"
-                        },
-                        "SOEv0": {
-                          "content": "실패 시 관측 정보 기록 개선"
-                        },
-                        "F8l2LV": {
-                          "content": "Done",
-                          "fill": "$--color-success"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "관측 기록 PR 열림, 리뷰 대기",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -11875,35 +11898,37 @@
                     {
                       "id": "inactive-state-1-csMSx",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / task-factory",
+                      "ref": "HXWFK",
+                      "name": "Row / GitHub 작업 흐름 설계",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "✓",
                           "fill": "$--color-success"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-success"
+                        "x0h40": {
+                          "content": "GitHub 작업 흐름 설계",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "task-factory"
+                        "w4jdH": {
+                          "content": "56s",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "56s"
-                        },
-                        "SOEv0": {
-                          "content": "GitHub 작업 흐름과 상태 설계 정리"
-                        },
-                        "F8l2LV": {
-                          "content": "Done",
-                          "fill": "$--color-success"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "상태 설계 정리 완료, #12 리뷰 필요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -12343,35 +12368,37 @@
                     {
                       "id": "inactive-state-2-q8VhA",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / herdr-ide",
+                      "ref": "HXWFK",
+                      "name": "Row / 결제 멱등키 PR",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "!",
                           "fill": "$--color-warning"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-warning"
+                        "x0h40": {
+                          "content": "결제 멱등키 PR",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "herdr-ide"
+                        "w4jdH": {
+                          "content": "1m",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "1m"
-                        },
-                        "SOEv0": {
-                          "content": "아이콘 패밀리와 버튼 제작"
-                        },
-                        "F8l2LV": {
-                          "content": "Approval",
-                          "fill": "$--color-warning"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Approval",
+                          "fill": "$--color-warning",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "DB 마이그레이션 실행을 승인하세요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -12399,35 +12426,37 @@
                     {
                       "id": "inactive-state-2-vrp4i",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / sasu",
+                      "ref": "HXWFK",
+                      "name": "Row / 실패 관측 정보 기록",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "✓",
                           "fill": "$--color-success"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-success"
+                        "x0h40": {
+                          "content": "실패 관측 정보 기록",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "sasu"
+                        "w4jdH": {
+                          "content": "0s",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "0s"
-                        },
-                        "SOEv0": {
-                          "content": "실패 시 관측 정보 기록 개선"
-                        },
-                        "F8l2LV": {
-                          "content": "Done",
-                          "fill": "$--color-success"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "관측 기록 PR 열림, 리뷰 대기",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -12468,35 +12497,37 @@
                     {
                       "id": "inactive-state-2-csMSx",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / task-factory",
+                      "ref": "HXWFK",
+                      "name": "Row / GitHub 작업 흐름 설계",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "✓",
                           "fill": "$--color-success"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-success"
+                        "x0h40": {
+                          "content": "GitHub 작업 흐름 설계",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "task-factory"
+                        "w4jdH": {
+                          "content": "56s",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "56s"
-                        },
-                        "SOEv0": {
-                          "content": "GitHub 작업 흐름과 상태 설계 정리"
-                        },
-                        "F8l2LV": {
-                          "content": "Done",
-                          "fill": "$--color-success"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "상태 설계 정리 완료, #12 리뷰 필요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -13014,35 +13045,37 @@
                     {
                       "id": "inactive-state-3-q8VhA",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / herdr-ide",
+                      "ref": "HXWFK",
+                      "name": "Row / 결제 멱등키 PR",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "!",
                           "fill": "$--color-warning"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-warning"
+                        "x0h40": {
+                          "content": "결제 멱등키 PR",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "herdr-ide"
+                        "w4jdH": {
+                          "content": "1m",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "1m"
-                        },
-                        "SOEv0": {
-                          "content": "아이콘 패밀리와 버튼 제작"
-                        },
-                        "F8l2LV": {
-                          "content": "Approval",
-                          "fill": "$--color-warning"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Approval",
+                          "fill": "$--color-warning",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "DB 마이그레이션 실행을 승인하세요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -13070,35 +13103,37 @@
                     {
                       "id": "inactive-state-3-vrp4i",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / sasu",
+                      "ref": "HXWFK",
+                      "name": "Row / 실패 관측 정보 기록",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "✓",
                           "fill": "$--color-success"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-success"
+                        "x0h40": {
+                          "content": "실패 관측 정보 기록",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "sasu"
+                        "w4jdH": {
+                          "content": "0s",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "0s"
-                        },
-                        "SOEv0": {
-                          "content": "실패 시 관측 정보 기록 개선"
-                        },
-                        "F8l2LV": {
-                          "content": "Done",
-                          "fill": "$--color-success"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "관측 기록 PR 열림, 리뷰 대기",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -13139,35 +13174,37 @@
                     {
                       "id": "inactive-state-3-csMSx",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / task-factory",
+                      "ref": "HXWFK",
+                      "name": "Row / GitHub 작업 흐름 설계",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "✓",
                           "fill": "$--color-success"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-success"
+                        "x0h40": {
+                          "content": "GitHub 작업 흐름 설계",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "task-factory"
+                        "w4jdH": {
+                          "content": "56s",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "56s"
-                        },
-                        "SOEv0": {
-                          "content": "GitHub 작업 흐름과 상태 설계 정리"
-                        },
-                        "F8l2LV": {
-                          "content": "Done",
-                          "fill": "$--color-success"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "상태 설계 정리 완료, #12 리뷰 필요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -13596,35 +13633,37 @@
                     {
                       "id": "inactive-state-4-q8VhA",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / herdr-ide",
+                      "ref": "HXWFK",
+                      "name": "Row / 결제 멱등키 PR",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "!",
                           "fill": "$--color-warning"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-warning"
+                        "x0h40": {
+                          "content": "결제 멱등키 PR",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "herdr-ide"
+                        "w4jdH": {
+                          "content": "1m",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "1m"
-                        },
-                        "SOEv0": {
-                          "content": "아이콘 패밀리와 버튼 제작"
-                        },
-                        "F8l2LV": {
-                          "content": "Approval",
-                          "fill": "$--color-warning"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Approval",
+                          "fill": "$--color-warning",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "DB 마이그레이션 실행을 승인하세요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -13652,35 +13691,37 @@
                     {
                       "id": "inactive-state-4-vrp4i",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / sasu",
+                      "ref": "HXWFK",
+                      "name": "Row / 실패 관측 정보 기록",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "✓",
                           "fill": "$--color-success"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-success"
+                        "x0h40": {
+                          "content": "실패 관측 정보 기록",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "sasu"
+                        "w4jdH": {
+                          "content": "0s",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "0s"
-                        },
-                        "SOEv0": {
-                          "content": "실패 시 관측 정보 기록 개선"
-                        },
-                        "F8l2LV": {
-                          "content": "Done",
-                          "fill": "$--color-success"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "관측 기록 PR 열림, 리뷰 대기",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -13721,35 +13762,37 @@
                     {
                       "id": "inactive-state-4-csMSx",
                       "type": "ref",
-                      "ref": "cfYc8",
-                      "name": "Row / task-factory",
+                      "ref": "HXWFK",
+                      "name": "Row / GitHub 작업 흐름 설계",
                       "width": "fill_container",
                       "descendants": {
-                        "lwWCN": {
+                        "PCeNa": {
                           "content": "✓",
                           "fill": "$--color-success"
                         },
-                        "EJiwU": {
-                          "fill": "$--color-wash-success"
+                        "x0h40": {
+                          "content": "GitHub 작업 흐름 설계",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
                         },
-                        "ocSTu": {
-                          "content": "task-factory"
+                        "w4jdH": {
+                          "content": "56s",
+                          "enabled": true
                         },
-                        "Umyx6": {
-                          "content": "56s"
-                        },
-                        "SOEv0": {
-                          "content": "GitHub 작업 흐름과 상태 설계 정리"
-                        },
-                        "F8l2LV": {
-                          "content": "Done",
-                          "fill": "$--color-success"
-                        },
-                        "Y7odV": {
-                          "content": "main"
-                        },
-                        "frfQg": {
+                        "jb7mF": {
                           "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "상태 설계 정리 완료, #12 리뷰 필요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
                         }
                       }
                     },
@@ -15354,14 +15397,29 @@
                   "padding": "$--spacing-none",
                   "descendants": {
                     "x0h40": {
-                      "content": "Fix tab snap-back on split checkouts",
-                      "fontSize": "$--text-caption"
+                      "content": "Hook 버그 확인",
+                      "fontSize": "$--text-caption",
+                      "width": 84,
+                      "fontWeight": "600"
                     },
                     "EurXP": {
-                      "enabled": false
+                      "enabled": true
                     },
                     "nT97E": {
                       "enabled": false
+                    },
+                    "TYOu2": {
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    },
+                    "X6LdE": {
+                      "enabled": false
+                    },
+                    "BsCNW": {
+                      "content": "hook 보고 경로를 소켓 호출로 교체 중",
+                      "fill": "$--color-secondary",
+                      "fontSize": "$--text-caption"
                     }
                   }
                 },
@@ -15733,7 +15791,9 @@
                   "descendants": {
                     "x0h40": {
                       "content": "Design contract false positive",
-                      "fontSize": "$--text-caption"
+                      "fontSize": "$--text-caption",
+                      "width": 168,
+                      "fontWeight": "600"
                     },
                     "PCeNa": {
                       "content": "○",
@@ -15752,6 +15812,11 @@
                     },
                     "nT97E": {
                       "enabled": false
+                    },
+                    "TYOu2": {
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
                     }
                   }
                 },
@@ -16041,14 +16106,29 @@
                   "padding": "$--spacing-none",
                   "descendants": {
                     "x0h40": {
-                      "content": "Fix tab snap-back on split checkouts",
-                      "fontSize": "$--text-caption"
+                      "content": "Hook 버그 확인",
+                      "fontSize": "$--text-caption",
+                      "width": 84,
+                      "fontWeight": "600"
                     },
                     "EurXP": {
-                      "enabled": false
+                      "enabled": true
                     },
                     "nT97E": {
                       "enabled": false
+                    },
+                    "TYOu2": {
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    },
+                    "X6LdE": {
+                      "enabled": false
+                    },
+                    "BsCNW": {
+                      "content": "hook 보고 경로를 소켓 호출로 교체 중",
+                      "fill": "$--color-secondary",
+                      "fontSize": "$--text-caption"
                     }
                   }
                 },
@@ -16218,18 +16298,36 @@
                   "padding": "$--spacing-none",
                   "descendants": {
                     "x0h40": {
-                      "content": "Fix tab snap-back on split checkouts",
-                      "fontSize": "$--text-caption"
+                      "content": "결제 멱등키 PR",
+                      "fontSize": "$--text-caption",
+                      "width": 78,
+                      "fontWeight": "600"
                     },
                     "PCeNa": {
                       "content": "?",
                       "fill": "$--color-warning"
                     },
                     "EurXP": {
-                      "enabled": false
+                      "enabled": true
                     },
                     "nT97E": {
                       "enabled": false
+                    },
+                    "TYOu2": {
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    },
+                    "X6LdE": {
+                      "content": "Question",
+                      "fill": "$--color-warning",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "500"
+                    },
+                    "BsCNW": {
+                      "content": "A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요",
+                      "fill": "$--color-primary",
+                      "fontSize": "$--text-caption"
                     }
                   }
                 },
@@ -16418,7 +16516,9 @@
                   "descendants": {
                     "x0h40": {
                       "content": "claude",
-                      "fontSize": "$--text-caption"
+                      "fontSize": "$--text-caption",
+                      "width": 40,
+                      "fontWeight": "600"
                     },
                     "PCeNa": {
                       "content": "○",
@@ -16429,6 +16529,11 @@
                     },
                     "nT97E": {
                       "enabled": false
+                    },
+                    "TYOu2": {
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
                     }
                   }
                 },
@@ -16587,7 +16692,9 @@
                   "descendants": {
                     "x0h40": {
                       "content": "Design contract false positive",
-                      "fontSize": "$--text-caption"
+                      "fontSize": "$--text-caption",
+                      "width": 168,
+                      "fontWeight": "600"
                     },
                     "PCeNa": {
                       "content": "●",
@@ -16602,10 +16709,23 @@
                       }
                     },
                     "EurXP": {
-                      "enabled": false
+                      "enabled": true
                     },
                     "nT97E": {
                       "enabled": false
+                    },
+                    "TYOu2": {
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    },
+                    "X6LdE": {
+                      "enabled": false
+                    },
+                    "BsCNW": {
+                      "content": "디자인 계약 검사 재실행 중",
+                      "fill": "$--color-secondary",
+                      "fontSize": "$--text-caption"
                     }
                   }
                 },
@@ -30193,6 +30313,10 @@
     "--size-settings-sheet-window-inset": {
       "type": "number",
       "value": 40
+    },
+    "--size-pane-header-sentence-min": {
+      "type": "number",
+      "value": 120
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

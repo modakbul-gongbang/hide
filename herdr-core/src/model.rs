@@ -363,8 +363,9 @@ pub struct SidebarAgentSnapshot {
     /// refused it as an agent name (PRD D-03).
     #[serde(skip_serializing)]
     pub name: Option<String>,
-    /// The label plugin's rolling task title. A fallback name only.
-    #[serde(skip_serializing)]
+    /// The label plugin's rolling task title. A fallback name in the row,
+    /// and the search sheet's subtitle when the state chose no sentence
+    /// (PRD D-01, D-15).
     pub task: Option<String>,
     /// The label plugin's one-line progress sentence.
     #[serde(skip_serializing)]
