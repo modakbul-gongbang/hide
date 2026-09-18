@@ -36,6 +36,7 @@ A document's location or an old PRD citation does not make it current authority.
 | Agent status, semantic colors, Workspace aggregation, and read/unread policy | [status-model.md](status-model.md) | `sidebar.rs`, `AgentRow.swift`, `SidebarPresentation.swift`, status tests |
 | Optional ambient counts and privacy | [status-model.md](status-model.md#ambient-signals-subagents-background-tasks) | `sidebar.rs::parse_ambient`, `pet.rs::ambient_totals` |
 | Ownership axis, delegated grouping, the stall clock and its thresholds | [status-model.md: the stall clock](status-model.md#the-stall-clock) | `sidebar.rs::ownership_of`, `runtime.rs` stall clocks, `session_sync/coordinator.rs` agent tick |
+| Where an agent's parent comes from: Herdr's record or the `parent_pane` token | [status-model.md: where a parent comes from](status-model.md#where-a-parent-comes-from) | `wire.rs::lineage_parent`, `sidebar.rs::apply_lineage`, wire lineage test |
 | Why a pane's children are visible or not, and the uninstrumented mark | [status-model.md: uninstrumented is not an unknown activity](status-model.md#uninstrumented-is-not-an-unknown-activity) | `hide-agent-hooks/src/diagnosis.rs`, `herdr-core/src/agent_hooks.rs`, `sidebar.rs::project_pane_children` |
 | Agent hook installation, what is written where, and the Settings diagnosis | [agent-hooks.md](agent-hooks.md) | `hide-agent-hooks/`, `StatusSnapshot.agent_hooks`, `install_agent_hooks` event |
 | Native pet window and gestures | [pet-window-macos.md](pet-window-macos.md) | `PetWindow.swift`, `PetIntegrationTests.swift` |
