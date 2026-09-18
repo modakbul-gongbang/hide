@@ -39,8 +39,10 @@ pub const MAX_TASK_CHARS: usize = 30;
 /// and Herdr caps a token value at 80 characters; the prompt asks for this
 /// length and the parser cuts whatever came back to it (PRD D-05).
 pub const MAX_EXPECTED_REPLY_CHARS: usize = 40;
-/// The longest session name published as a token. Herdr's own cap on a
-/// token value; the sidebar row truncates at its width.
+/// The longest session name published as a token, Herdr's own cap on a
+/// token value; the sidebar row truncates at its width. Only a Claude
+/// `ai-title` reaches it: a name taken from a first human turn goes through
+/// `normalize_task` and its 30-character task budget (PRD D-02).
 pub const MAX_SESSION_NAME_CHARS: usize = 80;
 /// The initial view includes a small head and a bounded tail of human turns.
 pub const INITIAL_FIRST_USER_TURNS: usize = 3;
