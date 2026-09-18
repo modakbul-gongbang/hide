@@ -43,7 +43,7 @@ struct FileDocumentStateTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("typing.txt")
         try "START ".write(to: file, atomically: true, encoding: .utf8)
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually { model.focusedCheckout != nil }
@@ -80,7 +80,7 @@ struct FileDocumentStateTests {
         let second = root.appendingPathComponent("second.md")
         try "First original".write(to: first, atomically: true, encoding: .utf8)
         try "Second original".write(to: second, atomically: true, encoding: .utf8)
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually { model.focusedCheckout != nil }

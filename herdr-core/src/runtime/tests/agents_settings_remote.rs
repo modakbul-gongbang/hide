@@ -73,9 +73,11 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         id: "mini".to_owned(),
         label: "Mac mini".to_owned(),
         kind: "remote".to_owned(),
-        state: "available".to_owned(),
+        state: "unavailable".to_owned(),
+        message: None,
         ssh_alias: Some("mini".to_owned()),
         agent_count: 0,
+        test: None,
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: "mini".to_owned(),

@@ -915,36 +915,115 @@ private struct HideDeviceRow: View {
     let onTest: () -> Void
     let onRemove: () -> Void
 
+    private var isRemote: Bool { device.kind == "remote" }
+
+    /// One dot carries the connection: green when the remote session is
+    /// projected, amber when the core says why it is not.
+    private var stateColor: Color {
+        guard isRemote else { return accent }
+        return device.state == "ready" ? HideTheme.success : HideTheme.warning
+    }
+
+    private var stateText: String {
+        switch device.state {
+        case "ready": "connected"
+        case "unavailable": "not connected"
+        default: device.state
+        }
+    }
+
     var body: some View {
         VStack(spacing: HideTheme.spacingNone) {
             HStack(spacing: HideTheme.spacingSM) {
                 Circle()
-                    .fill(device.kind == "remote" ? HideTheme.success : accent)
+                    .fill(stateColor)
                     .frame(width: 6, height: 6)
                 VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                     Text(device.label)
                         .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
                         .foregroundStyle(HideTheme.primary)
-                    Text(device.sshAlias ?? "local, no SSH alias")
+                    Text(isRemote ? "\(device.sshAlias ?? "") · \(stateText)" : "local, no SSH alias")
                         .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
                         .foregroundStyle(HideTheme.secondary)
                 }
                 Spacer(minLength: HideTheme.spacingSM)
-                if device.kind == "remote" {
+                if isRemote {
                     Button("Test", action: onTest)
                         .buttonStyle(HideTextButtonStyle())
+                        .disabled(device.test?.state == "running")
                     Button("Remove", role: .destructive, action: onRemove)
                         .buttonStyle(HideTextButtonStyle())
                 }
             }
             .padding(.horizontal, HideTheme.spacingMD)
             .padding(.vertical, HideTheme.spacingSM)
+            if isRemote, device.state != "ready", let message = device.message {
+                HideSettingsNote(
+                    text: message,
+                    systemImage: "exclamationmark.triangle.fill",
+                    color: HideTheme.warning,
+                    showsDivider: false
+                )
+            }
+            if let test = device.test {
+                HideDeviceTestReport(test: test)
+            }
             if showsDivider {
                 Rectangle()
                     .fill(HideTheme.divider)
                     .frame(height: HideTheme.Layout.hairlineWidth)
             }
         }
+    }
+}
+
+/// The staged connection test: one line per stage, in the order the core
+/// runs them, so the first red line is where the host needs attention.
+private struct HideDeviceTestReport: View {
+    let test: CoreDeviceTestSnapshot
+
+    private var headline: String {
+        switch test.state {
+        case "running": "Testing the connection…"
+        case "passed": "Connection test passed"
+        default: "Connection test failed"
+        }
+    }
+
+    private var headlineColor: Color {
+        switch test.state {
+        case "running": HideTheme.secondary
+        case "passed": HideTheme.success
+        default: HideTheme.warning
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+            Text(headline)
+                .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                .foregroundStyle(headlineColor)
+            ForEach(test.stages) { stage in
+                HStack(alignment: .top, spacing: HideTheme.spacingXS) {
+                    Image(systemName: stage.state == "passed" ? "checkmark" : "xmark")
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                        .foregroundStyle(stage.state == "passed" ? HideTheme.success : HideTheme.warning)
+                        .frame(width: HideTheme.spacingMD)
+                    Text(stage.stage)
+                        .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
+                        .foregroundStyle(HideTheme.primary)
+                        .frame(width: HideTheme.deviceTestStageColumnWidth, alignment: .leading)
+                    Text(stage.detail)
+                        .hideFont(size: HideTheme.Typography.caption)
+                        .foregroundStyle(HideTheme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, HideTheme.spacingMD)
+        .padding(.bottom, HideTheme.spacingSM)
     }
 }
 
@@ -1071,11 +1150,11 @@ struct AddDeviceSheet: View {
             )
             HideSettingsGroup(title: "Device") {
                 HideSettingsRow(label: "Label") {
-                    HideSettingsField(placeholder: "mini", text: $label, width: 210)
+                    HideSettingsField(placeholder: "Studio", text: $label, width: 210)
                         .accessibilityLabel("Device label")
                 }
                 HideSettingsRow(label: "SSH alias", showsDivider: false) {
-                    HideSettingsField(placeholder: "my-mac-mini", text: $alias, width: 210)
+                    HideSettingsField(placeholder: "studio", text: $alias, width: 210)
                         .accessibilityLabel("SSH alias")
                 }
             }

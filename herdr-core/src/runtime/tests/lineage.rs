@@ -140,7 +140,6 @@ fn lineage_collapse_persists_without_attention_expanding_it_and_prunes_on_disapp
         schema_version: SCHEMA_VERSION,
         herdr_socket_path: None,
         herdr_bin_path: None,
-        remote_targets: vec![],
         app_state_path: runtime.state_path.to_string_lossy().into_owned(),
     };
     let restarted = Runtime::new(

@@ -1034,24 +1034,39 @@ pub fn require_terminal_surface(surface: &RemoteSurface) -> RemoteResult<&Remote
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum RemoteReadCommand {
-    GitStatus { root: String },
+    GitStatus {
+        root: String,
+    },
+    /// `herdr status server --json`: the host's own answer to where its
+    /// server socket is and whether the server is up.
+    HerdrServerStatus,
 }
+
+/// Where a non-login SSH exec finds `herdr` on the remote host: the
+/// installer's user prefix, Homebrew, and the system paths. A login shell
+/// would print its banners into the JSON, so the PATH is spelled out instead.
+const REMOTE_HERDR_PATH: &str = "$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
 
 impl RemoteReadCommand {
     fn operation_id(&self) -> &'static str {
         match self {
             Self::GitStatus { .. } => "remote-git-status",
+            Self::HerdrServerStatus => "remote-herdr-status",
         }
     }
 
     fn stage(&self) -> RemoteStage {
         match self {
             Self::GitStatus { .. } => RemoteStage::Git,
+            Self::HerdrServerStatus => RemoteStage::Herdr,
         }
     }
 
     fn command_line(&self) -> RemoteResult<String> {
         match self {
+            Self::HerdrServerStatus => Ok(format!(
+                "PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json"
+            )),
             Self::GitStatus { root } => {
                 if !root.starts_with('/')
                     || root
@@ -1083,16 +1098,112 @@ pub struct RemoteCommandOutput {
     pub exit_status: u32,
 }
 
+/// The fields of `herdr status server --json` the IDE reads. The CLI is the
+/// boundary here, not the socket schema: the socket cannot be reached before
+/// this answer says where it is.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+pub struct RemoteHerdrServerStatus {
+    pub running: bool,
+    pub socket: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub protocol: Option<u32>,
+}
+
+/// The remembered socket is one owned `String`, so a panic while it was held
+/// cannot have left it half-written; the value is taken as it is.
+fn lock_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Exit status a POSIX shell reports when the command is not on its PATH.
+const EXIT_COMMAND_NOT_FOUND: u32 = 127;
+
+/// Reads the server status the remote host printed, and turns each way it
+/// can fail into the action the operator takes on that host.
+pub fn parse_herdr_server_status(
+    host_id: &str,
+    output: &RemoteCommandOutput,
+) -> RemoteResult<RemoteHerdrServerStatus> {
+    let operation_id = RemoteReadCommand::HerdrServerStatus.operation_id();
+    if output.exit_status == EXIT_COMMAND_NOT_FOUND {
+        return Err(remote_error(
+            operation_id,
+            host_id,
+            RemoteStage::Herdr,
+            format!("herdr is not installed on {host_id}, or not under {REMOTE_HERDR_PATH}"),
+            false,
+            true,
+        ));
+    }
+    if output.exit_status != 0 {
+        return Err(remote_error(
+            operation_id,
+            host_id,
+            RemoteStage::Herdr,
+            format!(
+                "herdr status server --json exited {} on {host_id}: {}",
+                output.exit_status,
+                redact_output(&output.stderr)
+            ),
+            true,
+            false,
+        ));
+    }
+    let status: RemoteHerdrServerStatus =
+        serde_json::from_str(output.stdout.trim()).map_err(|error| {
+            remote_error(
+                operation_id,
+                host_id,
+                RemoteStage::Herdr,
+                format!("herdr status server --json on {host_id} was not readable: {error}"),
+                false,
+                true,
+            )
+        })?;
+    if !Path::new(&status.socket).is_absolute()
+        || status.socket.bytes().any(|byte| byte.is_ascii_control())
+    {
+        return Err(remote_error(
+            operation_id,
+            host_id,
+            RemoteStage::Herdr,
+            "remote Herdr socket path must be absolute and single-line",
+            false,
+            true,
+        ));
+    }
+    if !status.running {
+        return Err(remote_error(
+            operation_id,
+            host_id,
+            RemoteStage::Herdr,
+            format!("Herdr server is not running on {host_id}; run `herdr` there once to start it"),
+            true,
+            true,
+        ));
+    }
+    Ok(status)
+}
+
 #[derive(Clone)]
 pub struct RusshRemoteClient {
     host: SshAlias,
     runtime: Arc<Runtime>,
+    /// The socket `herdr status server --json` reported on the host. It is
+    /// asked for on first use and forgotten when a socket open fails, so a
+    /// server restarted under another path is found again on the next
+    /// attempt instead of failing forever on the remembered one.
+    herdr_socket: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Clone)]
 pub(crate) struct RusshApiConnector {
     connection: Arc<RusshApiConnection>,
-    socket_path: String,
 }
 
 impl fmt::Debug for RusshApiConnector {
@@ -1100,7 +1211,6 @@ impl fmt::Debug for RusshApiConnector {
         formatter
             .debug_struct("RusshApiConnector")
             .field("host_id", &self.connection.client.host.host_id)
-            .field("socket_path", &self.socket_path)
             .finish()
     }
 }
@@ -1144,6 +1254,7 @@ impl RusshApiConnection {
                         "en",
                     ));
                 }
+                self.client.forget_herdr_socket();
                 ApiError::Transport(format!(
                     "remote Herdr socket open failed for {}: {error}",
                     self.client.host.host_id
@@ -1358,7 +1469,12 @@ impl Drop for RusshApiStream {
 
 impl ApiConnector for RusshApiConnector {
     fn connect(&self) -> Result<Box<dyn ApiStream>, ApiError> {
-        let stream = self.connection.open_stream(&self.socket_path)?;
+        let socket_path = self
+            .connection
+            .client
+            .herdr_socket_path()
+            .map_err(|error| ApiError::Transport(error.to_string()))?;
+        let stream = self.connection.open_stream(&socket_path)?;
         Ok(Box::new(RusshApiStream {
             runtime: Arc::clone(&self.connection.client.runtime),
             _connection: Arc::clone(&self.connection),
@@ -1400,6 +1516,7 @@ impl RusshRemoteClient {
         Ok(Self {
             host,
             runtime: Arc::new(runtime),
+            herdr_socket: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1407,41 +1524,40 @@ impl RusshRemoteClient {
         &self.host
     }
 
-    pub(crate) fn herdr_api_connector(
-        &self,
-        socket_path: impl Into<String>,
-    ) -> RemoteResult<RusshApiConnector> {
-        let socket_path = socket_path.into();
-        if !Path::new(&socket_path).is_absolute()
-            || socket_path.bytes().any(|byte| byte.is_ascii_control())
-        {
-            return Err(remote_error(
-                "remote-herdr-socket",
-                &self.host.host_id,
-                RemoteStage::Herdr,
-                "remote Herdr socket path must be absolute and single-line",
-                false,
-                true,
-            ));
+    /// The remote Herdr socket, asked of the host on the first call and
+    /// remembered until [`Self::forget_herdr_socket`].
+    pub fn herdr_socket_path(&self) -> RemoteResult<String> {
+        if let Some(path) = lock_recover(&self.herdr_socket).clone() {
+            return Ok(path);
         }
-        Ok(RusshApiConnector {
+        let output = self.exec_read_only(RemoteReadCommand::HerdrServerStatus)?;
+        let status = parse_herdr_server_status(&self.host.host_id, &output)?;
+        *lock_recover(&self.herdr_socket) = Some(status.socket.clone());
+        Ok(status.socket)
+    }
+
+    pub(crate) fn forget_herdr_socket(&self) {
+        *lock_recover(&self.herdr_socket) = None;
+    }
+
+    pub(crate) fn herdr_api_connector(&self) -> RusshApiConnector {
+        RusshApiConnector {
             connection: Arc::new(RusshApiConnection {
                 client: self.clone(),
                 session: Mutex::new(None),
             }),
-            socket_path,
-        })
+        }
     }
 
     pub(crate) fn open_terminal_session(
         &self,
-        socket_path: &str,
         pane_id: &str,
         mode: &str,
         rows: u16,
         cols: u16,
     ) -> RemoteResult<RemoteTerminalProcess> {
-        let command = remote_terminal_command(socket_path, pane_id, mode, rows, cols)?;
+        let socket_path = self.herdr_socket_path()?;
+        let command = remote_terminal_command(&socket_path, pane_id, mode, rows, cols)?;
         let session = self
             .runtime
             .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
@@ -1520,7 +1636,6 @@ impl RusshRemoteClient {
     pub fn staged_capability_test(
         &self,
         operation_id: &str,
-        herdr_socket_path: &str,
         probe_tunnel: bool,
     ) -> CapabilityReport {
         let mut report = CapabilityReport::new(operation_id, self.host.identity());
@@ -1562,7 +1677,10 @@ impl RusshRemoteClient {
             }
         }
 
-        match self.fetch_herdr_snapshot(herdr_socket_path) {
+        // A stale remembered socket would make the probe answer for a server
+        // that has since moved; the probe asks the host afresh.
+        self.forget_herdr_socket();
+        match self.fetch_herdr_snapshot() {
             Ok(snapshot) => {
                 report.pass(
                     RemoteStage::Herdr,
@@ -1799,8 +1917,9 @@ impl RusshRemoteClient {
         }
     }
 
-    pub fn fetch_herdr_snapshot(&self, socket_path: &str) -> RemoteResult<RemoteSnapshotEnvelope> {
-        let connector = self.herdr_api_connector(socket_path)?;
+    pub fn fetch_herdr_snapshot(&self) -> RemoteResult<RemoteSnapshotEnvelope> {
+        let socket_path = self.herdr_socket_path()?;
+        let connector = self.herdr_api_connector();
         let response = hide_herdr_client::request_with_connector(
             &connector,
             "session.snapshot",
@@ -1812,14 +1931,14 @@ impl RusshRemoteClient {
         // socket through is the identity the envelope carries.
         let host = HostScope {
             host_id: self.host.host_id.clone(),
-            session_id: socket_path.to_owned(),
+            session_id: socket_path,
         };
         crate::wire::remote_snapshot(&response, "remote-herdr-snapshot", &host)
     }
 
     #[cfg(test)]
-    pub fn fetch_herdr_snapshot_value(&self, socket_path: &str) -> RemoteResult<Value> {
-        let connector = self.herdr_api_connector(socket_path)?;
+    pub fn fetch_herdr_snapshot_value(&self) -> RemoteResult<Value> {
+        let connector = self.herdr_api_connector();
         hide_herdr_client::request_with_connector(
             &connector,
             "session.snapshot",
@@ -2498,7 +2617,7 @@ fn remote_terminal_command(
         ));
     }
     Ok(format!(
-        "env HERDR_SOCKET_PATH={} PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr terminal session {} {} --cols {cols} --rows {rows}",
+        "env HERDR_SOCKET_PATH={} PATH=\"{REMOTE_HERDR_PATH}\" herdr terminal session {} {} --cols {cols} --rows {rows}",
         shell_quote(socket_path),
         shell_quote(mode),
         shell_quote(pane_id),
@@ -3732,6 +3851,75 @@ mod tests {
         assert!(!command.contains("ssh "));
     }
 
+    fn status_output(exit_status: u32, stdout: &str) -> RemoteCommandOutput {
+        RemoteCommandOutput {
+            stdout: stdout.to_owned(),
+            stderr: String::new(),
+            exit_status,
+        }
+    }
+
+    /// The shape `herdr status server --json` prints on 0.9.1, with the
+    /// socket under the remote user's own home.
+    #[test]
+    fn herdr_server_status_names_the_socket_the_host_reported() {
+        let status = parse_herdr_server_status(
+            "mini",
+            &status_output(
+                0,
+                r#"{"status":"running","running":true,"version":"0.9.1","protocol":22,"capabilities":{"live_handoff":true},"compatible":true,"endpoint_compatible":true,"socket":"/Users/example/.config/herdr/herdr.sock","session":null,"restart_needed":false,"server_binary_stale":false}"#,
+            ),
+        )
+        .expect("running server status parses");
+        assert_eq!(status.socket, "/Users/example/.config/herdr/herdr.sock");
+        assert_eq!(status.version.as_deref(), Some("0.9.1"));
+        assert_eq!(status.protocol, Some(22));
+    }
+
+    #[test]
+    fn herdr_server_status_failures_name_what_to_do_on_the_host() {
+        let not_running = parse_herdr_server_status(
+            "mini",
+            &status_output(
+                0,
+                r#"{"status":"not_running","running":false,"version":null,"protocol":null,"capabilities":null,"compatible":null,"endpoint_compatible":null,"socket":"/Users/example/.config/herdr/herdr.sock","session":null,"restart_needed":false,"server_binary_stale":false}"#,
+            ),
+        )
+        .expect_err("a stopped server is a failure");
+        assert_eq!(not_running.stage(), RemoteStage::Herdr);
+        assert!(not_running.diagnostic().action_required);
+        assert!(not_running.diagnostic().retryable);
+        assert!(not_running.to_string().contains("not running on mini"));
+
+        let not_installed = parse_herdr_server_status("mini", &status_output(127, ""))
+            .expect_err("a missing binary is a failure");
+        assert!(not_installed.diagnostic().action_required);
+        assert!(!not_installed.diagnostic().retryable);
+        assert!(not_installed.to_string().contains("not installed on mini"));
+
+        let unreadable = parse_herdr_server_status("mini", &status_output(0, "usage: herdr"))
+            .expect_err("non-JSON output is a failure");
+        assert!(unreadable.to_string().contains("not readable"));
+
+        let relative = parse_herdr_server_status(
+            "mini",
+            &status_output(0, r#"{"running":true,"socket":"herdr.sock"}"#),
+        )
+        .expect_err("a relative socket is refused");
+        assert!(relative.to_string().contains("absolute"));
+    }
+
+    #[test]
+    fn herdr_server_status_command_runs_without_a_login_shell() {
+        let command = RemoteReadCommand::HerdrServerStatus
+            .command_line()
+            .expect("status command");
+        assert_eq!(
+            command,
+            "PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr status server --json"
+        );
+    }
+
     #[test]
     fn remote_terminal_command_rejects_untrusted_contract_values() {
         assert!(remote_terminal_command("relative.sock", "w1:p1", "control", 24, 80).is_err());
@@ -3743,20 +3931,16 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires HERDR_TEST_SSH_ALIAS and HERDR_TEST_SOCKET_PATH"]
+    #[ignore = "requires HERDR_TEST_SSH_ALIAS"]
     fn official_remote_socket_snapshot_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
             .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
-        let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
-            .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
         let home = std::env::var_os("HOME").expect("HOME is configured");
         let alias =
             SshAlias::from_config_file(&PathBuf::from(home).join(".ssh/config"), &alias_name)
                 .expect("SSH alias resolves");
         let client = RusshRemoteClient::new(alias).expect("remote client initializes");
-        let connector = client
-            .herdr_api_connector(&socket_path)
-            .expect("remote Socket API connector initializes");
+        let connector = client.herdr_api_connector();
         let result = hide_herdr_client::request_with_connector(
             &connector,
             "session.snapshot",
@@ -3766,7 +3950,9 @@ mod tests {
         .expect("official remote Socket API snapshot responds");
         let host = HostScope {
             host_id: client.host().host_id.clone(),
-            session_id: socket_path.clone(),
+            session_id: client
+                .herdr_socket_path()
+                .expect("remote Herdr socket resolves"),
         };
         let snapshot = decode_remote_snapshot(&result, "remote-herdr-snapshot", &host)
             .expect("remote snapshot matches the official protocol");
@@ -3803,8 +3989,6 @@ mod tests {
 
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
             .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
-        let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
-            .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
         let workspace_id = std::env::var("HERDR_TEST_REMOTE_TERMINAL_WORKSPACE_ID")
             .expect("HERDR_TEST_REMOTE_TERMINAL_WORKSPACE_ID names the owned fixture workspace");
         let pane_id = std::env::var("HERDR_TEST_REMOTE_TERMINAL_PANE_ID")
@@ -3822,7 +4006,7 @@ mod tests {
                 .expect("SSH alias resolves");
         let client = RusshRemoteClient::new(alias).expect("remote client initializes");
         let snapshot = client
-            .fetch_herdr_snapshot_value(&socket_path)
+            .fetch_herdr_snapshot_value()
             .expect("fixture session snapshot");
         let snapshot = snapshot["snapshot"]
             .as_object()
@@ -3855,7 +4039,7 @@ mod tests {
         }));
 
         let process = client
-            .open_terminal_session(&socket_path, &pane_id, "control", 30, 100)
+            .open_terminal_session(&pane_id, "control", 30, 100)
             .expect("official remote terminal control session opens");
         let (reader, writer, shutdown) = process.into_parts();
         let mut writer = writer.expect("control session exposes a writer");

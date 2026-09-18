@@ -10,7 +10,7 @@ struct RecentNavigationIntegrationTests {
             .appendingPathComponent("hide-empty-navigation-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually("initial checkout") { model.focusedCheckout != nil }
@@ -55,7 +55,7 @@ struct RecentNavigationIntegrationTests {
             .appendingPathComponent("hide-panel-marks-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually("initial terminal") { model.recentSurfaces.count == 1 }
@@ -122,7 +122,7 @@ struct RecentNavigationIntegrationTests {
         let first = root.appendingPathComponent("first.txt")
         let last = root.appendingPathComponent("직전-file.txt")
         for file in [first, last] { try "review\n".write(to: file, atomically: true, encoding: .utf8) }
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually("initial terminal") { model.recentSurfaces.count == 1 }
@@ -180,7 +180,7 @@ struct RecentNavigationIntegrationTests {
         let fileB = beta.appendingPathComponent("beta.txt")
         try "alpha\n".write(to: fileA, atomically: true, encoding: .utf8)
         try "beta\n".write(to: fileB, atomically: true, encoding: .utf8)
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", alpha.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually("initial checkout") { model.focusedCheckout != nil }

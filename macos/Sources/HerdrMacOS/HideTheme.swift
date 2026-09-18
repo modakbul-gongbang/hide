@@ -289,6 +289,9 @@ enum HideTheme {
     static let settingsSheetMaxHeight: CGFloat = 800
     static let settingsSheetWindowInset: CGFloat = 40
     static let addDeviceSheetSize = CGSize(width: 470, height: 300)
+    /// The stage column of a device connection test, wide enough for
+    /// `protocol` in the monospaced caption so the details line up.
+    static let deviceTestStageColumnWidth: CGFloat = 64
 
     static let badgeHeight: CGFloat = 16
 

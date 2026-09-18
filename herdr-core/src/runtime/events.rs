@@ -1455,7 +1455,6 @@ impl Runtime {
                     return true;
                 }
                 if id == workspace::LOCAL_DEVICE_ID
-                    || self.remote_targets.iter().any(|target| target.id == id)
                     || self
                         .snapshot
                         .ui_state
@@ -1470,19 +1469,22 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.snapshot.ui_state.device_registrations.push(
-                    crate::model::DeviceRegistration {
-                        id: id.clone(),
-                        label,
-                        ssh_alias: Some(ssh_alias.clone()),
-                    },
-                );
+                let registration = crate::model::DeviceRegistration {
+                    id: id.clone(),
+                    label,
+                    ssh_alias: Some(ssh_alias.clone()),
+                };
+                self.snapshot
+                    .ui_state
+                    .device_registrations
+                    .push(registration.clone());
                 self.rebuild_catalog();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.registered",
                     format!("Registered SSH device {id} ({ssh_alias})"),
                 );
+                self.connect_remote_device(&registration);
                 true
             }
             Event::RemoveDevice(payload) => {
@@ -1507,6 +1509,7 @@ impl Runtime {
                     );
                     return true;
                 }
+                self.disconnect_remote_device(&payload.device_id);
                 self.rebuild_catalog();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
@@ -1524,32 +1527,19 @@ impl Runtime {
                     .navigator
                     .devices
                     .iter()
-                    .any(|device| device.id == payload.device_id);
+                    .any(|device| device.id == payload.device_id && device.kind == "remote");
                 if !known {
                     self.set_error(
                         "device.unknown",
-                        format!("Device {} is not registered", payload.device_id),
+                        format!(
+                            "Device {} is not a registered SSH device",
+                            payload.device_id
+                        ),
                         false,
                     );
                     return true;
                 }
-                self.push_diagnostic(
-                    "device.connection_test_requested",
-                    format!(
-                        "Connection test requested for {}; SSH credentials remain outside hide",
-                        payload.device_id
-                    ),
-                );
-                if let Some(device) = self
-                    .snapshot
-                    .navigator
-                    .devices
-                    .iter_mut()
-                    .find(|device| device.id == payload.device_id)
-                {
-                    device.state = "test_requested".to_owned();
-                }
-                true
+                self.start_device_test(&payload.device_id)
             }
             Event::CreatePane(payload) => {
                 if payload.command.is_some() {

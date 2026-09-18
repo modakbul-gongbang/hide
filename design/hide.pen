@@ -30133,6 +30133,10 @@
     "--size-pane-header-sentence-min": {
       "type": "number",
       "value": 120
+    },
+    "--size-device-test-stage-col": {
+      "type": "number",
+      "value": 64
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

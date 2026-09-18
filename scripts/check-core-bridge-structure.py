@@ -105,6 +105,8 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
         ("struct", "CoreProviderUsageSnapshot", "internal"),
         ("struct", "CoreProviderUsageBucketSnapshot", "internal"),
         ("struct", "CoreDeviceSnapshot", "internal"),
+        ("struct", "CoreDeviceTestSnapshot", "internal"),
+        ("struct", "CoreDeviceTestStageSnapshot", "internal"),
         ("struct", "CoreWorkspaceSnapshot", "internal"),
         ("struct", "CoreInactiveCheckoutGroupSnapshot", "internal"),
         ("struct", "CoreCheckoutAgentSummary", "internal"),

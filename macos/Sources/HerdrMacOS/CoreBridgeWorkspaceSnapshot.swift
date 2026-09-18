@@ -186,17 +186,44 @@ struct CoreDeviceSnapshot: Decodable, Identifiable {
     let label: String
     let kind: String
     let state: String
+    /// Why an SSH device is not ready, in the core's words; nil while it is.
+    let message: String?
     let sshAlias: String?
     let agentCount: UInt32
+    /// The last connection test the operator asked for, or the one running.
+    let test: CoreDeviceTestSnapshot?
 
     enum CodingKeys: String, CodingKey {
         case id
         case label
         case kind
         case state
+        case message
         case sshAlias = "ssh_alias"
         case agentCount = "agent_count"
+        case test
     }
+}
+
+struct CoreDeviceTestSnapshot: Decodable, Equatable {
+    /// `running`, `passed` or `failed`.
+    let state: String
+    let checkedAtUnixMs: UInt64?
+    let stages: [CoreDeviceTestStageSnapshot]
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case checkedAtUnixMs = "checked_at_unix_ms"
+        case stages
+    }
+}
+
+struct CoreDeviceTestStageSnapshot: Decodable, Equatable, Identifiable {
+    var id: String { stage }
+    let stage: String
+    /// `pending`, `passed` or `failed`.
+    let state: String
+    let detail: String
 }
 
 struct CoreWorkspaceSnapshot: Decodable, Identifiable {

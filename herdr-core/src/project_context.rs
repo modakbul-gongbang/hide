@@ -359,7 +359,6 @@ mod tests {
             schema_version: SCHEMA_VERSION,
             herdr_socket_path: None,
             herdr_bin_path: None,
-            remote_targets: Vec::new(),
             app_state_path: "/tmp/hide-project-context-test-state.json".to_owned(),
         })
         .navigator;

@@ -22,7 +22,6 @@ struct ForkSurfaceTests {
         let bridge = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
-            "--verification-no-remote",
             "--workspace-root", root.path,
             "--state-path", stateURL.path,
         ])

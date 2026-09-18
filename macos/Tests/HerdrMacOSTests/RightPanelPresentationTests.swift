@@ -102,11 +102,6 @@ struct RightPanelPresentationTests {
         #expect(brightPixels > 20, "The document body must draw visible glyphs, independent of its ruler")
     }
 
-    @Test @MainActor func verificationNoRemoteArgumentDisablesRemoteTargetsOnlyForThatLaunch() {
-        #expect(CoreBridge.remoteTargets(arguments: ["hide"]).contains { $0["id"] == "mini" })
-        #expect(CoreBridge.remoteTargets(arguments: ["hide", "--verification-no-remote"]).isEmpty)
-    }
-
     @Test func directoryLoaderReadsOnlyTheRequestedLevelAndKeepsRepositoryDotfiles() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("hide-right-panel-\(UUID().uuidString)", isDirectory: true)
@@ -285,7 +280,6 @@ struct RightPanelPresentationTests {
         let bridge = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
-            "--verification-no-remote",
             "--workspace-root", root.path,
             "--state-path", stateURL.path,
         ])
@@ -353,7 +347,6 @@ struct RightPanelPresentationTests {
         let bridge = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
-            "--verification-no-remote",
             "--workspace-root", macosRoot.path,
             "--state-path", stateURL.path,
         ])
@@ -398,7 +391,6 @@ struct RightPanelPresentationTests {
         let bridge = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
-            "--verification-no-remote",
             "--workspace-root", root.path,
             "--state-path", stateURL.path,
         ])
@@ -445,7 +437,6 @@ struct RightPanelPresentationTests {
         var first: CoreBridge? = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
-            "--verification-no-remote",
             "--state-path", stateURL.path,
         ])
         try await Task.sleep(for: .milliseconds(50))
@@ -466,7 +457,6 @@ struct RightPanelPresentationTests {
         let restored = CoreBridge(arguments: [
             "HerdrMacOS",
             "--verification-ui-fixture",
-            "--verification-no-remote",
             "--state-path", stateURL.path,
         ])
         let uiState = try #require(restored.snapshot?.uiState)

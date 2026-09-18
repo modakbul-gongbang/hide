@@ -303,9 +303,6 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
         } else if CommandLine.arguments.contains("--verification-browser-refresh") {
             model.browser.refresh()
         }
-        if CommandLine.arguments.contains("--verification-remote-mini") {
-            model.remote.refreshMini()
-        }
         #if DEBUG
         if CommandLine.arguments.contains("--verification-ui-fixture"),
            let scene = LaunchArguments.value("--verification-scene", in: CommandLine.arguments) {

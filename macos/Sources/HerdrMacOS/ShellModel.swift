@@ -732,12 +732,12 @@ final class ShellModel: ObservableObject {
             }
         }
         guard let layout = remote.navigation?.focusedPaneLayout else {
-            return "remote.pane_layout_unavailable: The selected remote tab has panes but no layout in the Herdr snapshot. Retry the Mac mini connection."
+            return "remote.pane_layout_unavailable: The selected remote tab has panes but no layout in the Herdr snapshot. Retry the remote connection."
         }
         let expectedPaneIDs = Set(focusedPanes.map(\.id))
         let layoutPaneIDs = Set(layout.frames.map(\.paneID))
         guard !layout.frames.isEmpty, layoutPaneIDs == expectedPaneIDs else {
-            return "remote.pane_layout_mismatch: The selected remote tab's panes do not match its layout. Retry the Mac mini connection."
+            return "remote.pane_layout_mismatch: The selected remote tab's panes do not match its layout. Retry the remote connection."
         }
         return nil
     }
