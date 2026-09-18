@@ -74,6 +74,22 @@ A delegated row can be Working or Seen and nothing else: its question, approval,
 The row keeps its own demand, mark and status word, so the parent's badge can still say what its child is asking for; what changes is only which group the row sits in and whether it is drawn bright.
 Done is therefore scoped to the lineage root: a delegated child that finishes leaves a dimmed Seen row, and the completion the operator acts on is the root's.
 
+## Where a parent comes from
+
+Ownership, the tree, the breadcrumb and the stall clock all start from one fact per agent: the pane it was spawned from.
+That fact has two sources, resolved once in `wire.rs::lineage_parent` and nowhere else, so every row and every view sees the same parent.
+
+1. Herdr's own record, `spawned_from_pane_id`, which the pinned fork writes when a pane is created through `agent.new --from-pane`.
+   Hide's own fork command uses it.
+2. The pane token `parent_pane`, whose value is the parent's pane id, written by whoever created the pane through `pane.report_metadata`.
+   sasu's dispatch writes it, because the only start that can carry its role marker is `agent.start`, which records no lineage; any orchestrator can write the same token by hand.
+
+Herdr observed the spawn, so its record wins when both are present; an empty token is a cleared declaration, not a parent named by an empty string.
+The token is display-only in Herdr's own terms and dies with the pane, so a closed child leaves no edge behind, and a parent that has gone makes the child an orphan root exactly as it does for Herdr's record.
+Herdr's stable release carries no lineage at all, so the token is the source that survives a return to upstream; the field is the one that goes.
+
+Regression owner: `a_parent_declared_as_a_pane_token_is_the_lineage_when_herdr_recorded_none`.
+
 ## The stall clock
 
 Delegation is only safe if work that stops being anybody's problem comes back.

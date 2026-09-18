@@ -68,6 +68,10 @@ What an agent has spawned in-process is not on Herdr's wire at all.
 The hook helper reports it through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.
 A count Hide cannot read is reported as unknown, never as zero.
 
+A parent Herdr did not record travels the same channel.
+An orchestrator that must mark its child's environment cannot use `agent.new --from-pane` (the fork's only lineage-recording start), so it starts the agent with `agent.start` and declares the parent as the pane token `parent_pane`; `wire.rs::lineage_parent` resolves Herdr's record first and that token second into the one `spawned_from_pane_id` the sidebar's lineage is built from.
+`docs/status-model.md` owns the contract; the token is also the lineage source that outlives the fork, since the stable release records none.
+
 An attach lives only while its tab is in the last five shown.
 Herdr renders a pane for every attached client, so an attach nobody is looking at costs a child process here and a render there for the life of the process; visiting eight tabs used to leave eight attaches alive.
 The core keeps the most recently shown tabs (`ATTACHED_TAB_LIMIT`) and releases the rest, which is the ordinary session drop, not a new path.

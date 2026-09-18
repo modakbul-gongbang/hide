@@ -352,13 +352,45 @@ macro_rules! record_conversions {
 record_conversions!(res);
 record_conversions!(ev);
 
+/// The pane metadata token by which whoever created a pane declares the pane
+/// it was spawned from, so an agent Herdr did not itself spawn as a child can
+/// still be drawn as one.
+///
+/// Herdr's stable release records no lineage, and the pinned fork records it
+/// only on `agent.new`, which cannot carry an environment marker; an
+/// orchestrator that has to mark its child (sasu's implementor) therefore
+/// starts it with `agent.start` and declares the parent afterwards with
+/// `pane.report_metadata`, the same display-only channel the label plugin and
+/// the hook helper already use. The value is the parent's pane id, it dies
+/// with the pane, and it is read here and nowhere else.
+pub(crate) const PARENT_PANE_TOKEN: &str = "parent_pane";
+
+/// The pane this agent was spawned from: Herdr's own record when the fork
+/// carries one, else the parent its spawner declared. Herdr observed the
+/// spawn, so its record wins when the two disagree; an empty value is no
+/// declaration, because Herdr clears a token by setting it empty.
+fn lineage_parent(recorded: Option<String>, declared: Option<&str>) -> Option<String> {
+    recorded.filter(|id| !id.trim().is_empty()).or_else(|| {
+        declared
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+    })
+}
+
 impl From<res::AgentInfo> for ProjectedAgent {
     fn from(v: res::AgentInfo) -> Self {
+        let declared_parent = v
+            .tokens
+            .iter()
+            .find(|(key, _)| key.as_str() == PARENT_PANE_TOKEN)
+            .map(|(_, id)| id.as_str());
+        let spawned_from_pane_id = lineage_parent(v.spawned_from_pane_id, declared_parent);
         Self {
             pane_id: v.pane_id, name: v.name, workspace_id: v.workspace_id, tab_id: v.tab_id, cwd: v.cwd,
             agent: v.agent, agent_status: Some(v.agent_status.to_string()),
             agent_session: v.agent_session.map(|s| SessionAgentSessionPayload { kind: s.kind.to_string(), value: s.value }),
-            spawned_from_pane_id: v.spawned_from_pane_id, state_change_seq: v.state_change_seq,
+            spawned_from_pane_id, state_change_seq: v.state_change_seq,
             tokens: v.tokens.into_iter().map(|(k,v)| (k.into(), Value::String(v))).collect(),
             ambient: v.ambient.map(|v| json!({ "background_failed": v.background_failed, "background_running": v.background_running, "subagents_active": v.subagents_active })),
         }
@@ -1639,6 +1671,49 @@ mod tests {
             parse_subscription_line(" ").err().unwrap().message(),
             "Herdr event stream emitted an empty line"
         );
+    }
+
+    fn listed_agent(extra: Value) -> Value {
+        let mut agent = json!({"pane_id": "w1:p2", "workspace_id": "w1", "tab_id": "w1:t2",
+            "terminal_id": "fixture-terminal", "revision": 1, "focused": false, "agent_status": "working"});
+        agent
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        json!({"type": "agent_list", "agents": [agent]})
+    }
+
+    // sasu starts its implementor with `agent.start` (the only start that can
+    // carry the role marker) and declares the Observer's pane as the parent
+    // afterwards; without this the row was a root in another checkout and the
+    // Observer had no child (2026-09-18).
+    #[test]
+    fn a_parent_declared_as_a_pane_token_is_the_lineage_when_herdr_recorded_none() {
+        let declared =
+            agents_response(listed_agent(json!({"tokens": {"parent_pane": "w1:p1"}}))).unwrap();
+        assert_eq!(declared[0].spawned_from_pane_id.as_deref(), Some("w1:p1"));
+        // The token is still carried verbatim; the sidebar's own token readers are unaffected.
+        assert_eq!(declared[0].tokens.get("parent_pane"), Some(&json!("w1:p1")));
+
+        let recorded = agents_response(listed_agent(
+            json!({"spawned_from_pane_id": "w1:p9", "tokens": {"parent_pane": "w1:p1"}}),
+        ))
+        .unwrap();
+        assert_eq!(
+            recorded[0].spawned_from_pane_id.as_deref(),
+            Some("w1:p9"),
+            "Herdr observed the spawn; its record wins"
+        );
+
+        let cleared =
+            agents_response(listed_agent(json!({"tokens": {"parent_pane": "  "}}))).unwrap();
+        assert_eq!(
+            cleared[0].spawned_from_pane_id, None,
+            "an empty token is a cleared declaration, not a parent named \"\""
+        );
+
+        let silent = agents_response(listed_agent(json!({}))).unwrap();
+        assert_eq!(silent[0].spawned_from_pane_id, None);
     }
 
     #[test]

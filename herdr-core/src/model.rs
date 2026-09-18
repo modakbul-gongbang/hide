@@ -332,7 +332,9 @@ pub struct SidebarAgentSnapshot {
     /// because neither agent's fork command takes one.
     #[serde(skip_serializing)]
     pub session_id: Option<String>,
-    /// The pane this agent was spawned from, as Herdr's own lineage records it.
+    /// The pane this agent was spawned from: Herdr's own lineage record, or
+    /// the `parent_pane` token its spawner declared when Herdr recorded none.
+    /// `wire.rs::lineage_parent` is the one place that resolves the two.
     #[serde(skip_serializing)]
     pub spawned_from_pane_id: Option<String>,
     /// Ownership, derived from the lineage alone: a root is the operator's own
