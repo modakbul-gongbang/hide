@@ -1,7 +1,7 @@
 ---
 topic: "사이드바 에이전트 행과 pane 헤더: 안정된 세션 이름, 상태가 고르는 둘째 줄, 플러그인의 task/progress/expected_reply"
-status: "draft"
-human_approval: "pending"
+status: "ready"
+human_approval: "approved"  # user 2026-09-18 verbatim: ㅇㅇ 승인 /implement ㄱㄱ opus5로 new pane ㄱㄱㄱ
 review_profile: "standard"
 review_rationale: "사이드바 행·pane 헤더·Herdr 탭 이름이 바뀌는 사용자 가시 변경이며, 플러그인이 Herdr에 agent.rename·tab.rename을 쓰기 시작한다. 자격 증명·외부 서비스·영속 데이터 변경은 없고, 새로 쓰는 값은 소유권 규칙으로 보호된다."
 source_intake: "agents/interview/agent-row-identity/qa-log.md"
