@@ -287,6 +287,6 @@ The workspace inspector uses the canonical representative agent and disconnected
 ## Task identity
 
 The core publishes `identity_label` separately from the compact activity `summary`.
-It resolves the composer chat title, then the available activity summary, then the named agent, then the workspace label.
+It resolves the available activity summary, then the named agent, then the workspace label.
 Projects, Agents, Overview, and lineage controls consume that identity; truncation belongs to each view and does not shorten tooltip text.
 Projection adds one bounded-by-metadata string per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.

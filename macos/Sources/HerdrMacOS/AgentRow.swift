@@ -141,23 +141,6 @@ extension AgentRowPresentation {
         }
     }
 
-    /// A Scratch row. The chat's own title is the line that identifies it -
-    /// there is no project name to stand in for one - and the agent's summary
-    /// sits beneath it.
-    init(agent: SidebarAgent, title: String, connected: Bool) {
-        paneID = agent.paneID
-        agentKind = agent.agentKind
-        let status = AgentStatusPresentation(agent: agent, connected: connected)
-        symbol = status.symbol
-        statusLabel = status.label
-        statusColor = status.color
-        self.title = title
-        detail = agent.summary
-        qualifier = nil
-        elapsed = agent.elapsed
-        ambient = agent.ambient
-    }
-
     /// A pet dashboard row. The dashboard groups by project, so the project
     /// name is the heading and the summary is the title. A server that stopped
     /// answering is a state of the row, not of the agent, so it takes the

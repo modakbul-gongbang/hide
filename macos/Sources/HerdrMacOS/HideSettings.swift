@@ -462,14 +462,6 @@ private struct HideAgentSettings: View {
         HideAgentHookSettings(hooks: model.agentHooks) { runtimeID in
             model.core.dispatch(kind: "install_agent_hooks", payload: ["runtime_id": runtimeID])
         }
-
-        HideSettingsGroup(title: "Launch safety") {
-            HideSettingsNote(
-                text: "Permission bypass is a choice the composer remembers, and the chip says so while it is on.",
-                systemImage: "shield.lefthalf.filled",
-                showsDivider: false
-            )
-        }
     }
 }
 

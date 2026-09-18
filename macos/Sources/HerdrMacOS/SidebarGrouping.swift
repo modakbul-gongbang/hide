@@ -75,21 +75,6 @@ enum SidebarGrouping {
         sections(agents).filter { raisedGroups.contains($0.group) }
     }
 
-    /// The Scratch rows the tree below should draw.
-    ///
-    /// A Scratch agent that is waiting or finished is already a row at the
-    /// top, so drawing it again under Scratch would show one agent twice. The
-    /// project tree retains raised rows beneath its Workspace summary.
-    static func scratchTabsBelowRaisedSections(
-        tabs: [CoreScratchTabSnapshot],
-        agents: [SidebarAgent]
-    ) -> [CoreScratchTabSnapshot] {
-        let raised = Set(raised(agents).flatMap(\.agents).map(\.paneID))
-        return tabs.filter { tab in
-            !tab.panes.contains { raised.contains($0.id) }
-        }
-    }
-
     /// The visible preorder is shared by rendering and direct-select numbering.
     /// Parentage and collapse are already decided by the core.
     static func tree(_ agents: [SidebarAgent], checkoutID: String, ownedPaneIDs: Set<String> = []) -> [SidebarAgent] {

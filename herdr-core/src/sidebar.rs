@@ -658,16 +658,11 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
 ///
 /// A pane id is a transport handle, not a name. Some report-only panes have
 /// no Herdr agent name, so their `id` falls back to that handle even while a
-/// chat title or useful task summary is available. Prefer those authoritative
-/// labels and use the workspace only when no task identity exists.
+/// useful task summary is available. Prefer that authoritative label and use
+/// the workspace only when no task identity exists.
 fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
-    agent
-        .chat_title
-        .clone()
-        .or_else(|| {
-            (agent.summary != MISSING_SUMMARY && !agent.summary.trim().is_empty())
-                .then(|| agent.summary.clone())
-        })
+    (agent.summary != MISSING_SUMMARY && !agent.summary.trim().is_empty())
+        .then(|| agent.summary.clone())
         .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
         .unwrap_or_else(|| agent.workspace_label.clone())
 }
@@ -904,11 +899,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let elapsed = token_string(&agent.tokens, "elapsed")
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
-    // The title the composer wrote onto this pane when it started the chat.
-    // Herdr holds it, so it survives a Hide restart the way the pane does.
-    let chat_title = token_string(&agent.tokens, crate::scratch::TITLE_TOKEN)
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
 
     let mut projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
@@ -944,7 +934,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
-        chat_title,
         delegated: false,
         stall_level: String::new(),
         stall_notice: None,

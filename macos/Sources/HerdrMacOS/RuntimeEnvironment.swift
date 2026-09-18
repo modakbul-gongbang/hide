@@ -382,59 +382,15 @@ typealias HerdrCommandRunner = @Sendable (_ arguments: [String]) -> HerdrCommand
 enum AgentProvider: String, CaseIterable, Equatable, Sendable {
     case claude
     case codex
-
-    var bypassFlag: String {
-        switch self {
-        case .claude:
-            "--dangerously-skip-permissions"
-        case .codex:
-            "--dangerously-bypass-approvals-and-sandbox"
-        }
-    }
 }
 
 enum AgentLaunchArguments {
-    static func build(
-        provider: AgentProvider,
-        paneID: String,
-        bypassWarnings: Bool
-    ) -> [String] {
+    static func build(provider: AgentProvider, paneID: String) -> [String] {
         let agent = provider.rawValue
-        var arguments = [
+        return [
             "agent", "start", "hide-\(agent)",
             "--kind", agent,
             "--pane", paneID,
-        ]
-        if bypassWarnings {
-            arguments.append("--")
-            arguments.append(provider.bypassFlag)
-        }
-        return arguments
-    }
-}
-
-enum AgentRootPaneArguments {
-    /// `cwd` rather than a checkout path: Scratch is a folder with no
-    /// checkout, and it opens its tabs through exactly this call.
-    static func build(
-        workspaceID: String?,
-        cwd: String,
-        agent: String
-    ) -> [String] {
-        if let workspaceID, !workspaceID.isEmpty {
-            return [
-                "tab", "create",
-                "--workspace", workspaceID,
-                "--cwd", cwd,
-                "--label", "hide \(agent)",
-                "--focus",
-            ]
-        }
-        return [
-            "workspace", "create",
-            "--cwd", cwd,
-            "--label", "hide \(agent)",
-            "--focus",
         ]
     }
 }
@@ -466,175 +422,91 @@ enum HerdrLiveWorkspaceIdentity {
     }
 }
 
-/// Starts a chat: one tab, one agent, its first message, and its title.
+/// The one sentence inside Herdr's CLI error envelope.
 ///
-/// Four Herdr calls in a fixed order. The message is sent only after the agent
-/// reports itself ready, because an agent still on its trust or update screen
-/// would swallow it. Each step reports its own name on failure, and every
-/// failure after the tab exists leaves that tab alive as a shell prompt rather
-/// than tidying away work the operator can still use.
+/// The CLI writes a JSON envelope to stderr, and passing it through whole put
+/// `{"error":{"code":"agent_pane_busy","message":"agent target pane w2:p7 is
+/// not an available shell"},"id":"cli:agent:start"}` in front of the operator
+/// where the sentence inside it was the entire content. Anything that is not
+/// one of these envelopes is the CLI talking in prose, and is left alone.
+enum HerdrErrorEnvelope {
+    struct Error: Equatable {
+        let code: String
+        let message: String
+    }
+
+    static func error(in text: String) -> Error? {
+        guard let data = text.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = root["error"] as? [String: Any],
+              let code = error["code"] as? String,
+              !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let message = error["message"] as? String,
+              !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return Error(code: code, message: message)
+    }
+
+    static func message(in text: String) -> String? {
+        error(in: text)?.message
+    }
+}
+
+/// What a launch did.
+///
+/// `paneID` is always the pane the launch was asked to start in: on failure
+/// the pane stays as a shell prompt the operator can use, and the shell
+/// needs its id to focus it.
+struct AgentLaunchResult: Equatable, Sendable {
+    let succeeded: Bool
+    let message: String
+    let paneID: String
+}
+
+/// Starts an agent in a pane another owner has already created.
+///
+/// The core creates the worktree's pane and reports it back; this is the
+/// agent-owned half that follows. A failure leaves the pane alive as a shell
+/// prompt rather than tidying away work the operator can still use.
 ///
 /// hide supplies non-secret routing arguments only; authentication stays with
 /// the selected CLI and the Herdr server.
-enum HerdrChatLauncher {
-    /// Starts only the agent-owned half after another owner has created the
-    /// pane. Scratch uses this entry point because Rust owns its folder,
-    /// workspace, and tab creation.
+enum HerdrAgentLauncher {
     static func startInPane(
         paneID: String,
         path: String,
         provider: AgentProvider,
-        message: String?,
-        bypassWarnings: Bool,
         agentIsInstalled: Bool,
         run: HerdrCommandRunner
-    ) -> ChatLaunchResult {
+    ) -> AgentLaunchResult {
         guard agentIsInstalled else {
-            return ChatLaunchResult(
+            return AgentLaunchResult(
                 succeeded: false,
-                failedStep: .startAgent,
                 message: "\(provider.rawValue) is not installed on this Mac. Install it, then try again.",
                 paneID: paneID
             )
         }
-        var remaining: [(step: ChatLaunchStep, arguments: [String])] = [
-            (.startAgent, AgentLaunchArguments.build(
-                provider: provider,
-                paneID: paneID,
-                bypassWarnings: bypassWarnings
-            ))
-        ]
-        if let message {
-            remaining += ChatLaunchPlan.stepsAfterTab(
-                provider: provider,
-                message: message,
-                bypassWarnings: bypassWarnings,
+        let result = run(AgentLaunchArguments.build(provider: provider, paneID: paneID))
+        let succeeded = result.status == 0
+        HideLaunchTrace.mark(
+            succeeded ? "agent.launch.started" : "agent.launch.failed",
+            detail: "kind=\(provider.rawValue) pane=\(paneID)"
+        )
+        guard succeeded else {
+            let text = String(decoding: result.error, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = HerdrErrorEnvelope.message(in: text) ?? text
+            return AgentLaunchResult(
+                succeeded: false,
+                message: "Agent could not start: \(detail.isEmpty ? "Herdr refused the agent start." : detail)",
                 paneID: paneID
-            ).dropFirst()
+            )
         }
-        for entry in remaining {
-            let result = run(entry.arguments)
-            let succeeded = result.status == 0
-            trace(step: entry.step, paneID: paneID, succeeded: succeeded)
-            guard succeeded else {
-                return ChatLaunchResult(
-                    succeeded: false,
-                    failedStep: entry.step,
-                    message: failureMessage(
-                        step: entry.step,
-                        detail: detail(from: result),
-                        fallback: "Herdr refused the \(entry.step.rawValue) step."
-                    ),
-                    paneID: paneID
-                )
-            }
-        }
-        return ChatLaunchResult(
+        return AgentLaunchResult(
             succeeded: true,
-            failedStep: nil,
             message: "Started \(provider.rawValue) in \(URL(fileURLWithPath: path).lastPathComponent).",
             paneID: paneID
         )
-    }
-
-    static func start(
-        herdrPath: String,
-        destination: CheckoutChatDestination,
-        provider: AgentProvider,
-        message: String,
-        bypassWarnings: Bool
-    ) -> ChatLaunchResult {
-        start(
-            destination: destination,
-            provider: provider,
-            message: message,
-            bypassWarnings: bypassWarnings,
-            agentIsInstalled: AgentCLIAvailability.isUsable(provider.rawValue),
-            run: { arguments in run(herdrPath: herdrPath, arguments: arguments) }
-        )
-    }
-
-    static func start(
-        destination: CheckoutChatDestination,
-        provider: AgentProvider,
-        message: String,
-        bypassWarnings: Bool,
-        agentIsInstalled: Bool,
-        run: HerdrCommandRunner
-    ) -> ChatLaunchResult {
-        guard agentIsInstalled else {
-            return ChatLaunchResult(
-                succeeded: false,
-                failedStep: .startAgent,
-                message: "\(provider.rawValue) is not installed on this Mac. Install it, then try again.",
-                paneID: nil
-            )
-        }
-
-        let created = run(ChatLaunchPlan.createTab(destination: destination, provider: provider))
-        guard created.status == 0,
-              let paneID = rootPaneID(from: created.output),
-              !paneID.isEmpty
-        else {
-            trace(step: .createTab, paneID: nil, succeeded: false)
-            return ChatLaunchResult(
-                succeeded: false,
-                failedStep: .createTab,
-                message: failureMessage(
-                    step: .createTab,
-                    detail: detail(from: created),
-                    fallback: "Hide could not create a Herdr tab. Check Herdr status and retry."
-                ),
-                paneID: nil
-            )
-        }
-        trace(step: .createTab, paneID: paneID, succeeded: true)
-        return startInPane(
-            paneID: paneID,
-            path: destination.path,
-            provider: provider,
-            message: message,
-            bypassWarnings: bypassWarnings,
-            agentIsInstalled: true,
-            run: run
-        )
-    }
-
-    /// One line per step: which step, which pane, and whether it worked.
-    ///
-    /// Never the message. What the operator asked an agent is theirs, and a
-    /// diagnostic that carried it would put it in every log this app writes.
-    private static func trace(step: ChatLaunchStep, paneID: String?, succeeded: Bool) {
-        HideLaunchTrace.mark(
-            succeeded ? "chat.launch.step" : "chat.launch.step_failed",
-            detail: "step=\(step.rawValue) pane=\(paneID ?? "none")"
-        )
-    }
-
-    private static func failureMessage(
-        step: ChatLaunchStep,
-        detail: String,
-        fallback: String
-    ) -> String {
-        let reason = detail.isEmpty ? fallback : detail
-        return "Chat could not \(step.rawValue): \(reason)"
-    }
-
-    private static func detail(from result: HerdrCommandResult) -> String {
-        let text = String(decoding: result.error, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return HerdrErrorEnvelope.message(in: text) ?? text
-    }
-
-    /// Both `tab.create` and `workspace.create` answer with the root pane the
-    /// tab was opened at, which is the pane the agent then starts in. Starting
-    /// it there keeps the new tab at exactly one pane.
-    private static func rootPaneID(from output: Data) -> String? {
-        (try? JSONSerialization.jsonObject(with: output))
-            .flatMap { $0 as? [String: Any] }
-            .flatMap { $0["result"] as? [String: Any] }
-            .flatMap { $0["root_pane"] as? [String: Any] }
-            .flatMap { $0["pane_id"] as? String }
     }
 
     static func run(herdrPath: String, arguments: [String]) -> HerdrCommandResult {

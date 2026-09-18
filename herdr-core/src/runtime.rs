@@ -863,13 +863,6 @@ pub struct Runtime {
     /// reconcile never rebuilds under the runtime lock.
     last_accepted_catalog: Option<Vec<WorkspaceSnapshot>>,
     catalog_roots: workspace::RootIndex,
-    /// Where Scratch lives, resolved once when the core is created.
-    ///
-    /// Held rather than recomputed because every pane in every reconcile is
-    /// compared against it, and because one answer per process is what keeps
-    /// the projection, the snapshot and the shell's launcher from disagreeing
-    /// about which folder is Scratch.
-    scratch_root: String,
     /// The strip order each local checkout has, as strip entry ids. It is
     /// memory only by decision: Herdr persists its own tab order and file tabs
     /// do not survive a restart, so there is nothing here worth writing to
@@ -1072,7 +1065,6 @@ impl Runtime {
             last_session_spaces: Vec::new(),
             last_accepted_catalog: None,
             catalog_roots: workspace::RootIndex::new(),
-            scratch_root: crate::scratch::root().to_string_lossy().into_owned(),
             checkout_tab_order: BTreeMap::new(),
             herdr_workspace_tab_order: BTreeMap::new(),
             pending_tab_move: BTreeMap::new(),
@@ -1224,9 +1216,9 @@ impl Runtime {
 
 /// One tab's panes, as the navigator draws them.
 ///
-/// Lifted out of the placement loop so a Scratch tab and a project tab are
-/// projected by the same code: a pane row that differed between the two
-/// sections would be a second definition of what a pane is.
+/// Lifted out of the placement loop so every section projects a pane row
+/// through the same code: a row that differed between sections would be a
+/// second definition of what a pane is.
 fn project_layout_panes(
     layout: &crate::sidebar::SessionLayoutPayload,
     payload: &SessionSnapshotPayload,

@@ -86,7 +86,7 @@ A close Hide asked for, or a pane Herdr has already stopped listing, projects `c
 ### Reopening locally closed work
 
 The core owns one session-local, twenty-item LIFO stack for file tabs and local Herdr pane or tab closes initiated through Hide.
-Scratch panes, Browser-only panes, remote closes, and topology changes reported by another Herdr client never enter it.
+Browser-only panes, remote closes, and topology changes reported by another Herdr client never enter it.
 Before sending a Herdr close, a background worker exports immutable layout facts and the core records the close intent in its target scope; it enters `closing` immediately, moves selection only to a confirmed surviving item, and starts the external effect after capture succeeds.
 The captured item is a reservation separate from the twenty confirmed entries, so a failed or unknown close cannot evict older undo history.
 A definitive Herdr refusal releases only that reservation; a transport failure or malformed acknowledgement keeps it available, starts one read-only status check, and reports the uncertainty inline.

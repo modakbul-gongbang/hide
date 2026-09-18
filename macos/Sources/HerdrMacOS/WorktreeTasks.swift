@@ -3,18 +3,12 @@ import Foundation
 enum WorktreeMenuPolicy {
     static let newWorktree = "New worktree…"
     static let removeRegistration = "Remove registration"
-    static let startAgentHere = "Start agent here"
     static let setBaseBranch = "Set as base branch"
     static let copyPath = "Copy Path"
     static let openIn = "Open in"
 
     static let projectItems = [newWorktree, removeRegistration]
-    static func checkoutItems(isMain: Bool) -> [String] {
-        var items = [newWorktree]
-        if !isMain { items.append(startAgentHere) }
-        items += [setBaseBranch, copyPath, openIn]
-        return items
-    }
+    static let checkoutItems = [newWorktree, setBaseBranch, copyPath, openIn]
 }
 
 struct WorktreeSheetDraft: Equatable {

@@ -380,28 +380,6 @@ impl Runtime {
         if let Some(id) = pane_operation_id {
             return self.ingest_pane_mutation_result(&id, result, elapsed_ms);
         }
-        let scratch_close_key = if let PaneControlAction::Close { pane_id } = &action {
-            self.close_operations
-                .iter()
-                .find(|(_, operation)| {
-                    operation.target_id == *pane_id
-                        && operation.phase == "transmitting"
-                        && operation.request.context.checkout_id == crate::scratch::NODE_ID
-                        && connection_generation
-                            .is_none_or(|generation| operation.connection_generation == generation)
-                })
-                .map(|(key, _)| key.clone())
-        } else {
-            None
-        };
-        if let Some(key) = scratch_close_key {
-            return self.ingest_scratch_close_result(
-                &key,
-                result,
-                elapsed_ms,
-                connection_generation,
-            );
-        }
         match (action, result) {
             (
                 PaneControlAction::Project { pane_id },

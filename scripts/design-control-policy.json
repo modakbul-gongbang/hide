@@ -109,14 +109,6 @@
         "control:Toggle": 1
       }
     },
-    "ChatComposerSheet.swift": {
-      "kind": "legacy",
-      "reason": "The chat composer retains its native text editor and CLI bypass toggle while using shared shell controls.",
-      "rules": {
-        "control:Toggle": 1,
-        "control:TextEditor": 1
-      }
-    },
     "MergedWorktreeCleanup.swift": {
       "kind": "legacy",
       "reason": "The existing Toggle invocation uses HideCheckboxStyle while retaining its cleanup semantics.",
