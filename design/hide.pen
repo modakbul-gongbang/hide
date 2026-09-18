@@ -14019,13 +14019,13 @@
                       "enabled": true
                     },
                     "jb7mF": {
-                      "enabled": false
+                      "enabled": true,
+                      "content": "hide · main",
+                      "fill": "$--color-muted",
+                      "fontSize": "$--text-micro"
                     },
                     "X6LdE": {
-                      "content": "Question",
-                      "fill": "$--color-warning",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "500"
+                      "enabled": false
                     },
                     "BsCNW": {
                       "content": "A/B 선택 후 DB 마이그레이션 승인",
@@ -14055,13 +14055,13 @@
                       "enabled": true
                     },
                     "jb7mF": {
-                      "enabled": false
+                      "enabled": true,
+                      "content": "hide · main",
+                      "fill": "$--color-muted",
+                      "fontSize": "$--text-micro"
                     },
                     "X6LdE": {
-                      "content": "Approval",
-                      "fill": "$--color-warning",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "500"
+                      "enabled": false
                     },
                     "BsCNW": {
                       "content": "dist 삭제 후 재빌드 승인 대기",
@@ -14091,13 +14091,13 @@
                       "enabled": true
                     },
                     "jb7mF": {
-                      "enabled": false
+                      "enabled": true,
+                      "content": "hide · main",
+                      "fill": "$--color-muted",
+                      "fontSize": "$--text-micro"
                     },
                     "X6LdE": {
-                      "content": "Error",
-                      "fill": "$--color-danger",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "500"
+                      "enabled": false
                     },
                     "BsCNW": {
                       "content": "cargo test 3건 실패로 중단",
@@ -14127,13 +14127,13 @@
                       "enabled": true
                     },
                     "jb7mF": {
-                      "enabled": false
+                      "enabled": true,
+                      "content": "hide · main",
+                      "fill": "$--color-muted",
+                      "fontSize": "$--text-micro"
                     },
                     "X6LdE": {
-                      "content": "Done",
-                      "fill": "$--color-success",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "500"
+                      "enabled": false
                     },
                     "BsCNW": {
                       "content": "#1/#8 머지됨, #9 정지 상태로 재개 필요",
@@ -14346,7 +14346,7 @@
               "type": "text",
               "id": "ari00e",
               "name": "Rule",
-              "content": "Line 2 by state: needs-you and unseen done = word + expected_reply (or progress) in primary;",
+              "content": "Line 2 by state: needs-you and unseen done = expected_reply (or progress) in primary;",
               "fill": "$--color-secondary",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-body",
@@ -14356,7 +14356,7 @@
               "type": "text",
               "id": "ari00f",
               "name": "Rule",
-              "content": "working = progress in secondary; seen idle = no second line; no tokens = word alone.",
+              "content": "working = progress in secondary; seen idle = no second line; no sentence = word alone.",
               "fill": "$--color-secondary",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-body",
@@ -14366,7 +14366,7 @@
               "type": "text",
               "id": "ari00g",
               "name": "Rule",
-              "content": "Word: caption medium in the status colour. Sentence: caption regular, tail truncation, tooltip.",
+              "content": "Word: caption medium in the status colour, only without a sentence. Sentence: caption regular, tail truncation, tooltip. Prominent rows: qualifier on line 3, micro muted.",
               "fill": "$--color-secondary",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-body",
