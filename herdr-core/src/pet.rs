@@ -8,8 +8,6 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
-
 use crate::model::SidebarAgentSnapshot;
 use crate::sidebar::{AgentDemand, AgentGroup};
 
@@ -38,19 +36,6 @@ pub struct PetSummary {
 impl PetSummary {
     pub fn total(&self) -> usize {
         self.needs_you + self.working + self.done + self.seen + self.disconnected
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct AmbientTotals {
-    pub subagents_active: u32,
-    pub background_running: u32,
-    pub background_failed: u32,
-}
-
-impl AmbientTotals {
-    pub fn is_empty(&self) -> bool {
-        self.subagents_active == 0 && self.background_running == 0 && self.background_failed == 0
     }
 }
 
@@ -179,24 +164,23 @@ pub fn summarize(agents: &[SidebarAgentSnapshot], connected: bool) -> PetSummary
     summary
 }
 
-/// Ambient counts are only meaningful while the server is answering.
-pub fn ambient_totals(agents: &[SidebarAgentSnapshot], connected: bool) -> AmbientTotals {
-    let mut totals = AmbientTotals::default();
+/// The in-process subagents Hide's hook reports as working, summed over the
+/// listed agents. A count is only meaningful while the server is answering,
+/// and only a pane that still holds an agent is counted, so a token left on
+/// a pane whose agent exited does not linger in the badge.
+pub fn subagents_active(
+    agents: &[SidebarAgentSnapshot],
+    hook_tokens: &BTreeMap<String, crate::agent_hooks::PaneHookTokens>,
+    connected: bool,
+) -> u32 {
     if !connected {
-        return totals;
+        return 0;
     }
-    for ambient in agents.iter().filter_map(|agent| agent.ambient.as_ref()) {
-        totals.subagents_active = totals
-            .subagents_active
-            .saturating_add(ambient.subagents_active);
-        totals.background_running = totals
-            .background_running
-            .saturating_add(ambient.background_running);
-        totals.background_failed = totals
-            .background_failed
-            .saturating_add(ambient.background_failed);
-    }
-    totals
+    agents
+        .iter()
+        .filter_map(|agent| hook_tokens.get(&agent.pane_id))
+        .filter_map(|tokens| tokens.working)
+        .fold(0, u32::saturating_add)
 }
 
 /// Whether this agent is one the operator still has to act on.
@@ -257,7 +241,7 @@ pub fn observe_unseen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::AmbientSignal;
+    use crate::agent_hooks::PaneHookTokens;
 
     /// A projected row named by the group it landed in. `needs_you` rows carry
     /// a question unless the name says error, which is the one demand the pet
@@ -294,7 +278,6 @@ mod tests {
             elapsed: "1s".to_owned(),
             last_activity: "0000000000001".to_owned(),
             state_change_seq: None,
-            ambient: None,
             session_id: None,
             spawned_from_pane_id: None,
             delegated: false,
@@ -433,29 +416,30 @@ mod tests {
     }
 
     #[test]
-    fn ambient_counts_sum_across_panes_and_go_quiet_while_disconnected() {
-        let mut first = agent("a", "working");
-        first.ambient = Some(AmbientSignal {
-            subagents_active: 2,
-            background_running: 1,
-            background_failed: 0,
-        });
-        let mut second = agent("b", "working");
-        second.ambient = Some(AmbientSignal {
-            subagents_active: 1,
-            background_running: 0,
-            background_failed: 3,
-        });
-        let agents = [first, second, agent("c", "idle")];
+    fn subagent_counts_sum_the_hook_tokens_of_listed_agents_and_go_quiet_while_disconnected() {
+        let working = |count: Option<u32>| PaneHookTokens {
+            version: Some(1),
+            working: count,
+            done: None,
+            blocked: None,
+        };
+        let tokens = BTreeMap::from([
+            ("a".to_owned(), working(Some(2))),
+            ("b".to_owned(), working(Some(1))),
+            // An instrumented pane whose count is unknown adds nothing.
+            ("c".to_owned(), working(None)),
+            // A token left on a pane whose agent is gone is not counted.
+            ("gone".to_owned(), working(Some(9))),
+        ]);
+        let agents = [
+            agent("a", "working"),
+            agent("b", "working"),
+            agent("c", "idle"),
+        ];
 
-        let totals = ambient_totals(&agents, true);
-        assert_eq!(totals.subagents_active, 3);
-        assert_eq!(totals.background_running, 1);
-        assert_eq!(totals.background_failed, 3);
-        assert!(!totals.is_empty());
-
-        assert!(ambient_totals(&agents, false).is_empty());
-        assert!(ambient_totals(&[agent("c", "seen")], true).is_empty());
+        assert_eq!(subagents_active(&agents, &tokens, true), 3);
+        assert_eq!(subagents_active(&agents, &tokens, false), 0);
+        assert_eq!(subagents_active(&[agent("d", "seen")], &tokens, true), 0);
     }
 
     #[test]

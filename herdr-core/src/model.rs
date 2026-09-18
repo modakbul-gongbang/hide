@@ -157,9 +157,10 @@ pub struct PetBadgesSnapshot {
     /// Retained agents on a server that stopped answering. They are counted
     /// separately because a stale count of what is waiting would be a lie.
     pub disconnected: usize,
+    /// In-process subagents Hide's hook reported as working, summed over the
+    /// agents on an answering server. It is the one count the hook can vouch
+    /// for; an uninstrumented session contributes nothing, not a zero.
     pub subagents_active: u32,
-    pub background_running: u32,
-    pub background_failed: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -326,7 +327,6 @@ pub struct SidebarAgentSnapshot {
     /// read record.
     #[serde(skip_serializing)]
     pub state_change_seq: Option<u64>,
-    pub ambient: Option<AmbientSignal>,
     /// The conversation id this agent is running, kept only when Herdr recorded
     /// the session as an id. A session recorded as a path is dropped here,
     /// because neither agent's fork command takes one.
@@ -385,16 +385,6 @@ pub struct SidebarAgentSnapshot {
     /// something to read.
     pub spawn_origin_pane_id: Option<String>,
     pub lineage_collapsed: bool,
-}
-
-/// The only three values this client ever reads out of a pane's optional
-/// `ambient` object. Any other key, or a value of the wrong type, is dropped
-/// during parsing and never reaches app state, the UI, or logs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct AmbientSignal {
-    pub subagents_active: u32,
-    pub background_running: u32,
-    pub background_failed: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

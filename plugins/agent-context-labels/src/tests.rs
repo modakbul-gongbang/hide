@@ -113,12 +113,11 @@ fn watcher_subscribes_to_the_contract_pane_events_only() {
         ]
     );
     let params = hide_herdr_client::subscription_params_for_panes(
-        17,
         &WATCHER_SUBSCRIPTIONS,
         &["w1:p1".to_owned()],
     )
     .unwrap();
-    assert_eq!(params["after_sequence"], 17);
+    assert_eq!(params.get("after_sequence"), None);
     assert_eq!(params["subscriptions"].as_array().unwrap().len(), 7);
     assert!(
         params["subscriptions"]
@@ -139,11 +138,9 @@ fn watcher_subscribes_to_the_contract_pane_events_only() {
 }
 
 #[test]
-fn event_lines_carry_sequence_and_protocol_and_errors_stay_explicit() {
+fn event_lines_carry_their_kind_and_errors_stay_explicit() {
     let event = parse_watcher_subscription_line(
         &json!({
-            "protocol": HERDR_PROTOCOL_REVISION,
-            "sequence": 42,
             "event": "pane_agent_status_changed",
             "data": {"type": "pane_agent_status_changed", "pane_id": "w1:p1"}
         })
@@ -152,21 +149,17 @@ fn event_lines_carry_sequence_and_protocol_and_errors_stay_explicit() {
     .unwrap();
     assert!(matches!(
         event,
-        WatcherSubscriptionLine::Event {
-            protocol: HERDR_PROTOCOL_REVISION,
-            sequence: 42,
-            kind,
-        } if kind == "pane_agent_status_changed"
+        WatcherSubscriptionLine::Event { kind } if kind == "pane_agent_status_changed"
     ));
 
     let error = parse_watcher_subscription_line(
-        r#"{"id":"herdr-core:events.subscribe","error":{"code":"event_gap","message":"sequence is no longer retained"}}"#,
+        r#"{"id":"herdr-core:events.subscribe","error":{"code":"internal","message":"event stream closed"}}"#,
     )
     .unwrap();
     assert!(matches!(
         error,
         WatcherSubscriptionLine::Error { code, message }
-            if code == "event_gap" && message == "sequence is no longer retained"
+            if code == "internal" && message == "event stream closed"
     ));
 }
 
@@ -2260,16 +2253,10 @@ fn socket_transport_uses_one_client_for_list_metadata_and_subscription() {
         json!({
             "id": "herdr-core:events.subscribe",
             "result": {
-                "type": "subscription_started",
-                "host": {"host_id": "fixture", "session_id": "session"},
-                "sequence": 20,
-                "oldest_available_sequence": 1
+                "type": "subscription_started"
             }
         }),
         json!({
-            "protocol": HERDR_PROTOCOL_REVISION,
-            "host": {"host_id": "fixture", "session_id": "session"},
-            "sequence": 21,
             "event": "pane_focused",
             "data": {"type": "pane_focused", "pane_id": "w1:p1", "workspace_id": "w1"}
         })
@@ -2301,8 +2288,8 @@ fn socket_transport_uses_one_client_for_list_metadata_and_subscription() {
         )
         .unwrap();
     socket.clear_legacy_summary_token(&panes[0]).unwrap();
-    let subscription = socket.subscribe(17, &["w1:p1".to_owned()]).unwrap();
-    assert_eq!(subscription.ack.sequence, 20);
+    let subscription = socket.subscribe(&["w1:p1".to_owned()]).unwrap();
+    assert_eq!(subscription.ack.kind, "subscription_started");
     let (mut reader, _shutdown) = subscription.into_parts();
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
@@ -2328,7 +2315,7 @@ fn socket_transport_uses_one_client_for_list_metadata_and_subscription() {
         Value::Null
     );
     let subscription_request: Value = serde_json::from_slice(&requests[3]).unwrap();
-    assert_eq!(subscription_request["params"]["after_sequence"], 17);
+    assert_eq!(subscription_request["params"].get("after_sequence"), None);
     assert_eq!(
         subscription_request["params"]["subscriptions"]
             .as_array()

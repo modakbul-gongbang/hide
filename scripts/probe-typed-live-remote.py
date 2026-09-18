@@ -105,13 +105,7 @@ while True:
                 request("pane.layout", {"pane_id": pane})
                 request("pane.read", {"pane_id": pane, "source": "visible", "format": "text"})
                 request("session.snapshot", {})
-                created = cli(
-                    "agent", "new", "fixture-child", "--kind", "codex", "--pane", pane,
-                    "--idempotency-key", "typed-probe", "--cwd", str(home),
-                    "--no-focus", "--timeout", "10000",
-                )
-                capture("agent-new", created)
-                print("captured all seven socket methods and real agent new output")
+                print("captured all seven socket methods")
             finally:
                 try:
                     subprocess.run(

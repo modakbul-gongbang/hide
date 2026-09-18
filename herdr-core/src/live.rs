@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
 use crate::find::PaneFindOptions;
-use crate::fork::{ForkRequest, fork_arguments};
+use crate::fork::ForkRequest;
 use crate::model::{
     EditorDocumentSnapshot, PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
     WorkspaceRegistration, WorkspaceSnapshot,
@@ -1870,15 +1870,12 @@ fn read_pane_text(
 }
 
 pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<(), String> {
-    let herdr_bin = context.herdr_bin.clone().ok_or_else(|| {
-        "herdr binary was not found; install herdr or set its path in the app options".to_owned()
-    })?;
     thread::Builder::new()
         .name("herdr-core-agent-fork".to_owned())
         .spawn(move || {
             let started = Instant::now();
             let parent_pane_id = request.parent_pane_id.clone();
-            let result = run_agent_fork(&herdr_bin, &context.socket_path, &request);
+            let result = run_agent_fork(context.api_connector.as_ref(), &request);
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
@@ -1896,26 +1893,49 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
         .map_err(|error| format!("fork worker could not be started: {error}"))
 }
 
-fn run_agent_fork(
-    herdr_bin: &Path,
-    socket_path: &Path,
-    request: &ForkRequest,
-) -> Result<String, String> {
-    let output = Command::new(herdr_bin)
-        .args(fork_arguments(request))
-        .env("HERDR_SOCKET_PATH", socket_path)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("herdr agent new could not be run: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if stderr.is_empty() {
-            format!("herdr agent new exited with {}", output.status)
-        } else {
-            stderr
-        });
+/// Splits beside the parent, starts the agent in the new pane, and declares
+/// the parent on it. The three calls are not one transaction, so a pane
+/// whose agent never started is closed again before the failure is
+/// reported: the operator asked for a fork, and an empty pane is not one.
+fn run_agent_fork(connector: &dyn ApiConnector, request: &ForkRequest) -> Result<String, String> {
+    let child_pane_id = control_request(
+        connector,
+        "pane.split",
+        wire::fork_split_params(&request.parent_pane_id, request.cwd.as_deref())?,
+    )
+    .and_then(wire::split_pane)?;
+    let started = start_agent(
+        connector,
+        &format!("herdr-core:fork:{}:start", request.name),
+        &child_pane_id,
+        &request.name,
+        request.agent.kind(),
+        request.agent.resume_arguments(&request.session_id),
+    )
+    .and_then(|started_pane_id| {
+        control_request(
+            connector,
+            "pane.report_metadata",
+            wire::declare_parent_pane_params(&started_pane_id, &request.parent_pane_id)?,
+        )
+        .map(|_| started_pane_id)
+    });
+    match started {
+        Ok(pane_id) => Ok(pane_id),
+        Err(error) => {
+            let closed = control_request(
+                connector,
+                "pane.close",
+                wire::pane_target_params(&child_pane_id)?,
+            );
+            Err(match closed {
+                Ok(_) => error,
+                Err(close_error) => format!(
+                    "{error}; the pane {child_pane_id} it split could not be closed: {close_error}"
+                ),
+            })
+        }
     }
-    wire::created_agent_pane(&output.stdout)
 }
 
 pub fn spawn_remote_control(
@@ -3367,9 +3387,8 @@ mod tests {
         let herdr = FakeHerdr::start("reopen-owned-pane", |method, _| match method {
             "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
                 "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
-                "workspaces":[], "tabs":[], "agents":[], "lineage":[],
-                "panes":[{"pane_id":"w1:p3","workspace_id":"w1","tab_id":"w1:t1","cwd":"/tmp","focused":false,"agent_status":"idle","revision":0,"surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"unrelated-term"}}}],
+                "workspaces":[], "tabs":[], "agents":[],
+                "panes":[{"pane_id":"w1:p3", "terminal_id": "fixture-terminal","workspace_id":"w1","tab_id":"w1:t1","cwd":"/tmp","focused":false,"agent_status":"idle","revision":0}],
                 "layouts":[{"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,
                     "area":{"x":0,"y":0,"width":80,"height":24}, "focused_pane_id":"w1:p1",
                     "panes":[{"pane_id":"w1:p1","focused":true,"rect":{"x":0,"y":0,"width":40,"height":24}},
@@ -3387,13 +3406,8 @@ mod tests {
                 }
             }),
             "pane.split" => json!({"type": "pane_info", "pane": {
-                "pane_id": "w1:p4", "workspace_id": "w1", "tab_id": "w1:t1",
-                "focused": true, "agent_status": "idle", "revision": 1,
-                "surface": {"kind": "terminal", "attach": {
-                    "host": {"host_id": "fixture", "session_id": "fixture"},
-                    "transport": "herdr_client", "protocol": HERDR_PROTOCOL_REVISION,
-                    "terminal_id": "owned-term"
-                }}
+                "pane_id": "w1:p4", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1",
+                "focused": true, "agent_status": "idle", "revision": 1
             }}),
             method => panic!("unexpected method {method}"),
         });
@@ -3468,10 +3482,9 @@ mod tests {
         let herdr = FakeHerdr::start("reopen-owned-layout", move |method, params| match method {
             "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
                 "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
                 "workspaces":[{"workspace_id":"w2","label":"Fixture","active_tab_id":"w2:t1","number":2,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
                 "tabs":[{"workspace_id":"w2","tab_id":"w2:t1","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
-                "panes":[], "layouts":[], "agents":[], "lineage":[]
+                "panes":[], "layouts":[], "agents":[]
             }}),
             "layout.export" => json!({"type":"layout_export","layout": {
                 "workspace_id":"w2", "tab_id":"w2:t1", "zoomed":false,
@@ -3486,7 +3499,7 @@ mod tests {
                 json!({"type":"workspace_created",
                     "workspace":{"workspace_id":"w3","number":3,"label":"Fixture","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w3:t1","agent_status":"idle"},
                     "tab":{"tab_id":"w3:t1","workspace_id":"w3","number":1,"label":"1","focused":true,"pane_count":1,"agent_status":"idle"},
-                    "root_pane":{"pane_id":"w3:p3","surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"seed-term"}},"workspace_id":"w3","tab_id":"w3:t1","focused":true,"agent_status":"idle","revision":1}
+                    "root_pane":{"pane_id":"w3:p3", "terminal_id": "fixture-terminal","workspace_id":"w3","tab_id":"w3:t1","focused":true,"agent_status":"idle","revision":1}
                 })
             }
             "layout.apply" => {
@@ -3591,10 +3604,9 @@ mod tests {
             move |method, params| match method {
                 "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
                     "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                    "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
                     "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
                     "tabs":[{"workspace_id":"w1","tab_id":"w1:t2","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
-                    "panes":[], "layouts":[], "agents":[], "lineage":[]
+                    "panes":[], "layouts":[], "agents":[]
                 }}),
                 "layout.export" => json!({"type":"layout_export","layout": {
                     "workspace_id":"w1", "tab_id":"w1:t2", "zoomed":false,
@@ -3737,8 +3749,6 @@ mod tests {
                 "snapshot": {
                     "version": "fixture",
                     "protocol": HERDR_PROTOCOL_REVISION,
-                    "host": {"host_id": "fixture", "session_id": "s1"},
-                    "event_sequence": 1,
                     "workspaces": [],
                     "tabs": [],
                     "panes": [],
@@ -3757,8 +3767,7 @@ mod tests {
                         "cwd": "/tmp",
                         "foreground_cwd": "/tmp",
                         "revision": 0
-                    }],
-                    "lineage": []
+                    }]
                 }
             }),
             "pane.send_text" => {
@@ -3923,7 +3932,7 @@ mod tests {
                 "type": "workspace_created",
                 "workspace": {"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
                 "tab": {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w1:p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
+                "root_pane": {"pane_id": "w1:p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
             })
         });
 
@@ -3957,7 +3966,7 @@ mod tests {
     fn pane_control_uses_the_official_socket_contract_for_every_mutation() {
         let herdr = FakeHerdr::start("pane-control", |method, _| match method {
             "pane.split" => {
-                json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
+                json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
             }
             "pane.zoom" | "pane.close" => json!({"type": "ok"}),
             other => panic!("unexpected {other}"),
@@ -4021,7 +4030,7 @@ mod tests {
             "tab.create" => json!({
                 "type": "tab_created",
                 "tab": {"tab_id": "w1:t3", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w1:p3", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
+                "root_pane": {"pane_id": "w1:p3", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
             }),
             other => panic!("unexpected {other}"),
         });
@@ -4262,7 +4271,7 @@ mod tests {
         let herdr = FakeHerdr::start("pane-worker", |method, _| {
             assert_eq!(method, "pane.split");
             std::thread::sleep(Duration::from_millis(500));
-            json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
+            json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
         });
         let context = LiveContext {
             socket_path: herdr.socket_path().to_path_buf(),
@@ -4300,7 +4309,7 @@ mod tests {
             assert_eq!(params["pane_id"], "fixture:p2");
             match method {
                 "pane.focus" => {
-                    json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
+                    json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "terminal_id": "fixture-terminal", "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
                 }
                 "pane.layout" => json!({
                     "type": "pane_layout",
@@ -4340,11 +4349,8 @@ mod tests {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
             "version": "fixture",
-            "host": {"host_id": "fixture-host", "session_id": "fixture"},
-            "event_sequence": 0,
             "panes": [],
             "tabs": [],
-            "lineage": [],
             "workspaces": [
                 {"workspace_id": "w1", "label": "herdr-ide", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"},
             ],
@@ -4402,10 +4408,7 @@ mod tests {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
             "version": "fixture",
-            "host": {"host_id": "fixture-host", "session_id": "fixture"},
-            "event_sequence": 0,
             "panes": [],
-            "lineage": [],
             "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"}],
             "tabs": [{
                 "workspace_id": "w1",
@@ -4439,11 +4442,8 @@ mod tests {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
             "version": "fixture",
-            "host": {"host_id": "fixture-host", "session_id": "fixture"},
-            "event_sequence": 0,
             "panes": [],
             "tabs": [],
-            "lineage": [],
             "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"}],
             "agents": [],
             "focused_pane_id": "w1:p3",

@@ -15,8 +15,7 @@ private func searchAgent(paneID: String) -> SidebarAgent {
         symbol: "\u{25cf}",
         summary: "Agent in \(paneID)",
         elapsed: "1m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
 }
 
@@ -51,8 +50,7 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         symbol: "\u{25cf}",
         summary: "Build the release",
         elapsed: "2m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
     let workspace = try JSONDecoder().decode(
         CoreWorkspaceSnapshot.self,

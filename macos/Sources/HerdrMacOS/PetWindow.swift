@@ -540,8 +540,6 @@ final class PetWindowController: NSObject, NSWindowDelegate {
             "seen": pet?.badges.seen ?? 0,
             "disconnected": pet?.badges.disconnected ?? 0,
             "subagents_active": pet?.badges.subagentsActive ?? 0,
-            "background_running": pet?.badges.backgroundRunning ?? 0,
-            "background_failed": pet?.badges.backgroundFailed ?? 0,
         ]
         let petStateRecord: [String: Any] = [
             "pose": pet?.pose ?? "unknown",

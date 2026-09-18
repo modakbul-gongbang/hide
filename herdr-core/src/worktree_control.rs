@@ -530,7 +530,7 @@ mod tests {
             "type":"workspace_created",
             "workspace":{"workspace_id":workspace_id,"label":"hide","number":1,"focused":true,"pane_count":1,"tab_count":1,"active_tab_id":format!("{workspace_id}:t1"),"agent_status":"unknown"},
             "tab":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"label":"hide codex","number":1,"focused":true,"pane_count":1,"agent_status":"unknown"},
-            "root_pane":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"pane_id":pane_id,"cwd":path,"foreground_cwd":path,"focused":true,"agent_status":"unknown","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40},"surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"protocol":21,"terminal_id":"term","transport":"herdr_client"}}}
+            "root_pane":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"pane_id":pane_id, "terminal_id": "fixture-terminal","cwd":path,"foreground_cwd":path,"focused":true,"agent_status":"unknown","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40}}
         }})
     }
     fn worktree_created(path: &str, branch: &str) -> Value {

@@ -51,7 +51,6 @@ pub(crate) struct ProjectedAgent {
     pub(crate) spawned_from_pane_id: Option<String>,
     pub(crate) state_change_seq: u64,
     pub(crate) tokens: BTreeMap<String, Value>,
-    pub(crate) ambient: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -99,7 +98,6 @@ impl ProjectionState {
                     spawned_from_pane_id: agent.spawned_from_pane_id.clone(),
                     state_change_seq: Some(agent.state_change_seq),
                     tokens: agent.tokens.clone(),
-                    ambient: agent.ambient.clone(),
                 }
             })
             .collect();
@@ -154,7 +152,7 @@ impl ProjectionState {
 pub(crate) fn project_snapshot(
     snapshot: &Value,
 ) -> Result<SessionSnapshotPayload, SessionFetchError> {
-    Ok(wire::snapshot(snapshot.clone())?.2.project())
+    Ok(wire::snapshot(snapshot.clone())?.project())
 }
 
 /// A Herdr label or terminal title that is present but blank carries no more

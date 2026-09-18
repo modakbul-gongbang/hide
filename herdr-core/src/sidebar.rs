@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{AmbientSignal, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
+use crate::model::{PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
@@ -110,10 +110,6 @@ pub struct SessionAgentPayload {
     pub state_change_seq: Option<u64>,
     #[serde(default)]
     pub tokens: BTreeMap<String, Value>,
-    /// Passed through verbatim; the strict shape check lives in
-    /// [`parse_ambient`] so a broken record can never partially survive.
-    #[serde(default)]
-    pub ambient: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -878,10 +874,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let demand = agent_demand(&agent);
     let activity = agent_activity(&agent);
     let blocked = agent.agent_status.as_deref() == Some("blocked");
-    let ambient = match agent.ambient.as_ref() {
-        Some(raw) => parse_ambient(raw)?,
-        None => None,
-    };
     let workspace_label = non_empty(agent.workspace_label.as_deref())
         .or_else(|| {
             agent
@@ -926,7 +918,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         elapsed,
         last_activity,
         state_change_seq: agent.state_change_seq,
-        ambient,
         session_id: agent
             .agent_session
             .as_ref()
@@ -1092,35 +1083,6 @@ fn derive_read_state(
         derive_from_axes(agent);
     }
     sort_agents(agents);
-}
-
-/// Reads a pane's optional `ambient` object.
-///
-/// `null` means the server sent nothing for this pane. Any other unreadable
-/// shape excludes the whole record rather than partially extracting it, and
-/// unknown keys are dropped so nothing but the three counts can ever reach
-/// app state (see docs/status-model.md, Ambient signals).
-fn parse_ambient(raw: &Value) -> Result<Option<AmbientSignal>, String> {
-    if raw.is_null() {
-        return Ok(None);
-    }
-    let object = raw
-        .as_object()
-        .ok_or_else(|| "ambient signal is not an object".to_owned())?;
-    let count = |key: &str| -> Result<u32, String> {
-        match object.get(key) {
-            None => Ok(0),
-            Some(value) => value
-                .as_u64()
-                .and_then(|number| u32::try_from(number).ok())
-                .ok_or_else(|| format!("ambient signal {key} is not a count")),
-        }
-    };
-    Ok(Some(AmbientSignal {
-        subagents_active: count("subagents_active")?,
-        background_running: count("background_running")?,
-        background_failed: count("background_failed")?,
-    }))
 }
 
 /// The demand axis. Error outranks question, which outranks approval, so the
@@ -1949,60 +1911,5 @@ mod tests {
         ])));
         assert_eq!(projection.agents[0].last_activity, "00000000000000000001");
         assert_eq!(projection.agents[0].state_change_seq, Some(1));
-    }
-
-    #[test]
-    fn ambient_counts_parse_and_unknown_keys_never_survive() {
-        let projection = project_agents(payload(json!([
-            {"pane_id":"legacy","tokens":{"status_idle":"○","activity":"0000000000001"}},
-            {"pane_id":"counted","tokens":{"status_working":"●","activity":"0000000000002"},
-             "ambient":{"subagents_active":2,"background_running":1,"background_failed":0,
-                        "task_name":"SENTINEL-do-not-leak","command":"SENTINEL-rm -rf /"}}
-        ])));
-
-        assert_eq!(projection.excluded, []);
-        let counted = projection
-            .agents
-            .iter()
-            .find(|agent| agent.pane_id == "counted")
-            .expect("counted agent");
-        let ambient = counted.ambient.expect("ambient present");
-        assert_eq!(ambient.subagents_active, 2);
-        assert_eq!(ambient.background_running, 1);
-        assert_eq!(
-            projection
-                .agents
-                .iter()
-                .find(|agent| agent.pane_id == "legacy")
-                .and_then(|agent| agent.ambient),
-            None,
-            "a snapshot without the key stays on the legacy path"
-        );
-        let serialized = serde_json::to_string(&projection.agents).expect("serialize agents");
-        assert!(
-            !serialized.contains("SENTINEL"),
-            "unknown ambient keys must never reach the projected agent: {serialized}"
-        );
-    }
-
-    #[test]
-    fn a_malformed_ambient_record_excludes_only_that_agent() {
-        let projection = project_agents(payload(json!([
-            {"pane_id":"broken","tokens":{"status_working":"●","activity":"0000000000002"},
-             "ambient":{"subagents_active":"not-a-number"}},
-            {"pane_id":"intact","tokens":{"status_idle":"○","activity":"0000000000001"}}
-        ])));
-
-        assert_eq!(
-            projection
-                .agents
-                .iter()
-                .map(|agent| agent.pane_id.as_str())
-                .collect::<Vec<_>>(),
-            ["intact"]
-        );
-        assert_eq!(projection.excluded.len(), 1);
-        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("broken"));
-        assert!(projection.excluded[0].reason.contains("subagents_active"));
     }
 }

@@ -1844,13 +1844,6 @@ impl Runtime {
                     .find(|pane| pane.id == pane_id)
                     .map(|pane| pane.cwd.clone());
                 self.fork_sequence += 1;
-                // The name is already unique and already sanitized, so it is
-                // also the retry identity rather than a second thing to keep
-                // unique. It is used as the idempotency key unchanged: a
-                // `hide-` prefix on the key used to make a second string that
-                // nothing kept inside Herdr's name rule, and the key is what
-                // the CLI puts in its request id, so a key that broke the rule
-                // was the value the operator saw refused.
                 let name = fork_name(
                     &pane_id,
                     &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
@@ -1860,7 +1853,6 @@ impl Runtime {
                     agent: agent_kind,
                     session_id,
                     cwd,
-                    idempotency_key: name.clone(),
                     name,
                 };
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
