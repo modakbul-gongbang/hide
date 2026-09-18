@@ -479,19 +479,34 @@ struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
     let kind: Kind
     let sourceID: String
     let label: String
+    /// The one agent this tab holds, when the core found exactly one. The
+    /// Recent Panels switcher names the tab by it; a shell-only tab and a tab
+    /// with several agents carry none and keep their label.
+    let agentIdentity: CoreAgentChip?
 
     enum CodingKeys: String, CodingKey {
         case id
         case kind
         case sourceID = "source_id"
         case label
+        case agentIdentity = "agent_identity"
     }
 
-    init(id: String, kind: Kind, sourceID: String, label: String) {
+    init(id: String, kind: Kind, sourceID: String, label: String, agentIdentity: CoreAgentChip? = nil) {
         self.id = id
         self.kind = kind
         self.sourceID = sourceID
         self.label = label
+        self.agentIdentity = agentIdentity
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        sourceID = try container.decode(String.self, forKey: .sourceID)
+        label = try container.decode(String.self, forKey: .label)
+        agentIdentity = try container.decodeIfPresent(CoreAgentChip.self, forKey: .agentIdentity)
     }
 }
 
@@ -751,7 +766,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     let requiresCloseConfirmation: Bool
     /// Whether activity must be refreshed before the core permits a close.
     let requiresCloseStatusCheck: Bool
-    let summary: String?
+    /// The agent's stable name, from the same ladder the sidebar row shows.
+    let identityLabel: String?
     let activityAt: UInt64?
     let fork: CorePaneFork
     /// Ports listened on from at or below this pane's working directory.
@@ -774,7 +790,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         case statusLabel = "status_label"
         case requiresCloseConfirmation = "requires_close_confirmation"
         case requiresCloseStatusCheck = "requires_close_status_check"
-        case summary
+        case identityLabel = "identity_label"
         case activityAt = "activity_at_unix_ms"
         case children
         case lineagePath = "lineage_path"
@@ -790,7 +806,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         statusLabel: String,
         requiresCloseConfirmation: Bool = false,
         requiresCloseStatusCheck: Bool = false,
-        summary: String?,
+        identityLabel: String? = nil,
         activityAt: UInt64?,
         fork: CorePaneFork = CorePaneFork(),
         ports: [UInt16] = [],
@@ -806,7 +822,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
         self.requiresCloseStatusCheck = requiresCloseStatusCheck
-        self.summary = summary
+        self.identityLabel = identityLabel
         self.activityAt = activityAt
         self.fork = fork
         self.ports = ports
@@ -833,7 +849,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         requiresCloseStatusCheck = try container.decodeIfPresent(
             Bool.self, forKey: .requiresCloseStatusCheck
         ) ?? false
-        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel)
         activityAt = try container.decodeIfPresent(UInt64.self, forKey: .activityAt)
         fork = try container.decodeIfPresent(CorePaneFork.self, forKey: .fork) ?? CorePaneFork()
         ports = try container.decodeIfPresent([UInt16].self, forKey: .ports) ?? []
@@ -848,7 +864,10 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
     var id: String { paneID }
     let paneID: String
     let label: String
-    let detail: String
+    /// The row's second line as the core chose it: the sentence, or nothing.
+    let detail: String?
+    /// Whether the status word is drawn beside that sentence.
+    let statusWordVisible: Bool
     let agentKind: String
     let demand: String
     let activity: String
@@ -857,10 +876,18 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
     let statusLabel: String
     let delegated: Bool
 
+    /// The tooltip and accessibility description: the status word as the
+    /// surface resolved it (a disconnected server says so), then the
+    /// sentence when there is one.
+    func description(status: AgentStatusPresentation) -> String {
+        [status.label, detail].compactMap { $0 }.joined(separator: ". ")
+    }
+
     enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
         case label
         case detail
+        case statusWordVisible = "status_word_visible"
         case agentKind = "agent_kind"
         case demand
         case activity
@@ -873,7 +900,8 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
     init(
         paneID: String,
         label: String,
-        detail: String = "",
+        detail: String? = nil,
+        statusWordVisible: Bool = true,
         agentKind: String = "claude",
         demand: String = "none",
         activity: String = "working",
@@ -885,6 +913,7 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
         self.paneID = paneID
         self.label = label
         self.detail = detail
+        self.statusWordVisible = statusWordVisible
         self.agentKind = agentKind
         self.demand = demand
         self.activity = activity
@@ -892,6 +921,21 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
         self.symbol = symbol
         self.statusLabel = statusLabel
         self.delegated = delegated
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        paneID = try container.decode(String.self, forKey: .paneID)
+        label = try container.decode(String.self, forKey: .label)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        statusWordVisible = try container.decodeIfPresent(Bool.self, forKey: .statusWordVisible) ?? true
+        agentKind = try container.decode(String.self, forKey: .agentKind)
+        demand = try container.decode(String.self, forKey: .demand)
+        activity = try container.decode(String.self, forKey: .activity)
+        emphasized = try container.decode(Bool.self, forKey: .emphasized)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        statusLabel = try container.decode(String.self, forKey: .statusLabel)
+        delegated = try container.decodeIfPresent(Bool.self, forKey: .delegated) ?? false
     }
 }
 
@@ -1044,8 +1088,15 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let requiresCloseConfirmation: Bool
     /// Whether the activity status must be refreshed before closing this pane.
     let requiresCloseStatusCheck: Bool
+    /// The stable name every surface calls this agent by (PRD D-01).
     let identityLabel: String
-    let summary: String
+    /// The label plugin's rolling task title; the search sheet's subtitle
+    /// when the state chose no sentence (PRD D-15).
+    let task: String?
+    /// The second line the core chose for this row's state, or nothing.
+    let detail: String?
+    /// Whether the status word is drawn on the second line.
+    let statusWordVisible: Bool
     let elapsed: String
     let lastActivity: String
 
@@ -1085,8 +1136,10 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusLabel: String = "Idle",
         requiresCloseConfirmation: Bool = false,
         requiresCloseStatusCheck: Bool = false,
-        summary: String,
-        identityLabel: String? = nil,
+        identityLabel: String,
+        task: String? = nil,
+        detail: String? = nil,
+        statusWordVisible: Bool = true,
         elapsed: String,
         lastActivity: String
     ) {
@@ -1105,8 +1158,10 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
         self.requiresCloseStatusCheck = requiresCloseStatusCheck
-        self.identityLabel = identityLabel ?? summary
-        self.summary = summary
+        self.identityLabel = identityLabel
+        self.task = task
+        self.detail = detail
+        self.statusWordVisible = statusWordVisible
         self.elapsed = elapsed
         self.lastActivity = lastActivity
     }
@@ -1128,8 +1183,10 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusLabel = try container.decode(String.self, forKey: .statusLabel)
         requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
         requiresCloseStatusCheck = try container.decodeIfPresent(Bool.self, forKey: .requiresCloseStatusCheck) ?? false
-        summary = try container.decode(String.self, forKey: .summary)
-        identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel) ?? summary
+        identityLabel = try container.decode(String.self, forKey: .identityLabel)
+        task = try container.decodeIfPresent(String.self, forKey: .task)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        statusWordVisible = try container.decodeIfPresent(Bool.self, forKey: .statusWordVisible) ?? true
         elapsed = try container.decode(String.self, forKey: .elapsed)
         lastActivity = try container.decode(String.self, forKey: .lastActivity)
         lineageDepth = try container.decodeIfPresent(Int.self, forKey: .lineageDepth) ?? 0
@@ -1163,7 +1220,9 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case requiresCloseConfirmation = "requires_close_confirmation"
         case requiresCloseStatusCheck = "requires_close_status_check"
         case identityLabel = "identity_label"
-        case summary
+        case task
+        case detail
+        case statusWordVisible = "status_word_visible"
         case elapsed
         case lastActivity = "last_activity"
         case lineageDepth = "lineage_depth"

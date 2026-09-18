@@ -8,7 +8,6 @@ private func presentationPane(id: String) -> CorePaneSnapshot {
         id: id,
         cwd: "/tmp/hide",
         statusLabel: "Idle",
-        summary: nil,
         activityAt: nil
     )
 }
@@ -218,8 +217,7 @@ private func presentationAgent(
         unread: group == "needs_you" || group == "done",
         group: group,
         symbol: "\u{25cf}",
-        summary: "Agent \(id)",
-        identityLabel: identityLabel,
+        identityLabel: identityLabel ?? "Agent \(id)",
         elapsed: "1m",
         lastActivity: "0000000000001"
     )
@@ -563,15 +561,76 @@ private func presentationAgent(
     #expect(readError.color == HideTheme.danger.opacity(HideTheme.readStatusOpacity))
 }
 
-@Test func sidebarIdentityUsesTheCanonicalTaskInsteadOfTheActivitySummary() {
+/// PRD B1, D-01: the row's title is the core's identity at both densities;
+/// a raised row names its home in the qualifier instead of the title.
+@Test func sidebarRowTitleIsTheIdentityAtBothDensities() {
     let agent = SidebarAgent(
-        id: "transport-child", paneID: "w1:p2", workspaceLabel: "Project",
-        agentKind: "codex", symbol: "●", summary: "A shorter activity summary",
+        id: "transport-child", paneID: "w1:p2", workspaceLabel: "Project", checkoutLabel: "main",
+        agentKind: "codex", symbol: "●",
         identityLabel: "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름",
         elapsed: "0s", lastActivity: ""
     )
     let compact = AgentRowPresentation(agent: agent, density: .compact, connected: true)
     let prominent = AgentRowPresentation(agent: agent, density: .prominent, connected: true)
     #expect(compact.title == "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름")
-    #expect(prominent.detail == compact.title)
+    #expect(prominent.title == compact.title)
+    #expect(compact.qualifier == nil)
+    #expect(prominent.qualifier == "Project › main")
+}
+
+/// PRD D-06, D-07: the second line is the core's sentence and word flag,
+/// carried through unchanged, and the emphasis decides the sentence colour.
+@Test func sidebarRowSecondLineCarriesTheCoresChoice() {
+    let working = SidebarAgent(
+        id: "w", paneID: "w1:p1", workspaceLabel: "hide", agentKind: "claude",
+        activity: "working", group: "working", symbol: "●", statusLabel: "Working",
+        identityLabel: "Hook 버그 확인", detail: "hook 보고 경로를 소켓 호출로 교체 중", statusWordVisible: false,
+        elapsed: "2m", lastActivity: ""
+    )
+    let question = SidebarAgent(
+        id: "q", paneID: "w1:p2", workspaceLabel: "hide", agentKind: "claude",
+        demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
+        statusLabel: "Question",
+        identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: true,
+        elapsed: "2m", lastActivity: ""
+    )
+    let seen = SidebarAgent(
+        id: "s", paneID: "w1:p3", workspaceLabel: "hide", agentKind: "codex",
+        activity: "stopped", symbol: "○", statusLabel: "Idle",
+        identityLabel: "컨텍스트 라벨 표시", detail: nil, statusWordVisible: false,
+        elapsed: "1h", lastActivity: ""
+    )
+    let workingRow = AgentRowPresentation(agent: working, density: .compact, connected: true)
+    #expect(workingRow.detail == "hook 보고 경로를 소켓 호출로 교체 중")
+    #expect(!workingRow.statusWordVisible)
+    #expect(!workingRow.emphasized)
+    let questionRow = AgentRowPresentation(agent: question, density: .compact, connected: true)
+    #expect(questionRow.detail == "A/B 선택 후 DB 마이그레이션 승인")
+    #expect(questionRow.statusWordVisible)
+    #expect(questionRow.emphasized)
+    let seenRow = AgentRowPresentation(agent: seen, density: .compact, connected: true)
+    #expect(seenRow.detail == nil)
+    #expect(!seenRow.statusWordVisible)
+}
+
+/// PRD D-08, B9: the header line reads `name · [word] sentence`, and a shell
+/// operation on the pane takes the slot while it runs.
+@Test func paneHeaderSentenceFollowsTheRowAndYieldsToAShellOperation() {
+    let question = SidebarAgent(
+        id: "q", paneID: "w1:p2", workspaceLabel: "hide", agentKind: "claude",
+        demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
+        statusLabel: "Question",
+        identityLabel: "결제 멱등키 PR", detail: "A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요",
+        statusWordVisible: true, elapsed: "2m", lastActivity: ""
+    )
+    let sentence = PaneHeaderPresentation.sentence(agent: question, activity: "")
+    #expect(sentence.word == "Question")
+    #expect(sentence.text == "A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요")
+    #expect(sentence.emphasized)
+    #expect(PaneHeaderPresentation.sentence(agent: question, activity: " · forking…").isEmpty)
+    #expect(PaneHeaderPresentation.sentence(agent: nil, activity: "").isEmpty)
+    let label = PaneHeaderPresentation.accessibilityLabel(
+        kind: "terminal", title: "결제 멱등키 PR", paneID: "w1:p2", agent: question, activity: "", notice: nil
+    )
+    #expect(label == "Focus terminal pane 결제 멱등키 PR (w1:p2), claude, Question, A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요")
 }

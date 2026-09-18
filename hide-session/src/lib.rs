@@ -152,6 +152,13 @@ impl RescanReason {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedSession {
     pub events: Vec<ConversationEvent>,
+    /// The name the agent gave its own session, when the chunk carried one.
+    ///
+    /// Claude Code writes an `ai-title` record once it has named the
+    /// conversation and repeats it on later turns; the last one in the
+    /// chunk wins. It is a property of the session rather than an event, so
+    /// it never enters `events`. Codex has no such record and leaves `None`.
+    pub title: Option<String>,
     pub skipped_lines: usize,
     pub skipped_reasons: BTreeMap<SkipReason, usize>,
     pub rescan_reason: Option<RescanReason>,
@@ -615,6 +622,9 @@ enum LineResult {
     Ignore,
     Skip(SkipReason),
     Event(ConversationEvent),
+    /// A session-level record rather than a turn: the title the agent gave
+    /// the conversation.
+    Title(String),
 }
 
 /// Parse Claude Code JSONL records into normalized events.
@@ -649,6 +659,7 @@ fn parse_lines(contents: &str, mut extract: impl FnMut(&Value) -> LineResult) ->
             LineResult::Ignore => {}
             LineResult::Skip(reason) => parsed.skipped(reason),
             LineResult::Event(event) => parsed.events.push(event),
+            LineResult::Title(title) => parsed.title = Some(title),
         }
     }
     parsed
@@ -658,6 +669,17 @@ fn parse_claude_line(item: &Value) -> LineResult {
     let role = match item.get("type").and_then(Value::as_str) {
         Some("user") => "user",
         Some("assistant") => "assistant",
+        Some("ai-title") => {
+            return match item
+                .get("aiTitle")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+            {
+                Some(title) => LineResult::Title(title.to_owned()),
+                None => LineResult::Ignore,
+            };
+        }
         _ => return LineResult::Ignore,
     };
     let Some(text) = session_text(item.pointer("/message/content")) else {
@@ -1046,6 +1068,29 @@ mod tests {
         assert_eq!(parsed.events[4].text, "--quick");
         assert_eq!(parsed.events[5].text, "[Request interrupted by user]");
         assert_eq!(parsed.skipped_lines, 0);
+        assert_eq!(parsed.title, None, "the fixture carries no ai-title record");
+    }
+
+    /// Claude's `ai-title` record is the session's own name: the last one
+    /// wins, it is not an event, and an empty one is nothing.
+    #[test]
+    fn claude_ai_title_is_the_session_title_and_not_an_event() {
+        let chunk = concat!(
+            r#"{"type":"ai-title","aiTitle":"  Hook 버그 확인 ","sessionId":"s1"}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-18T00:00:00.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"hook 고쳐줘"}}"#,
+            "\n",
+            r#"{"type":"ai-title","aiTitle":"","sessionId":"s1"}"#,
+            "\n",
+            r#"{"type":"ai-title","aiTitle":"Hook 보고 경로 교체","sessionId":"s1"}"#,
+            "\n",
+        );
+        let parsed = parse_claude_events(chunk);
+        assert_eq!(parsed.title.as_deref(), Some("Hook 보고 경로 교체"));
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.skipped_lines, 0);
+        let codex = parse_codex_events(chunk);
+        assert_eq!(codex.title, None);
     }
 
     #[test]

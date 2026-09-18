@@ -316,9 +316,30 @@ pub struct SidebarAgentSnapshot {
     /// Derived: the activity evidence is incomplete, so a destructive close
     /// must wait for a fresh status rather than assuming the pane is idle.
     pub requires_close_status_check: bool,
-    /// Canonical task identity, distinct from the compact activity summary.
+    /// The stable name every surface calls this agent by; `sidebar.rs` owns
+    /// the ladder that picks it (PRD D-01).
     pub identity_label: String,
-    pub summary: String,
+    /// The session name the label plugin published as a token when Herdr
+    /// refused it as an agent name (PRD D-03).
+    #[serde(skip_serializing)]
+    pub name: Option<String>,
+    /// The label plugin's rolling task title. A fallback name in the row,
+    /// and the search sheet's subtitle when the state chose no sentence
+    /// (PRD D-01, D-15).
+    pub task: Option<String>,
+    /// The label plugin's one-line progress sentence.
+    #[serde(skip_serializing)]
+    pub progress: Option<String>,
+    /// The one action the operator is being asked for, at most 40 characters.
+    #[serde(skip_serializing)]
+    pub expected_reply: Option<String>,
+    /// Derived: the row's second line, chosen by the group from the three
+    /// sentences above (PRD D-06). `None` draws no sentence.
+    pub detail: Option<String>,
+    /// Derived: whether the row draws its status word. It leaves working and
+    /// read rows, where the mark already says it, and stays on rows that
+    /// still concern the operator.
+    pub status_word_visible: bool,
     pub elapsed: String,
     /// The ordering key: the label plugin's activity timestamp when it has one,
     /// otherwise Herdr's state change sequence zero-padded to the same width.
@@ -505,6 +526,12 @@ pub struct StripTabSnapshot {
     /// The Herdr tab id or editor tab id this entry stands for.
     pub source_id: String,
     pub label: String,
+    /// The one agent this tab holds, when it holds exactly one, drawn as the
+    /// tab's identity where a tab is named: the Recent Panels switcher shows
+    /// its name and mark instead of the Herdr label, which for an unnamed tab
+    /// is only a number (PRD D-16). A shell-only tab and a tab with several
+    /// agents carry `None` and keep their label.
+    pub agent_identity: Option<AgentChipSnapshot>,
 }
 
 /// The kinds of tab a strip holds.
@@ -524,6 +551,7 @@ impl StripTabSnapshot {
             kind: StripTabKind::Herdr,
             source_id,
             label: label.into(),
+            agent_identity: None,
         }
     }
 
@@ -534,6 +562,7 @@ impl StripTabSnapshot {
             kind: StripTabKind::File,
             source_id,
             label: label.into(),
+            agent_identity: None,
         }
     }
 
@@ -544,6 +573,7 @@ impl StripTabSnapshot {
             kind: StripTabKind::Diff,
             source_id,
             label: label.into(),
+            agent_identity: None,
         }
     }
 
@@ -671,7 +701,9 @@ pub struct PaneSnapshot {
     pub requires_close_confirmation: bool,
     /// Whether the core needs a fresh activity status before allowing a close.
     pub requires_close_status_check: bool,
-    pub summary: Option<String>,
+    /// The agent's stable name, from the same ladder the sidebar row shows,
+    /// so the header and the row cannot call one pane two things (PRD D-09).
+    pub identity_label: Option<String>,
     pub activity_at_unix_ms: Option<u64>,
     pub fork: PaneForkSnapshot,
     /// The ports listened on from at or below this pane's working directory.
@@ -738,8 +770,10 @@ pub struct AgentChipSnapshot {
     pub pane_id: String,
     /// The short name the chip shows beside its mark.
     pub label: String,
-    /// The longer description for the chip's tooltip.
-    pub detail: String,
+    /// The row's second line: the sentence the group chose, or nothing.
+    pub detail: Option<String>,
+    /// Whether the status word is drawn beside that sentence.
+    pub status_word_visible: bool,
     pub agent_kind: String,
     pub demand: String,
     pub activity: String,

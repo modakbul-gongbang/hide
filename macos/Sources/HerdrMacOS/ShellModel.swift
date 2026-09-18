@@ -785,7 +785,7 @@ final class ShellModel: ObservableObject {
         let agent = agents.first { $0.paneID == paneID }
         return PaneHeaderPresentation.title(
             herdrLabel: pane.herdrLabel,
-            agentSummary: agent?.identityLabel ?? pane.summary,
+            agentSummary: agent?.identityLabel ?? pane.identityLabel,
             terminalTitle: pane.terminalTitle,
             workspaceLabel: pane.workspaceLabel,
             paneID: pane.id
@@ -2464,7 +2464,7 @@ final class ShellModel: ObservableObject {
             label: pane.herdrLabel ?? pane.id,
             statusLabel: agent?.statusLabel ?? "Idle",
             requiresCloseConfirmation: contentConsequence != nil || (agent?.requiresCloseConfirmation ?? false),
-            summary: contentConsequence ?? agent?.summary ?? "No working or attention state is reported for this pane.",
+            summary: contentConsequence ?? agent?.detail ?? "No working or attention state is reported for this pane.",
             requiresStatusCheck: pane.requiresCloseStatusCheck || (agent?.requiresCloseStatusCheck ?? false),
             contentConsequence: contentConsequence
         )
@@ -2620,10 +2620,10 @@ final class ShellModel: ObservableObject {
         let targets = agents.map {
             DestructiveTarget(
                 id: $0.paneID,
-                label: $0.workspaceLabel,
+                label: $0.identityLabel,
                 statusLabel: $0.statusLabel,
                 requiresCloseConfirmation: $0.requiresCloseConfirmation,
-                summary: $0.summary,
+                summary: $0.detail ?? $0.statusLabel,
                 requiresStatusCheck: $0.requiresCloseStatusCheck
             )
         }

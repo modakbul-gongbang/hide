@@ -342,7 +342,7 @@ impl SessionReplica {
                                         .is_some_and(|agent| agent.requires_close_confirmation),
                                     requires_close_status_check: agent
                                         .is_some_and(|agent| agent.requires_close_status_check),
-                                    summary: agent.map(|agent| agent.summary.clone()),
+                                    identity_label: agent.map(|agent| agent.identity_label.clone()),
                                     activity_at_unix_ms: state
                                         .agents
                                         .iter()

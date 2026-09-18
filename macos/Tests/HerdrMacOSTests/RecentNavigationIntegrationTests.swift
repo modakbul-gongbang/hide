@@ -59,11 +59,19 @@ struct RecentNavigationIntegrationTests {
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually("initial terminal") { model.recentSurfaces.count == 1 }
+        // The fixture tab holds one agent pane, so the core names the tab
+        // after it and the switcher row reads that name (PRD D-16, B18).
+        try await eventually("one-agent tab is named after its agent") {
+            model.recentSurfaces.values.first?.item.agentIdentity?.label == "working"
+        }
+        let seeded = try #require(model.recentSurfaces.values.first)
+        #expect(RecentSurfacePresentation.title(seeded) == "working")
+        #expect(seeded.item.agentIdentity?.symbol == "●")
         bridge.dispatch(kind: "session_snapshot", payload: [
             "focused_pane_id": "fixture-working",
             "agents": [("fixture-working", "codex"), ("fixture-claude", "claude")].map { pane, kind in
                 ["id": pane, "pane_id": pane, "workspace_label": "Review", "agent": kind,
-                 "agent_status": "working", "tokens": ["summary": "Review", "status_working": "●", "activity": "1755000003000"]] as [String: Any]
+                 "agent_status": "working", "tokens": ["task": "Review", "status_working": "●", "activity": "1755000003000"]] as [String: Any]
             },
             "workspaces": [["workspace_id": "fixture-workspace", "label": "Review", "active_tab_id": "fixture-tab"]],
             "tabs": [["tab_id": "fixture-tab", "workspace_id": "fixture-workspace", "label": "Review"]],
@@ -82,6 +90,12 @@ struct RecentNavigationIntegrationTests {
             model.recentSurfaces.values.first?.item.focusedAgent?.agentKind == "codex"
         }
         let tabSurfaceID = try #require(model.recentSurfaces.values.first?.id)
+        // Two agents share the tab now: the row falls back to the Herdr label.
+        try await eventually("two-agent tab keeps its label") {
+            model.recentSurfaces[tabSurfaceID]?.item.agentIdentity == nil
+        }
+        let shared = try #require(model.recentSurfaces[tabSurfaceID])
+        #expect(RecentSurfacePresentation.title(shared) == "Review")
         bridge.focusPane("fixture-claude", origin: .operatorChoice)
         try await eventually("Claude panel mark follows core focus before layout acknowledgement") {
             model.recentSurfaces[tabSurfaceID]?.item.focusedAgent?.agentKind == "claude"

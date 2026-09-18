@@ -697,6 +697,12 @@ impl Runtime {
         }
         order.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
         pending.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
+        // A rebuilt entry starts without its agent; name it before the strip
+        // is published so a fresh tab never draws as a bare number first.
+        sync_strip_agent_identity(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+        );
         for checkout_id in dropped_moves {
             self.push_diagnostic(
                 "tab.move.dropped",

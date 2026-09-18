@@ -352,7 +352,7 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
                 "agent_status":"working",
                 "state_change_seq":1,
                 "workspace_label":"Workspace",
-                "tokens":{"summary":"Project coordinator"}
+                "tokens":{"name":"Project coordinator"}
             },
             {
                 "id":"qa-lineage-child",
@@ -360,7 +360,7 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
                 "spawned_from_pane_id":"w1:p1",
                 "agent_status":"working",
                 "state_change_seq":2,
-                "tokens":{"summary":"Hide design QA"}
+                "tokens":{"name":"Hide design QA"}
             }
         ]}))
         .unwrap(),
@@ -686,6 +686,78 @@ fn a_tab_holding_only_delegated_children_is_kept_off_the_strip() {
             .iter()
             .any(|tab| tab.id.as_deref() == Some("t2")),
         "and still in the checkout, so the sidebar and breadcrumb reach it"
+    );
+}
+
+/// PRD D-16: a strip entry is named after its one agent, and a tab with two
+/// agents or none keeps the Herdr label alone.
+#[test]
+fn a_strip_entry_carries_its_one_agents_identity_and_mark() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(split_lineage_payload()));
+
+    let entry = |runtime: &Runtime, tab_id: &str| {
+        runtime.snapshot.navigator.workspaces[0].checkouts[0]
+            .strip
+            .iter()
+            .find(|entry| entry.source_id == tab_id)
+            .cloned()
+    };
+    // Two agents share the tab: the label stays what Herdr said.
+    assert_eq!(
+        entry(&runtime, "t1")
+            .expect("the tab is on the strip")
+            .agent_identity,
+        None
+    );
+
+    // Move the child to its own tab: the parent's tab now holds one agent.
+    for workspace in &mut runtime.snapshot.navigator.workspaces {
+        for checkout in &mut workspace.checkouts {
+            let child = checkout.tabs[0]
+                .panes
+                .iter()
+                .position(|pane| pane.id == "w1:p2")
+                .map(|index| checkout.tabs[0].panes.remove(index));
+            if let Some(child) = child {
+                let mut moved = checkout.tabs[0].clone();
+                moved.id = Some("t2".to_owned());
+                moved.panes = vec![child];
+                checkout.tabs.push(moved);
+            }
+        }
+    }
+    runtime.sync_pane_lineage();
+    let identity = entry(&runtime, "t1")
+        .expect("the parent's tab")
+        .agent_identity
+        .expect("one agent names the tab");
+    assert_eq!(identity.label, "Observer");
+    assert_eq!(identity.pane_id, "w1:p1");
+    assert_eq!(identity.symbol, "\u{25cf}");
+    assert_eq!(identity.activity, "working");
+
+    // A tab with no agent pane at all says nothing about agents.
+    for workspace in &mut runtime.snapshot.navigator.workspaces {
+        for checkout in &mut workspace.checkouts {
+            let mut shell = checkout.tabs[0].clone();
+            shell.id = Some("t3".to_owned());
+            shell.panes = vec![];
+            checkout.tabs.push(shell);
+        }
+    }
+    runtime.rebuild_tab_strips();
+    assert_eq!(
+        entry(&runtime, "t3").expect("the shell tab").agent_identity,
+        None
+    );
+    assert_eq!(
+        entry(&runtime, "t1")
+            .unwrap()
+            .agent_identity
+            .map(|chip| chip.label),
+        Some("Observer".to_owned()),
+        "a rebuilt strip is named again before it is published"
     );
 }
 
@@ -1303,20 +1375,20 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         "agents": [
             {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
              "state_change_seq":1,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"summary":"delegating the orchestrator work"}},
+             "tokens":{"progress":"delegating the orchestrator work"}},
             {"id":"Implementor","pane_id":"w1:p2","agent":"claude","agent_status":"working",
              "state_change_seq":2,"cwd":"/fixture","workspace_label":"hide",
-             "spawned_from_pane_id":"w1:p1","tokens":{"summary":"구현 중: 계보 투영과 위임 표시"}},
+             "spawned_from_pane_id":"w1:p1","tokens":{"progress":"구현 중: 계보 투영과 위임 표시"}},
             {"id":"Reviewer","pane_id":"w1:p3","agent":"claude","agent_status":"idle",
              "state_change_seq":3,"cwd":"/fixture","workspace_label":"hide",
              "spawned_from_pane_id":"w1:p1",
-             "tokens":{"status_question_new":"?","summary":"정체 임계값을 물어보는 중"}},
+             "tokens":{"status_question_new":"?","progress":"정체 임계값을 물어보는 중"}},
             {"id":"Uninstrumented","pane_id":"w1:p4","agent":"claude","agent_status":"working",
              "state_change_seq":4,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"summary":"started before the hook was installed"}},
+             "tokens":{"progress":"started before the hook was installed"}},
             {"id":"Alone","pane_id":"w1:p5","agent":"claude","agent_status":"working",
              "state_change_seq":5,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"summary":"working with no children"}}
+             "tokens":{"progress":"working with no children"}}
         ],
         "panes": [
             {"pane_id":"w1:p1","cwd":"/fixture",
@@ -1430,16 +1502,19 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
             .iter()
             .map(|chip| chip.label.as_str())
             .collect::<Vec<_>>(),
-        [
-            "정체 임계값을 물어보는 중",
-            "구현 중: 계보 투영과 위임 표시"
-        ],
-        "chips follow the lineage's own child order"
+        ["Reviewer", "Implementor"],
+        "chips follow the lineage's own child order and carry the Herdr name (PRD D-01)"
     );
     assert_eq!(
-        parent.representative.as_ref().unwrap().label,
-        "정체 임계값을 물어보는 중"
+        parent
+            .chips
+            .iter()
+            .map(|chip| chip.detail.as_deref())
+            .collect::<Vec<_>>(),
+        [None, Some("구현 중: 계보 투영과 위임 표시")],
+        "a delegated question is Seen and says nothing more; a delegated worker keeps its progress (PRD D-06)"
     );
+    assert_eq!(parent.representative.as_ref().unwrap().label, "Reviewer");
     assert_eq!(
         (parent.subagents.working, parent.subagents.done),
         (Some(2), Some(4))
@@ -1448,7 +1523,7 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         pane("w1:p2")
             .lineage_path
             .iter()
-            .any(|step| step.label == "delegating the orchestrator wo")
+            .any(|step| step.label == "Observer")
     );
 
     // A pane Hide cannot see into, and the reason a restart would fix it.

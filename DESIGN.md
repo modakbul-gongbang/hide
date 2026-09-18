@@ -838,6 +838,18 @@ Project-view number shortcuts skip agents hidden by workspace disclosure.
 `agentMarkWidth` (12pt) and `checkoutIconWidth` (14pt) define the status and branch columns.
 `compactAgentLeadingInset` derives the root agent status center from the Workspace branch center, accounting for the lineage chevron gutter.
 Compact agent rows use `spacingXS` (4pt) between the status, provider icon, and title.
+An agent row's title is the core's `identity_label` at both densities: the session name the label plugin derived (Claude's `ai-title`, Codex's first turn), or the Herdr agent name, or the rolling task, or the workspace label, in that order; a prominent row keeps its project context as the qualifier beside the second line.
+The second line is chosen by the core from the row's group and drawn as given, so no view decides it twice ([status model](docs/status-model.md#the-second-line)):
+
+| Group | Word | Sentence |
+| --- | --- | --- |
+| Needs You, unread Done | `Typography.caption` medium in the mark's color | `expected_reply`, else `progress`, caption regular in `primary` |
+| Working | none | `progress`, caption regular in `secondary` |
+| Seen, unknown | none | none - the row is one line |
+
+A row with no sentence keeps its word, so a row is never left with an empty second line; a delegated row's sentence is `muted`, like the rest of it.
+The sentence is one line with tail truncation, and the full text is the row tooltip and the accessibility label, which reads name, agent kind, status word, sentence in that order even when the word left the screen.
+There is no third gray for the sentence: a `muted` step between `secondary` and `primary` was tried and the two grays did not separate in the rendered row.
 The Workspace status is shown once in a trailing chip with the representative provider and `+N` remaining agents; single agents omit the suffix, and empty Workspaces omit the chip.
 An expanded Workspace omits the chip as well: each nested agent row carries its own status and provider, so the summary would repeat what is already beside it. The disclosure chevron stays in both states.
 The chip uses the toolbar height, `radiusMedium`, `spacingXS`, and the elevated surface; the disclosure chevron follows it at the far right.
@@ -872,6 +884,10 @@ The sidebar runtime version stays on one line with middle truncation; its toolti
 ## Pane header lineage and ownership
 
 The pane header keeps one 28pt identity row.
+Its title is `name · [word] sentence` on one line: the identity in caption semibold `primary`, ` · ` in `muted`, the status word in caption medium in the mark's color when the row shows it, and the sentence in caption regular with the row's emphasis color, tail-truncated to no less than `Layout.paneHeaderSentenceMinWidth` (120pt).
+When the header is narrower than that, `ViewThatFits` drops the sentence first and the word second, so the identity is what survives a three-way split.
+A shell operation string (`forking…`, `reopening…`) takes the sentence's slot while it runs.
+The header and the sidebar row call a pane by the same name, and the header's accessibility label carries the status word in the same order as the row's.
 A pane with children gains a second 24pt row for the child chips, and that row exists only when there are children; a pane with none stays at 28pt.
 This is a user decision between four candidates, not a default: compressing the marks onto the breadcrumb row, relying on the sidebar alone, and a bottom status bar were all rejected, because the chip has to carry the child's name where the operator is already looking.
 
@@ -1058,6 +1074,7 @@ The existing core catalog determines grouping; navigation does not infer it from
 Both switchers use the same themed overlay and registry-derived keycaps, with at most nine rows around the highlight.
 Project rows show the last surface and checkout; panel rows show their project and checkout, collapsed to the checkout alone when both carry the same name, and their surface type.
 Recent Panels uses the same focused-pane agent brand mark as the tab strip, including Claude Code and Codex; file, diff and unassociated terminal surfaces keep their type icons.
+A panel row whose tab holds exactly one agent pane is titled by that agent's identity with its status mark before the brand mark, derived in the core as the strip entry's `agent_identity`; a tab with no agent or several keeps the Herdr tab label, and the Herdr label itself is never changed for this.
 History is session-local and retains only existing projects and surfaces.
 A deleted highlight moves to the next surviving entry without reordering the held cycle and records the reconciliation in structured trace.
 If none survives, cancel with a structured recovery trace and keep the core's current selection.
@@ -1066,6 +1083,7 @@ Empty projects show “No open tabs”; a project without an available checkout 
 ### Search keyboard navigation
 
 Command+K opens agent/workspace search and Command+P opens file search with the same focused query field and first-result selection behavior.
+An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling to the rolling task when the state chose no sentence (unless that is already the title) and then to the status word; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
 Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
 Return executes the highlighted result through the existing agent, checkout, or file-opening action; Escape closes the sheet.
 The selected row uses the existing accent emphasis fill and scrolls into view.

@@ -1436,7 +1436,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         _ id: String,
         _ symbol: String,
         _ activity: String,
-        _ summary: String,
+        _ progress: String,
         _ elapsed: String,
         _ workspace: String,
         _ agent: String,
@@ -1451,7 +1451,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "tokens": [
                 statusToken: symbol,
                 "activity": activity,
-                "summary": summary,
+                "progress": progress,
                 "elapsed": elapsed,
             ],
         ]

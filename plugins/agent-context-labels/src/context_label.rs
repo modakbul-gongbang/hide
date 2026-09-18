@@ -2,7 +2,7 @@
 //! provider answer becomes an [`Analysis`]. The provider layer never sees
 //! these; it only carries the request and validates the answer's shape.
 
-use crate::{Analysis, Attention, normalize_task, normalize_text_field};
+use crate::{Analysis, Attention, MAX_EXPECTED_REPLY_CHARS, normalize_task, normalize_text_field};
 use anyhow::{Context, Result, anyhow};
 use hide_ai::{AiRequest, RequestId};
 use serde::Deserialize;
@@ -13,7 +13,7 @@ use std::time::Duration;
 pub const FEATURE_ID: &str = "context_label";
 /// Bumped whenever the prompt or the schema changes, so a log line can be
 /// read against the pair that produced it.
-pub const SCHEMA_VERSION: &str = "context_label.v2";
+pub const SCHEMA_VERSION: &str = "context_label.v3";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -39,7 +39,8 @@ pub const SYSTEM_PROMPT: &str = concat!(
     "에이전트가 사용자에게 직접 답하라고 낸 질문이나 문제(퀴즈 출제 포함)는 명시적 요청 문구가 없어도 ",
     "대답이 기대되는 요구이므로 question입니다. ",
     "단 \"무엇을 도와드릴까요?\"처럼 특정 답이 아니라 새 작업 지시를 기다리는 열린 인사말은 question이 아닙니다. ",
-    "expected_reply에는 그 요구된 행동을 한 문장으로 쓰세요. ",
+    "expected_reply에는 그 요구된 행동을 40자 이내의 명령형 한 문장으로 쓰세요(\"~하세요\", \"~을 선택\"). ",
+    "사이드바 한 줄에 그대로 보이므로 배경 설명 없이 사용자가 할 행동만 쓰세요. ",
     "요구된 행동을 한 문장으로 쓸 수 없다면 그것은 question이 아닙니다: ",
     "완료 보고, 인사, 새 작업 지시를 기다리는 대기, \"원하면/필요하면 ~도 가능\" 같은 선택적 제안이 여기에 해당하며, ",
     "expected_reply를 빈 문자열로 두고 none으로 판정하세요. ",
@@ -110,8 +111,13 @@ pub fn parse(value: Value) -> Result<Analysis> {
     let task = normalize_task(&parsed.task).ok_or_else(|| anyhow!("provider_invalid_task"))?;
     let progress = normalize_text_field(&parsed.progress, true)
         .ok_or_else(|| anyhow!("provider_invalid_progress"))?;
+    // The sidebar draws this in one line, so the prompt's 40-character rule
+    // is enforced here whatever the model did with it (PRD D-05).
     let expected_reply = normalize_text_field(&parsed.expected_reply, true)
-        .ok_or_else(|| anyhow!("provider_invalid_expected_reply"))?;
+        .ok_or_else(|| anyhow!("provider_invalid_expected_reply"))?
+        .chars()
+        .take(MAX_EXPECTED_REPLY_CHARS)
+        .collect::<String>();
     // A question with no statable user action is a surface-pattern match
     // (greeting, courtesy offer), not a real request: downgrade it.
     let attention = match parsed.attention {

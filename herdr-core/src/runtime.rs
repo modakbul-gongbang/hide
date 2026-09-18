@@ -552,7 +552,49 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
         }
     }
     changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
+    changed |= sync_strip_agent_identity(workspaces, agents);
     changed |= crate::project_context::sort_projects(workspaces, agents);
+    changed
+}
+
+/// Names each Herdr strip entry after the one agent its tab holds.
+///
+/// Runs on the same passes as the pane status, so the entry's mark and
+/// emphasis follow the read axis, and again whenever a strip is rebuilt, so
+/// a fresh entry never reaches the shell without its identity (PRD D-16).
+fn sync_strip_agent_identity(
+    workspaces: &mut [WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+) -> bool {
+    let mut changed = false;
+    for checkout in workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+    {
+        for entry in checkout
+            .strip
+            .iter_mut()
+            .filter(|entry| entry.kind == crate::model::StripTabKind::Herdr)
+        {
+            let identity = checkout
+                .tabs
+                .iter()
+                .find(|tab| tab.id.as_deref() == Some(entry.source_id.as_str()))
+                .and_then(|tab| {
+                    let mut held = agents
+                        .iter()
+                        .filter(|agent| tab.panes.iter().any(|pane| pane.id == agent.pane_id));
+                    let first = held.next()?;
+                    held.next()
+                        .is_none()
+                        .then(|| crate::sidebar::agent_chip(first))
+                });
+            if entry.agent_identity != identity {
+                entry.agent_identity = identity;
+                changed = true;
+            }
+        }
+    }
     changed
 }
 
@@ -1273,9 +1315,7 @@ fn project_layout_panes(
                     .is_some_and(|agent| agent.requires_close_confirmation),
                 requires_close_status_check: agent
                     .is_some_and(|agent| agent.requires_close_status_check),
-                summary: agent
-                    .map(|agent| agent.summary.clone())
-                    .filter(|summary| summary != crate::sidebar::MISSING_SUMMARY),
+                identity_label: agent.map(|agent| agent.identity_label.clone()),
                 activity_at_unix_ms: agent.and_then(|agent| agent.last_activity.parse().ok()),
                 fork: pane_fork_snapshot(agent),
                 ports,
