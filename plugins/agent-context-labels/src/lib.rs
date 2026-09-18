@@ -35,6 +35,13 @@ pub const LEGACY_PLUGIN_ID: &str = "herdr-agent-context-labels";
 /// turn while the initial or rolling sections are being assembled.
 pub const MAX_ANALYSIS_CONTEXT_CHARS: usize = 4_000;
 pub const MAX_TASK_CHARS: usize = 30;
+/// The longest `expected_reply` published. The sidebar draws it in one line
+/// and Herdr caps a token value at 80 characters; the prompt asks for this
+/// length and the parser cuts whatever came back to it (PRD D-05).
+pub const MAX_EXPECTED_REPLY_CHARS: usize = 40;
+/// The longest session name published as a token. Herdr's own cap on a
+/// token value; the sidebar row truncates at its width.
+pub const MAX_SESSION_NAME_CHARS: usize = 80;
 /// The initial view includes a small head and a bounded tail of human turns.
 pub const INITIAL_FIRST_USER_TURNS: usize = 3;
 /// How many of the session's latest human turns feed the initial task context.
@@ -307,6 +314,13 @@ impl AgentKind {
 pub struct Pane {
     pub id: String,
     pub agent: AgentKind,
+    /// The Herdr agent name: the operator's (`herdr agent new <NAME>`,
+    /// `agent rename`) or one this plugin wrote. `None` for an agent started
+    /// by hand, which Herdr addresses by pane id.
+    pub name: Option<String>,
+    /// The tab the pane sits in, so the plugin can tell a tab holding one
+    /// agent from one holding several (PRD D-04).
+    pub tab_id: String,
     pub agent_session: Option<AgentSession>,
     /// Herdr's own lifecycle verdict: idle, working, blocked, done, unknown.
     /// `done` already means "finished while you were not looking", so the
@@ -344,6 +358,10 @@ struct AgentListResult {
 struct AgentListItem {
     pane_id: String,
     agent: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    tab_id: String,
     agent_status: String,
     revision: u64,
     state_change_seq: u64,
@@ -358,6 +376,8 @@ impl AgentListItem {
         Some(Pane {
             agent: self.agent.as_deref().and_then(AgentKind::from_herdr)?,
             id: self.pane_id,
+            name: self.name.filter(|name| !name.trim().is_empty()),
+            tab_id: self.tab_id,
             agent_session: self.agent_session,
             agent_status: self.agent_status,
             revision: self.revision,
@@ -399,6 +419,10 @@ pub struct Display {
     /// its own token because the sidebar's recency tiebreak needs a clock two
     /// panes can be compared on, which `state_change_seq` is not.
     pub activity_unix_ms: u64,
+    /// The second report's tokens. They ride the same display so one
+    /// comparison decides whether anything moved, and are sent on their own
+    /// because the first report is already at Herdr's 16-token cap (PRD D-05).
+    pub identity: Identity,
 }
 
 impl Default for Display {
@@ -410,8 +434,31 @@ impl Default for Display {
             elapsed: None,
             unseen: false,
             activity_unix_ms: 0,
+            identity: Identity::default(),
         }
     }
+}
+
+impl Display {
+    /// Whether the first report's tokens differ from `other`'s.
+    fn status_tokens_differ(&self, other: &Self) -> bool {
+        self.task != other.task
+            || self.status != other.status
+            || self.sort_key != other.sort_key
+            || self.elapsed != other.elapsed
+            || self.unseen != other.unseen
+            || self.activity_unix_ms != other.activity_unix_ms
+    }
+}
+
+/// The three sentences the sidebar draws beside the status: the session's
+/// name when Herdr would not take it as the agent name (PRD D-03), what the
+/// agent is doing, and the one action the operator is asked for (PRD D-05).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Identity {
+    pub name: Option<String>,
+    pub progress: Option<String>,
+    pub expected_reply: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -768,6 +815,9 @@ struct PaneSessionState {
     path: PathBuf,
     cursor: SessionCursor,
     events: std::collections::VecDeque<SessionEvent>,
+    /// The session's own title, kept across incremental reads: a later chunk
+    /// carries it only when the agent wrote it again.
+    title: Option<String>,
 }
 
 const MAX_RETAINED_EVENTS: usize = 512;
@@ -857,15 +907,18 @@ impl SessionReader for LocalSessionReader {
                 path: path.clone(),
                 cursor: SessionCursor::new(),
                 events: std::collections::VecDeque::new(),
+                title: None,
             });
         if state.path != path {
             state.path = path.clone();
             state.cursor.reset();
             state.events.clear();
+            state.title = None;
         }
         let chunk = state.cursor.read(&path).map_err(anyhow::Error::from)?;
         if chunk.rescan_reason.is_some() {
             state.events.clear();
+            state.title = None;
         }
         let parsed = parse_events(
             match pane.agent {
@@ -879,9 +932,13 @@ impl SessionReader for LocalSessionReader {
                 state.events.push_back(event);
             }
         }
+        if parsed.title.is_some() {
+            state.title = parsed.title;
+        }
         Self::retain_bounded(&mut state.events);
         Ok(ParsedSession {
             events: state.events.iter().cloned().collect(),
+            title: state.title.clone(),
             skipped_lines: parsed.skipped_lines,
             skipped_reasons: parsed.skipped_reasons,
             rescan_reason: chunk.rescan_reason,
@@ -973,6 +1030,27 @@ struct PersistedDisplayState {
     task: Option<String>,
     #[serde(default)]
     progress: String,
+    /// The one action the operator was asked for by the last analysis, or
+    /// empty. Republished after a restart without a provider call.
+    #[serde(default)]
+    expected_reply: String,
+    /// The session name this plugin last handled for the pane, whichever way
+    /// it went out. The ownership rule reads it: a Herdr agent name equal to
+    /// it was ours to write, any other name is the operator's (PRD D-03).
+    #[serde(default)]
+    plugin_name: Option<String>,
+    /// Whether `plugin_name` went to Herdr as the agent name. When Herdr
+    /// refused it, it went out as the `name` token instead.
+    #[serde(default)]
+    plugin_name_as_agent: bool,
+    /// The tab label this plugin last handled for the pane's tab, so a label
+    /// equal to it is ours to replace and a changed one is left alone.
+    #[serde(default)]
+    plugin_tab_label: Option<String>,
+    /// The Claude session had no `ai-title` and fell back to its first turn;
+    /// logged once per pane rather than on every scan.
+    #[serde(default)]
+    title_missing_logged: bool,
     /// The last Human event included in the rolling task input.
     #[serde(default)]
     task_input_cursor: Option<u64>,
@@ -1303,6 +1381,17 @@ pub fn enforce_retention(paths: &StatePaths) -> Result<()> {
 pub trait HerdrTransport {
     fn panes(&self) -> Result<Vec<Pane>>;
     fn report(&self, pane: &Pane, display: &Display) -> Result<()>;
+    /// The second `pane.report_metadata`, carrying `name`, `progress` and
+    /// `expected_reply`; the first is at Herdr's per-report cap (PRD D-05).
+    fn report_identity(&self, pane: &Pane, identity: &Identity) -> Result<()>;
+    /// `agent.rename` on the pane's agent. Herdr refuses a name outside
+    /// `[a-z][a-z0-9_-]{0,31}`; the caller reads the error and falls back
+    /// to the `name` token (PRD D-03).
+    fn rename_agent(&self, pane: &Pane, name: &str) -> Result<()>;
+    /// `tab.get`, for the label the ownership rule reads (PRD D-04).
+    fn tab_label(&self, tab_id: &str) -> Result<String>;
+    /// `tab.rename`.
+    fn rename_tab(&self, tab_id: &str, label: &str) -> Result<()>;
 
     /// Clear the token published by the v1 plugin once before the v2 task
     /// report takes ownership of the same sidebar slot.
@@ -1373,6 +1462,54 @@ impl HerdrTransport for SocketHerdr {
         .map_err(|error| anyhow!("pane.report_metadata failed: {error}"))
     }
 
+    fn report_identity(&self, pane: &Pane, identity: &Identity) -> Result<()> {
+        request_with_connector(
+            self.connector.as_ref(),
+            "pane.report_metadata",
+            identity_params(pane, identity),
+            self.timeout,
+        )
+        .map(|_| ())
+        .map_err(|error| anyhow!("pane.report_metadata failed: {error}"))
+    }
+
+    fn rename_agent(&self, pane: &Pane, name: &str) -> Result<()> {
+        request_with_connector(
+            self.connector.as_ref(),
+            "agent.rename",
+            serde_json::json!({"target": pane.id, "name": name}),
+            self.timeout,
+        )
+        .map(|_| ())
+        .map_err(|error| anyhow!("agent.rename failed: {error}"))
+    }
+
+    fn tab_label(&self, tab_id: &str) -> Result<String> {
+        let value = request_with_connector(
+            self.connector.as_ref(),
+            "tab.get",
+            serde_json::json!({"tab_id": tab_id}),
+            self.timeout,
+        )
+        .map_err(|error| anyhow!("tab.get failed: {error}"))?;
+        value
+            .pointer("/tab/label")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow!("tab.get answered without a label"))
+    }
+
+    fn rename_tab(&self, tab_id: &str, label: &str) -> Result<()> {
+        request_with_connector(
+            self.connector.as_ref(),
+            "tab.rename",
+            serde_json::json!({"tab_id": tab_id, "label": label}),
+            self.timeout,
+        )
+        .map(|_| ())
+        .map_err(|error| anyhow!("tab.rename failed: {error}"))
+    }
+
     fn clear_legacy_summary_token(&self, pane: &Pane) -> Result<()> {
         request_with_connector(
             self.connector.as_ref(),
@@ -1387,6 +1524,26 @@ impl HerdrTransport for SocketHerdr {
         .map(|_| ())
         .map_err(|error| anyhow!("legacy summary token clear failed: {error}"))
     }
+}
+
+/// The second report: three tokens, each cleared with `null` when absent so
+/// a name the operator has since taken over, or a reply that was answered,
+/// leaves the pane rather than lingering (PRD D-03, D-05).
+fn identity_params(pane: &Pane, identity: &Identity) -> serde_json::Value {
+    let token = |value: &Option<String>| {
+        value
+            .clone()
+            .map_or(serde_json::Value::Null, serde_json::Value::String)
+    };
+    serde_json::json!({
+        "pane_id": pane.id,
+        "source": PLUGIN_ID,
+        "tokens": {
+            "name": token(&identity.name),
+            "progress": token(&identity.progress),
+            "expected_reply": token(&identity.expected_reply),
+        },
+    })
 }
 
 impl HerdrEventTransport for SocketHerdr {
@@ -1571,6 +1728,10 @@ pub struct Watcher<T: HerdrTransport, R: SessionReader> {
     /// Pane ids for which the v1 `$summary` token has already been cleared in
     /// this watcher lifetime.
     legacy_summary_cleared: HashSet<String>,
+    /// How many agent panes each tab held in the last scan's list, so the
+    /// tab-naming rule can tell one agent from several without a second
+    /// endpoint (PRD D-04).
+    tab_agent_counts: HashMap<String, usize>,
     /// The home whose `hide-ai` settings file this watcher follows, and the
     /// choice it last read from it. `None` for a watcher given its router
     /// directly, which is what a test does.
@@ -1622,6 +1783,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             analysis_sender,
             analysis_receiver,
             legacy_summary_cleared: HashSet::new(),
+            tab_agent_counts: HashMap::new(),
             ai_settings: None,
             ai_settings_failure: None,
         }
@@ -1788,6 +1950,13 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             }
             None => None,
         };
+        self.tab_agent_counts.clear();
+        for pane in panes {
+            *self
+                .tab_agent_counts
+                .entry(pane.tab_id.clone())
+                .or_default() += 1;
+        }
         for pane in panes {
             if !self.legacy_summary_cleared.contains(&pane.id) {
                 self.transport.clear_legacy_summary_token(pane)?;
@@ -1867,6 +2036,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 Some(&format!("lines={};reasons={reasons}", parsed.skipped_lines)),
             )?;
         }
+        self.sync_names(pane, &parsed)?;
         let newest_user_is_last = parsed
             .events
             .iter()
@@ -2068,6 +2238,13 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             state.semantic_attention = None;
             changed = true;
         }
+        // The action the operator was asked for was taken, or overtaken: a
+        // working agent is not waiting for it, and the turn-end analysis
+        // writes the next one.
+        if pane.agent_status == "working" && !state.expected_reply.is_empty() {
+            state.expected_reply.clear();
+            changed = true;
+        }
         if pane.agent_status == "working" && state.interrupted {
             state.interrupted = false;
             changed = true;
@@ -2189,6 +2366,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             state.task = Some(analysis.task.clone());
         }
         state.progress = analysis.progress.clone();
+        state.expected_reply = analysis.expected_reply.clone();
         state.task_input_cursor = task_input_cursor.or(state.task_input_cursor);
         state.semantic_attention = analysis.attention;
         state.interrupted = false;
@@ -2283,6 +2461,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             .panes
             .get(&pane.id)
             .map_or(0, |state| state.changed_unix_ms);
+        let identity = self.identity_for(pane);
         if interrupted {
             return Ok(Display {
                 task: self
@@ -2295,6 +2474,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 elapsed: self.elapsed_for(pane)?,
                 unseen,
                 activity_unix_ms,
+                identity,
             });
         }
         let sort_key = match attention {
@@ -2323,21 +2503,227 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
             elapsed: self.elapsed_for(pane)?,
             unseen,
             activity_unix_ms,
+            identity,
         })
     }
 
+    /// The second report's tokens, read off the persisted state so a restart
+    /// republishes them without a provider call (PRD D-05).
+    ///
+    /// The `name` token is spent only while the name is this plugin's to
+    /// give and Herdr would not take it as the agent name; an agent the
+    /// operator named carries none, so the sidebar shows the operator's
+    /// name (PRD B10).
+    fn identity_for(&self, pane: &Pane) -> Identity {
+        let Some(state) = self.display_states.panes.get(&pane.id) else {
+            return Identity::default();
+        };
+        let non_empty = |value: &str| (!value.trim().is_empty()).then(|| value.to_owned());
+        Identity {
+            name: state
+                .plugin_name
+                .clone()
+                .filter(|_| !state.plugin_name_as_agent && name_owned(pane, state)),
+            progress: non_empty(&state.progress),
+            expected_reply: non_empty(&state.expected_reply),
+        }
+    }
+
+    /// Writes the session's name where it belongs and the tab's label after
+    /// it, under the ownership rule, once per name (PRD D-02, D-03, D-04).
+    ///
+    /// A failure is one log line and no retry: the name that is not there is
+    /// the visible failure (PRD D-11). The next different name is tried again.
+    fn sync_names(&mut self, pane: &Pane, parsed: &ParsedSession) -> Result<()> {
+        let now = unix_time_ms()?;
+        let state = self
+            .display_states
+            .panes
+            .entry(pane.id.clone())
+            .or_insert_with(|| PersistedDisplayState {
+                state_change_seq: pane.state_change_seq,
+                changed_unix_ms: now,
+                ..PersistedDisplayState::default()
+            });
+        let (name, title_missing) = session_name(pane.agent, parsed);
+        if title_missing && !state.title_missing_logged {
+            state.title_missing_logged = true;
+            write_state_json(
+                &self.paths.display_state(),
+                &self.display_states,
+                "display-state",
+            )?;
+            append_log(&self.paths, "session_title_missing", Some(pane), None)?;
+        }
+        let Some(name) = name else {
+            return Ok(());
+        };
+        let state = self
+            .display_states
+            .panes
+            .get_mut(&pane.id)
+            .expect("inserted above");
+        let mut changed = false;
+        if name_owned(pane, state) && state.plugin_name.as_deref() != Some(name.as_str()) {
+            // Herdr takes only a lowercase ASCII identifier as an agent
+            // name; anything else goes out as the `name` token in the second
+            // report. A refusal of a name that looked acceptable takes the
+            // same road rather than a retry (PRD D-03).
+            let as_agent = if herdr_agent_name_acceptable(&name) {
+                match self.transport.rename_agent(pane, &name) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        append_log(
+                            &self.paths,
+                            "agent_rename_failed",
+                            Some(pane),
+                            Some(&error.to_string()),
+                        )?;
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+            state.plugin_name = Some(name.clone());
+            state.plugin_name_as_agent = as_agent;
+            changed = true;
+        }
+        if state.plugin_tab_label.as_deref() != Some(name.as_str())
+            && self.tab_agent_counts.get(&pane.tab_id).copied() == Some(1)
+        {
+            match self.transport.tab_label(&pane.tab_id) {
+                Ok(label) => {
+                    if tab_label_owned(&label, state.plugin_tab_label.as_deref())
+                        && let Err(error) = self.transport.rename_tab(&pane.tab_id, &name)
+                    {
+                        append_log(
+                            &self.paths,
+                            "tab_rename_failed",
+                            Some(pane),
+                            Some(&error.to_string()),
+                        )?;
+                    }
+                }
+                Err(error) => {
+                    append_log(
+                        &self.paths,
+                        "tab_rename_failed",
+                        Some(pane),
+                        Some(&error.to_string()),
+                    )?;
+                }
+            }
+            // Handled, whichever way: the same name is not asked about again.
+            state.plugin_tab_label = Some(name);
+            changed = true;
+        }
+        if changed {
+            write_state_json(
+                &self.paths.display_state(),
+                &self.display_states,
+                "display-state",
+            )?;
+        }
+        Ok(())
+    }
+
     fn report_if_changed(&mut self, pane: &Pane, display: &Display) -> Result<bool> {
-        if self.last_displays.get(&pane.id) == Some(display) {
+        let previous = self.last_displays.get(&pane.id);
+        let status_changed = previous.is_none_or(|last| last.status_tokens_differ(display));
+        let identity_changed = previous.is_none_or(|last| last.identity != display.identity);
+        if !status_changed && !identity_changed {
             return Ok(false);
         }
-        self.transport.report(pane, display)?;
+        let mut reports: u64 = 0;
+        if status_changed {
+            self.transport.report(pane, display)?;
+            reports += 1;
+        }
+        if identity_changed {
+            self.transport.report_identity(pane, &display.identity)?;
+            reports += 1;
+        }
         self.last_displays.insert(pane.id.clone(), display.clone());
-        // Herdr increments pane revision when display metadata changes.
-        // Record the expected next revision so that our own report is not an event trigger.
+        // Herdr increments pane revision when display metadata changes, once
+        // per report that changed something. Record the expected next
+        // revision so that our own reports are not an event trigger.
         self.reported_revisions
-            .insert(pane.id.clone(), pane.revision.saturating_add(1));
+            .insert(pane.id.clone(), pane.revision.saturating_add(reports));
         Ok(true)
     }
+}
+
+/// The name an agent's own session gives it, at no provider cost (PRD D-02).
+///
+/// Claude writes an `ai-title` record; when a session has none yet, its
+/// first human turn stands in and the second value says so, so the watcher
+/// can log it once. Codex has no title record and always takes the first
+/// human turn, cut to the task-title budget. A session with neither yields
+/// no name, and nothing is written.
+pub fn session_name(agent: AgentKind, parsed: &ParsedSession) -> (Option<String>, bool) {
+    let first_turn = || {
+        parsed
+            .events
+            .iter()
+            .find(|event| event.kind == EventKind::Human)
+            .and_then(|event| normalize_task(&collapse_whitespace(&event.text)))
+    };
+    match agent {
+        AgentKind::Claude => match parsed.title.as_deref() {
+            Some(title) => (
+                Some(
+                    collapse_whitespace(title)
+                        .chars()
+                        .take(MAX_SESSION_NAME_CHARS)
+                        .collect(),
+                ),
+                false,
+            ),
+            None => {
+                let fallback = first_turn();
+                let missing = fallback.is_some();
+                (fallback, missing)
+            }
+        },
+        AgentKind::Codex => (first_turn(), false),
+    }
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Herdr's rule for an agent name, as the pinned server states it in its
+/// `invalid_agent_name` refusal: a lowercase letter, then up to 31 of
+/// lowercase letters, digits, `-` or `_`. The schema carries no pattern, so
+/// the rule is checked here first and the server's answer second.
+pub fn herdr_agent_name_acceptable(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some('a'..='z'))
+        && name.len() <= 32
+        && chars.all(|c| matches!(c, 'a'..='z' | '0'..='9' | '-' | '_'))
+}
+
+/// Whether the agent's name is this plugin's to write: it has none, or it has
+/// the one this plugin gave it. A name the operator gave is never touched
+/// (PRD B10).
+fn name_owned(pane: &Pane, state: &PersistedDisplayState) -> bool {
+    match pane.name.as_deref() {
+        None => true,
+        Some(name) => state.plugin_name_as_agent && state.plugin_name.as_deref() == Some(name),
+    }
+}
+
+/// Whether a tab label is Herdr's own (`3`, `Tab 3`) or one this plugin wrote,
+/// either of which it may replace. A label the operator typed is neither
+/// (PRD D-04).
+pub fn tab_label_owned(label: &str, plugin_label: Option<&str>) -> bool {
+    let trimmed = label.trim();
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    digits(trimmed)
+        || trimmed.strip_prefix("Tab ").is_some_and(digits)
+        || plugin_label.is_some_and(|written| written == trimmed)
 }
 
 #[derive(Debug)]

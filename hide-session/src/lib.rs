@@ -1076,10 +1076,14 @@ mod tests {
     #[test]
     fn claude_ai_title_is_the_session_title_and_not_an_event() {
         let chunk = concat!(
-            r#"{"type":"ai-title","aiTitle":"  Hook 버그 확인 ","sessionId":"s1"}"#, "\n",
-            r#"{"type":"user","timestamp":"2026-09-18T00:00:00.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"hook 고쳐줘"}}"#, "\n",
-            r#"{"type":"ai-title","aiTitle":"","sessionId":"s1"}"#, "\n",
-            r#"{"type":"ai-title","aiTitle":"Hook 보고 경로 교체","sessionId":"s1"}"#, "\n",
+            r#"{"type":"ai-title","aiTitle":"  Hook 버그 확인 ","sessionId":"s1"}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-18T00:00:00.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"hook 고쳐줘"}}"#,
+            "\n",
+            r#"{"type":"ai-title","aiTitle":"","sessionId":"s1"}"#,
+            "\n",
+            r#"{"type":"ai-title","aiTitle":"Hook 보고 경로 교체","sessionId":"s1"}"#,
+            "\n",
         );
         let parsed = parse_claude_events(chunk);
         assert_eq!(parsed.title.as_deref(), Some("Hook 보고 경로 교체"));
