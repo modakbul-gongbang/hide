@@ -340,8 +340,6 @@ struct CorePetBadges: Decodable, Equatable {
     let seen: Int
     let disconnected: Int
     let subagentsActive: UInt32
-    let backgroundRunning: UInt32
-    let backgroundFailed: UInt32
 
     enum CodingKeys: String, CodingKey {
         case needsYou = "needs_you"
@@ -350,8 +348,6 @@ struct CorePetBadges: Decodable, Equatable {
         case seen
         case disconnected
         case subagentsActive = "subagents_active"
-        case backgroundRunning = "background_running"
-        case backgroundFailed = "background_failed"
     }
 
     static let none = CorePetBadges(
@@ -360,9 +356,7 @@ struct CorePetBadges: Decodable, Equatable {
         working: 0,
         seen: 0,
         disconnected: 0,
-        subagentsActive: 0,
-        backgroundRunning: 0,
-        backgroundFailed: 0
+        subagentsActive: 0
     )
 }
 
@@ -399,19 +393,11 @@ struct CoreUIStateSnapshot: Decodable {
     /// per document, and it is not a pane, so it carries a scale of its own
     /// instead of a row in the pane-keyed map.
     let editorTextScale: Double
-    /// The composer's defaults for the next chat, and whether the Scratch
-    /// section is open. Written by those surfaces only.
-    let lastAgentKind: String
-    let lastAgentBypass: Bool
-    let scratchExpanded: Bool
 
     var collapsedAgentPaneIDs: [String] = []
     var projectBaseBranches: [String: String] = [:]
 
     enum CodingKeys: String, CodingKey {
-        case lastAgentKind = "last_agent_kind"
-        case lastAgentBypass = "last_agent_bypass"
-        case scratchExpanded = "scratch_expanded"
         case collapsedAgentPaneIDs = "collapsed_agent_pane_ids"
         case projectBaseBranches = "project_base_branches"
         case leftSidebarVisible = "left_sidebar_visible"
@@ -465,10 +451,6 @@ struct CoreUIStateSnapshot: Decodable {
         ) ?? []
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
-        lastAgentKind = try container.decodeIfPresent(String.self, forKey: .lastAgentKind)
-            ?? AgentProvider.claude.rawValue
-        lastAgentBypass = try container.decodeIfPresent(Bool.self, forKey: .lastAgentBypass) ?? false
-        scratchExpanded = try container.decodeIfPresent(Bool.self, forKey: .scratchExpanded) ?? false
         shortcutBindings = try container.decodeIfPresent(
             [String: String].self,
             forKey: .shortcutBindings

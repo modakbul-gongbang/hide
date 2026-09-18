@@ -381,7 +381,4 @@ enum HideTheme {
 
     static let gitRowFontSize: CGFloat = 11
     static let gitDetailFontSize: CGFloat = 10
-    /// The composer is a message box, not a form: wide enough for a sentence
-    /// to breathe and short enough to read as a prompt rather than a page.
-    static let composerSheetSize = CGSize(width: 560, height: 250)
 }

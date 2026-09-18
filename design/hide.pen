@@ -11931,50 +11931,6 @@
                           "fontSize": "$--text-caption"
                         }
                       }
-                    },
-                    {
-                      "type": "frame",
-                      "id": "inactive-state-1-jgnJi",
-                      "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
-                      "width": "fill_container",
-                      "gap": "$--spacing-xs",
-                      "padding": [
-                        "$--spacing-sm",
-                        "$--spacing-md"
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "inactive-state-1-MBrtM",
-                          "name": "Chevron",
-                          "width": 9,
-                          "height": 9,
-                          "icon": "chevron-right",
-                          "library": "lucide",
-                          "fill": "$--color-muted"
-                        },
-                        {
-                          "type": "text",
-                          "id": "inactive-state-1-pBvfU",
-                          "name": "Label",
-                          "fill": "$--color-secondary",
-                          "content": "SCRATCH",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "text",
-                          "id": "inactive-state-1-olbHk",
-                          "name": "Count",
-                          "fill": "$--color-muted",
-                          "content": "1",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "normal"
-                        }
-                      ]
                     }
                   ]
                 },
@@ -12530,50 +12486,6 @@
                           "fontSize": "$--text-caption"
                         }
                       }
-                    },
-                    {
-                      "type": "frame",
-                      "id": "inactive-state-2-jgnJi",
-                      "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
-                      "width": "fill_container",
-                      "gap": "$--spacing-xs",
-                      "padding": [
-                        "$--spacing-sm",
-                        "$--spacing-md"
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "inactive-state-2-MBrtM",
-                          "name": "Chevron",
-                          "width": 9,
-                          "height": 9,
-                          "icon": "chevron-right",
-                          "library": "lucide",
-                          "fill": "$--color-muted"
-                        },
-                        {
-                          "type": "text",
-                          "id": "inactive-state-2-pBvfU",
-                          "name": "Label",
-                          "fill": "$--color-secondary",
-                          "content": "SCRATCH",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "text",
-                          "id": "inactive-state-2-olbHk",
-                          "name": "Count",
-                          "fill": "$--color-muted",
-                          "content": "1",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "normal"
-                        }
-                      ]
                     }
                   ]
                 },
@@ -13207,50 +13119,6 @@
                           "fontSize": "$--text-caption"
                         }
                       }
-                    },
-                    {
-                      "type": "frame",
-                      "id": "inactive-state-3-jgnJi",
-                      "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
-                      "width": "fill_container",
-                      "gap": "$--spacing-xs",
-                      "padding": [
-                        "$--spacing-sm",
-                        "$--spacing-md"
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "inactive-state-3-MBrtM",
-                          "name": "Chevron",
-                          "width": 9,
-                          "height": 9,
-                          "icon": "chevron-right",
-                          "library": "lucide",
-                          "fill": "$--color-muted"
-                        },
-                        {
-                          "type": "text",
-                          "id": "inactive-state-3-pBvfU",
-                          "name": "Label",
-                          "fill": "$--color-secondary",
-                          "content": "SCRATCH",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "text",
-                          "id": "inactive-state-3-olbHk",
-                          "name": "Count",
-                          "fill": "$--color-muted",
-                          "content": "1",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "normal"
-                        }
-                      ]
                     }
                   ]
                 },
@@ -13795,50 +13663,6 @@
                           "fontSize": "$--text-caption"
                         }
                       }
-                    },
-                    {
-                      "type": "frame",
-                      "id": "inactive-state-4-jgnJi",
-                      "name": "ScratchSection header / UPPERCASE, chevron, inset 12 - disagrees with the label above",
-                      "width": "fill_container",
-                      "gap": "$--spacing-xs",
-                      "padding": [
-                        "$--spacing-sm",
-                        "$--spacing-md"
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "inactive-state-4-MBrtM",
-                          "name": "Chevron",
-                          "width": 9,
-                          "height": 9,
-                          "icon": "chevron-right",
-                          "library": "lucide",
-                          "fill": "$--color-muted"
-                        },
-                        {
-                          "type": "text",
-                          "id": "inactive-state-4-pBvfU",
-                          "name": "Label",
-                          "fill": "$--color-secondary",
-                          "content": "SCRATCH",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "text",
-                          "id": "inactive-state-4-olbHk",
-                          "name": "Count",
-                          "fill": "$--color-muted",
-                          "content": "1",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "normal"
-                        }
-                      ]
                     }
                   ]
                 },
@@ -29933,14 +29757,6 @@
     "--size-add-device-sheet-h": {
       "type": "number",
       "value": 300
-    },
-    "--size-composer-sheet-w": {
-      "type": "number",
-      "value": 560
-    },
-    "--size-composer-sheet-h": {
-      "type": "number",
-      "value": 250
     },
     "--size-editor-inset": {
       "type": "number",

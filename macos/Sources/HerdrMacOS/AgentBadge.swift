@@ -29,8 +29,8 @@ enum AgentMark {
     ///
     /// A SwiftUI `Menu` label is hosted by AppKit, which draws an
     /// `Image(nsImage:)` at the NSImage's own size and ignores
-    /// `.resizable().frame(...)`: the composer's agent chip drew the 128pt mark
-    /// beside an 11pt title. Sizing the image itself is the instruction that
+    /// `.resizable().frame(...)`: a menu chip once drew the 128pt mark beside
+    /// an 11pt title. Sizing the image itself is the instruction that
     /// surface honors. The copy is a second handle over the same bitmap, so the
     /// cache still holds one decode.
     static func image(for agentKind: String, side: CGFloat) -> NSImage? {

@@ -43,7 +43,6 @@ struct PetDashboardRow: Identifiable, Equatable {
     /// status word; there is no second unread flag, because the bright mark
     /// and the Done word already say that.
     let connection: String
-    let ambient: CoreAmbientSignal?
 }
 
 struct PetDashboardGroup: Identifiable, Equatable {
@@ -83,8 +82,7 @@ enum PetDashboardProjector {
                 detail: agent.detail,
                 statusWordVisible: agent.statusWordVisible,
                 elapsed: agent.elapsed,
-                connection: connected ? "connected" : "disconnected",
-                ambient: connected ? agent.ambient : nil
+                connection: connected ? "connected" : "disconnected"
             )
         }
 

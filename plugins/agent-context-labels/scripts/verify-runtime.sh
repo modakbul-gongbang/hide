@@ -49,7 +49,6 @@ request = {
     "id": "hide.agent-context-labels:verify-subscription",
     "method": "events.subscribe",
     "params": {
-        "after_sequence": 0,
         "subscriptions": [
             {"type": "pane.created"},
             {"type": "pane.updated"},
@@ -79,7 +78,7 @@ if "error" in ack:
 result = ack.get("result", {})
 if result.get("type") != "subscription_started":
     raise RuntimeError(f"unexpected events.subscribe result: {result}")
-print(f"subscription-started sequence={result.get('sequence')}")
+print("subscription-started")
 PY
 
 herdr pane report-metadata "$pane_id" --source "$source_id" \

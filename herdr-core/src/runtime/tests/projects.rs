@@ -49,7 +49,7 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
         "layouts": layouts,
     }))
     .expect("three-tab payload");
-    let spaces = Runtime::session_spaces(&payload, "");
+    let spaces = Runtime::session_spaces(&payload);
     let catalog = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),
@@ -120,7 +120,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
         }))
         .expect("one-tab payload")
     };
-    let spaces = Runtime::session_spaces(&payload(), "");
+    let spaces = Runtime::session_spaces(&payload());
     let fresh = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),

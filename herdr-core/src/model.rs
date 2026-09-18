@@ -157,9 +157,10 @@ pub struct PetBadgesSnapshot {
     /// Retained agents on a server that stopped answering. They are counted
     /// separately because a stale count of what is waiting would be a lie.
     pub disconnected: usize,
+    /// In-process subagents Hide's hook reported as working, summed over the
+    /// agents on an answering server. It is the one count the hook can vouch
+    /// for; an uninstrumented session contributes nothing, not a zero.
     pub subagents_active: u32,
-    pub background_running: u32,
-    pub background_failed: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -182,9 +183,6 @@ pub struct NavigatorSnapshot {
     pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
     pub provider_usage: Vec<ProviderUsageSnapshot>,
-    /// The one space that is not a project. Its own section, never a row in
-    /// `workspaces` and never counted with them.
-    pub scratch: ScratchSnapshot,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -193,44 +191,6 @@ pub struct InactiveProjectGroupSnapshot {
     pub expanded: bool,
     /// IDs in the same recent-activity order as `NavigatorSnapshot.workspaces`.
     pub project_ids: Vec<String>,
-}
-
-/// The Scratch node: one fixed folder, and the Herdr tabs living in it.
-///
-/// It is deliberately not a `WorkspaceSnapshot`. A project is a repository
-/// with checkouts, worktrees, a branch and a card; Scratch is a folder with
-/// tabs, and giving it the project shape would have meant answering all of
-/// that with placeholders and then keeping it out of every project view by
-/// hand.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct ScratchSnapshot {
-    /// Always `scratch::NODE_ID`. Carried so the shell addresses the node by
-    /// the value the core sent rather than by a string it repeats.
-    pub id: String,
-    pub label: String,
-    /// The folder every Scratch pane runs in. The core creates it as the
-    /// first step of the Scratch tab pipeline.
-    pub path: String,
-    /// Collapsed by default, so this is false until the operator opens it.
-    pub expanded: bool,
-    /// The Herdr workspaces holding Scratch panes, in Herdr order. Empty when
-    /// Herdr has none yet, which is what tells a new tab to create one.
-    pub session_workspace_ids: Vec<String>,
-    pub tabs: Vec<ScratchTabSnapshot>,
-}
-
-/// One row in the Scratch section.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ScratchTabSnapshot {
-    /// Herdr's tab id.
-    pub id: String,
-    /// Herdr's own tab label, which is what a tab with no agent shows.
-    pub label: String,
-    /// The chat's title, read from the pane metadata token an agent tab was
-    /// started with. Absent for a terminal tab, and for an agent tab whose
-    /// title was never written, which then falls back to the label.
-    pub title: Option<String>,
-    pub panes: Vec<PaneSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -388,19 +348,16 @@ pub struct SidebarAgentSnapshot {
     /// read record.
     #[serde(skip_serializing)]
     pub state_change_seq: Option<u64>,
-    pub ambient: Option<AmbientSignal>,
     /// The conversation id this agent is running, kept only when Herdr recorded
     /// the session as an id. A session recorded as a path is dropped here,
     /// because neither agent's fork command takes one.
     #[serde(skip_serializing)]
     pub session_id: Option<String>,
-    /// The pane this agent was spawned from, as Herdr's own lineage records it.
+    /// The pane this agent was spawned from: Herdr's own lineage record, or
+    /// the `parent_pane` token its spawner declared when Herdr recorded none.
+    /// `wire.rs::lineage_parent` is the one place that resolves the two.
     #[serde(skip_serializing)]
     pub spawned_from_pane_id: Option<String>,
-    /// The chat title the composer wrote onto this agent's pane, read back
-    /// from Herdr's pane metadata token. Absent for an agent Hide did not
-    /// start through the composer, which falls back to its tab label.
-    pub chat_title: Option<String>,
     /// Ownership, derived from the lineage alone: a root is the operator's own
     /// work, a descendant is work the root delegated. It is the fourth derived
     /// axis beside demand, activity and read, and it is advice rather than a
@@ -449,16 +406,6 @@ pub struct SidebarAgentSnapshot {
     /// something to read.
     pub spawn_origin_pane_id: Option<String>,
     pub lineage_collapsed: bool,
-}
-
-/// The only three values this client ever reads out of a pane's optional
-/// `ambient` object. Any other key, or a value of the wrong type, is dropped
-/// during parsing and never reaches app state, the UI, or logs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct AmbientSignal {
-    pub subagents_active: u32,
-    pub background_running: u32,
-    pub background_failed: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1187,24 +1134,6 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
-    /// The agent the composer offers next time, which is the one the operator
-    /// last started. Written on submission only, so it costs the revisioned
-    /// section nothing between submissions.
-    #[serde(default = "default_agent_kind")]
-    pub last_agent_kind: String,
-    /// Whether the composer's bypass toggle is on. The operator's choice
-    /// survives a restart because they asked for it to (D-15); the warning
-    /// beside the chip is what keeps it visible rather than forgetting it.
-    #[serde(default)]
-    pub last_agent_bypass: bool,
-    /// Whether the Scratch section is open.
-    ///
-    /// Its own field rather than a row in `collapsed_workspace_ids`, because
-    /// that list records the exceptions to a default of expanded and Scratch
-    /// defaults to collapsed. Encoding "collapsed by default" in a collapsed
-    /// list needs a sentinel for "never recorded"; one boolean says it.
-    #[serde(default)]
-    pub scratch_expanded: bool,
 }
 
 /// One pane's read mark: the state the operator was looking at the last time
@@ -1277,9 +1206,6 @@ impl Default for UiStateSnapshot {
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
-            last_agent_kind: default_agent_kind(),
-            last_agent_bypass: false,
-            scratch_expanded: false,
         }
     }
 }
@@ -1303,11 +1229,6 @@ pub struct DeviceRegistration {
 
 pub(crate) fn default_local_device_id() -> String {
     "local".to_owned()
-}
-
-/// The composer's agent before the operator has started one.
-pub(crate) fn default_agent_kind() -> String {
-    "claude".to_owned()
 }
 
 pub(crate) fn default_accent_hex() -> String {
@@ -2078,14 +1999,6 @@ impl Snapshot {
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),
                 provider_usage: ProviderUsageSnapshot::initial_rows(),
-                scratch: ScratchSnapshot {
-                    id: crate::scratch::NODE_ID.to_owned(),
-                    label: crate::scratch::LABEL.to_owned(),
-                    path: crate::scratch::root().to_string_lossy().into_owned(),
-                    expanded: false,
-                    session_workspace_ids: Vec::new(),
-                    tabs: Vec::new(),
-                },
             },
             overlay: OverlaySnapshot {
                 kind: None,

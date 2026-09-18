@@ -29,7 +29,10 @@ fn run_coordinator(
     let mut active_tab_reads: BTreeMap<String, u32> = BTreeMap::new();
     let mut subscription: Option<ActiveSubscription> = None;
     let mut subscription_generation = 0_u64;
-    let mut needs_bootstrap = true;
+    // Until when a line off the stream is reconciled against the bootstrap
+    // snapshot rather than applied strictly. Every connect is a bootstrap,
+    // because Herdr's stream has no position to resume from.
+    let mut reconcile_until = Instant::now();
     let mut reconnect_at = Instant::now();
     let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
     let mut defer_background_reads = true;
@@ -80,25 +83,20 @@ fn run_coordinator(
 
         if subscription.is_none() && Instant::now() >= reconnect_at {
             let has_projection = replica.is_some();
-            let attempt = match (needs_bootstrap, replica.as_ref()) {
-                (false, Some(current)) => {
-                    connect_from_cursor(&context, current, &sender, &mut subscription_generation)
-                }
-                _ => connect_from_snapshot(
-                    &context,
-                    &sender,
-                    &mut subscription_generation,
-                    has_projection,
-                )
-                .map(|(next_replica, next_subscription)| {
+            match connect(
+                &context,
+                &sender,
+                &mut subscription_generation,
+                has_projection,
+            ) {
+                Ok(Connected {
+                    replica: next_replica,
+                    subscription: next_subscription,
+                    snapshot_at,
+                }) => {
                     replica = Some(next_replica);
-                    next_subscription
-                }),
-            };
-
-            match attempt {
-                Ok(next_subscription) => {
                     subscription = Some(next_subscription);
+                    reconcile_until = snapshot_at + RECONCILE_GRACE;
                     active_tab_reads.clear();
                     defer_background_reads = true;
                     reconnect_delay = RECONNECT_INITIAL_DELAY;
@@ -115,12 +113,10 @@ fn run_coordinator(
                     if let (Some(home), Some(current)) = (hook_home.as_deref(), replica.as_ref()) {
                         sweep_subagent_counters(home, current);
                     }
-                    needs_bootstrap = false;
                 }
-                Err(failure) => {
-                    log_sync_failure(&context, "connect.failed", replica.as_ref(), &failure.error);
-                    needs_bootstrap |= failure.needs_bootstrap;
-                    if !publish_failure(&context, failure.error) {
+                Err(error) => {
+                    log_sync_failure(&context, "connect.failed", replica.as_ref(), &error);
+                    if !publish_failure(&context, error) {
                         return;
                     }
                     reconnect_at = Instant::now() + reconnect_delay;
@@ -175,7 +171,6 @@ fn run_coordinator(
                                 if !publish_failure(&context, error) {
                                     return;
                                 }
-                                needs_bootstrap = true;
                                 reconnect_at = Instant::now() + reconnect_delay;
                                 reconnect_delay = next_reconnect_delay(reconnect_delay);
                             }
@@ -225,7 +220,6 @@ fn run_coordinator(
                     Err(error) => {
                         log_sync_failure(&context, "active_tab_read.failed", Some(current), &error);
                         stop_subscription(&mut subscription);
-                        needs_bootstrap = true;
                         if !publish_failure(&context, error) {
                             return;
                         }
@@ -434,17 +428,26 @@ fn run_coordinator(
                 stop_subscription(&mut subscription);
                 return;
             }
-            Ok(CoordinatorMessage::SubscriptionLine { generation, line }) => {
+            Ok(CoordinatorMessage::SubscriptionLine {
+                generation,
+                line,
+                received_at,
+            }) => {
                 if subscription.as_ref().map(|active| active.generation) != Some(generation) {
                     continue;
                 }
                 defer_background_reads = true;
+                let mode = if received_at <= reconcile_until {
+                    ApplyMode::Reconcile
+                } else {
+                    ApplyMode::Strict
+                };
                 match parse_subscription_line(&line) {
                     Ok(SubscriptionLine::Event(event)) => {
                         let current = replica
                             .as_mut()
                             .expect("active subscription always has a replica");
-                        match current.apply(event) {
+                        match current.apply(event, mode) {
                             Ok(outcome) => {
                                 if outcome.refresh_agents {
                                     next_agent_refresh = Instant::now();
@@ -485,7 +488,6 @@ fn run_coordinator(
                                                 &error,
                                             );
                                             stop_subscription(&mut subscription);
-                                            needs_bootstrap = true;
                                             if !publish_failure(&context, error) {
                                                 return;
                                             }
@@ -498,7 +500,6 @@ fn run_coordinator(
                             Err(error) => {
                                 log_sync_failure(&context, "event.rejected", Some(current), &error);
                                 stop_subscription(&mut subscription);
-                                needs_bootstrap = true;
                                 if !publish_failure(&context, error) {
                                     return;
                                 }
@@ -508,18 +509,15 @@ fn run_coordinator(
                         }
                     }
                     Ok(SubscriptionLine::Error { code, message }) => {
-                        let event_gap = code == "event_gap" || code == "event_journal_unavailable";
-                        let cursor = replica.as_ref().map(|current| current.cursor);
                         crate::diagnostic!(json!({
                             "component": "session_sync",
                             "kind": "subscription.error",
                             "target": context.log_target(),
                             "code": code,
-                            "sequence": cursor,
+                            "applied_events": replica.as_ref().map(|current| current.applied_events),
                             "message": message,
                         }));
                         stop_subscription(&mut subscription);
-                        needs_bootstrap = event_gap;
                         let error = SessionFetchError::Stale(format!(
                             "Herdr event stream failed with {code}: {message}"
                         ));
@@ -537,7 +535,6 @@ fn run_coordinator(
                             &error,
                         );
                         stop_subscription(&mut subscription);
-                        needs_bootstrap = true;
                         if !publish_failure(&context, error) {
                             return;
                         }
@@ -555,9 +552,12 @@ fn run_coordinator(
                 }
                 defer_background_reads = true;
                 stop_subscription(&mut subscription);
-                let cursor = replica.as_ref().map(|current| current.cursor).unwrap_or(0);
+                let applied = replica
+                    .as_ref()
+                    .map(|current| current.applied_events)
+                    .unwrap_or(0);
                 let error = SessionFetchError::Stale(format!(
-                    "Herdr event stream disconnected after sequence {cursor}: {message}"
+                    "Herdr event stream disconnected after {applied} events: {message}"
                 ));
                 log_sync_failure(
                     &context,
@@ -833,17 +833,16 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (registrations, worktrees, scratch_root) = match runtime.lock() {
+    let (registrations, worktrees) = match runtime.lock() {
         Ok(guard) => (
             guard.snapshot().ui_state.workspace_registrations.clone(),
             guard.worktree_catalog(),
-            guard.scratch_root(),
         ),
         Err(_) => return false,
     };
     drop(runtime);
 
-    let spaces = Runtime::session_spaces(&payload, &scratch_root);
+    let spaces = Runtime::session_spaces(&payload);
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
         cache.registrations == registrations
             && cache.spaces == spaces

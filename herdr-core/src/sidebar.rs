@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{AmbientSignal, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
+use crate::model::{PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
@@ -115,10 +115,6 @@ pub struct SessionAgentPayload {
     pub state_change_seq: Option<u64>,
     #[serde(default)]
     pub tokens: BTreeMap<String, Value>,
-    /// Passed through verbatim; the strict shape check lives in
-    /// [`parse_ambient`] so a broken record can never partially survive.
-    #[serde(default)]
-    pub ambient: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -658,20 +654,18 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
 
 /// The stable, user-facing identity shared by lineage surfaces.
 ///
-/// The ladder is `chat title → name token → Herdr agent name → task →
-/// workspace label` (PRD D-01, D-03). The chat title is what the composer
-/// wrote; the `name` token is the session name the label plugin read off the
-/// agent's own session file when Herdr refused it as an agent name; the Herdr
-/// agent name is the one the operator or the plugin gave. `task` is the
+/// The ladder is `name token → Herdr agent name → task → workspace label`
+/// (PRD D-01, D-03). The `name` token is the session name the label plugin
+/// read off the agent's own session file when Herdr refused it as an agent
+/// name; the Herdr agent name is the one the operator or the plugin gave. `task` is the
 /// plugin's rolling title, which moves between turns, so it stands in only
 /// when no name exists at all. A pane id is a transport handle, never a
 /// name: a report-only pane whose `id` is its pane id falls through to the
 /// workspace label.
 fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
     agent
-        .chat_title
+        .name
         .clone()
-        .or_else(|| agent.name.clone())
         .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
         .or_else(|| agent.task.clone())
         .unwrap_or_else(|| agent.workspace_label.clone())
@@ -924,10 +918,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let demand = agent_demand(&agent);
     let activity = agent_activity(&agent);
     let blocked = agent.agent_status.as_deref() == Some("blocked");
-    let ambient = match agent.ambient.as_ref() {
-        Some(raw) => parse_ambient(raw)?,
-        None => None,
-    };
     let workspace_label = non_empty(agent.workspace_label.as_deref())
         .or_else(|| {
             agent
@@ -947,11 +937,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let elapsed = token_string(&agent.tokens, "elapsed")
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
-    // The title the composer wrote onto this pane when it started the chat.
-    // Herdr holds it, so it survives a Hide restart the way the pane does.
-    let chat_title = token_string(&agent.tokens, crate::scratch::TITLE_TOKEN)
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
 
     let mut projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
@@ -984,7 +969,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         elapsed,
         last_activity,
         state_change_seq: agent.state_change_seq,
-        ambient,
         session_id: agent
             .agent_session
             .as_ref()
@@ -992,7 +976,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
-        chat_title,
         delegated: false,
         stall_level: String::new(),
         stall_notice: None,
@@ -1151,35 +1134,6 @@ fn derive_read_state(
         derive_from_axes(agent);
     }
     sort_agents(agents);
-}
-
-/// Reads a pane's optional `ambient` object.
-///
-/// `null` means the server sent nothing for this pane. Any other unreadable
-/// shape excludes the whole record rather than partially extracting it, and
-/// unknown keys are dropped so nothing but the three counts can ever reach
-/// app state (see docs/status-model.md, Ambient signals).
-fn parse_ambient(raw: &Value) -> Result<Option<AmbientSignal>, String> {
-    if raw.is_null() {
-        return Ok(None);
-    }
-    let object = raw
-        .as_object()
-        .ok_or_else(|| "ambient signal is not an object".to_owned())?;
-    let count = |key: &str| -> Result<u32, String> {
-        match object.get(key) {
-            None => Ok(0),
-            Some(value) => value
-                .as_u64()
-                .and_then(|number| u32::try_from(number).ok())
-                .ok_or_else(|| format!("ambient signal {key} is not a count")),
-        }
-    };
-    Ok(Some(AmbientSignal {
-        subagents_active: count("subagents_active")?,
-        background_running: count("background_running")?,
-        background_failed: count("background_failed")?,
-    }))
 }
 
 /// The demand axis. Error outranks question, which outranks approval, so the
@@ -1788,9 +1742,8 @@ mod tests {
 
     /// PRD D-01, D-03: the name ladder, one rung at a time, top to bottom.
     #[test]
-    fn identity_ladder_prefers_chat_title_then_name_then_herdr_name_then_task() {
+    fn identity_ladder_prefers_name_then_herdr_name_then_task() {
         let projected = projected(json!([
-            {"pane_id":"p1","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000001","hide_chat_title":"Scratch chat","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
             {"pane_id":"p2","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
             {"pane_id":"p3","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","task":"hook 보고 경로 수정"}},
             {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}},
@@ -1802,13 +1755,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             labels,
-            [
-                "Scratch chat",
-                "Hook 버그 확인",
-                "impl-x",
-                "hook 보고 경로 수정",
-                "hide"
-            ]
+            ["Hook 버그 확인", "impl-x", "hook 보고 경로 수정", "hide"]
         );
     }
 
@@ -2128,60 +2075,5 @@ mod tests {
         ])));
         assert_eq!(projection.agents[0].last_activity, "00000000000000000001");
         assert_eq!(projection.agents[0].state_change_seq, Some(1));
-    }
-
-    #[test]
-    fn ambient_counts_parse_and_unknown_keys_never_survive() {
-        let projection = project_agents(payload(json!([
-            {"pane_id":"legacy","tokens":{"status_idle":"○","activity":"0000000000001"}},
-            {"pane_id":"counted","tokens":{"status_working":"●","activity":"0000000000002"},
-             "ambient":{"subagents_active":2,"background_running":1,"background_failed":0,
-                        "task_name":"SENTINEL-do-not-leak","command":"SENTINEL-rm -rf /"}}
-        ])));
-
-        assert_eq!(projection.excluded, []);
-        let counted = projection
-            .agents
-            .iter()
-            .find(|agent| agent.pane_id == "counted")
-            .expect("counted agent");
-        let ambient = counted.ambient.expect("ambient present");
-        assert_eq!(ambient.subagents_active, 2);
-        assert_eq!(ambient.background_running, 1);
-        assert_eq!(
-            projection
-                .agents
-                .iter()
-                .find(|agent| agent.pane_id == "legacy")
-                .and_then(|agent| agent.ambient),
-            None,
-            "a snapshot without the key stays on the legacy path"
-        );
-        let serialized = serde_json::to_string(&projection.agents).expect("serialize agents");
-        assert!(
-            !serialized.contains("SENTINEL"),
-            "unknown ambient keys must never reach the projected agent: {serialized}"
-        );
-    }
-
-    #[test]
-    fn a_malformed_ambient_record_excludes_only_that_agent() {
-        let projection = project_agents(payload(json!([
-            {"pane_id":"broken","tokens":{"status_working":"●","activity":"0000000000002"},
-             "ambient":{"subagents_active":"not-a-number"}},
-            {"pane_id":"intact","tokens":{"status_idle":"○","activity":"0000000000001"}}
-        ])));
-
-        assert_eq!(
-            projection
-                .agents
-                .iter()
-                .map(|agent| agent.pane_id.as_str())
-                .collect::<Vec<_>>(),
-            ["intact"]
-        );
-        assert_eq!(projection.excluded.len(), 1);
-        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("broken"));
-        assert!(projection.excluded[0].reason.contains("subagents_active"));
     }
 }

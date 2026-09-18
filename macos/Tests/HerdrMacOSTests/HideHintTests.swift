@@ -5,7 +5,7 @@ import Testing
 @Suite("Hide hint lifecycle and exposure")
 struct HideHintTests {
     func targets() -> [HideHintTarget] {
-        let menus: [ShellMenuCommand] = [.search, .newChat, .newWorkspace, .toggleSidebarView,
+        let menus: [ShellMenuCommand] = [.search, .newWorkspace, .toggleSidebarView,
             .toggleLeftSidebar, .newTab, .toggleRightPanel, .openFile, .findInPane]
         return menus.map { HideHintTarget(id: $0.rawValue, command: .menu($0)) } + [
             HideHintTarget(id: "close-a", command: .menu(.closeTab), tabID: "a"),
@@ -22,7 +22,7 @@ struct HideHintTests {
 
     @Test func exactMatrixAndEffectiveBindings() {
         let cases: [(Set<PaneShortcut.Modifier>, Set<String>)] = [
-            ([.command], ["search", "new_chat", "toggle_sidebar_view", "toggle_left_sidebar", "new_tab", "close-a", "tab-1"]),
+            ([.command], ["search", "toggle_sidebar_view", "toggle_left_sidebar", "new_tab", "close-a", "tab-1"]),
             ([.command, .shift], ["new_workspace", "toggle_right_panel", "pane-a"]),
             ([.option], ["agent-1"]), ([.command, .option], ["zoom-a"]),
             ([.control], []), ([.shift], []), ([.control, .command], []),
@@ -125,7 +125,7 @@ struct HideHintTests {
         #expect(model.shortcutHintState.reveals(.agent(1), bindings: [:]))
 
         let sheets: [ReferenceWritableKeyPath<ShellModel, Bool>] = [
-            \.showComposer, \.showSearch, \.showFileSearch, \.showSettings,
+            \.showSearch, \.showFileSearch, \.showSettings,
         ]
         for sheet in sheets {
             model[keyPath: sheet] = true

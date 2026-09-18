@@ -440,16 +440,6 @@ pub(super) struct UiStateUpdatePayload {
     pub(super) accent_hex: Option<String>,
     #[serde(default)]
     pub(super) font_size: Option<f32>,
-    /// The composer's remembered agent and bypass choice, and whether the
-    /// Scratch section is open. Each is `None` on a save that did not touch
-    /// it, so a navigator save cannot reset the composer and a composer
-    /// submission cannot close the Scratch section.
-    #[serde(default)]
-    pub(super) last_agent_kind: Option<String>,
-    #[serde(default)]
-    pub(super) last_agent_bypass: Option<bool>,
-    #[serde(default)]
-    pub(super) scratch_expanded: Option<bool>,
     /// Ephemeral observation hints for the core-owned provider usage timer.
     /// They ride the existing UI-state event but are never persisted.
     #[serde(default)]
@@ -485,11 +475,6 @@ pub(super) struct GitWorktreeOpenPayload {
 pub(super) struct GitWorktreeSetBasePayload {
     pub(super) repository_root: String,
     pub(super) branch: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CreateScratchChatTabPayload {
-    pub(super) label: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -712,7 +697,6 @@ pub(super) enum Event {
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
-    CreateScratchChatTab(CreateScratchChatTabPayload),
     CreateWorktree(CreateWorktreePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
     TaskOperationAck(TaskOperationAckPayload),
@@ -844,9 +828,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
-        "create_scratch_chat_tab" => {
-            decode!(CreateScratchChatTabPayload, CreateScratchChatTab)
-        }
         "create_worktree" => decode!(CreateWorktreePayload, CreateWorktree),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
         "task_operation_ack" => decode!(TaskOperationAckPayload, TaskOperationAck),
@@ -1094,11 +1075,6 @@ impl Runtime {
                 true
             }
             Event::CreateTab(payload) => {
-                // Scratch is not a project, so it is answered before the
-                // project lookup rather than by pretending to be one.
-                if payload.workspace_id == crate::scratch::NODE_ID {
-                    return self.create_scratch_tab(payload.label.trim());
-                }
                 let Some(workspace_snapshot) = self
                     .snapshot
                     .navigator
@@ -1776,17 +1752,6 @@ impl Runtime {
                     return true;
                 }
                 let pane_id = payload.pane_id;
-                if self
-                    .snapshot
-                    .navigator
-                    .scratch
-                    .tabs
-                    .iter()
-                    .flat_map(|tab| tab.panes.iter())
-                    .any(|pane| pane.id == pane_id)
-                {
-                    return self.start_scratch_close(pane_id);
-                }
                 if self.live.is_none() {
                     self.set_error(
                         "pane.control_unavailable",
@@ -1879,13 +1844,6 @@ impl Runtime {
                     .find(|pane| pane.id == pane_id)
                     .map(|pane| pane.cwd.clone());
                 self.fork_sequence += 1;
-                // The name is already unique and already sanitized, so it is
-                // also the retry identity rather than a second thing to keep
-                // unique. It is used as the idempotency key unchanged: a
-                // `hide-` prefix on the key used to make a second string that
-                // nothing kept inside Herdr's name rule, and the key is what
-                // the CLI puts in its request id, so a key that broke the rule
-                // was the value the operator saw refused.
                 let name = fork_name(
                     &pane_id,
                     &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
@@ -1895,7 +1853,6 @@ impl Runtime {
                     agent: agent_kind,
                     session_id,
                     cwd,
-                    idempotency_key: name.clone(),
                     name,
                 };
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
@@ -2522,7 +2479,6 @@ impl Runtime {
             Event::GitWorktreeSetBase(payload) => {
                 self.set_git_worktree_base(payload.repository_root, payload.branch)
             }
-            Event::CreateScratchChatTab(payload) => self.create_scratch_chat_tab(payload.label),
             Event::CreateWorktree(payload) => self.create_project_worktree(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),
@@ -2696,11 +2652,6 @@ impl Runtime {
                     editor_text_scale: current.editor_text_scale,
                     conversation_pane_ids: current.conversation_pane_ids,
                     pane_read_records: current.pane_read_records,
-                    last_agent_kind: payload.last_agent_kind.unwrap_or(current.last_agent_kind),
-                    last_agent_bypass: payload
-                        .last_agent_bypass
-                        .unwrap_or(current.last_agent_bypass),
-                    scratch_expanded: payload.scratch_expanded.unwrap_or(current.scratch_expanded),
                 };
                 // Visibility and popover activity wake the provider reader,
                 // but they are not durable preferences. The shell sends the
@@ -2710,7 +2661,6 @@ impl Runtime {
                 if self.snapshot.ui_state == previous_ui_state {
                     return true;
                 }
-                self.snapshot.navigator.scratch.expanded = self.snapshot.ui_state.scratch_expanded;
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
                     self.snapshot.ui_state.focused_device_id.clone();

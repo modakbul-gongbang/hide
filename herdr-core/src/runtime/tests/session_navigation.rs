@@ -2029,7 +2029,7 @@ fn an_exited_panes_root_directory_does_not_become_a_checkout() {
     }))
     .expect("exited pane payload");
 
-    let spaces = Runtime::session_spaces(&payload, "");
+    let spaces = Runtime::session_spaces(&payload);
 
     assert_eq!(spaces.len(), 1);
     assert_eq!(

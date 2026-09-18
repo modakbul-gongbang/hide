@@ -102,8 +102,6 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
         ("enum", "CorePaneLayoutNode", "internal"),
         ("struct", "CoreNavigatorSnapshot", "internal"),
         ("struct", "CoreInactiveProjectGroupSnapshot", "internal"),
-        ("struct", "CoreScratchSnapshot", "internal"),
-        ("struct", "CoreScratchTabSnapshot", "internal"),
         ("struct", "CoreProviderUsageSnapshot", "internal"),
         ("struct", "CoreProviderUsageBucketSnapshot", "internal"),
         ("struct", "CoreDeviceSnapshot", "internal"),
@@ -129,7 +127,6 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
         ("struct", "CoreLineageStep", "internal"),
         ("struct", "CorePaneFork", "internal"),
         ("struct", "SidebarAgent", "internal"),
-        ("struct", "CoreAmbientSignal", "internal"),
     ),
 }
 

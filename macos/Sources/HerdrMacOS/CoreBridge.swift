@@ -606,96 +606,23 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "refresh_status", payload: [:])
     }
 
-    /// Starts one chat and reports what happened.
-    ///
-    /// The four Herdr calls run on a detached task, never on the main actor
-    /// and never under the runtime lock: the readiness wait alone is up to
-    /// thirty seconds, and holding either through it would freeze the window.
-    /// The completion is what unlocks the composer, so the sheet stays locked
-    /// for exactly as long as the work takes.
-    func startChat(
-        destination: CheckoutChatDestination,
-        provider: AgentProvider,
-        message: String,
-        bypassWarnings: Bool,
-        completion: @escaping @MainActor (ChatLaunchResult) -> Void
-    ) {
-        guard case .connected = localHerdrMutationReadiness else {
-            completion(ChatLaunchResult(
-                succeeded: false,
-                failedStep: .createTab,
-                message: localHerdrMutationReadiness.message,
-                paneID: nil
-            ))
-            return
-        }
-        guard let runtimeSelection else {
-            bridgeError = HideStartupDiagnostic.runtimeUnavailable
-            completion(
-                ChatLaunchResult(
-                    succeeded: false,
-                    failedStep: .createTab,
-                    message: HideStartupDiagnostic.runtimeUnavailable,
-                    paneID: nil
-                )
-            )
-            return
-        }
-        let herdrPath = runtimeSelection.path
-        HideLaunchTrace.mark(
-            "chat.launch.requested",
-            detail: "kind=\(provider.rawValue) workspace_id=\(destination.workspaceID ?? "new")"
-        )
-        Task { @MainActor [weak self] in
-            let result = await Task.detached {
-                HerdrChatLauncher.start(
-                    herdrPath: herdrPath,
-                    destination: destination,
-                    provider: provider,
-                    message: message,
-                    bypassWarnings: bypassWarnings
-                )
-            }.value
-            guard let self else { return }
-            HideLaunchTrace.mark(
-                result.succeeded ? "chat.launch.ready" : "chat.launch.failed",
-                detail: result.failedStep.map { "step=\($0.rawValue)" } ?? "ok"
-            )
-            if let paneID = result.paneID {
-                // The CLI-created root pane anchors the selection until
-                // session sync publishes its authoritative layout. The tab
-                // stays visible even when a later step failed, because it is
-                // a shell prompt the operator can still use.
-                self.persistUIState(
-                    selectedPaneID: paneID,
-                    focusedCheckoutID: destination.id
-                )
-            }
-            completion(result)
-        }
-    }
-
     func startAgentInCreatedPane(
         paneID: String,
         path: String,
         provider: AgentProvider,
-        message: String?,
-        bypassWarnings: Bool,
-        completion: @escaping @MainActor (ChatLaunchResult) -> Void
+        completion: @escaping @MainActor (AgentLaunchResult) -> Void
     ) {
         guard case .connected = localHerdrMutationReadiness else {
-            completion(ChatLaunchResult(
+            completion(AgentLaunchResult(
                 succeeded: false,
-                failedStep: .startAgent,
                 message: localHerdrMutationReadiness.message,
                 paneID: paneID
             ))
             return
         }
         guard let runtimeSelection else {
-            completion(ChatLaunchResult(
+            completion(AgentLaunchResult(
                 succeeded: false,
-                failedStep: .startAgent,
                 message: HideStartupDiagnostic.runtimeUnavailable,
                 paneID: paneID
             ))
@@ -704,15 +631,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let herdrPath = runtimeSelection.path
         Task { @MainActor in
             let result = await Task.detached {
-                HerdrChatLauncher.startInPane(
+                HerdrAgentLauncher.startInPane(
                     paneID: paneID,
                     path: path,
                     provider: provider,
-                    message: message,
-                    bypassWarnings: bypassWarnings,
                     agentIsInstalled: AgentCLIAvailability.isUsable(provider.rawValue),
                     run: { arguments in
-                        HerdrChatLauncher.run(herdrPath: herdrPath, arguments: arguments)
+                        HerdrAgentLauncher.run(herdrPath: herdrPath, arguments: arguments)
                     }
                 )
             }.value
@@ -1069,9 +994,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         shortcutBindings: [String: String]? = nil,
         accentHex: String? = nil,
         fontSize: Double? = nil,
-        lastAgentKind: String? = nil,
-        lastAgentBypass: Bool? = nil,
-        scratchExpanded: Bool? = nil,
         usageWindowVisible: Bool? = nil,
         usagePopoverOpen: Bool? = nil
     ) {
@@ -1101,19 +1023,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             // This is the one explicit local-selection anchor used after a
             // terminal launcher returns. It never asks Herdr to change focus.
             payload["focused_checkout_id"] = focusedCheckoutID
-        }
-        // The composer's memory and the Scratch section's state are written
-        // only by the surfaces that own them. Absent means unchanged, so a
-        // navigator save cannot reset the composer and a submission cannot
-        // close the Scratch section.
-        if let lastAgentKind {
-            payload["last_agent_kind"] = lastAgentKind
-        }
-        if let lastAgentBypass {
-            payload["last_agent_bypass"] = lastAgentBypass
-        }
-        if let scratchExpanded {
-            payload["scratch_expanded"] = scratchExpanded
         }
         if let usageWindowVisible {
             payload["usage_window_visible"] = usageWindowVisible

@@ -15,8 +15,7 @@ private func searchAgent(paneID: String) -> SidebarAgent {
         symbol: "\u{25cf}",
         identityLabel: "Agent in \(paneID)",
         elapsed: "1m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
 }
 
@@ -51,8 +50,7 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         symbol: "\u{25cf}",
         identityLabel: "Build the release",
         elapsed: "2m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
     let workspace = try JSONDecoder().decode(
         CoreWorkspaceSnapshot.self,
@@ -112,7 +110,7 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
         statusLabel: "Question",
         identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: true,
-        elapsed: "2m", lastActivity: "", ambient: nil
+        elapsed: "2m", lastActivity: ""
     )
     let entries = HideSearchPresentation.agentGroups(
         workspaces: [workspace], agents: [question], query: ""
@@ -133,14 +131,14 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         id: "t", paneID: "w7J:p3", workspaceLabel: "Same name", agentKind: "claude",
         group: "seen", symbol: "\u{25cb}", statusLabel: "Idle",
         identityLabel: "hook-bug-check", task: "hook 보고 경로 교체",
-        elapsed: "2m", lastActivity: "", ambient: nil
+        elapsed: "2m", lastActivity: ""
     )
     #expect(HideSearchPresentation.agentSubtitle(tasked) == "hook 보고 경로 교체")
     let named = SidebarAgent(
         id: "n", paneID: "w7J:p4", workspaceLabel: "Same name", agentKind: "claude",
         group: "seen", symbol: "\u{25cb}", statusLabel: "Idle",
         identityLabel: "hook 보고 경로 교체", task: "hook 보고 경로 교체",
-        elapsed: "2m", lastActivity: "", ambient: nil
+        elapsed: "2m", lastActivity: ""
     )
     #expect(HideSearchPresentation.agentSubtitle(named) == "Idle", "the task is already the title")
 }

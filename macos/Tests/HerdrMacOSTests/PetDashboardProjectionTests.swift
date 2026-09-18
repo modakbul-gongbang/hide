@@ -4,14 +4,9 @@ import Testing
 
 @Suite("Pet dashboard projection")
 struct PetDashboardProjectionTests {
-    @Test func mixedSnapshotStatesGroupByPaneAndExposeOnlyProvidedAmbient() {
-        let ambient = CoreAmbientSignal(
-            subagentsActive: 2,
-            backgroundRunning: 1,
-            backgroundFailed: 0
-        )
+    @Test func mixedSnapshotStatesGroupByPane() {
         let agents = [
-            agent("p1", group: "working", ambient: ambient),
+            agent("p1", group: "working"),
             agent("p2", group: "done"),
             agent("p3", group: "seen"),
             agent("p4", group: "needs_you", demand: "error"),
@@ -38,8 +33,6 @@ struct PetDashboardProjectionTests {
         #expect(projection.groups.map(\.id) == ["w1", "unassigned-agents"])
         #expect(projection.groups[0].agents.map(\.paneID) == ["p1", "p2", "p3", "p4"])
         #expect(projection.groups[1].agents.map(\.paneID) == ["p5", "p6"])
-        #expect(projection.groups[0].agents[0].ambient == ambient)
-        #expect(projection.groups[0].agents[1].ambient == nil)
         #expect(projection.groups[0].agents[1].group == .done)
         #expect(projection.groups[0].agents[1].statusLabel == "Done")
         #expect(projection.groups[1].agents[0].group == .needsYou)
@@ -49,22 +42,14 @@ struct PetDashboardProjectionTests {
         #expect(rowFields == [
             "id", "paneID", "agentKind", "group", "demand", "activity",
             "emphasized", "symbol", "statusLabel", "identityLabel", "detail", "statusWordVisible", "elapsed",
-            "connection", "ambient",
+            "connection",
         ])
     }
 
-    @Test func disconnectedRowsHideStaleAmbientInsteadOfInventingZeroes() {
+    @Test func disconnectedRowsCountNothingAsWaiting() {
         let projection = PetDashboardProjector.project(
             agents: [
-                agent(
-                    "p1",
-                    group: "working",
-                    ambient: CoreAmbientSignal(
-                        subagentsActive: 3,
-                        backgroundRunning: 2,
-                        backgroundFailed: 1
-                    )
-                ),
+                agent("p1", group: "working"),
                 agent("p2", group: "needs_you", demand: "question"),
             ],
             workspaces: [workspace("w1", label: "Workspace A", paneIDs: ["p1", "p2"])],
@@ -83,7 +68,6 @@ struct PetDashboardProjectionTests {
         ))
         #expect(projection.groups[0].agents.allSatisfy { $0.statusLabel == "Disconnected" })
         #expect(projection.groups[0].agents.allSatisfy { $0.connection == "disconnected" })
-        #expect(projection.groups[0].agents.allSatisfy { $0.ambient == nil })
         #expect(projection.connectionMessage == "Herdr server is not answering")
 
         // The connection is the only thing a lost server changes about a row.
@@ -164,8 +148,7 @@ struct PetDashboardProjectionTests {
     private func agent(
         _ paneID: String,
         group: String,
-        demand: String = "none",
-        ambient: CoreAmbientSignal? = nil
+        demand: String = "none"
     ) -> SidebarAgent {
         SidebarAgent(
             id: "agent-\(paneID)",
@@ -181,8 +164,7 @@ struct PetDashboardProjectionTests {
             statusLabel: group == "done" ? "Done" : "Idle",
             identityLabel: "Agent \(paneID)",
             elapsed: "2m",
-            lastActivity: "0000000000001",
-            ambient: ambient
+            lastActivity: "0000000000001"
         )
     }
 

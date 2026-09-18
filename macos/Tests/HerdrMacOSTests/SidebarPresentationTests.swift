@@ -219,8 +219,7 @@ private func presentationAgent(
         symbol: "\u{25cf}",
         identityLabel: identityLabel ?? "Agent \(id)",
         elapsed: "1m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
 }
 
@@ -569,7 +568,7 @@ private func presentationAgent(
         id: "transport-child", paneID: "w1:p2", workspaceLabel: "Project", checkoutLabel: "main",
         agentKind: "codex", symbol: "●",
         identityLabel: "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름",
-        elapsed: "0s", lastActivity: "", ambient: nil
+        elapsed: "0s", lastActivity: ""
     )
     let compact = AgentRowPresentation(agent: agent, density: .compact, connected: true)
     let prominent = AgentRowPresentation(agent: agent, density: .prominent, connected: true)
@@ -586,20 +585,20 @@ private func presentationAgent(
         id: "w", paneID: "w1:p1", workspaceLabel: "hide", agentKind: "claude",
         activity: "working", group: "working", symbol: "●", statusLabel: "Working",
         identityLabel: "Hook 버그 확인", detail: "hook 보고 경로를 소켓 호출로 교체 중", statusWordVisible: false,
-        elapsed: "2m", lastActivity: "", ambient: nil
+        elapsed: "2m", lastActivity: ""
     )
     let question = SidebarAgent(
         id: "q", paneID: "w1:p2", workspaceLabel: "hide", agentKind: "claude",
         demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
         statusLabel: "Question",
         identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: true,
-        elapsed: "2m", lastActivity: "", ambient: nil
+        elapsed: "2m", lastActivity: ""
     )
     let seen = SidebarAgent(
         id: "s", paneID: "w1:p3", workspaceLabel: "hide", agentKind: "codex",
         activity: "stopped", symbol: "○", statusLabel: "Idle",
         identityLabel: "컨텍스트 라벨 표시", detail: nil, statusWordVisible: false,
-        elapsed: "1h", lastActivity: "", ambient: nil
+        elapsed: "1h", lastActivity: ""
     )
     let workingRow = AgentRowPresentation(agent: working, density: .compact, connected: true)
     #expect(workingRow.detail == "hook 보고 경로를 소켓 호출로 교체 중")
@@ -622,7 +621,7 @@ private func presentationAgent(
         demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
         statusLabel: "Question",
         identityLabel: "결제 멱등키 PR", detail: "A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요",
-        statusWordVisible: true, elapsed: "2m", lastActivity: "", ambient: nil
+        statusWordVisible: true, elapsed: "2m", lastActivity: ""
     )
     let sentence = PaneHeaderPresentation.sentence(agent: question, activity: "")
     #expect(sentence.word == "Question")

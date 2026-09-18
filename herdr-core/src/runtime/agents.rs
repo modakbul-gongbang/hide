@@ -686,7 +686,7 @@ impl Runtime {
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
         let waking = now < self.pet_waking_until_unix_ms;
-        let ambient = pet::ambient_totals(agents, connected);
+        let subagents_active = pet::subagents_active(agents, &self.pane_hook_tokens, connected);
         let attention_pane_ids = if connected {
             pet::observe_unseen(&mut self.pet_unseen_observed, agents, now);
             pet::attention_order(&self.snapshot.navigator.agents, &self.pet_unseen_observed)
@@ -707,9 +707,7 @@ impl Runtime {
                 working: summary.working,
                 seen: summary.seen,
                 disconnected: summary.disconnected,
-                subagents_active: ambient.subagents_active,
-                background_running: ambient.background_running,
-                background_failed: ambient.background_failed,
+                subagents_active,
             },
             attention_pane_ids,
             origin: self.snapshot.ui_state.pet_origin,
@@ -966,14 +964,6 @@ impl Runtime {
             .flat_map(|workspace| workspace.checkouts.iter_mut())
             .flat_map(|checkout| checkout.tabs.iter_mut())
             .flat_map(|tab| tab.panes.iter_mut())
-            .chain(
-                self.snapshot
-                    .navigator
-                    .scratch
-                    .tabs
-                    .iter_mut()
-                    .flat_map(|tab| tab.panes.iter_mut()),
-            )
         {
             // A remote pane's answer is fixed and was decided where it was
             // projected; the local hook state says nothing about it.
@@ -999,7 +989,7 @@ impl Runtime {
                     label: agents
                         .iter()
                         .find(|agent| agent.pane_id == pane.id)
-                        .map(|agent| agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()))
+                        .map(|agent| agent.id.clone())
                         .unwrap_or_else(|| pane.id.clone()),
                     message: children.uninstrumented_reason.clone().unwrap_or_default(),
                 });
@@ -1151,7 +1141,7 @@ impl Runtime {
                 .first()
                 .cloned()
                 .unwrap_or_else(|| agent.pane_id.clone());
-            let name = agent.chat_title.clone().unwrap_or_else(|| agent.id.clone());
+            let name = agent.id.clone();
             let notice = format!(
                 "{name} has been waiting {} minutes on {}",
                 elapsed / 60_000,
@@ -1280,7 +1270,7 @@ impl Runtime {
             requests.push((
                 agent.pane_id.clone(),
                 workspace_id.clone(),
-                agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()),
+                agent.id.clone(),
             ));
         }
         // A pane Herdr no longer reports can never answer, so its record is

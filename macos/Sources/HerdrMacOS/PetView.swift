@@ -65,7 +65,7 @@ final class PetAnimator: ObservableObject {
 
 /// The badge row: one capsule per non-zero group, in the sidebar's own order -
 /// what needs the operator, what finished unseen, what is still running - then
-/// the ambient counts.
+/// the subagents Hide's hook counts.
 struct PetBadgeRow: View {
     let badges: CorePetBadges
 
@@ -90,24 +90,6 @@ struct PetBadgeRow: View {
                 color: .purple,
                 label: "active subagents",
                 symbol: "person.2.fill"
-            )
-        )
-        result.append(
-            Badge(
-                id: "background",
-                count: Int(badges.backgroundRunning),
-                color: .teal,
-                label: "running background tasks",
-                symbol: "clock.arrow.circlepath"
-            )
-        )
-        result.append(
-            Badge(
-                id: "background-failed",
-                count: Int(badges.backgroundFailed),
-                color: .orange,
-                label: "failed background tasks",
-                symbol: "exclamationmark.triangle.fill"
             )
         )
         return result.filter { $0.count > 0 }

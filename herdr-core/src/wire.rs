@@ -2,7 +2,6 @@
 //! Generated values are consumed into domain inputs; no JSON round trip converts
 //! a generated payload back into a hand-written deserialization shape.
 
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::live::SessionFetchError;
@@ -10,28 +9,16 @@ use crate::model::PaneLayoutDirection;
 use crate::recent_closed::{ClosedLayout, ClosedLayoutNode, ClosedSplitDirection};
 use crate::session_sync::{
     PaneMove, ProjectedAgent, ProjectedPane, ProjectedTab, ProjectedWorkspace, ProjectedWorktree,
-    ProjectionState, ReplicaEnvelope, ReplicaEvent, SubscriptionLine,
+    ProjectionState, ReplicaEvent, SubscriptionLine,
 };
 use crate::sidebar::{
     SessionAgentSessionPayload, SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect,
     SessionLayoutSplitPayload,
 };
+use hide_herdr_client::HERDR_PROTOCOL_REVISION;
 use hide_herdr_client::wire::{
     error_response as err, event as ev, request as req, success_response as res,
 };
-use hide_herdr_client::{HERDR_PROTOCOL_REVISION, HostScope};
-
-// Observer decision: the pinned schema declares event/data but the server adds
-// these three sequencing fields. Keep only that contract gap hand-written here.
-// The schema-gap test below forces deletion when Herdr declares the metadata.
-#[derive(Deserialize)]
-struct EventMetadata {
-    protocol: u64,
-    host: res::HostScope,
-    sequence: u64,
-    #[serde(flatten)]
-    payload: ev::EventEnvelope,
-}
 
 pub(crate) fn protocol_mismatch(
     received_protocol: u64,
@@ -76,48 +63,22 @@ fn validate_snapshot(value: &Value) -> Result<(), SessionFetchError> {
     if version.is_none() {
         return Err(malformed("snapshot is missing version"));
     }
-    for field in [
-        "workspaces",
-        "tabs",
-        "panes",
-        "layouts",
-        "agents",
-        "lineage",
-    ] {
+    for field in ["workspaces", "tabs", "panes", "layouts", "agents"] {
         if !value.get(field).is_some_and(Value::is_array) {
             return Err(malformed(format!("snapshot is missing {field}")));
         }
     }
-    let host = value
-        .get("host")
-        .ok_or_else(|| malformed("snapshot is missing host"))?;
-    let host: res::HostScope = serde_json::from_value(host.clone())
-        .map_err(|e| malformed(format!("snapshot host is malformed: {e}")))?;
-    if host.host_id.trim().is_empty() || host.session_id.trim().is_empty() {
-        return Err(malformed("snapshot host contains an empty identifier"));
-    }
-    if value
-        .get("event_sequence")
-        .and_then(Value::as_u64)
-        .is_none()
-    {
-        return Err(malformed("snapshot is missing event_sequence"));
-    }
     Ok(())
 }
 
-pub(crate) fn snapshot(
-    value: Value,
-) -> Result<(HostScope, u64, ProjectionState), SessionFetchError> {
+pub(crate) fn snapshot(value: Value) -> Result<ProjectionState, SessionFetchError> {
     validate_snapshot(&value)?;
     let snapshot: res::SessionSnapshot = serde_json::from_value(value)
         .map_err(|e| malformed(format!("snapshot projection is malformed: {e}")))?;
     Ok(convert_snapshot(snapshot))
 }
 
-pub(crate) fn snapshot_response(
-    value: Value,
-) -> Result<(HostScope, u64, ProjectionState), SessionFetchError> {
+pub(crate) fn snapshot_response(value: Value) -> Result<ProjectionState, SessionFetchError> {
     decode_snapshot_response(value).map(convert_snapshot)
 }
 
@@ -159,23 +120,16 @@ fn decode_snapshot_response(value: Value) -> Result<res::SessionSnapshot, Sessio
     }
 }
 
-fn convert_snapshot(snapshot: res::SessionSnapshot) -> (HostScope, u64, ProjectionState) {
-    (
-        HostScope {
-            host_id: snapshot.host.host_id,
-            session_id: snapshot.host.session_id,
-        },
-        snapshot.event_sequence,
-        ProjectionState {
-            focused_pane_id: snapshot.focused_pane_id,
-            focused_workspace_id: snapshot.focused_workspace_id,
-            workspaces: snapshot.workspaces.into_iter().map(Into::into).collect(),
-            tabs: snapshot.tabs.into_iter().map(Into::into).collect(),
-            panes: snapshot.panes.into_iter().map(Into::into).collect(),
-            layouts: snapshot.layouts.into_iter().map(Into::into).collect(),
-            agents: snapshot.agents.into_iter().map(Into::into).collect(),
-        },
-    )
+fn convert_snapshot(snapshot: res::SessionSnapshot) -> ProjectionState {
+    ProjectionState {
+        focused_pane_id: snapshot.focused_pane_id,
+        focused_workspace_id: snapshot.focused_workspace_id,
+        workspaces: snapshot.workspaces.into_iter().map(Into::into).collect(),
+        tabs: snapshot.tabs.into_iter().map(Into::into).collect(),
+        panes: snapshot.panes.into_iter().map(Into::into).collect(),
+        layouts: snapshot.layouts.into_iter().map(Into::into).collect(),
+        agents: snapshot.agents.into_iter().map(Into::into).collect(),
+    }
 }
 
 pub(crate) fn agents_response(value: Value) -> Result<Vec<ProjectedAgent>, SessionFetchError> {
@@ -230,28 +184,16 @@ pub(crate) fn parse_subscription_line(line: &str) -> Result<SubscriptionLine, Se
             message: response.error.message,
         });
     }
-    // Preserve semantic replay identity, independent of JSON key order or whitespace.
-    let fingerprint = serde_json::to_string(&value)
-        .map_err(|e| malformed(format!("event fingerprint could not be encoded: {e}")))?;
-    let envelope: EventMetadata = serde_json::from_value(value)
-        .map_err(|e| malformed(format!("Herdr sequenced event is malformed: {e}")))?;
-    let kind = envelope.payload.event.to_string();
-    let (actual, data) = convert_event(envelope.payload.data);
+    let envelope: ev::EventEnvelope = serde_json::from_value(value)
+        .map_err(|e| malformed(format!("Herdr event is malformed: {e}")))?;
+    let kind = envelope.event.to_string();
+    let (actual, data) = convert_event(envelope.data);
     if actual != kind {
         return Err(malformed(format!(
             "Herdr {kind} event event data type is {actual:?}"
         )));
     }
-    Ok(SubscriptionLine::Event(ReplicaEnvelope {
-        protocol: envelope.protocol,
-        host: HostScope {
-            host_id: envelope.host.host_id,
-            session_id: envelope.host.session_id,
-        },
-        sequence: envelope.sequence,
-        data,
-        fingerprint,
-    }))
+    Ok(SubscriptionLine::Event(data))
 }
 
 // The two independently generated sub-schemas describe the same record shapes.
@@ -352,15 +294,58 @@ macro_rules! record_conversions {
 record_conversions!(res);
 record_conversions!(ev);
 
+/// The pane metadata token by which whoever created a pane declares the pane
+/// it was spawned from. It is the only lineage there is: Herdr records none,
+/// so an agent is a child exactly when its spawner said so.
+///
+/// Hide's own fork writes it, and so does an orchestrator that starts a child
+/// with `agent.start` (sasu's implementor); both declare it afterwards with
+/// `pane.report_metadata`, the same display-only channel the label plugin and
+/// the hook helper already use. The value is the parent's pane id, it dies
+/// with the pane, and it is read here and nowhere else.
+pub(crate) const PARENT_PANE_TOKEN: &str = "parent_pane";
+
+/// The source under which Hide writes its own pane tokens. Herdr keeps one
+/// token set per source, so a token Hide wrote can never overwrite one an
+/// orchestrator or the hook helper wrote under theirs.
+pub(crate) const HIDE_METADATA_SOURCE: &str = "hide";
+
+/// The parent a spawner declared. An empty value is no declaration, because
+/// Herdr clears a token by setting it empty.
+fn lineage_parent(declared: Option<&str>) -> Option<String> {
+    declared
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
 impl From<res::AgentInfo> for ProjectedAgent {
     fn from(v: res::AgentInfo) -> Self {
+        let declared_parent = v
+            .tokens
+            .iter()
+            .find(|(key, _)| key.as_str() == PARENT_PANE_TOKEN)
+            .map(|(_, id)| id.as_str());
+        let spawned_from_pane_id = lineage_parent(declared_parent);
         Self {
-            pane_id: v.pane_id, name: v.name, workspace_id: v.workspace_id, tab_id: v.tab_id, cwd: v.cwd,
-            agent: v.agent, agent_status: Some(v.agent_status.to_string()),
-            agent_session: v.agent_session.map(|s| SessionAgentSessionPayload { kind: s.kind.to_string(), value: s.value }),
-            spawned_from_pane_id: v.spawned_from_pane_id, state_change_seq: v.state_change_seq,
-            tokens: v.tokens.into_iter().map(|(k,v)| (k.into(), Value::String(v))).collect(),
-            ambient: v.ambient.map(|v| json!({ "background_failed": v.background_failed, "background_running": v.background_running, "subagents_active": v.subagents_active })),
+            pane_id: v.pane_id,
+            name: v.name,
+            workspace_id: v.workspace_id,
+            tab_id: v.tab_id,
+            cwd: v.cwd,
+            agent: v.agent,
+            agent_status: Some(v.agent_status.to_string()),
+            agent_session: v.agent_session.map(|s| SessionAgentSessionPayload {
+                kind: s.kind.to_string(),
+                value: s.value,
+            }),
+            spawned_from_pane_id,
+            state_change_seq: v.state_change_seq,
+            tokens: v
+                .tokens
+                .into_iter()
+                .map(|(k, v)| (k.into(), Value::String(v)))
+                .collect(),
         }
     }
 }
@@ -583,10 +568,6 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
                 closed_workspace_id,
                 closed_tab_id,
             }),
-        ),
-        ev::EventData::AgentLineageChanged { .. } => (
-            "agent_lineage_changed",
-            ReplicaEvent::Unrequested("agent_lineage_changed".to_owned()),
         ),
         ev::EventData::PaneOutputChanged { .. } => (
             "pane_output_changed",
@@ -832,6 +813,52 @@ pub(crate) fn agent_start_params(
         name: name.into(),
         pane_id: pane_id.into(),
         timeout_ms: Some(120_000),
+    })
+}
+
+/// A split that creates the pane a fork will run in. Unlike the operator's
+/// own split it does not take focus: the operator forked the pane they are
+/// reading, and taking focus away from it would undo that.
+pub(crate) fn fork_split_params(parent_pane_id: &str, cwd: Option<&str>) -> Result<Value, String> {
+    params(req::PaneSplitParams {
+        target_pane_id: Some(parent_pane_id.into()),
+        direction: req::SplitDirection::Right,
+        cwd: cwd.filter(|v| !v.trim().is_empty()).map(Into::into),
+        focus: false,
+        env: Default::default(),
+        ratio: None,
+        right_click: req::PaneRightClickTarget::Herdr,
+        workspace_id: None,
+    })
+}
+
+/// Declares `parent_pane_id` as the pane `child_pane_id` was spawned from,
+/// under Hide's own metadata source.
+pub(crate) fn declare_parent_pane_params(
+    child_pane_id: &str,
+    parent_pane_id: &str,
+) -> Result<Value, String> {
+    params(req::PaneReportMetadataParams {
+        pane_id: child_pane_id.into(),
+        source: HIDE_METADATA_SOURCE.into(),
+        tokens: [(
+            PARENT_PANE_TOKEN
+                .parse()
+                .map_err(|error| format!("parent pane token name is invalid: {error}"))?,
+            Some(parent_pane_id.to_owned()),
+        )]
+        .into_iter()
+        .collect(),
+        agent: None,
+        applies_to_source: None,
+        clear_display_agent: false,
+        clear_state_labels: false,
+        clear_title: false,
+        display_agent: None,
+        seq: None,
+        state_labels: Default::default(),
+        title: None,
+        ttl_ms: None,
     })
 }
 
@@ -1154,9 +1181,14 @@ fn remote_protocol_error(operation: &str, reason: impl Into<String>) -> crate::r
     )
 }
 
+/// Reads the identity envelope of a remote Herdr's snapshot. Herdr's stable
+/// snapshot names no host and no sequence, so the caller stamps the host it
+/// reached the socket through, and agents are identified by the pane they
+/// run in.
 pub(crate) fn remote_snapshot(
     value: &Value,
     operation: &str,
+    host: &crate::domain::HostScope,
 ) -> crate::remote::RemoteResult<crate::remote::RemoteSnapshotEnvelope> {
     use crate::remote::{
         REMOTE_PROTOCOL_REVISION, RemoteError, RemoteSnapshotEnvelope, RemoteStage,
@@ -1187,38 +1219,6 @@ pub(crate) fn remote_snapshot(
             format!("protocol mismatch expected={REMOTE_PROTOCOL_REVISION} received={protocol}"),
         ));
     }
-    let host = snapshot.get("host").ok_or_else(|| {
-        RemoteError::new(
-            operation,
-            "herdr",
-            RemoteStage::Herdr,
-            "snapshot.host is missing",
-            false,
-            true,
-        )
-    })?;
-    for key in ["host_id", "session_id"] {
-        if !host
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|v| !v.is_empty())
-        {
-            return Err(remote_protocol_error(
-                operation,
-                format!("missing non-empty field {key}"),
-            ));
-        }
-    }
-    if snapshot
-        .get("event_sequence")
-        .and_then(Value::as_u64)
-        .is_none()
-    {
-        return Err(remote_protocol_error(
-            operation,
-            "snapshot.event_sequence is missing",
-        ));
-    }
     let snapshot: res::SessionSnapshot = serde_json::from_value(snapshot.clone())
         .map_err(|error| remote_protocol_error(operation, error.to_string()))?;
     let workspace_ids = remote_ids(
@@ -1234,21 +1234,14 @@ pub(crate) fn remote_snapshot(
         operation,
     )?;
     let agent_ids = remote_ids(
-        snapshot
-            .agents
-            .into_iter()
-            .filter_map(|v| v.agent_instance_id),
+        snapshot.agents.into_iter().map(|v| v.pane_id),
         "agents",
-        "agent_instance_id",
+        "pane_id",
         operation,
     )?;
     Ok(RemoteSnapshotEnvelope {
-        host: crate::domain::HostScope {
-            host_id: snapshot.host.host_id,
-            session_id: snapshot.host.session_id,
-        },
+        host: host.clone(),
         protocol,
-        event_sequence: snapshot.event_sequence,
         workspace_ids,
         pane_ids,
         agent_ids,
@@ -1262,12 +1255,10 @@ fn remote_ids(
 ) -> crate::remote::RemoteResult<Vec<String>> {
     let mut ids = ids.collect::<Vec<_>>();
     if ids.iter().any(String::is_empty) {
-        let reason = if key == "agent_instance_id" {
-            format!("{array}.{key} must be a non-empty string or null")
-        } else {
-            format!("missing non-empty field {key}")
-        };
-        return Err(remote_protocol_error(operation, reason));
+        return Err(remote_protocol_error(
+            operation,
+            format!("missing non-empty field {key}"),
+        ));
     }
     ids.sort();
     if ids.windows(2).any(|pair| pair[0] == pair[1]) {
@@ -1335,19 +1326,6 @@ pub(crate) fn terminal_resize_line(rows: u16, cols: u16) -> Result<String, Strin
     Ok(line)
 }
 
-pub(crate) fn created_agent_pane(bytes: &[u8]) -> Result<String, String> {
-    let value: Value = serde_json::from_slice(bytes)
-        .map_err(|error| format!("herdr agent new returned unreadable output: {error}"))?;
-    let response: res::SuccessResponse = serde_json::from_value(value)
-        .map_err(|_| "herdr agent new reported no created pane".to_owned())?;
-    match response.result {
-        res::ResponseResult::AgentCreated { agent, .. } => {
-            nonempty_id(agent.pane_id, "herdr agent new reported no created pane")
-        }
-        _ => Err("herdr agent new reported no created pane".into()),
-    }
-}
-
 pub(crate) fn terminal_release_line() -> String {
     "{\"type\":\"terminal.release\"}\n".to_owned()
 }
@@ -1374,22 +1352,20 @@ mod tests {
     }
 
     #[test]
-    fn captured_agent_new_decodes_only_the_observed_created_variant() {
-        let bytes = include_bytes!("../tests/fixtures/agent-created.json");
-        let response: res::SuccessResponse = serde_json::from_slice(bytes).unwrap();
-        assert!(matches!(
-            response.result,
-            res::ResponseResult::AgentCreated { .. }
-        ));
-        assert_eq!(created_agent_pane(bytes).unwrap(), "w1:p4");
+    fn a_fork_splits_without_focus_and_declares_its_parent_under_hides_source() {
         assert_eq!(
-            created_agent_pane(br#"{"id":"fixture","result":{"type":"ok"}}"#).unwrap_err(),
-            "herdr agent new reported no created pane"
+            fork_split_params("w1:p1", Some("/fixture")).unwrap(),
+            json!({"target_pane_id": "w1:p1", "direction": "right", "cwd": "/fixture",
+                "focus": false, "right_click": "herdr"})
         );
-        assert!(
-            created_agent_pane(b"not json")
-                .unwrap_err()
-                .starts_with("herdr agent new returned unreadable output: ")
+        assert_eq!(
+            fork_split_params("w1:p1", Some("  ")).unwrap()["cwd"],
+            Value::Null
+        );
+        assert_eq!(
+            declare_parent_pane_params("w1:p4", "w1:p1").unwrap(),
+            json!({"pane_id": "w1:p4", "source": "hide", "tokens": {"parent_pane": "w1:p1"},
+                "clear_display_agent": false, "clear_state_labels": false, "clear_title": false})
         );
     }
 
@@ -1421,16 +1397,21 @@ mod tests {
         pane_text(load("pane.read.json")).unwrap();
         let snapshot = load("session.snapshot.json");
         live_session_response(snapshot.clone()).unwrap();
-        let remote = remote_snapshot(&snapshot, "probe").unwrap();
+        let remote = remote_snapshot(&snapshot, "probe", &probe_host()).unwrap();
         assert_eq!(remote.pane_ids, ["w1:p1", "w1:p2", "w1:p3"]);
-        let bytes = std::fs::read(std::path::Path::new(&directory).join("agent-new.json")).unwrap();
-        assert_eq!(created_agent_pane(&bytes).unwrap(), "w1:p4");
+    }
+
+    fn probe_host() -> crate::domain::HostScope {
+        crate::domain::HostScope {
+            host_id: "probe".to_owned(),
+            session_id: "probe".to_owned(),
+        }
     }
 
     #[test]
     fn malformed_remote_snapshots_keep_protocol_priority_and_diagnostic_flags() {
         let value = json!({"snapshot": {"protocol": HERDR_PROTOCOL_REVISION + 1}});
-        let error = remote_snapshot(&value, "fixture").unwrap_err();
+        let error = remote_snapshot(&value, "fixture", &probe_host()).unwrap_err();
         assert_eq!(error.stage(), crate::remote::RemoteStage::Protocol);
         assert!(!error.diagnostic().retryable);
         assert!(error.diagnostic().action_required);
@@ -1443,7 +1424,8 @@ mod tests {
         );
         let mut snapshot = empty_snapshot();
         snapshot.as_object_mut().unwrap().remove("version");
-        let error = remote_snapshot(&json!({"snapshot":snapshot}), "fixture").unwrap_err();
+        let error =
+            remote_snapshot(&json!({"snapshot":snapshot}), "fixture", &probe_host()).unwrap_err();
         assert_eq!(error.stage(), crate::remote::RemoteStage::Protocol);
         assert!(!error.diagnostic().retryable);
         assert!(error.diagnostic().action_required);
@@ -1469,34 +1451,40 @@ mod tests {
     }
 
     fn empty_snapshot() -> Value {
-        json!({"protocol": HERDR_PROTOCOL_REVISION, "version": "fixture", "host": {"host_id": "fixture-host", "session_id": "fixture"},
-            "event_sequence": 4, "workspaces": [], "tabs": [], "panes": [], "layouts": [], "agents": [], "lineage": []})
+        json!({"protocol": HERDR_PROTOCOL_REVISION, "version": "fixture",
+            "workspaces": [], "tabs": [], "panes": [], "layouts": [], "agents": []})
     }
 
+    // Herdr's stable event stream has no sequence, so the replica has no cursor
+    // and every reconnect reads a fresh snapshot. Should Herdr declare one, the
+    // resume path is worth building back: this test names the day.
     #[test]
-    fn delete_manual_event_metadata_when_the_contract_declares_it() {
+    fn a_sequenced_event_stream_would_earn_a_resume_cursor() {
         let schema: Value = serde_json::from_str(HERDR_API_SCHEMA_JSON).unwrap();
         let properties = schema["schemas"]["event"]["properties"]
             .as_object()
             .unwrap();
-        for field in ["sequence", "host", "protocol"] {
-            assert!(
-                !properties.contains_key(field),
-                "Herdr now declares {field}; delete EventMetadata and consume the generated envelope"
-            );
-        }
+        assert!(
+            !properties.contains_key("sequence"),
+            "Herdr now sequences its events; resume the subscription from the replica's last sequence instead of re-reading a snapshot on every reconnect"
+        );
+        let params = schema["schemas"]["request"]["$defs"]["EventsSubscribeParams"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(
+            !params.contains_key("after_sequence"),
+            "Herdr now takes a resume cursor; pass the replica's last sequence to events.subscribe"
+        );
     }
 
     #[test]
     fn generated_snapshot_and_response_variants_feed_domain_inputs() {
         let value = empty_snapshot();
-        let (host, cursor, state) = snapshot(value.clone()).unwrap();
-        assert_eq!(host.host_id, "fixture-host");
-        assert_eq!(cursor, 4);
+        let state = snapshot(value.clone()).unwrap();
         assert!(state.workspaces.is_empty());
-        let (_, cursor, _) =
+        let state =
             snapshot_response(json!({"type": "session_snapshot", "snapshot": value})).unwrap();
-        assert_eq!(cursor, 4);
+        assert!(state.agents.is_empty());
         assert!(
             agents_response(json!({"type": "agent_list", "agents": []}))
                 .unwrap()
@@ -1508,9 +1496,9 @@ mod tests {
     fn cleanup_preserves_launch_and_foreground_usage_and_unknown_paths() {
         let mut value = empty_snapshot();
         value["panes"] = json!([
-            {"pane_id":"w1:p1", "surface":{"kind":"terminal","attach":{"terminal_id":"fixture-terminal","protocol":HERDR_PROTOCOL_REVISION,"transport":"herdr_client","host":{"host_id":"fixture-host","session_id":"fixture"}}}, "workspace_id":"w1", "tab_id":"w1:t1", "focused":false, "agent_status":"idle", "revision":1,
+            {"pane_id":"w1:p1", "terminal_id":"fixture-terminal", "workspace_id":"w1", "tab_id":"w1:t1", "focused":false, "agent_status":"idle", "revision":1,
              "cwd":"/fixture/main", "foreground_cwd":"/fixture/linked/subdir"},
-            {"pane_id":"w1:p2", "surface":{"kind":"terminal","attach":{"terminal_id":"fixture-terminal","protocol":HERDR_PROTOCOL_REVISION,"transport":"herdr_client","host":{"host_id":"fixture-host","session_id":"fixture"}}}, "workspace_id":"w1", "tab_id":"w1:t1", "focused":false, "agent_status":"idle", "revision":1}
+            {"pane_id":"w1:p2", "terminal_id":"fixture-terminal", "workspace_id":"w1", "tab_id":"w1:t1", "focused":false, "agent_status":"idle", "revision":1}
         ]);
         let paths =
             cleanup_usage_paths(json!({"type":"session_snapshot", "snapshot": value})).unwrap();
@@ -1533,14 +1521,6 @@ mod tests {
             assert_eq!(error.state(), "malformed");
             assert_eq!(error.message(), format!("snapshot is missing {field}"));
         }
-        let mut value = empty_snapshot();
-        value["host"]["host_id"] = json!(" ");
-        let error = snapshot(value).unwrap_err();
-        assert_eq!(error.state(), "malformed");
-        assert_eq!(
-            error.message(),
-            "snapshot host contains an empty identifier"
-        );
     }
 
     #[test]
@@ -1573,34 +1553,24 @@ mod tests {
     }
 
     #[test]
-    fn generated_subscriptions_preserve_the_resume_cursor_and_filter_shape() {
+    fn generated_subscriptions_keep_the_filter_shape() {
         assert_eq!(
-            hide_herdr_client::subscription_params(42, &["workspace.created", "pane.focused"])
-                .unwrap(),
-            json!({"after_sequence": 42, "subscriptions": [{"type": "workspace.created"}, {"type": "pane.focused"}]})
+            hide_herdr_client::subscription_params(&["workspace.created", "pane.focused"]).unwrap(),
+            json!({"subscriptions": [{"type": "workspace.created"}, {"type": "pane.focused"}]})
         );
-        assert!(hide_herdr_client::subscription_params(42, &["not.a.subscription"]).is_err());
+        assert!(hide_herdr_client::subscription_params(&["not.a.subscription"]).is_err());
     }
 
     #[test]
-    fn generated_event_payload_and_metadata_keep_replay_identity() {
-        let value = json!({"protocol": HERDR_PROTOCOL_REVISION, "host": {"host_id": "fixture-host", "session_id": "fixture"},
-            "sequence": 42, "event": "workspace_focused", "data": {"type": "workspace_focused", "workspace_id": "w1"}});
+    fn generated_event_payloads_feed_replica_events() {
+        let value = json!({"event": "workspace_focused", "data": {"type": "workspace_focused", "workspace_id": "w1"}});
         let SubscriptionLine::Event(event) = parse_subscription_line(&value.to_string()).unwrap()
         else {
             panic!("event expected")
         };
-        assert_eq!(event.sequence, 42);
-        assert_eq!(event.host.host_id, "fixture-host");
         assert!(
-            matches!(event.data, ReplicaEvent::WorkspaceFocused { workspace_id } if workspace_id == "w1")
+            matches!(event, ReplicaEvent::WorkspaceFocused { workspace_id } if workspace_id == "w1")
         );
-        let SubscriptionLine::Event(pretty) =
-            parse_subscription_line(&serde_json::to_string_pretty(&value).unwrap()).unwrap()
-        else {
-            panic!("event expected")
-        };
-        assert_eq!(event.fingerprint, pretty.fingerprint);
         let mut wrong = value;
         wrong["data"]["type"] = json!("workspace_closed");
         let error = parse_subscription_line(&wrong.to_string()).err().unwrap();
@@ -1639,6 +1609,39 @@ mod tests {
             parse_subscription_line(" ").err().unwrap().message(),
             "Herdr event stream emitted an empty line"
         );
+    }
+
+    fn listed_agent(extra: Value) -> Value {
+        let mut agent = json!({"pane_id": "w1:p2", "workspace_id": "w1", "tab_id": "w1:t2",
+            "terminal_id": "fixture-terminal", "revision": 1, "focused": false, "agent_status": "working"});
+        agent
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        json!({"type": "agent_list", "agents": [agent]})
+    }
+
+    // sasu starts its implementor with `agent.start` (the only start that can
+    // carry the role marker) and declares the Observer's pane as the parent
+    // afterwards; without this the row was a root in another checkout and the
+    // Observer had no child (2026-09-18).
+    #[test]
+    fn a_parent_declared_as_a_pane_token_is_the_lineage() {
+        let declared =
+            agents_response(listed_agent(json!({"tokens": {"parent_pane": "w1:p1"}}))).unwrap();
+        assert_eq!(declared[0].spawned_from_pane_id.as_deref(), Some("w1:p1"));
+        // The token is still carried verbatim; the sidebar's own token readers are unaffected.
+        assert_eq!(declared[0].tokens.get("parent_pane"), Some(&json!("w1:p1")));
+
+        let cleared =
+            agents_response(listed_agent(json!({"tokens": {"parent_pane": "  "}}))).unwrap();
+        assert_eq!(
+            cleared[0].spawned_from_pane_id, None,
+            "an empty token is a cleared declaration, not a parent named \"\""
+        );
+
+        let silent = agents_response(listed_agent(json!({}))).unwrap();
+        assert_eq!(silent[0].spawned_from_pane_id, None);
     }
 
     #[test]

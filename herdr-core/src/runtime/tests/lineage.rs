@@ -352,7 +352,7 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
                 "agent_status":"working",
                 "state_change_seq":1,
                 "workspace_label":"Workspace",
-                "tokens":{"hide_chat_title":"Project coordinator"}
+                "tokens":{"name":"Project coordinator"}
             },
             {
                 "id":"qa-lineage-child",

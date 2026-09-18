@@ -528,17 +528,10 @@ mod tests {
     fn workspace_created(path: &str, workspace_id: &str, pane_id: &str) -> Value {
         json!({"result":{
             "type":"workspace_created",
-            "workspace":{"workspace_id":workspace_id,"label":"Scratch","number":1,"focused":true,"pane_count":1,"tab_count":1,"active_tab_id":format!("{workspace_id}:t1"),"agent_status":"unknown"},
+            "workspace":{"workspace_id":workspace_id,"label":"hide","number":1,"focused":true,"pane_count":1,"tab_count":1,"active_tab_id":format!("{workspace_id}:t1"),"agent_status":"unknown"},
             "tab":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"label":"hide codex","number":1,"focused":true,"pane_count":1,"agent_status":"unknown"},
-            "root_pane":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"pane_id":pane_id,"cwd":path,"foreground_cwd":path,"focused":true,"agent_status":"unknown","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40},"surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"protocol":21,"terminal_id":"term","transport":"herdr_client"}}}
+            "root_pane":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"pane_id":pane_id, "terminal_id": "fixture-terminal","cwd":path,"foreground_cwd":path,"focused":true,"agent_status":"unknown","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40}}
         }})
-    }
-    fn tab_created(path: &str, workspace_id: &str, pane_id: &str) -> Value {
-        let mut value = workspace_created(path, workspace_id, pane_id);
-        let result = value["result"].as_object_mut().unwrap();
-        result.insert("type".into(), json!("tab_created"));
-        result.remove("workspace");
-        value
     }
     fn worktree_created(path: &str, branch: &str) -> Value {
         let mut value = workspace_created(path, "w2", "w2:p1");
@@ -714,92 +707,6 @@ mod tests {
                 .unwrap_err()
                 .contains("checkout no longer exists")
         );
-    }
-
-    #[test]
-    fn scratch_chat_creates_folder() {
-        let root = std::env::temp_dir().join(format!("hide-scratch-create-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let server = server(vec![workspace_created(
-            root.to_str().unwrap(),
-            "s1",
-            "s1:p1",
-        )]);
-        let pane = create_scratch_tab(
-            &server,
-            &ScratchTabRequest {
-                root: root.to_string_lossy().into_owned(),
-                workspace_id: None,
-                label: "hide codex".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(pane, "s1:p1");
-        assert!(root.is_dir());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn scratch_chat_reuses_workspace() {
-        let root = std::env::temp_dir().join(format!("hide-scratch-reuse-{}", std::process::id()));
-        let server = server(vec![tab_created(root.to_str().unwrap(), "s1", "s1:p2")]);
-        let pane = create_scratch_tab(
-            &server,
-            &ScratchTabRequest {
-                root: root.to_string_lossy().into_owned(),
-                workspace_id: Some("s1".into()),
-                label: "hide codex".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(pane, "s1:p2");
-        assert_eq!(server.requests.lock().unwrap()[0]["method"], "tab.create");
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn scratch_chat_cleanup_on_early_failure() {
-        let root = std::env::temp_dir().join(format!("hide-scratch-file-{}", std::process::id()));
-        std::fs::write(&root, "not a directory").unwrap();
-        let server = server(vec![]);
-        let result = create_scratch_tab(
-            &server,
-            &ScratchTabRequest {
-                root: root.join("child").to_string_lossy().into_owned(),
-                workspace_id: None,
-                label: "hide codex".into(),
-            },
-        );
-        assert!(result.unwrap_err().contains("scratch folder"));
-        assert!(server.requests.lock().unwrap().is_empty());
-        std::fs::remove_file(root).unwrap();
-    }
-
-    #[test]
-    fn scratch_chat_late_failure_keeps_tab() {
-        let root = std::env::temp_dir().join(format!("hide-scratch-late-{}", std::process::id()));
-        let server = server(vec![workspace_created(
-            root.to_str().unwrap(),
-            "s1",
-            "s1:p3",
-        )]);
-        let created = create_scratch_tab(
-            &server,
-            &ScratchTabRequest {
-                root: root.to_string_lossy().into_owned(),
-                workspace_id: None,
-                label: "hide codex".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(created, "s1:p3");
-        assert_eq!(
-            server.requests.lock().unwrap().len(),
-            1,
-            "a later agent failure has no core cleanup call"
-        );
-        assert!(root.is_dir());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

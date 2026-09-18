@@ -28,7 +28,6 @@ mod recent_closed;
 pub mod remote;
 pub mod remote_files;
 mod runtime;
-pub mod scratch;
 mod session_sync;
 mod sidebar;
 mod terminal_recovery;

@@ -182,7 +182,6 @@ struct LocalHerdrMutationDispatchPolicy {
         "close_pane",
         "close_tab",
         "create_pane",
-        "create_scratch_chat_tab",
         "create_tab",
         "create_worktree",
         "create_workspace",

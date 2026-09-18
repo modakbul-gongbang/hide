@@ -1013,7 +1013,7 @@ The native controls are not replaced with gesture-only drawings.
 
 `HideInputSurface` owns text-input typography, horizontal inset, elevated fill, neutral border, focused outline and disabled appearance at compact 24pt or regular 36pt minimum height.
 It is a presentation modifier and does not install focus, submit, selection or keyboard handlers.
-Search retains `HideSearchKeyboard` as its only focus owner; address, form and composer inputs retain their existing native editing bindings.
+Search retains `HideSearchKeyboard` as its only focus owner; address and form inputs retain their existing native editing bindings.
 `HideMenuChipLabel` owns compact menu-trigger typography, chevron, surface and border; the native Menu retains activation and selected menu-item semantics.
 `HideEmptyState` owns the shell's empty/unavailable heading, decorative icon, explanation, wrapping and accessibility grouping using real caller-provided content.
 Its optional semantic emphasis colors the heading and icon for warnings and failures while keeping the explanation readable.
@@ -1035,7 +1035,7 @@ The sidebar opts into equal-width choices and supplies option-specific command t
 Cmd+K, file search and Overview reuse `HideSearchField`, including its clear action and the same keyboard selection behavior.
 Main-shell worktree review and settings Boolean controls use `HideCheckboxStyle`; a checkbox inside an operating-system Menu retains native menu semantics.
 Changes, sidebar and tab rows retain their domain layout but reuse `HideInteractiveButtonStyle` for hover, pressed, focus and disabled feedback.
-Shell actions use shared text/icon styles, including destructive roles, editor conflict recovery and composer submission.
+Shell actions use shared text/icon styles, including destructive roles and editor conflict recovery.
 The old unreferenced checkout-summary renderer is retired; Overview remains the active project context composition.
 
 Project summary rows, Git rails, worktree rows and inspector composition remain owned by Overview instead of becoming general-purpose domain components.
@@ -1050,7 +1050,7 @@ Option+Tab and Option+Shift+Tab cycle projects globally and restore each project
 Hold the chord's modifier to preview, release it to commit, or press Escape to keep the original selection.
 Menu actions commit immediately.
 Window > Reopen Closed Tab uses Shift+Command+T and is disabled when the session-local recent-close stack is empty or a restore is already running.
-The keyboard chord and Window menu item restore regardless of whether a terminal, file editor, search field, or composer text input owns focus.
+The keyboard chord and Window menu item restore regardless of whether a terminal, file editor, or search field owns focus.
 Restoration is one action with no confirmation: an in-flight pane uses the existing pane-header progress suffix, while a restore without a target pane uses the tab strip's compact warning line.
 Missing cwd, unavailable prior conversation, pruned Browser pane, missing file, and retryable failure states use the same warning color and inline notice vocabulary as existing pane operations, without adding a banner, card, or modal alert.
 A definitive Herdr close refusal removes its reserved reopen entry, while an unconfirmed transport or acknowledgement result keeps the entry and explains inline that Hide could not determine whether the item closed.
@@ -1293,7 +1293,7 @@ Geometry, color, typography and spacing are selected through existing tokens and
 The machine-readable control policy is `scripts/design-control-policy.json`.
 Its exact paths identify approved owners, existing legacy uses and platform exceptions, with a reason and count for each detected construct.
 The policy records native control invocations inside shared owners, the Pet dashboard empty-state exception and native menu controls.
-Remaining input invocations are owned wrappers or the composer/address editing boundary, each with the shared input surface.
+Remaining input invocations are owned wrappers or the address editing boundary, each with the shared input surface.
 Overview's stock segmented Picker, cleanup's stock checkbox appearance and obsolete toolbar/destructive styles have no retained allowance.
 TextField, SecureField and TextEditor invocations are counted as well: new input controls belong in a documented shared owner, while enumerated existing fields remain legacy uses.
 An allowance permits a specific native behavior boundary; it does not permit a caller to invent another appearance.

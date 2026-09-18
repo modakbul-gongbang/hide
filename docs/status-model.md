@@ -74,6 +74,19 @@ A delegated row can be Working or Seen and nothing else: its question, approval,
 The row keeps its own demand, mark and status word, so the parent's badge can still say what its child is asking for; what changes is only which group the row sits in and whether it is drawn bright.
 Done is therefore scoped to the lineage root: a delegated child that finishes leaves a dimmed Seen row, and the completion the operator acts on is the root's.
 
+## Where a parent comes from
+
+Ownership, the tree, the breadcrumb and the stall clock all start from one fact per agent: the pane it was spawned from.
+Herdr records no lineage, so that fact has one source, read once in `wire.rs::lineage_parent` and nowhere else, so every row and every view sees the same parent: the pane token `parent_pane`, whose value is the parent's pane id, written by whoever created the pane through `pane.report_metadata`.
+
+Hide's own fork writes it under the source `hide` after `pane.split` and `agent.start`.
+sasu's dispatch writes it under its own source after `agent.start`, the only start that can carry its role marker; any orchestrator can write the same token by hand, and a child whose creator wrote nothing is a root.
+
+An empty token is a cleared declaration, not a parent named by an empty string.
+The token is display-only in Herdr's own terms and dies with the pane, so a closed child leaves no edge behind, and a parent that has gone makes the child an orphan root.
+
+Regression owner: `a_parent_declared_as_a_pane_token_is_the_lineage`.
+
 ## The stall clock
 
 Delegation is only safe if work that stops being anybody's problem comes back.
@@ -211,16 +224,13 @@ The pet's "act now" number is the whole Needs You count and its done number is t
 `herdr-core/src/pet.rs` counts the groups the projection already decided rather than reading tokens or axes a second time.
 The pet dashboard's count tiles read the same four groups, plus the rows whose server stopped answering.
 
-## Ambient signals (subagents, background tasks)
+## The subagent badge
 
-A record may carry optional `ambient` counts: `subagents_active`, `background_running`, and `background_failed`.
-`sidebar.rs::parse_ambient` treats absent or null data as no signal and missing keys as zero; present counts must be nonnegative integers fitting `u32`.
-Unknown keys are discarded, so task names, prompts, commands, output, and paths never enter this count projection.
-A malformed ambient object excludes that agent with a diagnostic while other valid records continue to project.
-`pet.rs::ambient_totals` sums with saturation and returns no counts while disconnected; `PetBadgeRow` renders positive counts only.
-This client does not own upstream transcript scanning, authorization, or server restart policy.
+The badge row carries one more count after the three groups: the in-process subagents Hide's hook reports as working, in purple.
+`pet.rs::subagents_active` sums the `working` hook token over the agents on an answering server, with saturation, and returns zero while disconnected; a pane whose agent has gone is not counted even if its token lingers, and an instrumented pane whose count is unknown adds nothing rather than a zero.
+It is the one count the hook can vouch for; Herdr's own wire carries no ambient counts, and nothing here scans transcripts or output.
 
-Regression owners are `ambient_counts_parse_and_unknown_keys_never_survive`, `a_malformed_ambient_record_excludes_only_that_agent`, and `ambient_counts_sum_across_panes_and_go_quiet_while_disconnected`.
+Regression owner: `subagent_counts_sum_the_hook_tokens_of_listed_agents_and_go_quiet_while_disconnected`.
 
 ## Uninstrumented is not an unknown activity
 
@@ -287,7 +297,7 @@ The workspace inspector uses the canonical representative agent and disconnected
 ## Task identity
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, and the Overview agent line.
-`sidebar.rs` owns the ladder: the composer's chat title, then the `name` token the label plugin publishes when Herdr refused the session name as an agent name, then the Herdr agent name, then the plugin's rolling `task`, then the workspace label.
+`sidebar.rs` owns the ladder: the `name` token the label plugin publishes when Herdr refused the session name as an agent name, then the Herdr agent name, then the plugin's rolling `task`, then the workspace label.
 The session name is the plugin's to derive (Claude's `ai-title`, Codex's first human turn) and is written once per session, so the title does not move while the agent works; `task` is a fallback for an agent that has no name yet, not a name.
 There is no `summary` token and no missing-summary notice: an agent without a plugin label is titled by its Herdr name or its workspace, and the row says nothing else.
 Truncation belongs to each view and does not shorten tooltip or accessibility text.

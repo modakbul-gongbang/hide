@@ -6,7 +6,7 @@ For CI coverage, read [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Deterministic component tests
 
-Rust tests in `herdr-core/` cover session projection, independent demand/activity/read axes, malformed-record exclusion, ambient counts, pet behavior, state persistence, and connection transitions.
+Rust tests in `herdr-core/` cover session projection, independent demand/activity/read axes, malformed-record exclusion, the subagent badge, pet behavior, state persistence, and connection transitions.
 Herdr's `_new` suffix is not Hide's unread authority; the current contract is [status-model.md](status-model.md).
 Files under `herdr-core/tests/fixtures/` are test inputs, not a writable scratch directory.
 A test that persists state must allocate its own temporary path.
@@ -40,7 +40,7 @@ A minimal scenario is:
 {"agents": [{"pane_id": "fixture:p0", "state": "working", "summary": "Fixture agent"}]}
 ```
 
-The script also maps question, approval, error, done, idle, and acknowledged input states and accepts optional ambient counts.
+The script also maps question, approval, error, done, idle, and acknowledged input states.
 Its scenario file is re-read on snapshot and agent-list requests.
 Use a run-owned scenario, short private socket, explicit app state path, and the performance guide's isolation checks before launch.
 Stop only the recorded fixture process to exercise disconnect/recovery; never stop the operator's server.
@@ -62,7 +62,6 @@ None of them run in CI.
 | [agent-attention-fixture.sh](../scripts/agent-attention-fixture.sh) | Two tabs in a checkout that is its own repository, filled to cover the four attention groups and the blocked transition |
 | [tab-verification-fixture.sh](../scripts/tab-verification-fixture.sh) | One workspace holding three Herdr tabs, for the tab strip |
 | [view-state-fixture.sh](../scripts/view-state-fixture.sh) | Panes with checkable scrollback, the outside-focus path, and the missing-runtime launch |
-| [scratch-verification-fixture.sh](../scripts/scratch-verification-fixture.sh) | The Scratch surface on an isolated server |
 | [hide-paths-fixture.sh](../scripts/hide-paths-fixture.sh) | The path-and-tab scenarios, one per scenario card |
 | [e2e-fixture.sh](../scripts/e2e-fixture.sh) | A private GitHub repository with the worktrees, branches and pull request state the project panel reads |
 

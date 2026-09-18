@@ -165,9 +165,7 @@
     "--size-settings-sheet-h-max": "settingsSheetMaxHeight",
     "--size-settings-sheet-window-inset": "settingsSheetWindowInset",
     "--size-add-device-sheet-w": "addDeviceSheetSize.width",
-    "--size-add-device-sheet-h": "addDeviceSheetSize.height",
-    "--size-composer-sheet-w": "composerSheetSize.width",
-    "--size-composer-sheet-h": "composerSheetSize.height"
+    "--size-add-device-sheet-h": "addDeviceSheetSize.height"
   },
   "unmapped": {
     "inter": "a registered CGFont, not a value",

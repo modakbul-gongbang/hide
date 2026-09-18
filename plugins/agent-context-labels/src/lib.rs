@@ -1401,11 +1401,7 @@ pub trait HerdrTransport {
 }
 
 pub trait HerdrEventTransport: HerdrTransport {
-    fn subscribe(
-        &self,
-        after_sequence: u64,
-        pane_ids: &[String],
-    ) -> std::result::Result<Subscription, ApiError>;
+    fn subscribe(&self, pane_ids: &[String]) -> std::result::Result<Subscription, ApiError>;
     fn apply_priority_view(&self) -> Result<()>;
 }
 
@@ -1547,14 +1543,9 @@ fn identity_params(pane: &Pane, identity: &Identity) -> serde_json::Value {
 }
 
 impl HerdrEventTransport for SocketHerdr {
-    fn subscribe(
-        &self,
-        after_sequence: u64,
-        pane_ids: &[String],
-    ) -> std::result::Result<Subscription, ApiError> {
+    fn subscribe(&self, pane_ids: &[String]) -> std::result::Result<Subscription, ApiError> {
         hide_herdr_client::subscribe_with_connector_for_panes(
             self.connector.as_ref(),
-            after_sequence,
             &WATCHER_SUBSCRIPTIONS,
             pane_ids,
             self.timeout,
@@ -1856,7 +1847,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         refresh_requested: bool,
         elapsed_due: bool,
     ) -> Result<usize> {
-        self.scan_panes_at(panes, refresh_requested, elapsed_due, None, false)
+        self.scan_panes_at(panes, refresh_requested, elapsed_due, None)
     }
 
     fn scan_panes_at(
@@ -1865,7 +1856,6 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         refresh_requested: bool,
         elapsed_due: bool,
         event_received_at: Option<std::time::Instant>,
-        replayed_event: bool,
     ) -> Result<usize> {
         // Both files are read once per scan rather than once per pane.
         self.hook_states = load_hook_states(&self.paths);
@@ -1962,7 +1952,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 self.transport.clear_legacy_summary_token(pane)?;
                 self.legacy_summary_cleared.insert(pane.id.clone());
             }
-            let lifecycle_changed = self.observe_lifecycle(pane, event_unix_ms, replayed_event)?;
+            let lifecycle_changed = self.observe_lifecycle(pane, event_unix_ms)?;
             let revision_changed = self.revisions.get(&pane.id) != Some(&pane.revision);
             let state_changed =
                 self.state_change_seqs.get(&pane.id) != Some(&pane.state_change_seq);
@@ -2205,12 +2195,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         self.report_if_changed(pane, &display)
     }
 
-    fn observe_lifecycle(
-        &mut self,
-        pane: &Pane,
-        event_unix_ms: Option<u64>,
-        replayed_event: bool,
-    ) -> Result<bool> {
+    fn observe_lifecycle(&mut self, pane: &Pane, event_unix_ms: Option<u64>) -> Result<bool> {
         self.sync_hook_lifecycle(pane)?;
         let now = unix_time_ms()?;
         let is_new = !self.display_states.panes.contains_key(&pane.id);
@@ -2226,9 +2211,7 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
         let mut changed = is_new;
         if state.state_change_seq != pane.state_change_seq {
             state.state_change_seq = pane.state_change_seq;
-            if !replayed_event {
-                state.changed_unix_ms = event_unix_ms.unwrap_or(now);
-            }
+            state.changed_unix_ms = event_unix_ms.unwrap_or(now);
             state.unseen = !pane.focused;
             changed = true;
         }
@@ -2843,15 +2826,8 @@ impl Drop for WakeSocket {
 
 #[derive(Debug)]
 enum WatcherSubscriptionLine {
-    Event {
-        protocol: u64,
-        sequence: u64,
-        kind: String,
-    },
-    Error {
-        code: String,
-        message: String,
-    },
+    Event { kind: String },
+    Error { code: String, message: String },
 }
 
 fn parse_watcher_subscription_line(line: &str) -> Result<WatcherSubscriptionLine> {
@@ -2881,14 +2857,6 @@ fn parse_watcher_subscription_line(line: &str) -> Result<WatcherSubscriptionLine
             message: message.to_owned(),
         });
     }
-    let protocol = value
-        .get("protocol")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| anyhow!("Herdr sequenced event is missing protocol"))?;
-    let sequence = value
-        .get("sequence")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| anyhow!("Herdr sequenced event is missing sequence"))?;
     let kind = value
         .get("event")
         .and_then(serde_json::Value::as_str)
@@ -2898,10 +2866,8 @@ fn parse_watcher_subscription_line(line: &str) -> Result<WatcherSubscriptionLine
                 .and_then(|data| data.get("type"))
                 .and_then(serde_json::Value::as_str)
         })
-        .ok_or_else(|| anyhow!("Herdr sequenced event is missing event type"))?;
+        .ok_or_else(|| anyhow!("Herdr event is missing event type"))?;
     Ok(WatcherSubscriptionLine::Event {
-        protocol,
-        sequence,
         kind: kind.to_owned(),
     })
 }
@@ -3018,18 +2984,20 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
     /// Run the production watcher loop. Herdr is queried only on startup,
     /// reconnect, and an actual subscribed pane event; idle waits use the
     /// elapsed display boundary or the wake socket.
+    ///
+    /// Herdr's stream cannot be resumed from a position, so every connect
+    /// starts from a fresh pane list, and an event is only ever a prompt to
+    /// list again: nothing is replayed and nothing is read off the event
+    /// itself but its kind.
     pub fn run_event_loop(&mut self) -> Result<()> {
         let (sender, receiver) = mpsc::channel();
         let _wake_socket = WakeSocket::start(&self.paths, sender.clone())?;
         let mut subscription: Option<ActiveWatcherSubscription> = None;
         let mut generation = 0_u64;
         let mut panes = Vec::new();
-        let mut cursor = 0_u64;
-        let mut replay_until = 0_u64;
         let mut reconnect_at = std::time::Instant::now();
         let mut reconnect_wait = Duration::from_millis(100);
         let mut failure_streak = 0_u32;
-        let mut needs_bootstrap = true;
 
         loop {
             if subscription.is_none() && std::time::Instant::now() >= reconnect_at {
@@ -3048,14 +3016,8 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                     }
                 };
                 let pane_ids = watcher_pane_ids(&next_panes);
-                match self.transport.subscribe(cursor, &pane_ids) {
+                match self.transport.subscribe(&pane_ids) {
                     Ok(next) => {
-                        let ack = next.ack.clone();
-                        let sequence_regressed = ack.sequence < cursor;
-                        let rebootstrap = needs_bootstrap
-                            || sequence_regressed
-                            || (cursor > 0
-                                && cursor.saturating_add(1) < ack.oldest_available_sequence);
                         panes = next_panes;
                         let refresh = if panes.is_empty() {
                             false
@@ -3073,18 +3035,12 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                             reconnect_wait = reconnect_delay(reconnect_wait);
                             continue;
                         }
-                        cursor = if sequence_regressed {
-                            ack.sequence
-                        } else {
-                            cursor.max(ack.sequence)
-                        };
-                        replay_until = ack.sequence;
                         generation = generation.saturating_add(1);
                         match spawn_watcher_subscription(next, generation, sender.clone()) {
                             Ok(active) => {
                                 subscription = Some(active);
                                 watcher_recovered(&self.paths, &mut failure_streak);
-                                let detail = format!("cursor={cursor};rebootstrap={rebootstrap}");
+                                let detail = format!("panes={}", panes.len());
                                 let _ = append_log(
                                     &self.paths,
                                     "herdr_subscription_resumed",
@@ -3092,7 +3048,6 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                                     Some(&detail),
                                 );
                                 reconnect_wait = Duration::from_millis(100);
-                                needs_bootstrap = false;
                             }
                             Err(error) => {
                                 watcher_failure(
@@ -3106,22 +3061,10 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                         }
                     }
                     Err(error) => {
-                        let detail = format!("cursor={cursor};error={error}");
+                        let detail = format!("error={error}");
                         let _ =
                             append_log(&self.paths, "herdr_subscription_lost", None, Some(&detail));
                         watcher_failure(&self.paths, &mut failure_streak, &error.to_string());
-                        if matches!(
-                            error.code(),
-                            Some("event_gap" | "event_journal_unavailable")
-                        ) {
-                            // The server could not replay from this cursor.
-                            // Keep the next connection on the fresh-list path;
-                            // the zero cursor is only a marker here because the
-                            // next successful acknowledgement supplies the
-                            // authoritative sequence floor.
-                            needs_bootstrap = true;
-                            cursor = 0;
-                        }
                         if let ApiError::Remote { code, message } = &error
                             && code.contains("protocol")
                         {
@@ -3175,32 +3118,10 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                         continue;
                     }
                     match parse_watcher_subscription_line(&line) {
-                        Ok(WatcherSubscriptionLine::Event {
-                            protocol,
-                            sequence,
-                            kind,
-                        }) => {
-                            if protocol != HERDR_PROTOCOL_REVISION {
-                                let mismatch = format!(
-                                    "Herdr protocol mismatch: expected {HERDR_PROTOCOL_REVISION}, actual {protocol}"
-                                );
-                                eprintln!("{mismatch}");
-                                let _ = append_log(
-                                    &self.paths,
-                                    "herdr_protocol_mismatch",
-                                    None,
-                                    Some(&mismatch),
-                                );
-                                if let Some(active) = subscription.take() {
-                                    active.stop();
-                                }
-                                return Err(anyhow!(mismatch));
-                            }
+                        Ok(WatcherSubscriptionLine::Event { kind }) => {
                             if !is_watcher_pane_event(&kind) {
                                 continue;
                             }
-                            let replayed_event = sequence <= replay_until;
-                            cursor = cursor.max(sequence);
                             match self.transport.panes() {
                                 Ok(next_panes) => {
                                     let pane_ids_changed =
@@ -3216,16 +3137,12 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                                         refresh,
                                         false,
                                         Some(received_at),
-                                        replayed_event,
                                     ) {
                                         watcher_failure(
                                             &self.paths,
                                             &mut failure_streak,
                                             &format!("event processing failed: {error:#}"),
                                         );
-                                    }
-                                    if sequence > replay_until {
-                                        replay_until = sequence;
                                     }
                                     if pane_ids_changed {
                                         if let Some(active) = subscription.take() {
@@ -3235,7 +3152,7 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                                     }
                                 }
                                 Err(error) => {
-                                    let detail = format!("cursor={cursor};error={error:#}");
+                                    let detail = format!("error={error:#}");
                                     let _ = append_log(
                                         &self.paths,
                                         "herdr_subscription_lost",
@@ -3256,22 +3173,13 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                             }
                         }
                         Ok(WatcherSubscriptionLine::Error { code, message }) => {
-                            let detail = format!("cursor={cursor};code={code};message={message}");
+                            let detail = format!("code={code};message={message}");
                             let _ = append_log(
                                 &self.paths,
                                 "herdr_subscription_lost",
                                 None,
                                 Some(&detail),
                             );
-                            needs_bootstrap =
-                                code == "event_gap" || code == "event_journal_unavailable";
-                            if needs_bootstrap {
-                                // The retained journal cannot satisfy this
-                                // cursor. A zero cursor asks Herdr to replay
-                                // whatever it still has after the fresh list
-                                // bootstrap below.
-                                cursor = 0;
-                            }
                             if let Some(active) = subscription.take() {
                                 active.stop();
                             }
@@ -3288,8 +3196,6 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                             if let Some(active) = subscription.take() {
                                 active.stop();
                             }
-                            needs_bootstrap = true;
-                            cursor = 0;
                             reconnect_at = std::time::Instant::now() + reconnect_wait;
                             reconnect_wait = reconnect_delay(reconnect_wait);
                         }
@@ -3302,7 +3208,7 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                     if subscription.as_ref().map(|item| item.generation) != Some(ended_generation) {
                         continue;
                     }
-                    let detail = format!("cursor={cursor};message={message}");
+                    let detail = format!("message={message}");
                     let _ = append_log(&self.paths, "herdr_subscription_lost", None, Some(&detail));
                     if let Some(active) = subscription.take() {
                         active.stop();

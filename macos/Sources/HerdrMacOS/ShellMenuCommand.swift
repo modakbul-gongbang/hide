@@ -25,7 +25,6 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
     case recentProject = "recent_project"
     case previousRecentProject = "previous_recent_project"
     case newTab = "new_tab"
-    case newChat = "new_chat"
     case newWorkspace = "new_workspace"
     case search
     case openFile = "open_file"
@@ -60,7 +59,6 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .recentProject: "Next Recent Project"
         case .previousRecentProject: "Previous Recent Project"
         case .newTab: "New Tab"
-        case .newChat: "New Chat"
         case .newWorkspace: "New Workspace"
         case .search: "Search"
         case .openFile: "Open File"
@@ -81,7 +79,6 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .recentProject: PaneShortcut(key: "tab", modifiers: [.option])
         case .previousRecentProject: PaneShortcut(key: "tab", modifiers: [.option, .shift])
         case .newTab: PaneShortcut(key: "t", modifiers: [.command])
-        case .newChat: PaneShortcut(key: "n", modifiers: [.command])
         case .newWorkspace: PaneShortcut(key: "n", modifiers: [.command, .shift])
         case .search: PaneShortcut(key: "k", modifiers: [.command])
         case .openFile: PaneShortcut(key: "p", modifiers: [.command])
