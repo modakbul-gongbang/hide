@@ -280,7 +280,14 @@ enum HideTheme {
 
     static let compactControlSize: CGFloat = 36
     static let searchSheetSize = CGSize(width: 570, height: 430)
+    /// The Settings sheet's width and its smallest height. The sheet grows
+    /// with the window up to `settingsSheetMaxHeight`, keeping
+    /// `settingsSheetWindowInset` clear above and below, so a tab whose
+    /// content is taller than 560 points is read without a scroll on an
+    /// ordinary window and the sheet's bottom edge does not cut through a row.
     static let settingsSheetSize = CGSize(width: 720, height: 560)
+    static let settingsSheetMaxHeight: CGFloat = 800
+    static let settingsSheetWindowInset: CGFloat = 40
     static let addDeviceSheetSize = CGSize(width: 470, height: 300)
 
     static let badgeHeight: CGFloat = 16
