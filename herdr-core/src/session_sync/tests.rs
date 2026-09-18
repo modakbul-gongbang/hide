@@ -6,13 +6,12 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::model::{CoreOptions, SCHEMA_VERSION};
+use hide_herdr_client::HERDR_PROTOCOL_REVISION;
 
 fn snapshot() -> Value {
     json!({
         "version": "0.8.2",
         "protocol": HERDR_PROTOCOL_REVISION,
-        "host": {"host_id": "fixture-host", "session_id": "fixture"},
-        "event_sequence": 40,
         "focused_pane_id": "w1:p1",
         "workspaces": [{
             "workspace_id": "w1",
@@ -28,8 +27,7 @@ fn snapshot() -> Value {
         "panes": [{
             "workspace_id": "w1",
             "tab_id": "w1:t1",
-            "pane_id": "w1:p1", "focused": false, "revision": 0, "agent_status": "idle",
-            "surface": {"kind": "terminal", "attach": {"terminal_id": "fixture-terminal", "protocol": HERDR_PROTOCOL_REVISION, "transport": "herdr_client", "host": {"host_id": "fixture-host", "session_id": "fixture"}}},
+            "pane_id": "w1:p1", "terminal_id": "fixture-terminal", "focused": false, "revision": 0, "agent_status": "idle",
             "cwd": "/tmp/fixture"
         }],
         "layouts": [{
@@ -44,16 +42,14 @@ fn snapshot() -> Value {
             }],
             "splits": []
         }],
-        "agents": [],
-        "lineage": []
+        "agents": []
     })
 }
 
 #[test]
 fn every_session_sync_snapshot_fixture_obeys_the_generated_contract() {
     for (fixture, panes) in [(snapshot(), 1), (two_tab_snapshot(), 2)] {
-        let (_, cursor, state) = wire::snapshot(fixture).expect("generated snapshot contract");
-        assert_eq!(cursor, 40);
+        let state = wire::snapshot(fixture).expect("generated snapshot contract");
         assert_eq!(state.panes.len(), panes);
     }
 }
@@ -69,15 +65,14 @@ fn two_tab_snapshot() -> Value {
             "agent_status": "idle", "focused": false, "number": 2, "pane_count": 1, "label": "2"
         }));
     value["panes"]
-            .as_array_mut()
-            .expect("panes array")
-            .push(json!({
-                "workspace_id": "w1",
-                "tab_id": "w1:t2",
-                "pane_id": "w1:p2", "focused": false, "revision": 0, "agent_status": "idle",
-                "surface": {"kind": "terminal", "attach": {"terminal_id": "fixture-terminal", "protocol": HERDR_PROTOCOL_REVISION, "transport": "herdr_client", "host": {"host_id": "fixture-host", "session_id": "fixture"}}},
-                "cwd": "/tmp/fixture"
-            }));
+        .as_array_mut()
+        .expect("panes array")
+        .push(json!({
+            "workspace_id": "w1",
+            "tab_id": "w1:t2",
+            "pane_id": "w1:p2", "terminal_id": "fixture-terminal", "focused": false, "revision": 0, "agent_status": "idle",
+            "cwd": "/tmp/fixture"
+        }));
     value["layouts"]
         .as_array_mut()
         .expect("layouts array")
@@ -96,14 +91,8 @@ fn two_tab_snapshot() -> Value {
     value
 }
 
-fn event(sequence: u64, kind: &str, data: Value) -> ReplicaEnvelope {
-    let raw = json!({
-        "protocol": HERDR_PROTOCOL_REVISION,
-        "host": {"host_id": "fixture-host", "session_id": "fixture"},
-        "sequence": sequence,
-        "event": kind,
-        "data": data
-    });
+fn event(kind: &str, data: Value) -> ReplicaEvent {
+    let raw = json!({"event": kind, "data": data});
     match parse_subscription_line(&raw.to_string()).expect("event parses") {
         SubscriptionLine::Event(event) => event,
         SubscriptionLine::Error { .. } => unreachable!(),
@@ -116,7 +105,6 @@ fn worktree_events_invalidate_the_change_driven_reader_once() {
     let workspace = value["workspaces"][0].clone();
     let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
     let opened = event(
-        41,
         "worktree_opened",
         json!({
             "type": "worktree_opened",
@@ -125,10 +113,10 @@ fn worktree_events_invalidate_the_change_driven_reader_once() {
             "already_open": true
         }),
     );
-    let outcome = replica.apply(opened.clone()).expect("worktree event");
+    let outcome = replica
+        .apply(opened, ApplyMode::Strict)
+        .expect("worktree event");
     assert!(outcome.refresh_worktrees);
-    let duplicate = replica.apply(opened).expect("duplicate event");
-    assert!(!duplicate.refresh_worktrees);
 }
 
 fn accept_request(listener: &UnixListener) -> (UnixStream, Value) {
@@ -228,27 +216,26 @@ fn remove_fixture(root: &Path, socket_path: &Path, state_path: &Path) {
 fn split_is_published_only_after_the_authoritative_layout_arrives() {
     let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
     let created = replica
-            .apply(event(
-                41,
+        .apply(
+            event(
                 "pane_created",
                 json!({
                     "type": "pane_created",
                     "pane": {
                         "workspace_id": "w1",
                         "tab_id": "w1:t1",
-                        "pane_id": "w1:p2", "focused": false, "revision": 0, "agent_status": "idle",
-                        "surface": {"kind": "terminal", "attach": {"terminal_id": "fixture-terminal", "protocol": HERDR_PROTOCOL_REVISION, "transport": "herdr_client", "host": {"host_id": "fixture-host", "session_id": "fixture"}}},
+                        "pane_id": "w1:p2", "terminal_id": "fixture-terminal", "focused": false, "revision": 0, "agent_status": "idle",
                         "cwd": "/tmp/fixture"
                     }
                 }),
-            ))
-            .expect("pane event");
+            ),
+            ApplyMode::Strict,
+        )
+        .expect("pane event");
     assert!(!created.publish);
 
     let updated = replica
-            .apply(event(
-                42,
-                "layout_updated",
+            .apply(event("layout_updated",
                 json!({
                     "type": "layout_updated",
                     "layout": {
@@ -269,7 +256,7 @@ fn split_is_published_only_after_the_authoritative_layout_arrives() {
                         }]
                     }
                 }),
-            ))
+            ), ApplyMode::Strict)
             .expect("layout event");
     assert!(updated.publish);
     assert_eq!(replica.project().panes.len(), 2);
@@ -291,11 +278,13 @@ fn browser_host_identity_follows_pane_updates_and_rejects_remote_attachment() {
         "hide_browser_owns_target": "false"
     });
     replica
-        .apply(event(
-            41,
-            "pane_updated",
-            json!({"type": "pane_updated", "pane": pane}),
-        ))
+        .apply(
+            event(
+                "pane_updated",
+                json!({"type": "pane_updated", "pane": pane}),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("host report");
     let projected = replica.project();
     let content = crate::pane_content::PaneContent::from_tokens(&projected.panes[0].tokens, false);
@@ -310,11 +299,13 @@ fn browser_host_identity_follows_pane_updates_and_rejects_remote_attachment() {
     // stale browser over a shell that now occupies the same layout leaf.
     pane["tokens"] = json!({});
     replica
-        .apply(event(
-            42,
-            "pane_updated",
-            json!({"type": "pane_updated", "pane": pane}),
-        ))
+        .apply(
+            event(
+                "pane_updated",
+                json!({"type": "pane_updated", "pane": pane}),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("host release");
     assert!(
         crate::pane_content::PaneContent::from_tokens(&replica.project().panes[0].tokens, false)
@@ -368,11 +359,13 @@ fn remote_projects_follow_activity_order_rather_than_label_order() {
             "tab_id": "w2:t1",
             "agent_status": "idle", "focused": false, "number": 1, "pane_count": 1, "label": "1"
         }));
-    value["panes"].as_array_mut().expect("panes array").push(json!({
+    value["panes"]
+        .as_array_mut()
+        .expect("panes array")
+        .push(json!({
             "workspace_id": "w2",
             "tab_id": "w2:t1",
-            "pane_id": "w2:p1", "focused": false, "revision": 0, "agent_status": "idle",
-            "surface": {"kind": "terminal", "attach": {"terminal_id": "fixture-terminal", "protocol": HERDR_PROTOCOL_REVISION, "transport": "herdr_client", "host": {"host_id": "fixture-host", "session_id": "fixture"}}},
+            "pane_id": "w2:p1", "terminal_id": "fixture-terminal", "focused": false, "revision": 0, "agent_status": "idle",
             "cwd": "/tmp/fixture-zulu"
         }));
     value["layouts"]
@@ -608,27 +601,31 @@ fn official_remote_session_coordinator_probe() {
 fn workspace_close_cascade_clears_pending_layout_and_nested_state() {
     let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
     let pane_closed = replica
-        .apply(event(
-            41,
-            "pane_closed",
-            json!({
-                "type": "pane_closed",
-                "pane_id": "w1:p1",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "pane_closed",
+                json!({
+                    "type": "pane_closed",
+                    "pane_id": "w1:p1",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("pane close event");
     assert!(!pane_closed.publish);
 
     let workspace_closed = replica
-        .apply(event(
-            42,
-            "workspace_closed",
-            json!({
-                "type": "workspace_closed",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "workspace_closed",
+                json!({
+                    "type": "workspace_closed",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("workspace close event");
     assert!(workspace_closed.publish);
     assert!(replica.ready_to_publish());
@@ -646,15 +643,17 @@ fn last_pane_close_removes_an_implicitly_closed_inactive_tab() {
     let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
 
     let pane_closed = replica
-        .apply(event(
-            41,
-            "pane_closed",
-            json!({
-                "type": "pane_closed",
-                "pane_id": "w1:p2",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "pane_closed",
+                json!({
+                    "type": "pane_closed",
+                    "pane_id": "w1:p2",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("last pane close event");
 
     assert!(pane_closed.publish);
@@ -682,41 +681,47 @@ fn last_pane_close_waits_for_the_authoritative_fallback_tab_focus() {
     let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
 
     let pane_closed = replica
-        .apply(event(
-            41,
-            "pane_closed",
-            json!({
-                "type": "pane_closed",
-                "pane_id": "w1:p1",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "pane_closed",
+                json!({
+                    "type": "pane_closed",
+                    "pane_id": "w1:p1",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("last pane close event");
     assert!(!pane_closed.publish);
     assert!(!replica.ready_to_publish());
 
     let workspace_focused = replica
-        .apply(event(
-            42,
-            "workspace_focused",
-            json!({
-                "type": "workspace_focused",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "workspace_focused",
+                json!({
+                    "type": "workspace_focused",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("workspace focus event");
     assert!(!workspace_focused.publish);
 
     let tab_focused = replica
-        .apply(event(
-            43,
-            "tab_focused",
-            json!({
-                "type": "tab_focused",
-                "tab_id": "w1:t2",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "tab_focused",
+                json!({
+                    "type": "tab_focused",
+                    "tab_id": "w1:t2",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("fallback tab focus event");
     assert!(tab_focused.publish);
     assert!(replica.ready_to_publish());
@@ -791,9 +796,7 @@ fn tab_order_from_a_move_event_reaches_the_projection() {
     // resulting order. The projection the navigator reads must carry that
     // order, not the order the tabs were created in.
     let moved = replica
-            .apply(event(
-                41,
-                "tab_moved",
+            .apply(event("tab_moved",
                 json!({
                     "type": "tab_moved",
                     "workspace_id": "w1",
@@ -804,7 +807,7 @@ fn tab_order_from_a_move_event_reaches_the_projection() {
                         {"workspace_id": "w1", "tab_id": "w1:t1", "agent_status": "idle", "focused": false, "number": 1, "pane_count": 1, "label": "1"}
                     ]
                 }),
-            ))
+            ), ApplyMode::Strict)
             .expect("tab move event");
     assert!(moved.publish);
     assert_eq!(
@@ -835,29 +838,33 @@ fn active_tab_close_waits_for_the_authoritative_fallback_tab_focus() {
     let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
 
     let tab_closed = replica
-        .apply(event(
-            41,
-            "tab_closed",
-            json!({
-                "type": "tab_closed",
-                "tab_id": "w1:t1",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "tab_closed",
+                json!({
+                    "type": "tab_closed",
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("active tab close event");
     assert!(!tab_closed.publish);
     assert!(!replica.ready_to_publish());
 
     let tab_focused = replica
-        .apply(event(
-            42,
-            "tab_focused",
-            json!({
-                "type": "tab_focused",
-                "tab_id": "w1:t2",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "tab_focused",
+                json!({
+                    "type": "tab_focused",
+                    "tab_id": "w1:t2",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("fallback tab focus event");
     assert!(tab_focused.publish);
     assert!(replica.ready_to_publish());
@@ -871,11 +878,13 @@ fn active_tab_close_waits_for_the_authoritative_fallback_tab_focus() {
 fn active_tab_close_settles_from_a_workspace_read_when_no_focus_follows() {
     let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
     replica
-        .apply(event(
-            41,
-            "tab_closed",
-            json!({"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}),
-        ))
+        .apply(
+            event(
+                "tab_closed",
+                json!({"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("active tab close event");
     assert_eq!(
         replica.workspaces_awaiting_active_tab(),
@@ -904,18 +913,22 @@ fn active_tab_close_settles_from_a_workspace_read_when_no_focus_follows() {
 fn a_workspace_read_after_the_focus_event_changes_nothing() {
     let mut replica = SessionReplica::from_snapshot(&two_tab_snapshot()).expect("two-tab snapshot");
     replica
-        .apply(event(
-            41,
-            "tab_closed",
-            json!({"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}),
-        ))
+        .apply(
+            event(
+                "tab_closed",
+                json!({"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("active tab close event");
     replica
-        .apply(event(
-            42,
-            "tab_focused",
-            json!({"type": "tab_focused", "tab_id": "w1:t2", "workspace_id": "w1"}),
-        ))
+        .apply(
+            event(
+                "tab_focused",
+                json!({"type": "tab_focused", "tab_id": "w1:t2", "workspace_id": "w1"}),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("fallback tab focus event");
     assert!(replica.workspaces_awaiting_active_tab().is_empty());
     assert!(!replica.settle_active_tab("w1", "w1:t2"));
@@ -926,76 +939,95 @@ fn a_workspace_read_after_the_focus_event_changes_nothing() {
 fn last_tab_close_waits_for_the_workspace_close_cascade() {
     let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
     let tab_closed = replica
-        .apply(event(
-            41,
-            "tab_closed",
-            json!({
-                "type": "tab_closed",
-                "tab_id": "w1:t1",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "tab_closed",
+                json!({
+                    "type": "tab_closed",
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("tab close event");
     assert!(!tab_closed.publish);
 
     let workspace_closed = replica
-        .apply(event(
-            42,
-            "workspace_closed",
-            json!({
-                "type": "workspace_closed",
-                "workspace_id": "w1"
-            }),
-        ))
+        .apply(
+            event(
+                "workspace_closed",
+                json!({
+                    "type": "workspace_closed",
+                    "workspace_id": "w1"
+                }),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("workspace close event");
     assert!(workspace_closed.publish);
     assert!(replica.ready_to_publish());
     assert!(replica.project().workspaces.is_empty());
 }
 
+/// The subscription is opened before the snapshot, so an event emitted just
+/// before the snapshot was taken arrives as well and describes a change the
+/// snapshot already holds. In the reconcile window the snapshot wins and the
+/// event is dropped; the same event afterwards is a real divergence.
 #[test]
-fn exact_duplicate_replay_is_idempotent_but_reused_sequence_is_rejected() {
+fn an_event_the_snapshot_already_holds_is_dropped_while_reconciling_and_rejected_afterwards() {
     let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
-    let focused = event(
-        41,
-        "pane_focused",
+    let before = replica.project().panes.len();
+    let already_listed = event(
+        "pane_created",
         json!({
-            "type": "pane_focused",
+            "type": "pane_created",
             "workspace_id": "w1",
-            "pane_id": "w1:p1"
+            "tab_id": "w1:t1",
+            "pane": snapshot()["panes"][0]
         }),
     );
-    assert!(replica.apply(focused.clone()).expect("first event").publish);
-    assert!(!replica.apply(focused).expect("duplicate").publish);
+    let reconciled = replica
+        .apply(already_listed.clone(), ApplyMode::Reconcile)
+        .expect("the snapshot already holds this pane");
+    assert!(!reconciled.publish);
+    assert_eq!(replica.project().panes.len(), before);
+    assert_eq!(replica.applied_events, 0);
 
-    let changed = event(
-        41,
-        "workspace_focused",
-        json!({
-            "type": "workspace_focused",
-            "workspace_id": "w1"
-        }),
-    );
     let error = replica
-        .apply(changed)
-        .expect_err("sequence reuse must fail");
+        .apply(already_listed, ApplyMode::Strict)
+        .expect_err("after the window the replica has diverged");
     assert_eq!(error.state(), "malformed");
+    assert_eq!(replica.project().panes.len(), before);
+
+    // An event that does not contradict the snapshot applies in either mode.
+    let focused = event(
+        "pane_focused",
+        json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p1"}),
+    );
+    assert!(
+        replica
+            .apply(focused, ApplyMode::Reconcile)
+            .expect("a focus the snapshot agrees with")
+            .publish
+    );
+    assert_eq!(replica.applied_events, 1);
 }
 
 #[test]
-fn event_gap_is_an_explicit_stream_result() {
+fn a_stream_error_is_an_explicit_stream_result() {
     let line = json!({
         "id": "herdr-core:events.subscribe",
         "error": {
-            "code": "event_gap",
-            "message": "fetch session.snapshot and resubscribe"
+            "code": "internal",
+            "message": "event stream closed"
         }
     })
     .to_string();
     match parse_subscription_line(&line).expect("typed error") {
         SubscriptionLine::Error { code, message } => {
-            assert_eq!(code, "event_gap");
-            assert!(message.contains("session.snapshot"));
+            assert_eq!(code, "internal");
+            assert!(message.contains("closed"));
         }
         SubscriptionLine::Event(_) => panic!("expected subscription error"),
     }
@@ -1003,30 +1035,11 @@ fn event_gap_is_an_explicit_stream_result() {
 
 #[test]
 fn subscription_failure_is_stale_only_when_a_projection_already_exists() {
-    let initial =
-        connect_failure_from_api(ApiError::Transport("socket closed".to_owned()), false, 40);
-    assert_eq!(initial.error.state(), "unreachable");
+    let initial = connect_failure_from_api(ApiError::Transport("socket closed".to_owned()), false);
+    assert_eq!(initial.state(), "unreachable");
 
-    let reconnect =
-        connect_failure_from_api(ApiError::Transport("socket closed".to_owned()), true, 40);
-    assert_eq!(reconnect.error.state(), "stale");
-}
-
-#[test]
-fn filtered_global_sequence_gaps_are_accepted() {
-    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
-    let outcome = replica
-        .apply(event(
-            57,
-            "workspace_focused",
-            json!({
-                "type": "workspace_focused",
-                "workspace_id": "w1"
-            }),
-        ))
-        .expect("sequence jump is legal");
-    assert!(outcome.publish);
-    assert_eq!(replica.cursor, 57);
+    let reconnect = connect_failure_from_api(ApiError::Transport("socket closed".to_owned()), true);
+    assert_eq!(reconnect.state(), "stale");
 }
 
 fn agent(pane_id: &str, elapsed: &str) -> ProjectedAgent {
@@ -1104,11 +1117,13 @@ fn focus_events_move_the_projected_focused_workspace() {
     );
 
     replica
-        .apply(event(
-            41,
-            "workspace_focused",
-            json!({"type": "workspace_focused", "workspace_id": "w1"}),
-        ))
+        .apply(
+            event(
+                "workspace_focused",
+                json!({"type": "workspace_focused", "workspace_id": "w1"}),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("workspace focus applies");
     assert_eq!(
         replica.project().focused_workspace_id.as_deref(),
@@ -1117,11 +1132,13 @@ fn focus_events_move_the_projected_focused_workspace() {
 
     let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
     replica
-        .apply(event(
-            41,
-            "tab_focused",
-            json!({"type": "tab_focused", "workspace_id": "w1", "tab_id": "w1:t1"}),
-        ))
+        .apply(
+            event(
+                "tab_focused",
+                json!({"type": "tab_focused", "workspace_id": "w1", "tab_id": "w1:t1"}),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("tab focus applies");
     assert_eq!(
         replica.project().focused_workspace_id.as_deref(),
@@ -1131,11 +1148,13 @@ fn focus_events_move_the_projected_focused_workspace() {
 
     let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
     replica
-        .apply(event(
-            41,
-            "pane_focused",
-            json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p1"}),
-        ))
+        .apply(
+            event(
+                "pane_focused",
+                json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p1"}),
+            ),
+            ApplyMode::Strict,
+        )
         .expect("pane focus applies");
     assert_eq!(
         replica.project().focused_workspace_id.as_deref(),
@@ -1144,123 +1163,70 @@ fn focus_events_move_the_projected_focused_workspace() {
     );
 }
 
+/// Herdr's stream has no position to resume from, so a clean disconnect is
+/// followed by a fresh subscription and a fresh snapshot, in that order:
+/// listening first is what keeps an event between the two from being lost.
 #[test]
-fn host_and_protocol_mismatch_leave_the_last_projection_unchanged() {
-    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
-    let before = replica.project();
-    let wrong_host = json!({
-        "protocol": HERDR_PROTOCOL_REVISION,
-        "host": {"host_id": "another-host", "session_id": "fixture"},
-        "sequence": 41,
-        "event": "workspace_focused",
-        "data": {"type": "workspace_focused", "workspace_id": "w1"}
-    });
-    let event = match parse_subscription_line(&wrong_host.to_string()).expect("event parses") {
-        SubscriptionLine::Event(event) => event,
-        SubscriptionLine::Error { .. } => unreachable!(),
-    };
-    assert_eq!(
-        replica.apply(event).expect_err("host mismatch").state(),
-        "stale"
-    );
-    assert_eq!(replica.project().focused_pane_id, before.focused_pane_id);
-
-    let wrong_protocol = json!({
-        "protocol": HERDR_PROTOCOL_REVISION + 1,
-        "host": {"host_id": "fixture-host", "session_id": "fixture"},
-        "sequence": 41,
-        "event": "workspace_focused",
-        "data": {"type": "workspace_focused", "workspace_id": "w1"}
-    });
-    let event = match parse_subscription_line(&wrong_protocol.to_string()).expect("event parses") {
-        SubscriptionLine::Event(event) => event,
-        SubscriptionLine::Error { .. } => unreachable!(),
-    };
-    let mismatch = replica.apply(event).expect_err("protocol mismatch");
-    assert_eq!(mismatch.state(), "protocol_mismatch");
-    let message = mismatch.message();
-    assert!(
-        message.contains(&format!("protocol {}", HERDR_PROTOCOL_REVISION + 1))
-            && message.contains(&format!("supports protocol {HERDR_PROTOCOL_REVISION}"))
-            && message.contains("Update Hide")
-            && message.contains("No workspace or agent was created")
-            && !message.contains("server stop"),
-        "the mismatch names both revisions and the remedy: {message}"
-    );
-    assert_eq!(replica.project().focused_pane_id, before.focused_pane_id);
-}
-
-#[test]
-fn coordinator_resumes_from_the_last_event_without_fetching_another_snapshot() {
+fn coordinator_rebuilds_from_a_fresh_snapshot_after_a_clean_disconnect() {
     let root = Path::new("/tmp").join(format!(
-        "herdr-core-session-resume-contract-{}",
+        "herdr-core-session-rebuild-contract-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&root).expect("create socket directory");
     let socket_path = root.join("herdr.sock");
     let state_path = root.join("state.json");
     let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
-    let resumed = Arc::new(AtomicBool::new(false));
-    let resumed_from_server = Arc::clone(&resumed);
+    let rebuilt = Arc::new(AtomicBool::new(false));
+    let rebuilt_from_server = Arc::clone(&rebuilt);
     let server = thread::spawn(move || {
+        let (mut first_subscription, first_subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        assert_eq!(
+            first_subscribe_request["params"].get("after_sequence"),
+            None,
+            "the stable contract has no resume cursor"
+        );
+        write_result(
+            &mut first_subscription,
+            &first_subscribe_request,
+            json!({"type": "subscription_started"}),
+        );
         let (mut snapshot_stream, snapshot_request) =
             accept_request_for(&listener, "session.snapshot");
-        assert_eq!(snapshot_request["method"], "session.snapshot");
         write_result(
             &mut snapshot_stream,
             &snapshot_request,
             json!({"type": "session_snapshot", "snapshot": snapshot()}),
         );
-
-        let (mut first_subscription, first_subscribe_request) =
-            accept_request_for(&listener, "events.subscribe");
-        assert_eq!(first_subscribe_request["method"], "events.subscribe");
-        assert_eq!(first_subscribe_request["params"]["after_sequence"], 40);
-        write_result(
-            &mut first_subscription,
-            &first_subscribe_request,
-            json!({
-                "type": "subscription_started",
-                "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                "sequence": 40,
-                "oldest_available_sequence": 1
-            }),
-        );
         writeln!(
             first_subscription,
             "{}",
             json!({
-                "protocol": HERDR_PROTOCOL_REVISION,
-                "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                "sequence": 41,
                 "event": "workspace_focused",
                 "data": {"type": "workspace_focused", "workspace_id": "w1"}
             })
         )
-        .expect("write replayable event");
+        .expect("write event");
         drop(first_subscription);
 
-        let (mut resumed_subscription, resumed_request) =
+        let (mut second_subscription, second_subscribe_request) =
             accept_request_for(&listener, "events.subscribe");
-        assert_eq!(
-            resumed_request["method"], "events.subscribe",
-            "a clean disconnect must resume the cursor instead of fetching a snapshot"
-        );
-        assert_eq!(resumed_request["params"]["after_sequence"], 41);
         write_result(
-            &mut resumed_subscription,
-            &resumed_request,
-            json!({
-                "type": "subscription_started",
-                "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                "sequence": 41,
-                "oldest_available_sequence": 1
-            }),
+            &mut second_subscription,
+            &second_subscribe_request,
+            json!({"type": "subscription_started"}),
         );
-        resumed_from_server.store(true, Ordering::Release);
+        let (mut second_snapshot_stream, second_snapshot_request) =
+            accept_request_for(&listener, "session.snapshot");
+        write_result(
+            &mut second_snapshot_stream,
+            &second_snapshot_request,
+            json!({"type": "session_snapshot", "snapshot": snapshot()}),
+        );
+        rebuilt_from_server.store(true, Ordering::Release);
         let mut byte = [0_u8; 1];
         assert_eq!(
-            resumed_subscription
+            second_subscription
                 .read(&mut byte)
                 .expect("wait for shutdown"),
             0
@@ -1271,7 +1237,7 @@ fn coordinator_resumes_from_the_last_event_without_fetching_another_snapshot() {
     let context = context_for_fixture(&runtime, &socket_path);
     let handle = spawn(context, None).expect("start session sync");
     wait_until(Instant::now() + Duration::from_secs(3), || {
-        resumed.load(Ordering::Acquire)
+        rebuilt.load(Ordering::Acquire)
             && runtime
                 .lock()
                 .expect("runtime lock")
@@ -1303,6 +1269,13 @@ fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
     let read_answered = Arc::new(AtomicBool::new(false));
     let read_answered_from_server = Arc::clone(&read_answered);
     let server = thread::spawn(move || {
+        let (mut subscription, subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        write_result(
+            &mut subscription,
+            &subscribe_request,
+            json!({"type": "subscription_started"}),
+        );
         let (mut snapshot_stream, snapshot_request) =
             accept_request_for(&listener, "session.snapshot");
         write_result(
@@ -1310,25 +1283,10 @@ fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
             &snapshot_request,
             json!({"type": "session_snapshot", "snapshot": two_tab_snapshot()}),
         );
-        let (mut subscription, subscribe_request) =
-            accept_request_for(&listener, "events.subscribe");
-        write_result(
-            &mut subscription,
-            &subscribe_request,
-            json!({
-                "type": "subscription_started",
-                "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                "sequence": 40,
-                "oldest_available_sequence": 1
-            }),
-        );
         writeln!(
             subscription,
             "{}",
             json!({
-                "protocol": HERDR_PROTOCOL_REVISION,
-                "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                "sequence": 41,
                 "event": "tab_closed",
                 "data": {"type": "tab_closed", "tab_id": "w1:t1", "workspace_id": "w1"}
             })
@@ -1383,9 +1341,9 @@ fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
 }
 
 #[test]
-fn coordinator_recovers_event_gap_with_one_fresh_snapshot_and_stops_its_reader() {
+fn coordinator_recovers_a_stream_error_with_one_fresh_snapshot_and_stops_its_reader() {
     let root = Path::new("/tmp").join(format!(
-        "herdr-core-session-gap-contract-{}",
+        "herdr-core-session-stream-error-contract-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&root).expect("create socket directory");
@@ -1393,28 +1351,19 @@ fn coordinator_recovers_event_gap_with_one_fresh_snapshot_and_stops_its_reader()
     let state_path = root.join("state.json");
     let listener = UnixListener::bind(&socket_path).expect("bind fake Herdr socket");
     let server = thread::spawn(move || {
+        let (mut first_subscription, first_subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        write_result(
+            &mut first_subscription,
+            &first_subscribe_request,
+            json!({"type": "subscription_started"}),
+        );
         let (mut first_snapshot_stream, first_snapshot_request) =
             accept_request_for(&listener, "session.snapshot");
-        assert_eq!(first_snapshot_request["method"], "session.snapshot");
         write_result(
             &mut first_snapshot_stream,
             &first_snapshot_request,
             json!({"type": "session_snapshot", "snapshot": snapshot()}),
-        );
-
-        let (mut first_subscription, first_subscribe_request) =
-            accept_request_for(&listener, "events.subscribe");
-        assert_eq!(first_subscribe_request["method"], "events.subscribe");
-        assert_eq!(first_subscribe_request["params"]["after_sequence"], 40);
-        write_result(
-            &mut first_subscription,
-            &first_subscribe_request,
-            json!({
-                "type": "subscription_started",
-                "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                "sequence": 40,
-                "oldest_available_sequence": 1
-            }),
         );
         writeln!(
             first_subscription,
@@ -1422,19 +1371,24 @@ fn coordinator_recovers_event_gap_with_one_fresh_snapshot_and_stops_its_reader()
             json!({
                 "id": "herdr-core:events.subscribe",
                 "error": {
-                    "code": "event_gap",
-                    "message": "fetch session.snapshot and resubscribe"
+                    "code": "internal",
+                    "message": "event stream closed"
                 }
             })
         )
-        .expect("write event gap");
+        .expect("write stream error");
         drop(first_subscription);
 
+        let (mut final_subscription, final_subscribe_request) =
+            accept_request_for(&listener, "events.subscribe");
+        write_result(
+            &mut final_subscription,
+            &final_subscribe_request,
+            json!({"type": "subscription_started"}),
+        );
         let (mut second_snapshot_stream, second_snapshot_request) =
             accept_request_for(&listener, "session.snapshot");
-        assert_eq!(second_snapshot_request["method"], "session.snapshot");
         let mut recovered = snapshot();
-        recovered["event_sequence"] = json!(50);
         // A project is named after its directory, not Herdr's workspace
         // label, so the recovery marker is a pane in a new directory.
         recovered["panes"][0]["cwd"] = json!("/tmp/fixture-recovered");
@@ -1442,21 +1396,6 @@ fn coordinator_recovers_event_gap_with_one_fresh_snapshot_and_stops_its_reader()
             &mut second_snapshot_stream,
             &second_snapshot_request,
             json!({"type": "session_snapshot", "snapshot": recovered}),
-        );
-
-        let (mut final_subscription, final_subscribe_request) =
-            accept_request_for(&listener, "events.subscribe");
-        assert_eq!(final_subscribe_request["method"], "events.subscribe");
-        assert_eq!(final_subscribe_request["params"]["after_sequence"], 50);
-        write_result(
-            &mut final_subscription,
-            &final_subscribe_request,
-            json!({
-                "type": "subscription_started",
-                "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                "sequence": 50,
-                "oldest_available_sequence": 1
-            }),
         );
         let mut byte = [0_u8; 1];
         assert_eq!(

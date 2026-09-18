@@ -21,8 +21,7 @@ private func agent(id: String, paneID: String, group: String) -> SidebarAgent {
         symbol: "\u{25cf}",
         summary: "Summary for \(id)",
         elapsed: "2m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
 }
 

@@ -77,18 +77,15 @@ Done is therefore scoped to the lineage root: a delegated child that finishes le
 ## Where a parent comes from
 
 Ownership, the tree, the breadcrumb and the stall clock all start from one fact per agent: the pane it was spawned from.
-That fact has two sources, resolved once in `wire.rs::lineage_parent` and nowhere else, so every row and every view sees the same parent.
+Herdr records no lineage, so that fact has one source, read once in `wire.rs::lineage_parent` and nowhere else, so every row and every view sees the same parent: the pane token `parent_pane`, whose value is the parent's pane id, written by whoever created the pane through `pane.report_metadata`.
 
-1. Herdr's own record, `spawned_from_pane_id`, which the pinned fork writes when a pane is created through `agent.new --from-pane`.
-   Hide's own fork command uses it.
-2. The pane token `parent_pane`, whose value is the parent's pane id, written by whoever created the pane through `pane.report_metadata`.
-   sasu's dispatch writes it, because the only start that can carry its role marker is `agent.start`, which records no lineage; any orchestrator can write the same token by hand.
+Hide's own fork writes it under the source `hide` after `pane.split` and `agent.start`.
+sasu's dispatch writes it under its own source after `agent.start`, the only start that can carry its role marker; any orchestrator can write the same token by hand, and a child whose creator wrote nothing is a root.
 
-Herdr observed the spawn, so its record wins when both are present; an empty token is a cleared declaration, not a parent named by an empty string.
-The token is display-only in Herdr's own terms and dies with the pane, so a closed child leaves no edge behind, and a parent that has gone makes the child an orphan root exactly as it does for Herdr's record.
-Herdr's stable release carries no lineage at all, so the token is the source that survives a return to upstream; the field is the one that goes.
+An empty token is a cleared declaration, not a parent named by an empty string.
+The token is display-only in Herdr's own terms and dies with the pane, so a closed child leaves no edge behind, and a parent that has gone makes the child an orphan root.
 
-Regression owner: `a_parent_declared_as_a_pane_token_is_the_lineage_when_herdr_recorded_none`.
+Regression owner: `a_parent_declared_as_a_pane_token_is_the_lineage`.
 
 ## The stall clock
 
@@ -227,16 +224,13 @@ The pet's "act now" number is the whole Needs You count and its done number is t
 `herdr-core/src/pet.rs` counts the groups the projection already decided rather than reading tokens or axes a second time.
 The pet dashboard's count tiles read the same four groups, plus the rows whose server stopped answering.
 
-## Ambient signals (subagents, background tasks)
+## The subagent badge
 
-A record may carry optional `ambient` counts: `subagents_active`, `background_running`, and `background_failed`.
-`sidebar.rs::parse_ambient` treats absent or null data as no signal and missing keys as zero; present counts must be nonnegative integers fitting `u32`.
-Unknown keys are discarded, so task names, prompts, commands, output, and paths never enter this count projection.
-A malformed ambient object excludes that agent with a diagnostic while other valid records continue to project.
-`pet.rs::ambient_totals` sums with saturation and returns no counts while disconnected; `PetBadgeRow` renders positive counts only.
-This client does not own upstream transcript scanning, authorization, or server restart policy.
+The badge row carries one more count after the three groups: the in-process subagents Hide's hook reports as working, in purple.
+`pet.rs::subagents_active` sums the `working` hook token over the agents on an answering server, with saturation, and returns zero while disconnected; a pane whose agent has gone is not counted even if its token lingers, and an instrumented pane whose count is unknown adds nothing rather than a zero.
+It is the one count the hook can vouch for; Herdr's own wire carries no ambient counts, and nothing here scans transcripts or output.
 
-Regression owners are `ambient_counts_parse_and_unknown_keys_never_survive`, `a_malformed_ambient_record_excludes_only_that_agent`, and `ambient_counts_sum_across_panes_and_go_quiet_while_disconnected`.
+Regression owner: `subagent_counts_sum_the_hook_tokens_of_listed_agents_and_go_quiet_while_disconnected`.
 
 ## Uninstrumented is not an unknown activity
 

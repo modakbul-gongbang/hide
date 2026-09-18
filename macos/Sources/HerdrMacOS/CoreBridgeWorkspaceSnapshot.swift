@@ -1048,7 +1048,6 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let summary: String
     let elapsed: String
     let lastActivity: String
-    let ambient: CoreAmbientSignal?
 
     var lineageDepth: Int = 0
     var lineageChildPaneIDs: [String] = []
@@ -1089,8 +1088,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         summary: String,
         identityLabel: String? = nil,
         elapsed: String,
-        lastActivity: String,
-        ambient: CoreAmbientSignal?
+        lastActivity: String
     ) {
         self.id = id
         self.paneID = paneID
@@ -1111,7 +1109,6 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.summary = summary
         self.elapsed = elapsed
         self.lastActivity = lastActivity
-        self.ambient = ambient
     }
 
     init(from decoder: Decoder) throws {
@@ -1135,7 +1132,6 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel) ?? summary
         elapsed = try container.decode(String.self, forKey: .elapsed)
         lastActivity = try container.decode(String.self, forKey: .lastActivity)
-        ambient = try container.decodeIfPresent(CoreAmbientSignal.self, forKey: .ambient)
         lineageDepth = try container.decodeIfPresent(Int.self, forKey: .lineageDepth) ?? 0
         lineageChildPaneIDs = try container.decodeIfPresent([String].self, forKey: .lineageChildPaneIDs) ?? []
         lineageRootCheckoutID = try container.decodeIfPresent(String.self, forKey: .lineageRootCheckoutID)
@@ -1170,7 +1166,6 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case summary
         case elapsed
         case lastActivity = "last_activity"
-        case ambient
         case lineageDepth = "lineage_depth"
         case lineageChildPaneIDs = "lineage_child_pane_ids"
         case lineageRootCheckoutID = "lineage_root_checkout_id"
@@ -1186,14 +1181,3 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     }
 }
 
-struct CoreAmbientSignal: Decodable, Equatable {
-    let subagentsActive: UInt32
-    let backgroundRunning: UInt32
-    let backgroundFailed: UInt32
-
-    enum CodingKeys: String, CodingKey {
-        case subagentsActive = "subagents_active"
-        case backgroundRunning = "background_running"
-        case backgroundFailed = "background_failed"
-    }
-}

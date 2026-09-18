@@ -127,7 +127,6 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
         ("struct", "CoreLineageStep", "internal"),
         ("struct", "CorePaneFork", "internal"),
         ("struct", "SidebarAgent", "internal"),
-        ("struct", "CoreAmbientSignal", "internal"),
     ),
 }
 

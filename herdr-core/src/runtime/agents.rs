@@ -686,7 +686,7 @@ impl Runtime {
         }
         let idle_ms = now.saturating_sub(self.pet_active_at_unix_ms);
         let waking = now < self.pet_waking_until_unix_ms;
-        let ambient = pet::ambient_totals(agents, connected);
+        let subagents_active = pet::subagents_active(agents, &self.pane_hook_tokens, connected);
         let attention_pane_ids = if connected {
             pet::observe_unseen(&mut self.pet_unseen_observed, agents, now);
             pet::attention_order(&self.snapshot.navigator.agents, &self.pet_unseen_observed)
@@ -707,9 +707,7 @@ impl Runtime {
                 working: summary.working,
                 seen: summary.seen,
                 disconnected: summary.disconnected,
-                subagents_active: ambient.subagents_active,
-                background_running: ambient.background_running,
-                background_failed: ambient.background_failed,
+                subagents_active,
             },
             attention_pane_ids,
             origin: self.snapshot.ui_state.pet_origin,

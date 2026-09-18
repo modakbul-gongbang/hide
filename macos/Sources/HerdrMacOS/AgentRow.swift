@@ -98,7 +98,6 @@ struct AgentRowPresentation: Equatable {
     /// pane it is.
     let qualifier: String?
     let elapsed: String
-    let ambient: CoreAmbientSignal?
     /// Whether this row is somebody else's work. A delegated row is subdued
     /// so that scanning the sidebar for bright rows finds the operator's own
     /// (PRD B11, D-36).
@@ -132,7 +131,6 @@ extension AgentRowPresentation {
         detail = density == .prominent ? agent.identityLabel : nil
         qualifier = density == .prominent ? agent.checkoutQualifier : nil
         elapsed = agent.elapsed
-        ambient = agent.ambient
         delegated = agent.delegated
         stallNotice = agent.stallNotice
         if let children, !children.instrumented {
@@ -159,7 +157,6 @@ extension AgentRowPresentation {
         detail = nil
         qualifier = row.paneID
         elapsed = row.elapsed
-        ambient = row.ambient
     }
 }
 
@@ -194,24 +191,6 @@ struct AgentRow: View {
     var leadingInset: CGFloat?
     let action: () -> Void
     @Environment(\.hidePetAppearance) private var petAppearance
-
-    /// Work the agent started that is still running. It is background noise
-    /// next to the agent's own state, so it stays muted.
-    private var ambientLabel: String? {
-        guard let ambient = presentation.ambient else { return nil }
-        var parts: [String] = []
-        if ambient.subagentsActive > 0 { parts.append("\(ambient.subagentsActive) sub") }
-        if ambient.backgroundRunning > 0 { parts.append("\(ambient.backgroundRunning) bg") }
-        return parts.isEmpty ? nil : parts.joined(separator: "  ")
-    }
-
-    /// Work that failed, which is the one ambient signal worth a color. Every
-    /// surface says it once, in the same place and the same hue; the pet
-    /// dashboard used to repeat it in a trailing label of its own.
-    private var failedLabel: String? {
-        guard let failed = presentation.ambient?.backgroundFailed, failed > 0 else { return nil }
-        return "\(failed) failed"
-    }
 
     private var rowContent: some View {
         HStack(alignment: .top, spacing: density.iconSpacing) {
@@ -256,18 +235,6 @@ struct AgentRow: View {
                             .foregroundStyle(style.muted)
                             .lineLimit(1)
                     }
-                    if let ambientLabel {
-                        Text(ambientLabel)
-                            .hideFont(size: HideTheme.Typography.micro)
-                            .foregroundStyle(style.muted)
-                            .lineLimit(1)
-                    }
-                    if let failedLabel {
-                        Text(failedLabel)
-                            .hideFont(size: HideTheme.Typography.micro, weight: .medium)
-                            .foregroundStyle(HideTheme.danger)
-                            .lineLimit(1)
-                    }
                     if let reason = presentation.uninstrumentedReason {
                         // The second of the mark's three positions. A symbol
                         // and a name, never a color alone (PRD B21, B37).
@@ -310,8 +277,6 @@ struct AgentRow: View {
         if let detail = presentation.detail { values.append(detail) }
         if let qualifier = presentation.qualifier { values.append(qualifier) }
         if !presentation.elapsed.isEmpty { values.append(presentation.elapsed) }
-        if let ambientLabel { values.append(ambientLabel) }
-        if let failedLabel { values.append(failedLabel) }
         if presentation.delegated { values.append("Delegated") }
         if let label = presentation.uninstrumentedLabel { values.append(label) }
         if let notice = presentation.stallNotice { values.append(notice) }

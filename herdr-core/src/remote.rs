@@ -710,7 +710,6 @@ impl CapabilityReport {
 pub struct RemoteSnapshotEnvelope {
     pub host: HostScope,
     pub protocol: u32,
-    pub event_sequence: u64,
     pub workspace_ids: Vec<String>,
     pub pane_ids: Vec<String>,
     pub agent_ids: Vec<String>,
@@ -720,8 +719,9 @@ pub struct RemoteSnapshotEnvelope {
 pub fn decode_remote_snapshot(
     value: &Value,
     operation_id: &str,
+    host: &HostScope,
 ) -> RemoteResult<RemoteSnapshotEnvelope> {
-    crate::wire::remote_snapshot(value, operation_id)
+    crate::wire::remote_snapshot(value, operation_id, host)
 }
 
 pub struct RemoteHerdrProjection {
@@ -849,7 +849,7 @@ impl RemoteHerdrProjection {
     /// decoded ID envelope from being mistaken for a complete event baseline.
     #[cfg(test)]
     pub fn apply_wire_snapshot(&mut self, value: &Value, operation_id: &str) -> RemoteResult<()> {
-        let envelope = match decode_remote_snapshot(value, operation_id) {
+        let envelope = match decode_remote_snapshot(value, operation_id, &self.host_scope) {
             Ok(envelope) => envelope,
             Err(error) => {
                 self.state = RemoteConnectionState::Stale {
@@ -858,64 +858,6 @@ impl RemoteHerdrProjection {
                 return Err(error);
             }
         };
-        if envelope.host.host_id != self.host_scope.host_id
-            || envelope.host.session_id != self.host_scope.session_id
-        {
-            let reason = format!(
-                "snapshot host mismatch expected={}:{} received={}:{}",
-                self.host_scope.host_id,
-                self.host_scope.session_id,
-                envelope.host.host_id,
-                envelope.host.session_id
-            );
-            self.state = RemoteConnectionState::Stale {
-                reason: reason.clone(),
-            };
-            return Err(remote_error(
-                operation_id,
-                &self.host.host_id,
-                RemoteStage::Protocol,
-                reason,
-                true,
-                true,
-            ));
-        }
-        if let Some(previous) = self.last_snapshot.as_ref() {
-            if envelope.event_sequence < previous.event_sequence {
-                let reason = format!(
-                    "snapshot sequence regressed previous={} received={}",
-                    previous.event_sequence, envelope.event_sequence
-                );
-                self.state = RemoteConnectionState::Stale {
-                    reason: reason.clone(),
-                };
-                return Err(remote_error(
-                    operation_id,
-                    &self.host.host_id,
-                    RemoteStage::Protocol,
-                    reason,
-                    true,
-                    false,
-                ));
-            }
-            if envelope.event_sequence == previous.event_sequence && envelope != *previous {
-                let reason = format!(
-                    "snapshot identity changed without sequence advance sequence={}",
-                    envelope.event_sequence
-                );
-                self.state = RemoteConnectionState::Stale {
-                    reason: reason.clone(),
-                };
-                return Err(remote_error(
-                    operation_id,
-                    &self.host.host_id,
-                    RemoteStage::Protocol,
-                    reason,
-                    true,
-                    false,
-                ));
-            }
-        }
         self.last_snapshot = Some(envelope);
         self.wire_only_snapshot = true;
         self.disconnect_reason = None;
@@ -949,7 +891,6 @@ fn snapshot_envelope(projection: &DomainProjection, host: &HostScope) -> RemoteS
     RemoteSnapshotEnvelope {
         host: host.clone(),
         protocol: REMOTE_PROTOCOL_REVISION,
-        event_sequence: projection.sequence(),
         workspace_ids: projection
             .workspaces()
             .map(|workspace| workspace.workspace_id.clone())
@@ -1629,10 +1570,7 @@ impl RusshRemoteClient {
                 );
                 report.pass(
                     RemoteStage::Protocol,
-                    format!(
-                        "Herdr protocol={} event_sequence={}",
-                        snapshot.protocol, snapshot.event_sequence
-                    ),
+                    format!("Herdr protocol={}", snapshot.protocol),
                 );
             }
             Err(error) => {
@@ -1870,7 +1808,13 @@ impl RusshRemoteClient {
             SSH_OPERATION_TIMEOUT,
         )
         .map_err(|error| self.remote_snapshot_error(error))?;
-        crate::wire::remote_snapshot(&response, "remote-herdr-snapshot")
+        // Herdr names no host in its snapshot; the one Hide reached the
+        // socket through is the identity the envelope carries.
+        let host = HostScope {
+            host_id: self.host.host_id.clone(),
+            session_id: socket_path.to_owned(),
+        };
+        crate::wire::remote_snapshot(&response, "remote-herdr-snapshot", &host)
     }
 
     #[cfg(test)]
@@ -3820,7 +3764,11 @@ mod tests {
             SSH_OPERATION_TIMEOUT,
         )
         .expect("official remote Socket API snapshot responds");
-        let snapshot = decode_remote_snapshot(&result, "remote-herdr-snapshot")
+        let host = HostScope {
+            host_id: client.host().host_id.clone(),
+            session_id: socket_path.clone(),
+        };
+        let snapshot = decode_remote_snapshot(&result, "remote-herdr-snapshot", &host)
             .expect("remote snapshot matches the official protocol");
         let agents = hide_herdr_client::request_with_connector(
             &connector,
@@ -3833,13 +3781,11 @@ mod tests {
 
         let subscription = hide_herdr_client::subscribe_with_connector(
             &connector,
-            snapshot.event_sequence,
             &["pane.updated"],
             SSH_OPERATION_TIMEOUT,
         )
-        .expect("official remote event subscription starts from the snapshot cursor");
-        assert_eq!(subscription.ack.host.host_id, snapshot.host.host_id);
-        assert_eq!(subscription.ack.host.session_id, snapshot.host.session_id);
+        .expect("official remote event subscription starts");
+        assert_eq!(subscription.ack.kind, "subscription_started");
         let (reader, shutdown) = subscription.into_parts();
         shutdown.shutdown();
         drop(reader);
@@ -4215,29 +4161,33 @@ mod tests {
         let value = serde_json::json!({
             "result": {"snapshot": {
                 "protocol": REMOTE_PROTOCOL_REVISION,
-                "version": "fixture", "tabs": [], "layouts": [], "lineage": [],
-                "host": {"host_id": "ssh:mini", "session_id": "s1"},
-                "event_sequence": 9,
+                "version": "fixture", "tabs": [], "layouts": [],
                 "workspaces": [{"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"}],
-                "panes": [{"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
+                "panes": [{"pane_id": "p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
                 "agents": [
-                    {"agent_instance_id": "a1", "pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
-                    {"agent_instance_id": null, "pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
+                    {"pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
                     {"pane_id": "p2", "terminal_id": "fixture2", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
                 ]
             }}
         });
-        let envelope = decode_remote_snapshot(&value, "op").unwrap();
+        let envelope = decode_remote_snapshot(&value, "op", &fixture_scope()).unwrap();
         assert_eq!(envelope.host.host_id, "ssh:mini");
         assert_eq!(envelope.workspace_ids, ["w1"]);
         assert_eq!(envelope.pane_ids, ["p1"]);
-        assert_eq!(envelope.agent_ids, ["a1"]);
+        assert_eq!(envelope.agent_ids, ["p1", "p2"]);
+    }
+
+    fn fixture_scope() -> HostScope {
+        HostScope {
+            host_id: "ssh:mini".to_owned(),
+            session_id: "s1".to_owned(),
+        }
     }
 
     #[test]
     fn remote_wire_snapshot_rejects_protocol_mismatch() {
-        let value = serde_json::json!({"snapshot": {"protocol": REMOTE_PROTOCOL_REVISION - 1, "host": {"host_id": "h", "session_id": "s"}, "event_sequence": 1}});
-        let error = decode_remote_snapshot(&value, "op").unwrap_err();
+        let value = serde_json::json!({"snapshot": {"protocol": REMOTE_PROTOCOL_REVISION - 1}});
+        let error = decode_remote_snapshot(&value, "op", &fixture_scope()).unwrap_err();
         assert_eq!(error.stage(), RemoteStage::Protocol);
         assert!(error.diagnostic().action_required);
     }
@@ -4247,25 +4197,23 @@ mod tests {
         let duplicate = serde_json::json!({
             "snapshot": {
                 "protocol": REMOTE_PROTOCOL_REVISION,
-                "version": "fixture", "tabs": [], "layouts": [], "lineage": [],
-                "host": {"host_id": "h", "session_id": "s"},
-                "event_sequence": 1,
+                "version": "fixture", "tabs": [], "layouts": [],
                 "workspaces": [], "agents": [],
-                "panes": [{"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}, {"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
+                "panes": [{"pane_id": "p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}, {"pane_id": "p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
             }
         });
-        let error = decode_remote_snapshot(&duplicate, "op").unwrap_err();
+        let error = decode_remote_snapshot(&duplicate, "op", &fixture_scope()).unwrap_err();
         assert!(error.diagnostic().reason.contains("duplicate pane_id"));
 
         let wrapped = serde_json::json!({
             "snapshot": {
-                "protocol": u64::from(u32::MAX) + 22,
-                "host": {"host_id": "h", "session_id": "s"},
-                "event_sequence": 1
+                "protocol": u64::from(u32::MAX) + 22
             }
         });
         assert_eq!(
-            decode_remote_snapshot(&wrapped, "op").unwrap_err().stage(),
+            decode_remote_snapshot(&wrapped, "op", &fixture_scope())
+                .unwrap_err()
+                .stage(),
             RemoteStage::Protocol
         );
     }
@@ -4324,12 +4272,10 @@ mod tests {
         let value = serde_json::json!({
             "snapshot": {
                 "protocol": REMOTE_PROTOCOL_REVISION,
-                "version": "fixture", "tabs": [], "layouts": [], "lineage": [],
-                "host": {"host_id": "ssh:mini", "session_id": "s1"},
-                "event_sequence": 9,
+                "version": "fixture", "tabs": [], "layouts": [],
                 "workspaces": [{"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"}],
-                "panes": [{"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
-                "agents": [{"agent_instance_id": "a1", "pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
+                "panes": [{"pane_id": "p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
+                "agents": [{"pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
             }
         });
         projection.apply_wire_snapshot(&value, "op").unwrap();
@@ -4356,17 +4302,15 @@ mod tests {
         let value = serde_json::json!({
             "snapshot": {
                 "protocol": REMOTE_PROTOCOL_REVISION,
-                "version": "fixture", "tabs": [], "layouts": [], "lineage": [],
-                "host": {"host_id": "ssh:mini", "session_id": "s1"},
-                "event_sequence": 9,
+                "version": "fixture", "tabs": [], "layouts": [],
                 "workspaces": [{"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"}],
-                "panes": [{"pane_id": "p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
-                "agents": [{"agent_instance_id": "a1", "pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
+                "panes": [{"pane_id": "p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}],
+                "agents": [{"pane_id": "p1", "terminal_id": "fixture", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}]
             }
         });
         projection.apply_wire_snapshot(&value, "op-1").unwrap();
         projection.apply_wire_snapshot(&value, "op-2").unwrap();
-        assert_eq!(projection.last_snapshot().unwrap().event_sequence, 9);
+        assert_eq!(projection.last_snapshot().unwrap().workspace_ids, ["w1"]);
         assert_eq!(projection.state(), &RemoteConnectionState::Connected);
     }
 
@@ -4384,7 +4328,8 @@ mod tests {
             projection.state(),
             RemoteConnectionState::Stale { .. }
         ));
-        assert_eq!(error.stage(), RemoteStage::Herdr);
+        assert_eq!(error.stage(), RemoteStage::Protocol);
+        assert!(error.diagnostic().reason.starts_with("missing field"));
     }
 
     #[test]

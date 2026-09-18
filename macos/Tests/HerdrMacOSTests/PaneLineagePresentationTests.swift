@@ -284,8 +284,7 @@ private func row(
         statusLabel: "Working",
         summary: "running tests",
         elapsed: "2m",
-        lastActivity: "1",
-        ambient: nil
+        lastActivity: "1"
     )
     agent.delegated = delegated
     agent.stallNotice = stallNotice

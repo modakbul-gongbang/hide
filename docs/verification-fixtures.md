@@ -6,7 +6,7 @@ For CI coverage, read [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Deterministic component tests
 
-Rust tests in `herdr-core/` cover session projection, independent demand/activity/read axes, malformed-record exclusion, ambient counts, pet behavior, state persistence, and connection transitions.
+Rust tests in `herdr-core/` cover session projection, independent demand/activity/read axes, malformed-record exclusion, the subagent badge, pet behavior, state persistence, and connection transitions.
 Herdr's `_new` suffix is not Hide's unread authority; the current contract is [status-model.md](status-model.md).
 Files under `herdr-core/tests/fixtures/` are test inputs, not a writable scratch directory.
 A test that persists state must allocate its own temporary path.
@@ -40,7 +40,7 @@ A minimal scenario is:
 {"agents": [{"pane_id": "fixture:p0", "state": "working", "summary": "Fixture agent"}]}
 ```
 
-The script also maps question, approval, error, done, idle, and acknowledged input states and accepts optional ambient counts.
+The script also maps question, approval, error, done, idle, and acknowledged input states.
 Its scenario file is re-read on snapshot and agent-list requests.
 Use a run-owned scenario, short private socket, explicit app state path, and the performance guide's isolation checks before launch.
 Stop only the recorded fixture process to exercise disconnect/recovery; never stop the operator's server.

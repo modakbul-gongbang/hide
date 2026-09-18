@@ -340,8 +340,6 @@ struct CorePetBadges: Decodable, Equatable {
     let seen: Int
     let disconnected: Int
     let subagentsActive: UInt32
-    let backgroundRunning: UInt32
-    let backgroundFailed: UInt32
 
     enum CodingKeys: String, CodingKey {
         case needsYou = "needs_you"
@@ -350,8 +348,6 @@ struct CorePetBadges: Decodable, Equatable {
         case seen
         case disconnected
         case subagentsActive = "subagents_active"
-        case backgroundRunning = "background_running"
-        case backgroundFailed = "background_failed"
     }
 
     static let none = CorePetBadges(
@@ -360,9 +356,7 @@ struct CorePetBadges: Decodable, Equatable {
         working: 0,
         seen: 0,
         disconnected: 0,
-        subagentsActive: 0,
-        backgroundRunning: 0,
-        backgroundFailed: 0
+        subagentsActive: 0
     )
 }
 

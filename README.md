@@ -68,7 +68,7 @@ open /Applications/hide.app
 ```
 
 The source build creates an ad-hoc signed `dist/hide.app`, a versioned zip archive, and a SHA-256 sidecar.
-It also bundles the pinned Herdr v0.9.0-preview.2026-09-15-deefc5857a5c runtime, so a separate Herdr install is not required for a first launch.
+It also bundles the pinned Herdr v0.9.1 runtime, so a separate Herdr install is not required for a first launch.
 
 See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verification, Gatekeeper steps, first-launch behavior, updates, and troubleshooting.
 
@@ -84,9 +84,9 @@ See [Browser panes](docs/BROWSER_PANES.md) for the agent-facing open command, ex
   Remote edits stay in the terminal attached to that remote Herdr session.
 
 <!-- herdr-provenance:start -->
-hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-15-deefc5857a5c), built from commit `deefc5857a5c`.
-This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
-The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
+hide distributes the [upstream Herdr release v0.9.1](https://github.com/herdrdev/herdr/releases/tag/v0.9.1).
+The bundled binary is not modified by hide.
+The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
 
 ## Development

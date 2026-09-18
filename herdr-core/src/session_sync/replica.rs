@@ -4,8 +4,6 @@ use super::*;
 
 #[derive(Clone)]
 pub(crate) struct SessionReplica {
-    pub(crate) host: HostScope,
-    pub(crate) cursor: u64,
     pub(crate) state: ProjectionState,
     /// The last projection whose dependency ranges were confirmed. Pending
     /// topology is kept in `state`, while this copy is what the runtime is
@@ -15,7 +13,27 @@ pub(crate) struct SessionReplica {
     pub(crate) pending_layouts: BTreeSet<String>,
     pub(crate) pending_workspace_closures: BTreeSet<String>,
     pub(crate) pending_active_tab_focuses: BTreeSet<String>,
-    pub(crate) last_event: Option<(u64, String)>,
+    /// How many events this replica has applied since its snapshot. Herdr's
+    /// stream carries no sequence, so this is the only position a diagnostic
+    /// can name.
+    pub(crate) applied_events: u64,
+}
+
+/// How an event that disagrees with the replica is treated.
+///
+/// A subscription is opened before the snapshot it starts from, so the
+/// stream cannot miss an event; the price is that an event emitted before
+/// the snapshot was taken arrives as well, and it describes a change the
+/// snapshot already holds. For a short window after the snapshot the
+/// snapshot therefore wins: an event it contradicts (a pane created that it
+/// already lists, a pane closed that it no longer lists) is dropped with a
+/// diagnostic rather than declared malformed. After the window an event
+/// that contradicts the replica is a real divergence, and the replica is
+/// rebuilt from a fresh snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApplyMode {
+    Strict,
+    Reconcile,
 }
 
 #[derive(Debug)]
@@ -28,9 +46,9 @@ pub(crate) struct ApplyOutcome {
 /// Every top-level `session.snapshot` field the replica reads. The contract
 /// test asserts the pinned Herdr declares each one required, so a pin whose
 /// snapshot cannot feed the replica fails in CI rather than at the user's
-/// first launch with "snapshot is missing lineage".
+/// first launch with "snapshot is missing agents".
 #[cfg(test)]
-pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 10] = [
+pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 7] = [
     "version",
     "protocol",
     "workspaces",
@@ -38,9 +56,6 @@ pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 10] = [
     "panes",
     "layouts",
     "agents",
-    "lineage",
-    "host",
-    "event_sequence",
 ];
 
 impl SessionReplica {
@@ -49,18 +64,14 @@ impl SessionReplica {
         Self::from_decoded(wire::snapshot(snapshot.clone())?)
     }
 
-    pub(crate) fn from_decoded(
-        (host, cursor, state): (HostScope, u64, ProjectionState),
-    ) -> Result<Self, SessionFetchError> {
+    pub(crate) fn from_decoded(state: ProjectionState) -> Result<Self, SessionFetchError> {
         let replica = Self {
-            host,
-            cursor,
             published_state: state.clone(),
             state,
             pending_layouts: BTreeSet::new(),
             pending_workspace_closures: BTreeSet::new(),
             pending_active_tab_focuses: BTreeSet::new(),
-            last_event: None,
+            applied_events: 0,
         };
         replica.validate()?;
         replica.validate_active_tabs()?;
@@ -538,55 +549,34 @@ impl SessionReplica {
 
     pub(crate) fn apply(
         &mut self,
-        event: ReplicaEnvelope,
+        event: ReplicaEvent,
+        mode: ApplyMode,
     ) -> Result<ApplyOutcome, SessionFetchError> {
-        if event.protocol != HERDR_PROTOCOL_REVISION {
-            return Err(protocol_mismatch(event.protocol, None));
-        }
-        if event.host != self.host {
-            return Err(SessionFetchError::Stale(format!(
-                "Herdr event host {:?} does not match snapshot host {:?}",
-                event.host, self.host
-            )));
-        }
-        let fingerprint = event.fingerprint;
-        if event.sequence < self.cursor {
-            return Ok(ApplyOutcome {
-                publish: false,
-                refresh_agents: false,
-                refresh_worktrees: false,
-            });
-        }
-        if event.sequence == self.cursor {
-            if self
-                .last_event
-                .as_ref()
-                .is_some_and(|(sequence, previous)| {
-                    *sequence == event.sequence && previous == &fingerprint
-                })
-            {
+        let mut candidate = self.clone();
+        let refresh_worktrees = matches!(
+            event,
+            ReplicaEvent::WorktreeCreated { .. }
+                | ReplicaEvent::WorktreeOpened { .. }
+                | ReplicaEvent::WorktreeRemoved { .. }
+        );
+        let refresh_agents = match (candidate.apply_new_event(event), mode) {
+            (Ok(refresh_agents), _) => refresh_agents,
+            (Err(SessionFetchError::Malformed(detail)), ApplyMode::Reconcile) => {
+                crate::diagnostic!(json!({
+                    "component": "session_sync",
+                    "kind": "event.reconciled",
+                    "applied_events": self.applied_events,
+                    "message": detail,
+                }));
                 return Ok(ApplyOutcome {
                     publish: false,
                     refresh_agents: false,
                     refresh_worktrees: false,
                 });
             }
-            return Err(SessionFetchError::Malformed(format!(
-                "Herdr event sequence {} was reused with different content",
-                event.sequence
-            )));
-        }
-
-        let mut candidate = self.clone();
-        let refresh_worktrees = matches!(
-            event.data,
-            ReplicaEvent::WorktreeCreated { .. }
-                | ReplicaEvent::WorktreeOpened { .. }
-                | ReplicaEvent::WorktreeRemoved { .. }
-        );
-        let refresh_agents = candidate.apply_new_event(event.data)?;
-        candidate.cursor = event.sequence;
-        candidate.last_event = Some((event.sequence, fingerprint));
+            (Err(error), _) => return Err(error),
+        };
+        candidate.applied_events = candidate.applied_events.saturating_add(1);
         let publish = candidate.refresh_published_state()?;
         *self = candidate;
         Ok(ApplyOutcome {
@@ -1588,20 +1578,11 @@ pub(crate) struct PaneMove {
     pub(crate) closed_tab_id: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct ReplicaEnvelope {
-    pub(crate) protocol: u64,
-    pub(crate) host: HostScope,
-    pub(crate) sequence: u64,
-    pub(crate) data: ReplicaEvent,
-    pub(crate) fingerprint: String,
-}
-
 // Boxing Event would add an allocation to every subscription line merely to
 // shrink the uncommon error variant's stack footprint.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum SubscriptionLine {
-    Event(ReplicaEnvelope),
+    Event(ReplicaEvent),
     Error { code: String, message: String },
 }
 

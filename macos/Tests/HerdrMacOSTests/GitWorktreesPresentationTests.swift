@@ -26,7 +26,7 @@ struct GitWorktreesPresentationTests {
     @Test func visibleTreeAndNumberingPreserveCrossCheckoutChildrenAndCollapse() {
         func row(_ id: String, depth: Int, children: [String] = []) -> SidebarAgent {
             var result = SidebarAgent(id: id, paneID: id, workspaceLabel: "Repo", agentKind: "terminal",
-                symbol: "~", summary: "task", elapsed: "", lastActivity: "", ambient: nil)
+                symbol: "~", summary: "task", elapsed: "", lastActivity: "")
             result.lineageDepth = depth
             result.lineageRootCheckoutID = "main"
             result.lineageChildPaneIDs = children
@@ -47,12 +47,12 @@ struct GitWorktreesPresentationTests {
     @Test func raisedFamilyMembersKeepTheirTreeAndShareOneShortcut() {
         var parent = SidebarAgent(id: "parent", paneID: "parent", workspaceLabel: "Repo", agentKind: "terminal",
             demand: "question", activity: "stopped", unread: true, group: "needs_you",
-            symbol: "?", summary: "Review needed", elapsed: "", lastActivity: "", ambient: nil)
+            symbol: "?", summary: "Review needed", elapsed: "", lastActivity: "")
         parent.lineageRootCheckoutID = "main"
         parent.lineageChildPaneIDs = ["child"]
         var child = SidebarAgent(id: "child", paneID: "child", workspaceLabel: "Repo", agentKind: "terminal",
             demand: "none", activity: "stopped", unread: true, group: "done",
-            symbol: "✓", summary: "Completed task", elapsed: "", lastActivity: "", ambient: nil)
+            symbol: "✓", summary: "Completed task", elapsed: "", lastActivity: "")
         child.lineageDepth = 1
         child.lineageRootCheckoutID = "main"
         let agents = [child, parent]
@@ -66,7 +66,7 @@ struct GitWorktreesPresentationTests {
     @Test func completedStandaloneAgentRemainsInsideItsWorkspace() {
         var agent = SidebarAgent(id: "done", paneID: "done", workspaceLabel: "Repo", agentKind: "terminal",
             demand: "none", activity: "stopped", unread: true, group: "done",
-            symbol: "✓", summary: "Ready to review", elapsed: "", lastActivity: "", ambient: nil)
+            symbol: "✓", summary: "Ready to review", elapsed: "", lastActivity: "")
         agent.lineageRootCheckoutID = "main"
         #expect(SidebarGrouping.raised([agent]).flatMap(\.agents).map(\.paneID) == ["done"])
         #expect(SidebarGrouping.tree([agent], checkoutID: "main").map(\.paneID) == ["done"])
@@ -76,12 +76,12 @@ struct GitWorktreesPresentationTests {
 
     @Test func agentOwnedByAnotherCheckoutCanBeRevealedThere() {
         var parent = SidebarAgent(id: "parent", paneID: "parent", workspaceLabel: "Repo", agentKind: "terminal",
-            symbol: "~", summary: "Parent", elapsed: "", lastActivity: "", ambient: nil)
+            symbol: "~", summary: "Parent", elapsed: "", lastActivity: "")
         parent.lineageRootCheckoutID = "main"
         parent.lineageChildPaneIDs = ["child"]
         parent.lineageCollapsed = true
         var child = SidebarAgent(id: "child", paneID: "child", workspaceLabel: "Repo", agentKind: "terminal",
-            symbol: "~", summary: "Child", elapsed: "", lastActivity: "", ambient: nil)
+            symbol: "~", summary: "Child", elapsed: "", lastActivity: "")
         child.lineageRootCheckoutID = "main"
         child.lineageDepth = 1
         let rows = SidebarGrouping.tree([parent, child], checkoutID: "linked", ownedPaneIDs: ["child"])
