@@ -74,11 +74,8 @@ struct CoreNavigatorSnapshot: Decodable {
     let inactiveProjects: [CoreInactiveProjectGroupSnapshot]
     let agents: [SidebarAgent]
     let providerUsage: [CoreProviderUsageSnapshot]
-    /// The one space that is not a project.
-    let scratch: CoreScratchSnapshot
 
     enum CodingKeys: String, CodingKey {
-        case scratch
         case rootPath = "root_path"
         case focusedDeviceID = "focused_device_id"
         case focusedWorkspaceID = "focused_workspace_id"
@@ -107,8 +104,6 @@ struct CoreNavigatorSnapshot: Decodable {
             [CoreProviderUsageSnapshot].self,
             forKey: .providerUsage
         ) ?? []
-        scratch = try container.decodeIfPresent(CoreScratchSnapshot.self, forKey: .scratch)
-            ?? CoreScratchSnapshot.empty
     }
 }
 
@@ -123,76 +118,6 @@ struct CoreInactiveProjectGroupSnapshot: Decodable, Identifiable {
         case expanded
         case projectIDs = "project_ids"
     }
-}
-
-/// The Scratch node as the sidebar draws it: one folder, and the tabs in it.
-struct CoreScratchSnapshot: Decodable {
-    let id: String
-    let label: String
-    let path: String
-    let expanded: Bool
-    let sessionWorkspaceIDs: [String]
-    let tabs: [CoreScratchTabSnapshot]
-
-    static let empty = CoreScratchSnapshot(
-        id: "scratch",
-        label: "Scratch",
-        path: "",
-        expanded: false,
-        sessionWorkspaceIDs: [],
-        tabs: []
-    )
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case label
-        case path
-        case expanded
-        case sessionWorkspaceIDs = "session_workspace_ids"
-        case tabs
-    }
-
-    init(
-        id: String,
-        label: String,
-        path: String,
-        expanded: Bool,
-        sessionWorkspaceIDs: [String],
-        tabs: [CoreScratchTabSnapshot]
-    ) {
-        self.id = id
-        self.label = label
-        self.path = path
-        self.expanded = expanded
-        self.sessionWorkspaceIDs = sessionWorkspaceIDs
-        self.tabs = tabs
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(String.self, forKey: .id) ?? "scratch"
-        label = try container.decodeIfPresent(String.self, forKey: .label) ?? "Scratch"
-        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
-        expanded = try container.decodeIfPresent(Bool.self, forKey: .expanded) ?? false
-        sessionWorkspaceIDs = try container.decodeIfPresent(
-            [String].self,
-            forKey: .sessionWorkspaceIDs
-        ) ?? []
-        tabs = try container.decodeIfPresent([CoreScratchTabSnapshot].self, forKey: .tabs) ?? []
-    }
-}
-
-/// One Scratch row.
-struct CoreScratchTabSnapshot: Decodable, Identifiable {
-    let id: String
-    let label: String
-    /// The chat's title, when the composer wrote one onto its pane.
-    let title: String?
-    let panes: [CorePaneSnapshot]
-
-    /// What the row says: the title when there is one, the tab label when
-    /// there is not. Derived once here so no view has to decide it again.
-    var displayName: String { title ?? label }
 }
 
 struct CoreProviderUsageSnapshot: Decodable, Identifiable {

@@ -317,7 +317,6 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                 case "settings-agents":
                     self.model.settingsInitialTab = .agents
                     self.model.showSettings = true
-                case "new-chat": self.model.showComposer = true
                 case "file-search": self.model.showFileSearch = true
                 case "add-device": self.presentVerificationAddDeviceSheet()
                 default:
@@ -576,7 +575,6 @@ struct ShellCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             menuButton(.newTab) { model.addTab() }
-            menuButton(.newChat) { model.openComposer() }
             menuButton(.newWorkspace) { model.openNewWorkspace() }
             menuButton(.search) { model.openSearch() }
             menuButton(.openFile) { model.openFileSearch() }

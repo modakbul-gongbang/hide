@@ -297,7 +297,6 @@ mod tests {
             ambient: None,
             session_id: None,
             spawned_from_pane_id: None,
-            chat_title: None,
             delegated: false,
             stall_level: String::new(),
             stall_notice: None,

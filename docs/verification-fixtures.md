@@ -62,7 +62,6 @@ None of them run in CI.
 | [agent-attention-fixture.sh](../scripts/agent-attention-fixture.sh) | Two tabs in a checkout that is its own repository, filled to cover the four attention groups and the blocked transition |
 | [tab-verification-fixture.sh](../scripts/tab-verification-fixture.sh) | One workspace holding three Herdr tabs, for the tab strip |
 | [view-state-fixture.sh](../scripts/view-state-fixture.sh) | Panes with checkable scrollback, the outside-focus path, and the missing-runtime launch |
-| [scratch-verification-fixture.sh](../scripts/scratch-verification-fixture.sh) | The Scratch surface on an isolated server |
 | [hide-paths-fixture.sh](../scripts/hide-paths-fixture.sh) | The path-and-tab scenarios, one per scenario card |
 | [e2e-fixture.sh](../scripts/e2e-fixture.sh) | A private GitHub repository with the worktrees, branches and pull request state the project panel reads |
 

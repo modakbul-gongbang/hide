@@ -4,19 +4,12 @@ import Testing
 
 @Suite("Worktree menus")
 struct WorktreeMenuTests {
-    @Test func projectMenuReplacesNewChatWithNewWorktree() {
-        #expect(!WorktreeMenuPolicy.projectItems.contains("New chat here"))
+    @Test func projectMenuOffersNewWorktree() {
         #expect(WorktreeMenuPolicy.projectItems.contains("New worktree…"))
     }
 
-    @Test func onlyLinkedWorktreesCanStartAgentsHere() {
-        #expect(!WorktreeMenuPolicy.checkoutItems(isMain: true).contains("Start agent here"))
-        #expect(WorktreeMenuPolicy.checkoutItems(isMain: false).contains("Start agent here"))
-    }
-
     @Test func everyCheckoutCanSetItsBranchAsBase() {
-        #expect(WorktreeMenuPolicy.checkoutItems(isMain: true).contains("Set as base branch"))
-        #expect(WorktreeMenuPolicy.checkoutItems(isMain: false).contains("Set as base branch"))
+        #expect(WorktreeMenuPolicy.checkoutItems.contains("Set as base branch"))
     }
 }
 

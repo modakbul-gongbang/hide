@@ -500,12 +500,9 @@ struct CheckoutOverview: View {
                             .accessibilityIdentifier("overview-open-agent")
                     }
                 } else {
-                    HStack {
-                        Button("Open workspace") {
-                            model.selectCheckout(selected)
-                        }.disabled(selected.worktree == nil || !selected.exists)
-                        Button("Start agent…") { model.openComposer(checkoutID: selected.id) }
-                    }
+                    Button("Open workspace") {
+                        model.selectCheckout(selected)
+                    }.disabled(selected.worktree == nil || !selected.exists)
                 }
                 HStack {
                     Text(changesLabel(selected)).foregroundStyle(HideTheme.secondary)

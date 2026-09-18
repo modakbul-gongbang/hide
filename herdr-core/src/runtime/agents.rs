@@ -966,14 +966,6 @@ impl Runtime {
             .flat_map(|workspace| workspace.checkouts.iter_mut())
             .flat_map(|checkout| checkout.tabs.iter_mut())
             .flat_map(|tab| tab.panes.iter_mut())
-            .chain(
-                self.snapshot
-                    .navigator
-                    .scratch
-                    .tabs
-                    .iter_mut()
-                    .flat_map(|tab| tab.panes.iter_mut()),
-            )
         {
             // A remote pane's answer is fixed and was decided where it was
             // projected; the local hook state says nothing about it.
@@ -999,7 +991,7 @@ impl Runtime {
                     label: agents
                         .iter()
                         .find(|agent| agent.pane_id == pane.id)
-                        .map(|agent| agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()))
+                        .map(|agent| agent.id.clone())
                         .unwrap_or_else(|| pane.id.clone()),
                     message: children.uninstrumented_reason.clone().unwrap_or_default(),
                 });
@@ -1145,7 +1137,7 @@ impl Runtime {
                 .first()
                 .cloned()
                 .unwrap_or_else(|| agent.pane_id.clone());
-            let name = agent.chat_title.clone().unwrap_or_else(|| agent.id.clone());
+            let name = agent.id.clone();
             let notice = format!(
                 "{name} has been waiting {} minutes on {}",
                 elapsed / 60_000,
@@ -1274,7 +1266,7 @@ impl Runtime {
             requests.push((
                 agent.pane_id.clone(),
                 workspace_id.clone(),
-                agent.chat_title.clone().unwrap_or_else(|| agent.id.clone()),
+                agent.id.clone(),
             ));
         }
         // A pane Herdr no longer reports can never answer, so its record is

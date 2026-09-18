@@ -57,10 +57,6 @@ struct ShellView: View {
         .environment(\.hideAccent, HideTheme.color(for: model.core.snapshot?.uiState.accentHex ?? "#B9FF66"))
         .environment(\.hideFontScale, CGFloat((model.core.snapshot?.uiState.fontSize ?? 13) / 13))
         .tint(HideTheme.color(for: model.core.snapshot?.uiState.accentHex ?? "#B9FF66"))
-        .sheet(isPresented: $model.showComposer) {
-            ChatComposerSheet().hideOverlayHost()
-                .environmentObject(model)
-        }
         .sheet(isPresented: $model.showSearch) {
             HideSearchSheet().hideOverlayHost()
                 .environmentObject(model)

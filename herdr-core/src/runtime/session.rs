@@ -8,46 +8,10 @@ impl Runtime {
     /// Layouts carry the workspace a pane belongs to and `panes` carries its
     /// directory, so the two together give each workspace the set of
     /// repositories it actually occupies without asking git anything.
-    /// Where Scratch lives, for the sync coordinator that builds the catalog
-    /// before it takes this lock.
-    pub fn scratch_root(&self) -> String {
-        self.scratch_root.clone()
-    }
-    /// The Herdr workspaces holding at least one Scratch pane, in Herdr's own
-    /// order.
-    ///
-    /// Two things need this. A tab whose panes have not reported a directory
-    /// yet is placed by its workspace, and a new Scratch tab needs a live
-    /// workspace to be created in - the first entry, or none, which is what
-    /// makes the first submission create the workspace instead.
-    pub(super) fn scratch_workspace_ids(&self, payload: &SessionSnapshotPayload) -> Vec<String> {
-        let mut ids: Vec<String> = Vec::new();
-        for layout in &payload.layouts {
-            if ids.iter().any(|id| id == &layout.workspace_id) {
-                continue;
-            }
-            let holds_scratch = layout.panes.iter().any(|pane| {
-                Self::pane_cwd(payload, &pane.pane_id)
-                    .is_some_and(|cwd| crate::scratch::contains(&self.scratch_root, &cwd))
-            });
-            if holds_scratch {
-                ids.push(layout.workspace_id.clone());
-            }
-        }
-        ids
-    }
     /// The Herdr workspaces and the directories their panes occupy, as the
     /// project catalog sees them.
     ///
-    /// A directory inside Scratch is left out here rather than filtered later.
-    /// This list is what builds the catalog and resolves repository roots, so
-    /// a scratch directory that reached it would earn a project row, a git
-    /// fork, and the unregistered-folder fallback that draws an orange
-    /// temporary workspace - three leaks from one omission.
-    pub fn session_spaces(
-        payload: &SessionSnapshotPayload,
-        scratch_root: &str,
-    ) -> Vec<workspace::SessionSpace> {
+    pub fn session_spaces(payload: &SessionSnapshotPayload) -> Vec<workspace::SessionSpace> {
         let labels: HashMap<&str, &str> = payload
             .workspaces
             .iter()
@@ -79,9 +43,6 @@ impl Runtime {
                 let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) else {
                     continue;
                 };
-                if crate::scratch::contains(scratch_root, &cwd) {
-                    continue;
-                }
                 if !spaces[index].cwds.contains(&cwd) {
                     spaces[index].cwds.push(cwd);
                 }
@@ -118,7 +79,7 @@ impl Runtime {
         payload: &SessionSnapshotPayload,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
-        self.last_session_spaces = Self::session_spaces(payload, &self.scratch_root);
+        self.last_session_spaces = Self::session_spaces(payload);
         // The catalog and the root index shell out to git, so the sync
         // coordinator builds them before taking the runtime lock. A
         // precomputation whose registrations no longer match current state is
@@ -193,12 +154,6 @@ impl Runtime {
         // snapshot's tabs carry the formatted form, so the free number has to
         // be taken here or read back out of display text later.
         let mut raw_tab_labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        // Which Herdr workspaces hold Scratch panes. A tab whose panes report
-        // no directory at all still belongs to Scratch when its workspace
-        // does, which is the state a pane is in for the moment between Herdr
-        // creating it and reporting where it runs.
-        let scratch_workspace_ids = self.scratch_workspace_ids(payload);
-        let mut scratch_tabs: Vec<crate::model::ScratchTabSnapshot> = Vec::new();
         for session_tab in &payload.tabs {
             let Some(layout) = payload
                 .layouts
@@ -229,37 +184,6 @@ impl Runtime {
                             .and_then(|agent| agent.cwd.clone())
                     })
             });
-            // Scratch is decided before a project is looked for, so a
-            // scratch pane never reaches the placement that would give it a
-            // project row or an unregistered-folder fallback.
-            let in_scratch = match context_path.as_deref() {
-                Some(path) => crate::scratch::contains(&self.scratch_root, path),
-                None => scratch_workspace_ids
-                    .iter()
-                    .any(|id| id == &layout.workspace_id),
-            };
-            if in_scratch {
-                let panes = project_layout_panes(
-                    layout,
-                    payload,
-                    &projected_agents,
-                    &listening_ports,
-                    &self.scratch_root,
-                );
-                let title = panes.iter().find_map(|pane| {
-                    projected_agents
-                        .iter()
-                        .find(|agent| agent.pane_id == pane.id)
-                        .and_then(|agent| agent.chat_title.clone())
-                });
-                scratch_tabs.push(crate::model::ScratchTabSnapshot {
-                    id: session_tab.tab_id.clone(),
-                    label: crate::model::display_tab_label(&session_tab.label, &session_tab.tab_id),
-                    title,
-                    panes,
-                });
-                continue;
-            }
             let Some(workspace_snapshot) = find_workspace_for_context(
                 &mut workspaces,
                 context_path.as_deref(),
@@ -405,14 +329,6 @@ impl Runtime {
         );
         crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.scratch = crate::model::ScratchSnapshot {
-            id: crate::scratch::NODE_ID.to_owned(),
-            label: crate::scratch::LABEL.to_owned(),
-            path: self.scratch_root.clone(),
-            expanded: self.snapshot.ui_state.scratch_expanded,
-            session_workspace_ids: scratch_workspace_ids,
-            tabs: scratch_tabs,
-        };
         self.snapshot.navigator.devices = workspace::devices(
             &self.remote_targets,
             &self.snapshot.ui_state.device_registrations,
@@ -1462,24 +1378,6 @@ impl Runtime {
                             .any(|pane| pane.id == pane_id)
                     })
             });
-        // Scratch is in no checkout, so the flag above can never be true for
-        // one of its panes. This is captured here for the same reason that one
-        // is: the catalog reconciliation below replaces the Scratch node, and
-        // after it nothing records which space held a pane that has gone.
-        let previously_selected_in_scratch = self
-            .snapshot
-            .terminal
-            .pane_id
-            .as_deref()
-            .or(self.snapshot.ui_state.selected_pane_id.as_deref())
-            .is_some_and(|pane_id| {
-                self.snapshot
-                    .navigator
-                    .scratch
-                    .tabs
-                    .iter()
-                    .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
-            });
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
                 .layouts
@@ -1571,38 +1469,9 @@ impl Runtime {
                 // inside that checkout, or leave it empty. A pane that was
                 // never rendered is still a pending or invalid selection and
                 // keeps the explicit projection error below.
-                // Scratch belongs to no checkout, so the rule above cannot see
-                // one of its panes leave. Closing a Scratch tab left the
-                // selection on a pane that no longer existed, which raised the
-                // projection error below on every tick and left every later
-                // command reading as though no space were focused: ⌘T answered
-                // "create or register a workspace" while a Scratch tab was on
-                // screen. A Scratch pane that goes is the same expected
-                // transition, and it retargets inside Scratch for the same
-                // reason a checkout's retargets inside itself.
-                let scratch_pane_retired = previously_selected_in_scratch && selected_pane_missing;
-                let selected_pane_retired = scratch_pane_retired
-                    || (selected_was_projected
-                        && (selected_pane_missing || selected_left_focused_checkout));
-                let replacement_pane_id = if scratch_pane_retired {
-                    let scratch_workspaces = self.scratch_workspace_ids(&payload);
-                    let scratch_panes: Vec<&str> = payload
-                        .layouts
-                        .iter()
-                        .filter(|layout| {
-                            scratch_workspaces
-                                .iter()
-                                .any(|id| id == &layout.workspace_id)
-                        })
-                        .flat_map(|layout| layout.panes.iter().map(|pane| pane.pane_id.as_str()))
-                        .collect();
-                    payload
-                        .focused_pane_id
-                        .as_deref()
-                        .filter(|pane_id| scratch_panes.contains(pane_id))
-                        .or_else(|| scratch_panes.first().copied())
-                        .map(str::to_owned)
-                } else {
+                let selected_pane_retired = selected_was_projected
+                    && (selected_pane_missing || selected_left_focused_checkout);
+                let replacement_pane_id = {
                     selected_pane_retired
                         .then(|| {
                             previously_projected_tab
@@ -2401,83 +2270,6 @@ impl Runtime {
         );
         self.operator_focused_pane_id = None;
     }
-    /// Opens a terminal tab in Scratch.
-    ///
-    /// Nothing about it waits for a project: the folder and the workspace are
-    /// both created on demand by the worker, so the first `⌘T` in Scratch
-    /// works with no earlier setup.
-    pub(super) fn create_scratch_tab(&mut self, label: &str) -> bool {
-        if label.is_empty() {
-            self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
-            return true;
-        }
-        let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "tab.control_unavailable",
-                "Tab creation requires a live Herdr connection",
-                true,
-            );
-            return true;
-        };
-        let request = live::ScratchTabRequest {
-            root: self.scratch_root.clone(),
-            workspace_id: self
-                .snapshot
-                .navigator
-                .scratch
-                .session_workspace_ids
-                .first()
-                .cloned(),
-            label: label.to_owned(),
-        };
-        self.push_diagnostic(
-            "scratch.tab.requested",
-            format!(
-                "Creating a Scratch tab in {}",
-                request
-                    .workspace_id
-                    .as_deref()
-                    .unwrap_or("a new Herdr workspace")
-            ),
-        );
-        if let Err(message) = live::spawn_scratch_tab_creation(context, request) {
-            self.set_error("scratch.tab_worker_failed", message, true);
-        }
-        true
-    }
-    /// What the Scratch tab worker found.
-    ///
-    /// A failure carries the step that failed, because "the folder could not
-    /// be created" and "Herdr refused the tab" are different problems with
-    /// different fixes and one message for both would hide which happened.
-    pub fn ingest_scratch_tab_result(
-        &mut self,
-        result: Result<String, String>,
-        elapsed_ms: u128,
-    ) -> bool {
-        match result {
-            Ok(pane_id) => {
-                self.snapshot.terminal.pane_id = Some(pane_id.clone());
-                self.snapshot.focused.surface = Surface::Terminal;
-                self.snapshot.focused.pane_id = Some(pane_id.clone());
-                self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
-                self.deactivate_editor_tab();
-                self.persist_current_ui_state();
-                self.push_diagnostic(
-                    "scratch.tab.ready",
-                    format!("Scratch tab created in {elapsed_ms} ms as pane {pane_id}"),
-                );
-            }
-            Err(message) => {
-                self.set_error(
-                    "scratch.tab.failed",
-                    format!("Scratch tab failed: {message}"),
-                    true,
-                );
-            }
-        }
-        true
-    }
     pub(super) fn begin_task_operation(
         &mut self,
         kind: &str,
@@ -2509,45 +2301,6 @@ impl Runtime {
             message: None,
         });
         Ok(id)
-    }
-    pub(super) fn create_scratch_chat_tab(&mut self, label: String) -> bool {
-        let label = label.trim();
-        if label.is_empty() {
-            self.set_error(
-                "scratch_chat.invalid_label",
-                "Tab label cannot be empty",
-                false,
-            );
-            return true;
-        }
-        let id = match self.begin_task_operation("scratch_chat_tab", None, None, None, None) {
-            Ok(id) => id,
-            Err(message) => {
-                self.set_error("task_operation.busy", message, true);
-                return true;
-            }
-        };
-        let Some(context) = self.live.as_ref().cloned() else {
-            return self.ingest_task_operation_result(
-                id,
-                Err("create tab: a live Herdr connection is required".into()),
-            );
-        };
-        let request = live::ScratchTabRequest {
-            root: self.scratch_root.clone(),
-            workspace_id: self
-                .snapshot
-                .navigator
-                .scratch
-                .session_workspace_ids
-                .first()
-                .cloned(),
-            label: label.to_owned(),
-        };
-        if let Err(message) = live::spawn_scratch_chat_tab_creation(context, id, request) {
-            return self.ingest_task_operation_result(id, Err(message));
-        }
-        true
     }
     pub fn ingest_task_operation_result(
         &mut self,
