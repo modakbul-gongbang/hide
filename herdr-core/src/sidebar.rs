@@ -688,15 +688,17 @@ fn agent_second_line(
     expected_reply: Option<&str>,
     progress: Option<&str>,
 ) -> (bool, Option<String>) {
-    match group {
-        AgentGroup::NeedsYou | AgentGroup::Done => {
-            (true, expected_reply.or(progress).map(str::to_owned))
-        }
-        AgentGroup::Working => match progress {
-            Some(progress) => (false, Some(progress.to_owned())),
-            None => (true, None),
-        },
-        AgentGroup::Seen => (false, None),
+    let sentence = match group {
+        AgentGroup::NeedsYou | AgentGroup::Done => expected_reply.or(progress),
+        AgentGroup::Working => progress,
+        AgentGroup::Seen => return (false, None),
+    };
+    // The word is the sentence's stand-in, never its prefix: the mark and the
+    // group heading already say Question or Done, and the word beside a
+    // sentence took the width the sentence needed (2026-09-18).
+    match sentence {
+        Some(sentence) => (false, Some(sentence.to_owned())),
+        None => (true, None),
     }
 }
 
@@ -1799,11 +1801,11 @@ mod tests {
         let progress = Some("푸시 완료, 승인 대기 중");
         assert_eq!(
             agent_second_line(AgentGroup::NeedsYou, reply, progress),
-            (true, Some("A/B 선택 후 승인".to_owned()))
+            (false, Some("A/B 선택 후 승인".to_owned()))
         );
         assert_eq!(
             agent_second_line(AgentGroup::NeedsYou, None, progress),
-            (true, Some("푸시 완료, 승인 대기 중".to_owned()))
+            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
         );
         assert_eq!(
             agent_second_line(AgentGroup::NeedsYou, None, None),
@@ -1811,7 +1813,7 @@ mod tests {
         );
         assert_eq!(
             agent_second_line(AgentGroup::Done, None, progress),
-            (true, Some("푸시 완료, 승인 대기 중".to_owned()))
+            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
         );
         assert_eq!(
             agent_second_line(AgentGroup::Working, reply, progress),
@@ -1843,7 +1845,7 @@ mod tests {
         );
         assert!(!projected[0].status_word_visible);
         assert_eq!(projected[1].detail.as_deref(), Some("A/B 선택"));
-        assert!(projected[1].status_word_visible);
+        assert!(!projected[1].status_word_visible);
         // An unread stopped row with no demand is Done: word kept, no sentence.
         assert_eq!(projected[2].detail, None);
         assert!(projected[2].status_word_visible);

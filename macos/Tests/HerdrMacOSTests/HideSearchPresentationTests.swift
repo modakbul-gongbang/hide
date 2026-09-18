@@ -109,7 +109,7 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         id: "q", paneID: "w7J:p2P", workspaceLabel: "Same name", agentKind: "claude",
         demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
         statusLabel: "Question",
-        identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: true,
+        identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: false,
         elapsed: "2m", lastActivity: ""
     )
     let entries = HideSearchPresentation.agentGroups(

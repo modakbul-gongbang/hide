@@ -96,14 +96,14 @@ struct AgentRowPresentation: Equatable {
     /// The sentence the core chose for this row's state: what the operator is
     /// asked for, or what the agent is doing. `nil` draws none (PRD D-06).
     let detail: String?
-    /// Whether the status word is drawn before the sentence. It leaves
-    /// working and read rows, where the mark already says it (PRD D-07).
+    /// Whether the status word stands in for a sentence the row does not
+    /// have. Beside a sentence the mark already says it (PRD D-07).
     let statusWordVisible: Bool
     /// Whether the sentence is drawn bright. A row that still concerns the
     /// operator is; a working row's progress is subdued (PRD D-07).
     let emphasized: Bool
-    /// A small note after the sentence: where the agent lives, or which
-    /// pane it is.
+    /// A small note on its own line under the sentence: where the agent
+    /// lives, or which pane it is.
     let qualifier: String?
     let elapsed: String
     /// Whether this row is somebody else's work. A delegated row is subdued
@@ -231,7 +231,7 @@ struct AgentRow: View {
                         .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                         .foregroundStyle(style.muted)
                 }
-                // The second line. The core chose the word and the sentence
+                // The second line. The core chose the word or the sentence
                 // from the row's state (PRD D-06); this only draws them. The
                 // word is caption medium in the status colour, the sentence
                 // caption regular in the row's emphasis, one line, cut at the
@@ -254,12 +254,6 @@ struct AgentRow: View {
                             .truncationMode(.tail)
                             .hideTooltip(detail)
                     }
-                    if let qualifier = presentation.qualifier {
-                        Text(qualifier)
-                            .hideFont(size: HideTheme.Typography.micro)
-                            .foregroundStyle(style.muted)
-                            .lineLimit(1)
-                    }
                     if let reason = presentation.uninstrumentedReason {
                         // The second of the mark's three positions. A symbol
                         // and a name, never a color alone (PRD B21, B37).
@@ -269,6 +263,15 @@ struct AgentRow: View {
                             .hideTooltip(reason)
                             .accessibilityLabel(presentation.uninstrumentedLabel ?? reason)
                     }
+                }
+                // The qualifier takes a line of its own: beside the sentence
+                // it took the width the sentence needed, and a prominent row
+                // is the one place the project context has nowhere else to sit.
+                if let qualifier = presentation.qualifier {
+                    Text(qualifier)
+                        .hideFont(size: HideTheme.Typography.micro)
+                        .foregroundStyle(style.muted)
+                        .lineLimit(1)
                 }
                 if let notice = presentation.stallNotice {
                     // The safety net saying so in words, beside the mark that

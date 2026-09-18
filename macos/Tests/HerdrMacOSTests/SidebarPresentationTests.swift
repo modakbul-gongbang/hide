@@ -591,7 +591,7 @@ private func presentationAgent(
         id: "q", paneID: "w1:p2", workspaceLabel: "hide", agentKind: "claude",
         demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
         statusLabel: "Question",
-        identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: true,
+        identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: false,
         elapsed: "2m", lastActivity: ""
     )
     let seen = SidebarAgent(
@@ -606,25 +606,26 @@ private func presentationAgent(
     #expect(!workingRow.emphasized)
     let questionRow = AgentRowPresentation(agent: question, density: .compact, connected: true)
     #expect(questionRow.detail == "A/B 선택 후 DB 마이그레이션 승인")
-    #expect(questionRow.statusWordVisible)
+    #expect(!questionRow.statusWordVisible)
     #expect(questionRow.emphasized)
     let seenRow = AgentRowPresentation(agent: seen, density: .compact, connected: true)
     #expect(seenRow.detail == nil)
     #expect(!seenRow.statusWordVisible)
 }
 
-/// PRD D-08, B9: the header line reads `name · [word] sentence`, and a shell
-/// operation on the pane takes the slot while it runs.
+/// PRD D-08, B9: the header line reads `name · sentence`, with the word only
+/// when the core chose no sentence, and a shell operation on the pane takes
+/// the slot while it runs. The accessibility label carries the word either way.
 @Test func paneHeaderSentenceFollowsTheRowAndYieldsToAShellOperation() {
     let question = SidebarAgent(
         id: "q", paneID: "w1:p2", workspaceLabel: "hide", agentKind: "claude",
         demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
         statusLabel: "Question",
         identityLabel: "결제 멱등키 PR", detail: "A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요",
-        statusWordVisible: true, elapsed: "2m", lastActivity: ""
+        statusWordVisible: false, elapsed: "2m", lastActivity: ""
     )
     let sentence = PaneHeaderPresentation.sentence(agent: question, activity: "")
-    #expect(sentence.word == "Question")
+    #expect(sentence.word == nil)
     #expect(sentence.text == "A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요")
     #expect(sentence.emphasized)
     #expect(PaneHeaderPresentation.sentence(agent: question, activity: " · forking…").isEmpty)

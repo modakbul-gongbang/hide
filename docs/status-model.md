@@ -308,16 +308,17 @@ Projection adds bounded-by-metadata strings per agent to the existing snapshot b
 The core chooses the row's second line from the group, and publishes it as `detail` with `status_word_visible`; the shell draws what it is given and decides nothing.
 The sentences come from the plugin's tokens: `expected_reply` is the one action the operator is asked for, at most 40 characters; `progress` is what the agent is doing or has done.
 
-| Group | Status word | Sentence |
-| --- | --- | --- |
-| Needs You | shown, in the mark's color | `expected_reply`, else `progress` |
-| Done (unread) | shown | `expected_reply`, else `progress` |
-| Working | hidden - the mark already says it | `progress` |
-| Seen (read demands, read completions, idle, unknown) | hidden | none |
+| Group | Sentence |
+| --- | --- |
+| Needs You | `expected_reply`, else `progress` |
+| Done (unread) | `expected_reply`, else `progress` |
+| Working | `progress` |
+| Seen (read demands, read completions, idle, unknown) | none |
 
-A row that has no sentence keeps the status word instead, so an emphasized or working row never has an empty second line and a plugin that is absent or has not labelled the pane yet reads as before: title and status word.
+`status_word_visible` is true only when the group wanted a sentence and the tokens carried none: the status word stands in for it, so an emphasized or working row never has an empty second line and a plugin that is absent or has not labelled the pane yet reads as before, title and status word.
+Beside a sentence the word is never drawn; the mark and the group heading already say it.
 A delegated row follows the same table for its own group, which for a child is Working or Seen, so a delegated child that has stopped shows only its title.
-The pane header is one line: `name · [word] sentence`, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
+The pane header is one line: `name · sentence`, or `name · word` for a row with no sentence, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
 The accessibility label of a row and of a header always carries the status word, in the order name, agent kind, status word, sentence, so a row whose word left the screen is still read out with it.
 
 ### Search and Recent Panels

@@ -838,16 +838,17 @@ Project-view number shortcuts skip agents hidden by workspace disclosure.
 `agentMarkWidth` (12pt) and `checkoutIconWidth` (14pt) define the status and branch columns.
 `compactAgentLeadingInset` derives the root agent status center from the Workspace branch center, accounting for the lineage chevron gutter.
 Compact agent rows use `spacingXS` (4pt) between the status, provider icon, and title.
-An agent row's title is the core's `identity_label` at both densities: the session name the label plugin derived (Claude's `ai-title`, Codex's first turn), or the Herdr agent name, or the rolling task, or the workspace label, in that order; a prominent row keeps its project context as the qualifier beside the second line.
+An agent row's title is the core's `identity_label` at both densities: the session name the label plugin derived (Claude's `ai-title`, Codex's first turn), or the Herdr agent name, or the rolling task, or the workspace label, in that order; a prominent row keeps its project context as a qualifier on a third line, `Typography.micro` in `muted`, because beside the sentence it took the width the sentence needed.
 The second line is chosen by the core from the row's group and drawn as given, so no view decides it twice ([status model](docs/status-model.md#the-second-line)):
 
-| Group | Word | Sentence |
-| --- | --- | --- |
-| Needs You, unread Done | `Typography.caption` medium in the mark's color | `expected_reply`, else `progress`, caption regular in `primary` |
-| Working | none | `progress`, caption regular in `secondary` |
-| Seen, unknown | none | none - the row is one line |
+| Group | Sentence |
+| --- | --- |
+| Needs You, unread Done | `expected_reply`, else `progress`, caption regular in `primary` |
+| Working | `progress`, caption regular in `secondary` |
+| Seen, unknown | none - the row is one line |
 
-A row with no sentence keeps its word, so a row is never left with an empty second line; a delegated row's sentence is `muted`, like the rest of it.
+A row with no sentence draws the status word instead, `Typography.caption` medium in the mark's color, so a row is never left with an empty second line; beside a sentence the word is not drawn, because the mark and the group heading already say it and the two together took a third of the row.
+A delegated row's sentence is `muted`, like the rest of it.
 The sentence is one line with tail truncation, and the full text is the row tooltip and the accessibility label, which reads name, agent kind, status word, sentence in that order even when the word left the screen.
 There is no third gray for the sentence: a `muted` step between `secondary` and `primary` was tried and the two grays did not separate in the rendered row.
 The Workspace status is shown once in a trailing chip with the representative provider and `+N` remaining agents; single agents omit the suffix, and empty Workspaces omit the chip.
@@ -884,7 +885,7 @@ The sidebar runtime version stays on one line with middle truncation; its toolti
 ## Pane header lineage and ownership
 
 The pane header keeps one 28pt identity row.
-Its title is `name · [word] sentence` on one line: the identity in caption semibold `primary`, ` · ` in `muted`, the status word in caption medium in the mark's color when the row shows it, and the sentence in caption regular with the row's emphasis color, tail-truncated to no less than `Layout.paneHeaderSentenceMinWidth` (120pt).
+Its title is `name · sentence` on one line, or `name · word` when the row has no sentence: the identity in caption semibold `primary`, ` · ` in `muted`, the status word in caption medium in the mark's color when the row shows it, and the sentence in caption regular with the row's emphasis color, tail-truncated to no less than `Layout.paneHeaderSentenceMinWidth` (120pt).
 When the header is narrower than that, `ViewThatFits` drops the sentence first and the word second, so the identity is what survives a three-way split.
 A shell operation string (`forking…`, `reopening…`) takes the sentence's slot while it runs.
 The header and the sidebar row call a pane by the same name, and the header's accessibility label carries the status word in the same order as the row's.
