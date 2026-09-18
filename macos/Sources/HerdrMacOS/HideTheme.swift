@@ -286,7 +286,7 @@ enum HideTheme {
     /// content is taller than 560 points is read without a scroll on an
     /// ordinary window and the sheet's bottom edge does not cut through a row.
     static let settingsSheetSize = CGSize(width: 720, height: 560)
-    static let settingsSheetMaxHeight: CGFloat = 820
+    static let settingsSheetMaxHeight: CGFloat = 800
     static let settingsSheetWindowInset: CGFloat = 40
     static let addDeviceSheetSize = CGSize(width: 470, height: 300)
 
