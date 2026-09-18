@@ -280,6 +280,8 @@ mod tests {
         record_outcome(&root, "w1:p1", HookEvent::Stop, &socket, &outcome).expect("record");
         assert_eq!(last_failure(&root), None);
         fs::remove_dir_all(&root).ok();
+        fs::remove_file(&socket).ok();
+        fs::remove_dir(&socket_root).ok();
     }
 
     #[test]

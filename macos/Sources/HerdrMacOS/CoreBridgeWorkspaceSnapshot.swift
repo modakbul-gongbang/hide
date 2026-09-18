@@ -976,7 +976,7 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
         paneID: String,
         label: String,
         detail: String? = nil,
-        statusWordVisible: Bool = false,
+        statusWordVisible: Bool = true,
         agentKind: String = "claude",
         demand: String = "none",
         activity: String = "working",
