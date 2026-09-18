@@ -14,6 +14,10 @@ struct ShellTabItem: Identifiable {
     let kind: ShellTabKind
     var focusedAgent: SidebarAgent? = nil
     var contextLabel: String? = nil
+    /// The one agent a Herdr tab holds, as the core named it. Where a tab is
+    /// named rather than drawn as a strip slot - the Recent Panels switcher -
+    /// this is the title and the mark; a tab without one keeps `label`.
+    var agentIdentity: CoreAgentChip? = nil
 }
 
 /// Only the overlay subscribes to held-key presentation changes. The shell's
@@ -84,7 +88,7 @@ enum ShellTabStrip {
                 let agent = pane.flatMap { agentsByPane[$0.id] }
                 let paneTitle = pane.map {
                     PaneHeaderPresentation.title(
-                        herdrLabel: $0.herdrLabel, agentSummary: agent?.identityLabel ?? $0.summary,
+                        herdrLabel: $0.herdrLabel, agentSummary: agent?.identityLabel ?? $0.identityLabel,
                         terminalTitle: $0.terminalTitle, workspaceLabel: $0.workspaceLabel, paneID: $0.id
                     )
                 } ?? entry.label
@@ -98,7 +102,8 @@ enum ShellTabStrip {
                     active: activeFileTabID == nil && entry.sourceID == activeHerdrTabID,
                     kind: .herdr(tab),
                     focusedAgent: agent,
-                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(paneTitle)" }
+                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(paneTitle)" },
+                    agentIdentity: entry.agentIdentity
                 )
             case .file:
                 guard let tab = editorByID[entry.sourceID]

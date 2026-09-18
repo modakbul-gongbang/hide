@@ -30,7 +30,7 @@ struct PaneHeaderControlsTests {
     private func pane(risky: Bool) throws -> CorePaneSnapshot {
         let json = """
         {"id":"w1:p1","cwd":"/checkout","status_label":"Working",
-         "requires_close_confirmation":\(risky),"summary":null,
+         "requires_close_confirmation":\(risky),"identity_label":null,
          "activity_at_unix_ms":null,"fork":{"available":false,"forked_from_pane_id":null}}
         """
         return try JSONDecoder().decode(CorePaneSnapshot.self, from: Data(json.utf8))
@@ -48,7 +48,7 @@ struct PaneHeaderControlsTests {
         // written before it must not decode into a header offering a fork.
         let json = """
         {"id":"w1:p1","cwd":"/checkout","status_label":"Attached",
-         "requires_close_confirmation":false,"summary":null,
+         "requires_close_confirmation":false,"identity_label":null,
          "activity_at_unix_ms":null,"fork":{"available":false,"forked_from_pane_id":null}}
         """
         let pane = try JSONDecoder().decode(CorePaneSnapshot.self, from: Data(json.utf8))

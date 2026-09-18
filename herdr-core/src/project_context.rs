@@ -243,7 +243,7 @@ pub(crate) fn checkout_panes(
                         .herdr_label
                         .as_ref()
                         .or(pane.terminal_title.as_ref())
-                        .or(pane.summary.as_ref())
+                        .or(pane.identity_label.as_ref())
                         .cloned()
                         .unwrap_or_else(|| pane.id.clone()),
                     status: pane.status_label.clone(),
@@ -327,7 +327,7 @@ mod tests {
                         status_label: "Unknown".to_owned(),
                         requires_close_confirmation: false,
                         requires_close_status_check: false,
-                        summary: None,
+                        identity_label: None,
                         activity_at_unix_ms: None,
                         fork: Default::default(),
                         ports: vec![],

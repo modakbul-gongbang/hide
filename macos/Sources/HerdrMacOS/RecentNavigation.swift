@@ -20,22 +20,53 @@ struct RecentNavigationOverlay: View {
                 title: "RECENT PANELS", command: .recentTab,
                 rows: cycle.visibleIDs.compactMap { id in
                     guard let surface = model.recentSurfaces[id] else { return nil }
-                    return RecentSwitcherRow(id: id, title: surface.item.label,
+                    return RecentSwitcherRow(
+                        id: id, title: RecentSurfacePresentation.title(surface),
                         detail: surface.contextLabel, symbol: surface.symbol, dirty: surface.item.dirty,
-                        agent: surface.item.focusedAgent)
+                        agent: surface.item.focusedAgent,
+                        identity: surface.item.agentIdentity.map {
+                            RecentSwitcherRow.Identity(
+                                symbol: $0.symbol,
+                                color: AgentStatusPresentation(
+                                    demand: $0.demand, activity: $0.activity, emphasized: $0.emphasized,
+                                    symbol: $0.symbol, label: $0.statusLabel, connected: model.agentsConnected
+                                ).color,
+                                statusLabel: $0.statusLabel
+                            )
+                        }
+                    )
                 }, selectedID: cycle.selectedTabID,
                 identifier: "tab-mru-switcher"
             )
         }
     }
 }
+/// What a Recent Panels row is called.
+enum RecentSurfacePresentation {
+    /// A tab holding exactly one agent is called by that agent's name, as the
+    /// core decided (PRD D-16); every other tab keeps its label, so a shell
+    /// tab and a two-agent tab read as they always did.
+    static func title(_ surface: RecentSurface) -> String {
+        surface.item.agentIdentity?.label ?? surface.item.label
+    }
+}
+
 private struct RecentSwitcherRow: Identifiable {
+    /// The status mark that replaces the tab's icon when the tab is named
+    /// after its one agent.
+    struct Identity {
+        let symbol: String
+        let color: Color
+        let statusLabel: String
+    }
+
     let id: String
     let title: String
     let detail: String
     let symbol: String
     var dirty = false
     var agent: SidebarAgent? = nil
+    var identity: Identity? = nil
 }
 
 /// Both navigation levels share the existing panel, typography and keycaps.
@@ -59,7 +90,12 @@ private struct RecentSwitcherOverlay: View {
             ForEach(rows) { row in
                 HStack(spacing: HideTheme.spacingMD) {
                     Group {
-                        if let agent = row.agent {
+                        if let identity = row.identity {
+                            // The tab is named after its agent, so it carries
+                            // the agent's mark in the agent's colour, never the
+                            // colour alone (PRD B18).
+                            AgentStatusMark(symbol: identity.symbol, color: identity.color)
+                        } else if let agent = row.agent {
                             AgentBadge(agentKind: agent.agentKind,
                                 stateColor: HideTheme.secondary,
                                 size: HideTheme.checkoutIconWidth)
@@ -96,6 +132,11 @@ private struct RecentSwitcherOverlay: View {
                     in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
                 )
                 .accessibilityElement(children: .combine)
+                // The mark is hidden from VoiceOver, so a named tab says its
+                // agent's state in words here (PRD D-10).
+                .accessibilityLabel(
+                    [row.title, row.identity?.statusLabel, row.detail].compactMap { $0 }.joined(separator: ", ")
+                )
                 .accessibilityAddTraits(row.id == selectedID ? .isSelected : [])
             }
         }

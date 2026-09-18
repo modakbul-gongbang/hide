@@ -354,6 +354,11 @@ enum HideTheme {
         /// truncated. Long identifiers and Korean names both have to fit
         /// several chips on one row rather than one chip pushing the rest off.
         static let paneChildChipMaxWidth: CGFloat = 132
+        /// The least room the pane header's sentence keeps before the header
+        /// drops it. Above this it truncates at the tail; below it the row
+        /// would show an ellipsis and nothing else, so the sentence goes and
+        /// the name and the status word stay (PRD D-08, B7, B8).
+        static let paneHeaderSentenceMinWidth: CGFloat = 120
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
         static let sidebarMaxWidth: CGFloat = 440

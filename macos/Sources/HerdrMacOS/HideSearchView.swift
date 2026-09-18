@@ -129,9 +129,13 @@ struct HideSearchSheet: View {
                         .hideFont(size: HideTheme.Typography.subhead, weight: .semibold)
                         .foregroundStyle(HideTheme.primary)
                     Text(entry.subtitle)
-                        .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
+                        .hideFont(
+                            size: HideTheme.Typography.caption,
+                            design: entry.match == nil ? .monospaced : .default
+                        )
                         .foregroundStyle(HideTheme.secondary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 Spacer()
                 Text("↵")
@@ -148,6 +152,7 @@ struct HideSearchSheet: View {
             in: RoundedRectangle(cornerRadius: HideTheme.radiusMedium)
         )
         .accessibilityAddTraits(selection.selectedID == entry.id ? .isSelected : [])
+        .accessibilityLabel([entry.title, entry.subtitle, entry.match].compactMap { $0 }.joined(separator: ", "))
         .accessibilityValue(selection.selectedID == entry.id ? "Selected" : "Not selected")
         .accessibilityIdentifier("hide-search-result-\(entry.id)")
         .id(entry.id)
@@ -208,6 +213,14 @@ enum HideSearchPresentation {
         return HideSearchEntry.filtered(entries, query: query)
     }
 
+    /// The line under an agent's name: the sentence the core chose for its
+    /// state, else its rolling task is not carried here, so the status word
+    /// stands in. The pane id left this line for the match field and the
+    /// accessibility label (PRD D-15).
+    static func agentSubtitle(_ agent: SidebarAgent) -> String {
+        agent.detail ?? agent.statusLabel
+    }
+
     static func agentGroups(
         workspaces: [CoreWorkspaceSnapshot],
         agents: [SidebarAgent],
@@ -220,8 +233,9 @@ enum HideSearchPresentation {
                 .map {
                     HideSearchEntry(
                         id: "agent-\($0.paneID)",
-                        title: $0.summary,
-                        subtitle: $0.paneID,
+                        title: $0.identityLabel,
+                        subtitle: agentSubtitle($0),
+                        match: $0.paneID,
                         kind: .agent($0)
                     )
                 }
@@ -261,6 +275,9 @@ struct HideSearchEntry: Identifiable {
     let id: String
     let title: String
     let subtitle: String
+    /// Text the query matches that the row does not show: an agent's pane
+    /// id, so typing `w7J:p2P` still finds the row (PRD B17).
+    var match: String? = nil
     let kind: Kind
 
     var route: Route {
@@ -278,7 +295,9 @@ struct HideSearchEntry: Identifiable {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return entries }
         return entries.filter { entry in
-            entry.title.lowercased().contains(normalized) || entry.subtitle.lowercased().contains(normalized)
+            [entry.title, entry.subtitle, entry.match]
+                .compactMap { $0 }
+                .contains { $0.lowercased().contains(normalized) }
         }
     }
 }

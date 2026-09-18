@@ -78,10 +78,15 @@ pub struct SessionLayoutSplitPayload {
     pub rect: SessionLayoutRect,
 }
 
-/// What the sidebar shows for an agent whose context-label plugin reported
-/// no summary. It is a prompt to the user, not a name, so surfaces that name
-/// a pane must not adopt it.
-pub const MISSING_SUMMARY: &str = "Check agent-context-labels settings";
+/// The most a name or sentence read off a pane token may run to. Herdr caps
+/// a token value at 80 characters; the row draws one line, so anything past
+/// this is the tooltip's.
+const MAX_TOKEN_TEXT_CHARS: usize = 80;
+
+/// The longest `expected_reply` the label plugin publishes (PRD D-05). The
+/// core cuts at the same length so a plugin that outran its own rule cannot
+/// push the row past one line.
+pub const MAX_EXPECTED_REPLY_CHARS: usize = 40;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionAgentPayload {
@@ -638,12 +643,9 @@ pub fn apply_lineage(
 pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapshot {
     crate::model::AgentChipSnapshot {
         pane_id: agent.pane_id.clone(),
-        label: agent_identity_label(agent),
-        detail: if agent.summary == MISSING_SUMMARY {
-            agent.status_label.clone()
-        } else {
-            agent.summary.clone()
-        },
+        label: agent.identity_label.clone(),
+        detail: agent.detail.clone(),
+        status_word_visible: agent.status_word_visible,
         agent_kind: agent.agent_kind.clone(),
         demand: agent.demand.clone(),
         activity: agent.activity.clone(),
@@ -656,20 +658,52 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
 
 /// The stable, user-facing identity shared by lineage surfaces.
 ///
-/// A pane id is a transport handle, not a name. Some report-only panes have
-/// no Herdr agent name, so their `id` falls back to that handle even while a
-/// chat title or useful task summary is available. Prefer those authoritative
-/// labels and use the workspace only when no task identity exists.
+/// The ladder is `chat title → name token → Herdr agent name → task →
+/// workspace label` (PRD D-01, D-03). The chat title is what the composer
+/// wrote; the `name` token is the session name the label plugin read off the
+/// agent's own session file when Herdr refused it as an agent name; the Herdr
+/// agent name is the one the operator or the plugin gave. `task` is the
+/// plugin's rolling title, which moves between turns, so it stands in only
+/// when no name exists at all. A pane id is a transport handle, never a
+/// name: a report-only pane whose `id` is its pane id falls through to the
+/// workspace label.
 fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
     agent
         .chat_title
         .clone()
-        .or_else(|| {
-            (agent.summary != MISSING_SUMMARY && !agent.summary.trim().is_empty())
-                .then(|| agent.summary.clone())
-        })
+        .or_else(|| agent.name.clone())
         .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
+        .or_else(|| agent.task.clone())
         .unwrap_or_else(|| agent.workspace_label.clone())
+}
+
+/// What a row's second line says, decided by the row's group (PRD D-06).
+///
+/// Rows that still concern the operator - the Needs You group and an unread
+/// Done - keep their status word and add what the operator is being asked
+/// for (`expected_reply`), or what happened (`progress`) when nothing is
+/// asked. A working row shows only its progress: the mark already says it is
+/// working. A row the operator has read, and a row whose activity is unknown,
+/// say nothing more than their name. With no sentence at all, a row that
+/// would have shown one keeps the status word alone, so a pane with no label
+/// plugin behind it still reads as it did before (PRD B6, B13).
+///
+/// Returns whether the status word is drawn and the sentence beside it.
+fn agent_second_line(
+    group: AgentGroup,
+    expected_reply: Option<&str>,
+    progress: Option<&str>,
+) -> (bool, Option<String>) {
+    match group {
+        AgentGroup::NeedsYou | AgentGroup::Done => {
+            (true, expected_reply.or(progress).map(str::to_owned))
+        }
+        AgentGroup::Working => match progress {
+            Some(progress) => (false, Some(progress.to_owned())),
+            None => (true, None),
+        },
+        AgentGroup::Seen => (false, None),
+    }
 }
 
 /// What one pane's header says about the work its agent delegated.
@@ -869,6 +903,13 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
     agent.status_label = agent_status_label(demand, activity, unread).to_owned();
+    let (status_word_visible, detail) = agent_second_line(
+        group,
+        agent.expected_reply.as_deref(),
+        agent.progress.as_deref(),
+    );
+    agent.status_word_visible = status_word_visible;
+    agent.detail = detail;
     agent.requires_close_confirmation =
         agent_requires_close_confirmation(activity, demand, agent.blocked);
     agent.requires_close_status_check =
@@ -896,11 +937,13 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         })
         .unwrap_or("workspace")
         .to_owned();
-    let summary = token_string(&agent.tokens, "summary")
-        .map(collapse_whitespace)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.chars().take(30).collect())
-        .unwrap_or_else(|| MISSING_SUMMARY.to_owned());
+    // The three label-plugin sentences, each one line. The plugin already
+    // bounds them; the cut here is the same bound applied once more so a
+    // value that outran it cannot reach a row.
+    let name = token_text(&agent.tokens, "name", MAX_TOKEN_TEXT_CHARS);
+    let task = token_text(&agent.tokens, "task", MAX_TOKEN_TEXT_CHARS);
+    let progress = token_text(&agent.tokens, "progress", MAX_TOKEN_TEXT_CHARS);
+    let expected_reply = token_text(&agent.tokens, "expected_reply", MAX_EXPECTED_REPLY_CHARS);
     let elapsed = token_string(&agent.tokens, "elapsed")
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
@@ -932,7 +975,12 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         requires_close_confirmation: false,
         requires_close_status_check: false,
         identity_label: String::new(),
-        summary,
+        name,
+        task,
+        progress,
+        expected_reply,
+        detail: None,
+        status_word_visible: true,
         elapsed,
         last_activity,
         state_change_seq: agent.state_change_seq,
@@ -1211,6 +1259,15 @@ fn token_string(tokens: &BTreeMap<String, Value>, name: &str) -> Option<String> 
         .map(str::to_owned)
 }
 
+/// One line of text off a token: whitespace collapsed, empty dropped, cut
+/// at `max_chars`.
+fn token_text(tokens: &BTreeMap<String, Value>, name: &str, max_chars: usize) -> Option<String> {
+    token_string(tokens, name)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(max_chars).collect())
+}
+
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -1252,7 +1309,7 @@ mod tests {
                         status_label: "Unknown".to_owned(),
                         requires_close_confirmation: false,
                         requires_close_status_check: false,
-                        summary: None,
+                        identity_label: None,
                         activity_at_unix_ms: None,
                         fork: Default::default(),
                         ports: vec![],
@@ -1729,16 +1786,127 @@ mod tests {
         );
     }
 
+    /// PRD D-01, D-03: the name ladder, one rung at a time, top to bottom.
     #[test]
-    fn summary_is_compact_and_missing_summary_has_an_actionable_label() {
-        let projected = project_agents(payload(json!([
-            {"pane_id":"long","tokens":{"status_idle":"○","activity":"0000000000001","summary":"  one   two three four five six seven eight nine ten  ","elapsed":"4m"}},
-            {"pane_id":"missing","tokens":{"status_idle":"○","activity":"0000000000000"}}
-        ]))).agents;
-        assert!(projected[0].summary.chars().count() <= 30);
-        assert_eq!(projected[0].elapsed, "4m");
-        assert_eq!(projected[1].summary, "Check agent-context-labels settings");
-        assert_eq!(projected[1].elapsed, "0s");
+    fn identity_ladder_prefers_chat_title_then_name_then_herdr_name_then_task() {
+        let projected = projected(json!([
+            {"pane_id":"p1","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000001","hide_chat_title":"Scratch chat","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p2","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p3","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p5","id":"p5","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000005"}}
+        ]));
+        let labels = projected
+            .iter()
+            .map(|agent| agent.identity_label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            [
+                "Scratch chat",
+                "Hook 버그 확인",
+                "impl-x",
+                "hook 보고 경로 수정",
+                "hide"
+            ]
+        );
+    }
+
+    /// The old `summary` token is not read: a plugin still publishing it
+    /// names nothing and prompts nothing (PRD B13).
+    #[test]
+    fn a_legacy_summary_token_is_ignored() {
+        let projected = projected(json!([
+            {"pane_id":"p1","id":"p1","workspace_label":"task-factory","tokens":{"status_idle":"○","activity":"0000000000001","summary":"Check agent-context-labels settings"}}
+        ]));
+        assert_eq!(projected[0].identity_label, "task-factory");
+        assert_eq!(projected[0].detail, None);
+    }
+
+    /// PRD D-05: the sentences are one line each and `expected_reply` is cut
+    /// at the plugin's own 40-character rule.
+    #[test]
+    fn sentences_are_collapsed_and_expected_reply_is_cut_at_forty() {
+        let long_reply = "가".repeat(60);
+        let projected = projected(json!([
+            {"pane_id":"p1","id":"p1","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000001","progress":"  hook   보고\n경로 교체 중  ","expected_reply":long_reply}}
+        ]));
+        assert_eq!(
+            projected[0].progress.as_deref(),
+            Some("hook 보고 경로 교체 중")
+        );
+        assert_eq!(
+            projected[0]
+                .expected_reply
+                .as_deref()
+                .map(|value| value.chars().count()),
+            Some(MAX_EXPECTED_REPLY_CHARS)
+        );
+    }
+
+    /// PRD D-06: the second line by group. `agent_second_line` is what
+    /// `derive_from_axes` writes into `detail` and `status_word_visible`.
+    #[test]
+    fn second_line_is_chosen_by_group() {
+        let reply = Some("A/B 선택 후 승인");
+        let progress = Some("푸시 완료, 승인 대기 중");
+        assert_eq!(
+            agent_second_line(AgentGroup::NeedsYou, reply, progress),
+            (true, Some("A/B 선택 후 승인".to_owned()))
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::NeedsYou, None, progress),
+            (true, Some("푸시 완료, 승인 대기 중".to_owned()))
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::NeedsYou, None, None),
+            (true, None)
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::Done, None, progress),
+            (true, Some("푸시 완료, 승인 대기 중".to_owned()))
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::Working, reply, progress),
+            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::Working, None, None),
+            (true, None)
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::Seen, reply, progress),
+            (false, None)
+        );
+    }
+
+    /// The projected row carries the second line: a working row shows its
+    /// progress without the word, and the chip every lineage surface draws
+    /// says the same thing (PRD B4, D-06).
+    #[test]
+    fn projected_rows_carry_the_second_line_and_the_chip_repeats_it() {
+        let projected = projected(json!([
+            {"pane_id":"p1","id":"p1","workspace_label":"hide","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000001","name":"Hook 버그 확인","progress":"hook 보고 경로를 소켓 호출로 교체 중","expected_reply":"무시됨"}},
+            {"pane_id":"p2","id":"p2","workspace_label":"hide","tokens":{"status_question_new":"?","activity":"0000000000002","progress":"푸시 완료","expected_reply":"A/B 선택"}},
+            {"pane_id":"p3","id":"p3","workspace_label":"hide","tokens":{"status_idle":"○","activity":"0000000000003"}}
+        ]));
+        assert_eq!(
+            projected[0].detail.as_deref(),
+            Some("hook 보고 경로를 소켓 호출로 교체 중")
+        );
+        assert!(!projected[0].status_word_visible);
+        assert_eq!(projected[1].detail.as_deref(), Some("A/B 선택"));
+        assert!(projected[1].status_word_visible);
+        // An unread stopped row with no demand is Done: word kept, no sentence.
+        assert_eq!(projected[2].detail, None);
+        assert!(projected[2].status_word_visible);
+        let chip = agent_chip(&projected[0]);
+        assert_eq!(chip.label, "Hook 버그 확인");
+        assert_eq!(
+            chip.detail.as_deref(),
+            Some("hook 보고 경로를 소켓 호출로 교체 중")
+        );
+        assert!(!chip.status_word_visible);
     }
 
     #[test]
@@ -1775,7 +1943,7 @@ mod tests {
                 "pane_id":"remote",
                 "state_change_seq":218,
                 "agent_status":"done",
-                "tokens":{"status_done":"●","summary":"finished"}
+                "tokens":{"status_done":"●","task":"finished up"}
             },
             {
                 "pane_id":"malformed",

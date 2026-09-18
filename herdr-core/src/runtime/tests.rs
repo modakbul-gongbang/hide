@@ -518,7 +518,7 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
         status_label: "Attached".to_owned(),
         requires_close_confirmation: false,
         requires_close_status_check: false,
-        summary: None,
+        identity_label: None,
         activity_at_unix_ms: None,
         fork: PaneForkSnapshot::default(),
         ports: Vec::new(),

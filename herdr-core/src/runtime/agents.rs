@@ -1043,6 +1043,12 @@ impl Runtime {
         if delegated_tabs_changed {
             self.rebuild_tab_strips();
         }
+        // The lineage decided `delegated` after the read pass named the
+        // strip entries, so the chip they carry is refreshed here.
+        changed |= sync_strip_agent_identity(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+        );
         changed | delegated_tabs_changed | self.refresh_inactive_groups()
     }
 

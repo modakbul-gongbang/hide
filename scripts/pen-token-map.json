@@ -151,6 +151,7 @@
     "--size-tab-drag-activation": "Layout.tabDragActivationDistance",
     "--size-pane-child-row": "Layout.paneChildRowHeight",
     "--size-pane-child-chip-max": "Layout.paneChildChipMaxWidth",
+    "--size-pane-header-sentence-min": "Layout.paneHeaderSentenceMinWidth",
     "--size-terminal-min": "Layout.terminalMinWidth",
     "--size-terminal-ideal": "Layout.terminalIdealWidth",
     "--size-pr-popover": "Layout.pullRequestPopoverWidth",

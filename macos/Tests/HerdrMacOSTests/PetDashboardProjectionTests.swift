@@ -48,7 +48,7 @@ struct PetDashboardProjectionTests {
         let rowFields = Set(Mirror(reflecting: projection.groups[0].agents[0]).children.compactMap(\.label))
         #expect(rowFields == [
             "id", "paneID", "agentKind", "group", "demand", "activity",
-            "emphasized", "symbol", "statusLabel", "summary", "elapsed",
+            "emphasized", "symbol", "statusLabel", "identityLabel", "detail", "statusWordVisible", "elapsed",
             "connection", "ambient",
         ])
     }
@@ -179,7 +179,7 @@ struct PetDashboardProjectionTests {
             symbol: "-",
             emphasized: group == "needs_you" || group == "done",
             statusLabel: group == "done" ? "Done" : "Idle",
-            summary: "Agent \(paneID)",
+            identityLabel: "Agent \(paneID)",
             elapsed: "2m",
             lastActivity: "0000000000001",
             ambient: ambient
@@ -196,7 +196,6 @@ struct PetDashboardProjectionTests {
                 id: paneID,
                 cwd: "/tmp/\(id)",
                 statusLabel: "Idle",
-                summary: nil,
                 activityAt: nil
             )
         }

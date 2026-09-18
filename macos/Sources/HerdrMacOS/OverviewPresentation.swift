@@ -82,7 +82,8 @@ enum ProjectTaskForestPresentation {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return flattened }
         let matching = Set(flattened.filter {
-            [$0.agent.identityLabel, $0.agent.summary, $0.agent.id, $0.checkoutLabel, $0.agent.statusLabel]
+            [$0.agent.identityLabel, $0.agent.detail, $0.agent.id, $0.checkoutLabel, $0.agent.statusLabel]
+                .compactMap { $0 }
                 .contains { $0.localizedCaseInsensitiveContains(normalized) }
         }.map(\.id))
         var included = matching
