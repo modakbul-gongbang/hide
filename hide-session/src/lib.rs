@@ -21,7 +21,6 @@ use std::fmt::{Display, Formatter};
 use std::fs::{self, File, Metadata};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 #[cfg(not(unix))]
 use std::time::SystemTime;
@@ -34,7 +33,6 @@ use std::os::unix::fs::MetadataExt;
 pub const CODEX_FALLBACK_DAYS: usize = 7;
 /// Number of newest files considered by the usage fallback.
 pub const CODEX_CANDIDATE_LIMIT: usize = 32;
-const REPORTED_SESSION_FRESHNESS: Duration = Duration::from_secs(30);
 
 /// The two local agent session formats supported by Hide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,21 +357,17 @@ impl SessionLocator {
         identity: Option<&SessionIdentity>,
         cwd: Option<&str>,
     ) -> Result<PathBuf> {
+        // A session Herdr reported for this pane is that pane's session, full
+        // stop. The newest file in the same cwd used to override it once the
+        // reported file went quiet for 30 s, and that made every idle pane
+        // borrow its busiest neighbour's transcript: two Claude panes in one
+        // checkout read the same session, and the quiet one was named,
+        // labelled and diagnosed after the other (2026-09-18). A pane that
+        // starts a new session in place (`/clear`, `--resume`) is reported
+        // again by the runtime hook, so a switch reaches here as a new id.
         if let Some(identity) = identity {
             match self.reported_path(agent, cwd, identity) {
                 Ok(path) => {
-                    if self.is_recent(&path) {
-                        self.resolved.insert(pane_id.to_owned(), path.clone());
-                        return Ok(path);
-                    }
-                    if let Some(cwd) = cwd
-                        && let Some(newest) = self.newest_for_cwd(agent, cwd)?
-                        && newest != path
-                        && self.is_recent(&newest)
-                    {
-                        self.resolved.insert(pane_id.to_owned(), newest.clone());
-                        return Ok(newest);
-                    }
                     self.resolved.insert(pane_id.to_owned(), path.clone());
                     return Ok(path);
                 }
@@ -497,14 +491,6 @@ impl SessionLocator {
         days.reverse();
         days.truncate(CODEX_FALLBACK_DAYS);
         Ok(days)
-    }
-
-    fn is_recent(&self, path: &Path) -> bool {
-        fs::metadata(path)
-            .and_then(|meta| meta.modified())
-            .ok()
-            .and_then(|modified| modified.elapsed().ok())
-            .is_some_and(|age| age <= REPORTED_SESSION_FRESHNESS)
     }
 }
 
@@ -1152,6 +1138,38 @@ mod tests {
                 )
                 .unwrap(),
             codex
+        );
+    }
+
+    #[test]
+    fn a_reported_session_is_kept_when_a_neighbour_in_the_same_cwd_is_newer() {
+        let home = tempdir().unwrap();
+        let claude_dir = home.path().join(".claude/projects/-Users-example");
+        fs::create_dir_all(&claude_dir).unwrap();
+        let quiet = claude_dir.join("quiet-id.jsonl");
+        let busy = claude_dir.join("busy-id.jsonl");
+        fs::write(&quiet, b"").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        fs::File::open(&quiet).unwrap().set_modified(old).unwrap();
+        fs::write(&busy, b"").unwrap();
+        let mut locator = SessionLocator::new(home.path());
+        assert_eq!(
+            locator
+                .locate(
+                    "pane-quiet",
+                    Agent::Claude,
+                    Some(&SessionIdentity::id("quiet-id")),
+                    Some("/Users/example"),
+                )
+                .unwrap(),
+            quiet
+        );
+        // Without a reported id the newest file in the cwd is still the answer.
+        assert_eq!(
+            locator
+                .locate("pane-unknown", Agent::Claude, None, Some("/Users/example"))
+                .unwrap(),
+            busy
         );
     }
 }
