@@ -2036,7 +2036,13 @@ impl<T: HerdrTransport, R: SessionReader> Watcher<T, R> {
                 Some(&format!("lines={};reasons={reasons}", parsed.skipped_lines)),
             )?;
         }
-        self.sync_names(pane, &parsed)?;
+        // A name is written only from the pane's own session. Without a
+        // recorded session the reader falls back to the newest transcript in
+        // the cwd, which is another pane's when two agents share a directory,
+        // and a name Herdr keeps must not be borrowed that way (PRD D-02).
+        if pane.agent_session.is_some() {
+            self.sync_names(pane, &parsed)?;
+        }
         let newest_user_is_last = parsed
             .events
             .iter()

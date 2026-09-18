@@ -52,7 +52,7 @@ fn pane(id: &str, agent: AgentKind, status: &str) -> Pane {
         agent,
         name: None,
         tab_id: format!("{id}-tab"),
-        agent_session: None,
+        agent_session: Some(AgentSession::new("id", &format!("{id}-session"))),
         agent_status: status.to_owned(),
         revision: 1,
         state_change_seq: 1,
@@ -3077,6 +3077,46 @@ fn a_tab_shared_by_two_agents_keeps_its_label() {
         .map(|(_, identity)| identity.name.clone())
         .unwrap();
     assert!(codex_token.is_some());
+}
+
+/// PRD D-02: a pane whose session Herdr has not recorded yet reads the
+/// newest transcript in its cwd, which may be another pane's; no name is
+/// written from that guess, so the tab and agent wait for the pane's own
+/// session.
+#[test]
+fn a_pane_without_its_own_session_is_not_named_from_a_borrowed_transcript() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let reader = ScriptedSessionReader::new();
+    reader.titled("hook-bug-check");
+    reader.user("훅 버그를 확인하고 고쳐줘");
+    let mut unrecorded = pane("w1:p1", AgentKind::Claude, "working");
+    unrecorded.agent_session = None;
+    let transport = FakeTransport::new(vec![unrecorded]);
+    transport
+        .tab_labels
+        .borrow_mut()
+        .insert("w1:p1-tab".to_owned(), "1".to_owned());
+    let mut watcher = Watcher::new(transport, router_with(&backend), reader, paths);
+    watcher.settle();
+
+    assert!(watcher.transport.agent_renames.borrow().is_empty());
+    assert!(watcher.transport.tab_renames.borrow().is_empty());
+    let identity = watcher
+        .transport
+        .identity_reports
+        .borrow()
+        .last()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(identity.name, None);
+    assert_eq!(
+        identity.progress.as_deref(),
+        Some("착수"),
+        "the sentence tokens still flow"
+    );
 }
 
 /// PRD D-11: a rename Herdr refuses or a tab it cannot read is one log line
