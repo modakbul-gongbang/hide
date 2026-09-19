@@ -41,7 +41,6 @@
     "--color-graph-lane-4": "Overview.lanes.3",
     "--color-diff-added": "diffAdded",
     "--color-diff-removed": "diffRemoved",
-
     "--spacing-none": "spacingNone",
     "--spacing-xxs": "spacingXXS",
     "--spacing-xs": "spacingXS",
@@ -53,13 +52,11 @@
     "--spacing-xxxl": "spacingXXXL",
     "--size-sidebar-hierarchy-grandchild": "sidebarHierarchyGrandchildInset",
     "--size-sidebar-hierarchy-great-grandchild": "sidebarHierarchyGreatGrandchildInset",
-
     "--radius-xs": "radiusExtraSmall",
     "--radius-sm": "radiusSmall",
     "--radius-md": "radiusMedium",
     "--radius-lg": "radiusLarge",
     "--radius-xl": "radiusExtraLarge",
-
     "--text-micro": "Typography.micro",
     "--text-caption": "Typography.caption",
     "--text-body": "Typography.body",
@@ -79,7 +76,6 @@
     "--proposed-conversation-body": "Conversation.bodyFontSize",
     "--proposed-conversation-prompt": "Conversation.promptFontSize",
     "--proposed-conversation-glyph": "Conversation.promptGlyphSize",
-
     "--opacity-subtle-fill": "Opacity.subtleFill",
     "--opacity-selected-fill": "Opacity.selectedFill",
     "--opacity-emphasis-fill": "Opacity.emphasisFill",
@@ -87,11 +83,9 @@
     "--opacity-dimmed": "Opacity.dimmed",
     "--opacity-secondary": "Opacity.secondary",
     "--opacity-read-status": "readStatusOpacity",
-
     "--ratio-agent-mark-corner": "AgentMark.cornerRatio",
     "--ratio-agent-mark-inset": "AgentMark.insetRatio",
     "--ratio-agent-mark-font": "AgentMark.fontRatio",
-
     "--size-tab-strip": "Layout.tabStripHeight",
     "--size-traffic-light-inset": "Layout.trafficLightInset",
     "--size-pane-header": "Layout.paneHeaderHeight",
@@ -167,7 +161,16 @@
     "--size-settings-sheet-window-inset": "settingsSheetWindowInset",
     "--size-add-device-sheet-w": "addDeviceSheetSize.width",
     "--size-add-device-sheet-h": "addDeviceSheetSize.height",
-    "--size-device-test-stage-col": "deviceTestStageColumnWidth"
+    "--size-device-test-stage-col": "deviceTestStageColumnWidth",
+    "--size-home-card": "Home.cardWidth",
+    "--size-home-child-card": "Home.childCardWidth",
+    "--size-home-attention-card": "Home.attentionCardWidth",
+    "--size-home-track": "Home.trackHeight",
+    "--size-home-track-stage-min": "Home.trackStageMinWidth",
+    "--size-home-track-connector": "Home.trackConnectorWidth",
+    "--size-home-inspector": "Home.inspectorWidth",
+    "--size-home-inspector-fold": "Home.inspectorFoldWidth",
+    "--size-home-child-rail": "Home.childRailInset"
   },
   "unmapped": {
     "inter": "a registered CGFont, not a value",

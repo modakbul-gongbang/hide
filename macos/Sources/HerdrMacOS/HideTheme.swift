@@ -352,6 +352,38 @@ enum HideTheme {
         static func laneColor(_ lane: Int) -> Color { lanes[lane % lanes.count] }
     }
 
+    /// Project Home's mission board: one lane per checkout, agents as cards
+    /// in a wrapping flow, a progress track in the lane header. Every card
+    /// keeps a fixed width so a status change repaints one badge and never
+    /// moves a slot (PRD home-board, rule 3).
+    enum Home {
+        /// A root card's width. Two lines of a Korean identity label fit
+        /// beside the mark and the badge without wrapping mid-word.
+        static let cardWidth: CGFloat = 232
+        /// A delegated child's card: one lineage column narrower, drawn
+        /// under its parent, so the indent is the same column the sidebar
+        /// tree uses.
+        static let childCardWidth: CGFloat = Home.cardWidth - lineageIndent
+        /// Where a child's hairline hangs: the middle of the lineage column
+        /// its card is indented by, so the rail sits under the parent's mark.
+        static let childRailInset: CGFloat = lineageIndent / 2
+        /// The compact card in the Needs You strip. Narrower than a lane
+        /// card, because it carries the identity and the sentence and
+        /// nothing else.
+        static let attentionCardWidth: CGFloat = 200
+        /// The track's segments. One segment is as tall as a badge plus its
+        /// inset, so the track reads as one row of chips joined by rules.
+        static let trackHeight: CGFloat = 22
+        static let trackStageMinWidth: CGFloat = 60
+        /// The rule that joins two segments.
+        static let trackConnectorWidth: CGFloat = 10
+        /// The inspector column that opens beside the lanes on selection.
+        static let inspectorWidth: CGFloat = 280
+        /// The page keeps the lanes readable on a narrow window by folding
+        /// the inspector under the lanes below this width.
+        static let inspectorFoldWidth: CGFloat = 960
+    }
+
     enum Layout {
         static let pullRequestPopoverWidth: CGFloat = 360
         static let relationshipListMaxHeight: CGFloat = 360
