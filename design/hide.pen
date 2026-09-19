@@ -762,7 +762,7 @@
         {
           "type": "frame",
           "id": "fnd-pr",
-          "name": "Pull request and graph",
+          "name": "Pull request and diff",
           "layout": "vertical",
           "gap": "$--spacing-lg",
           "width": "fill_container",
@@ -778,9 +778,9 @@
                 {
                   "type": "text",
                   "id": "fnd-pr-title",
-                  "name": "PULL REQUEST AND GRAPH",
+                  "name": "PULL REQUEST AND DIFF",
                   "fill": "$--color-muted",
-                  "content": "PULL REQUEST AND GRAPH",
+                  "content": "PULL REQUEST AND DIFF",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-caption",
                   "fontWeight": "600"
@@ -790,7 +790,7 @@
                   "id": "fnd-pr-note",
                   "name": "Status colours a row sho",
                   "fill": "$--color-secondary",
-                  "content": "Status colours a row shows for a pull request, and the four lanes the Overview graph cycles through.",
+                  "content": "Status colours a row shows for a pull request, and the tints a diff draws.",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-subhead",
                   "fontWeight": "normal",
@@ -1028,237 +1028,6 @@
                               "name": "#9198A1",
                               "fill": "$--color-muted",
                               "content": "#9198A1",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-micro",
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "fnd-lane-set",
-                  "name": "Chips",
-                  "layout": "horizontal",
-                  "gap": "$--spacing-md",
-                  "alignItems": "start",
-                  "width": "fill_container",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "fnd-lane-set-color-graph-lane-1",
-                      "name": "lane 1",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "width": "fill_container",
-                      "padding": "$--spacing-lg",
-                      "fill": "$--color-panel",
-                      "stroke": "$--color-divider",
-                      "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner",
-                      "cornerRadius": "$--radius-lg",
-                      "children": [
-                        {
-                          "type": "rectangle",
-                          "id": "fnd-lane-set-color-graph-lane-1-dot",
-                          "name": "Colour",
-                          "width": 24,
-                          "height": 24,
-                          "fill": "$--color-graph-lane-1",
-                          "cornerRadius": "$--radius-sm"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "fnd-lane-set-color-graph-lane-1-text",
-                          "name": "Text",
-                          "layout": "vertical",
-                          "gap": "$--spacing-xxs",
-                          "width": "fill_container",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "fnd-lane-set-color-graph-lane-1-label",
-                              "name": "lane 1",
-                              "fill": "$--color-primary",
-                              "content": "lane 1",
-                              "fontFamily": "$--font-ui",
-                              "fontSize": "$--text-body",
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "fnd-lane-set-color-graph-lane-1-value",
-                              "name": "#61A6FF",
-                              "fill": "$--color-muted",
-                              "content": "#61A6FF",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-micro",
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "fnd-lane-set-color-graph-lane-2",
-                      "name": "lane 2",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "width": "fill_container",
-                      "padding": "$--spacing-lg",
-                      "fill": "$--color-panel",
-                      "stroke": "$--color-divider",
-                      "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner",
-                      "cornerRadius": "$--radius-lg",
-                      "children": [
-                        {
-                          "type": "rectangle",
-                          "id": "fnd-lane-set-color-graph-lane-2-dot",
-                          "name": "Colour",
-                          "width": 24,
-                          "height": 24,
-                          "fill": "$--color-graph-lane-2",
-                          "cornerRadius": "$--radius-sm"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "fnd-lane-set-color-graph-lane-2-text",
-                          "name": "Text",
-                          "layout": "vertical",
-                          "gap": "$--spacing-xxs",
-                          "width": "fill_container",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "fnd-lane-set-color-graph-lane-2-label",
-                              "name": "lane 2",
-                              "fill": "$--color-primary",
-                              "content": "lane 2",
-                              "fontFamily": "$--font-ui",
-                              "fontSize": "$--text-body",
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "fnd-lane-set-color-graph-lane-2-value",
-                              "name": "#B69AFF",
-                              "fill": "$--color-muted",
-                              "content": "#B69AFF",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-micro",
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "fnd-lane-set-color-graph-lane-3",
-                      "name": "lane 3",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "width": "fill_container",
-                      "padding": "$--spacing-lg",
-                      "fill": "$--color-panel",
-                      "stroke": "$--color-divider",
-                      "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner",
-                      "cornerRadius": "$--radius-lg",
-                      "children": [
-                        {
-                          "type": "rectangle",
-                          "id": "fnd-lane-set-color-graph-lane-3-dot",
-                          "name": "Colour",
-                          "width": 24,
-                          "height": 24,
-                          "fill": "$--color-graph-lane-3",
-                          "cornerRadius": "$--radius-sm"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "fnd-lane-set-color-graph-lane-3-text",
-                          "name": "Text",
-                          "layout": "vertical",
-                          "gap": "$--spacing-xxs",
-                          "width": "fill_container",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "fnd-lane-set-color-graph-lane-3-label",
-                              "name": "lane 3",
-                              "fill": "$--color-primary",
-                              "content": "lane 3",
-                              "fontFamily": "$--font-ui",
-                              "fontSize": "$--text-body",
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "fnd-lane-set-color-graph-lane-3-value",
-                              "name": "#5EE69E",
-                              "fill": "$--color-muted",
-                              "content": "#5EE69E",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-micro",
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "fnd-lane-set-color-graph-lane-4",
-                      "name": "lane 4",
-                      "layout": "vertical",
-                      "gap": "$--spacing-md",
-                      "width": "fill_container",
-                      "padding": "$--spacing-lg",
-                      "fill": "$--color-panel",
-                      "stroke": "$--color-divider",
-                      "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner",
-                      "cornerRadius": "$--radius-lg",
-                      "children": [
-                        {
-                          "type": "rectangle",
-                          "id": "fnd-lane-set-color-graph-lane-4-dot",
-                          "name": "Colour",
-                          "width": 24,
-                          "height": 24,
-                          "fill": "$--color-graph-lane-4",
-                          "cornerRadius": "$--radius-sm"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "fnd-lane-set-color-graph-lane-4-text",
-                          "name": "Text",
-                          "layout": "vertical",
-                          "gap": "$--spacing-xxs",
-                          "width": "fill_container",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "fnd-lane-set-color-graph-lane-4-label",
-                              "name": "lane 4",
-                              "fill": "$--color-primary",
-                              "content": "lane 4",
-                              "fontFamily": "$--font-ui",
-                              "fontSize": "$--text-body",
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
-                              "id": "fnd-lane-set-color-graph-lane-4-value",
-                              "name": "#FFB847",
-                              "fill": "$--color-muted",
-                              "content": "#FFB847",
                               "fontFamily": "$--font-mono",
                               "fontSize": "$--text-micro",
                               "fontWeight": "normal"
@@ -39886,22 +39655,6 @@
       "type": "color",
       "value": "#9198A1"
     },
-    "--color-graph-lane-1": {
-      "type": "color",
-      "value": "#61A6FF"
-    },
-    "--color-graph-lane-2": {
-      "type": "color",
-      "value": "#B69AFF"
-    },
-    "--color-graph-lane-3": {
-      "type": "color",
-      "value": "#5EE69E"
-    },
-    "--color-graph-lane-4": {
-      "type": "color",
-      "value": "#FFB847"
-    },
     "--color-diff-added": {
       "type": "color",
       "value": "#5EE69E"
@@ -40329,46 +40082,6 @@
     "--size-overview-cleanup": {
       "type": "number",
       "value": 560
-    },
-    "--size-overview-rail": {
-      "type": "number",
-      "value": 64
-    },
-    "--size-overview-lane-inset": {
-      "type": "number",
-      "value": 12
-    },
-    "--size-overview-lane-spacing": {
-      "type": "number",
-      "value": 14
-    },
-    "--size-overview-node-offset": {
-      "type": "number",
-      "value": 28
-    },
-    "--size-overview-node": {
-      "type": "number",
-      "value": 7
-    },
-    "--size-overview-selected-node": {
-      "type": "number",
-      "value": 16
-    },
-    "--size-overview-commit-row": {
-      "type": "number",
-      "value": 28
-    },
-    "--size-overview-workspace-height": {
-      "type": "number",
-      "value": 96
-    },
-    "--size-overview-row-width": {
-      "type": "number",
-      "value": 236
-    },
-    "--size-overview-graph-line": {
-      "type": "number",
-      "value": 1.5
     },
     "--ratio-agent-mark-corner": {
       "type": "number",

@@ -13,6 +13,11 @@ enum WorktreeMenuPolicy {
     /// (D-05). An unregistered folder row has no pin and no removal (D-06).
     static let projectItems = [pinProject, newWorktree, removeProject]
     static let checkoutItems = [newWorktree, setBaseBranch, copyPath, openIn]
+    /// The Overview group header's menu: the checkout menu plus the three
+    /// items only the Overview has a place for (right-panel-overview D-10).
+    static let overviewHeaderItems =
+        [OverviewPresentation.newAgentHere] + checkoutItems
+            + ["Open pull request", OverviewPresentation.openInHistory]
 }
 
 struct WorktreeSheetDraft: Equatable {

@@ -11,6 +11,9 @@ struct SidebarList<Content: View>: View {
     /// it was; the `Pinned` header appearing above the activity list is the
     /// case that showed it.
     var revealTopRowID: String? = nil
+    /// A one-off request to scroll a row to the top, as `Reveal in sidebar`
+    /// makes; its nonce lets the same row be asked for twice.
+    var reveal: SidebarRevealRequest? = nil
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -33,6 +36,15 @@ struct SidebarList<Content: View>: View {
                 // scroll waits one turn of the run loop for them.
                 DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
             }
+            .onChange(of: reveal) { _, request in
+                guard let request else { return }
+                DispatchQueue.main.async { proxy.scrollTo(request.rowID, anchor: .top) }
+            }
         }
     }
+}
+
+struct SidebarRevealRequest: Equatable {
+    let rowID: String
+    let nonce: Int
 }

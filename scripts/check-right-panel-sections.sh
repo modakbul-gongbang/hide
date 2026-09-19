@@ -18,4 +18,4 @@ fi
 
 bash scripts/verify-swift.sh test --filter ChangesPresentationTests
 
-printf 'right panel presents exactly Overview, Explorer and Changes; no Workbench string remains\n'
+printf 'right panel presents exactly Overview, Explorer and History; no Workbench string remains\n'
