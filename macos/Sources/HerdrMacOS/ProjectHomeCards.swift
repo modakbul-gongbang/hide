@@ -5,7 +5,9 @@ import SwiftUI
 struct ProjectHomeLaneView: View {
     let lane: ProjectHomeLane
     let selectedPaneID: String?
-    let hoveredPaneID: String?
+    /// The family the page raised across every lane (hover or selection);
+    /// nil means nothing is raised anywhere.
+    let raisedPaneIDs: Set<String>?
     let shownPaneID: String?
     let onHover: (String?) -> Void
     let onSelect: (String) -> Void
@@ -13,36 +15,21 @@ struct ProjectHomeLaneView: View {
     let onOpenCheckout: () -> Void
     let onOpenPullRequest: (CorePullRequest) -> Void
 
-    /// The cards a hover raises. Empty means nothing is hovered in this
-    /// lane, so nothing is dimmed (PRD rule 5).
+    /// The cards raised in this lane. Empty means none of the raised family
+    /// lives here, so nothing here is dimmed (PRD rule 5).
     private var raised: Set<String> {
-        guard let hoveredPaneID, lane.cards.contains(where: { $0.id == hoveredPaneID }) else { return [] }
-        return lane.lineage(of: hoveredPaneID)
+        guard let raisedPaneIDs else { return [] }
+        return raisedPaneIDs.intersection(lane.cards.map(\.id))
     }
 
     private var roots: [ProjectHomeCard] { lane.cards.filter { $0.depth == 0 } }
 
     var body: some View {
+        // A lane with nobody in it is its header row alone: the name, the
+        // badges and the track already say what there is to say.
         VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
             header
-            if lane.cards.isEmpty {
-                HStack(spacing: HideTheme.spacingXS) {
-                    Text(ProjectHomeBoard.noAgentsSentence)
-                        .hideFont(size: HideTheme.Typography.caption)
-                        .foregroundStyle(HideTheme.muted)
-                    if let reason = lane.uninstrumentedReason {
-                        // The third of the uninstrumented mark's positions:
-                        // "nobody is here" and "Hide cannot see in" must not
-                        // read the same (docs/status-model.md).
-                        Image(systemName: "questionmark.circle")
-                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                            .foregroundStyle(HideTheme.muted)
-                            .hideTooltip(reason)
-                            .accessibilityLabel(lane.uninstrumentedLabel ?? reason)
-                    }
-                }
-                .padding(.leading, HideTheme.checkoutIconWidth + HideTheme.spacingSM)
-            } else {
+            if !lane.cards.isEmpty {
                 ProjectHomeWrapLayout {
                     ForEach(roots) { root in
                         cardGroup(root)
@@ -79,6 +66,16 @@ struct ProjectHomeLaneView: View {
                     if lane.isDetached { HideBadge(label: "detached", color: HideTheme.secondary) }
                     if lane.isMissing { HideBadge(label: "missing", color: HideTheme.danger) }
                     if lane.isPrimary { HideBadge(label: "primary", color: HideTheme.secondary) }
+                    if lane.cards.isEmpty, let reason = lane.uninstrumentedReason {
+                        // The third of the uninstrumented mark's positions:
+                        // "nobody is here" and "Hide cannot see in" must not
+                        // read the same (docs/status-model.md).
+                        Image(systemName: "questionmark.circle")
+                            .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
+                            .foregroundStyle(HideTheme.muted)
+                            .hideTooltip(reason)
+                            .accessibilityLabel(lane.uninstrumentedLabel ?? reason)
+                    }
                 }
                 .padding(.vertical, HideTheme.spacingXS)
                 .padding(.trailing, HideTheme.spacingXS)
@@ -91,6 +88,11 @@ struct ProjectHomeLaneView: View {
             .accessibilityIdentifier("project-home-open-checkout-\(lane.id)")
             ProjectHomeTrackView(stages: lane.track, pullRequest: lane.pullRequest, onOpenPullRequest: onOpenPullRequest)
         }
+        // The row itself is the open control too, so a click between the
+        // name and the track, or on a hollow chip, opens the checkout; the
+        // PR chip is a button of its own and keeps its click.
+        .contentShape(Rectangle())
+        .onTapGesture { if lane.canOpen { onOpenCheckout() } }
     }
 
     /// A root with its descendants stacked under it, each child one lineage
@@ -222,6 +224,13 @@ struct ProjectHomeCardView: View {
                             .foregroundStyle(HideTheme.muted)
                             .lineLimit(1)
                     }
+                    if !compact, let caption = card.toLanesCaption {
+                        Text(caption)
+                            .hideFont(size: HideTheme.Typography.micro)
+                            .foregroundStyle(HideTheme.muted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                     if !compact, let notice = card.stallNotice {
                         HStack(spacing: HideTheme.spacingXXS) {
                             Image(systemName: "clock.badge.exclamationmark")
@@ -300,6 +309,7 @@ struct ProjectHomeCardView: View {
         if shown { values.append("Shown") }
         if agent.delegated { values.append("Delegated") }
         if let caption = card.fromParentCaption { values.append(caption) }
+        if let caption = card.toLanesCaption { values.append(caption) }
         if let notice = card.stallNotice { values.append(notice) }
         if !agent.elapsed.isEmpty { values.append(agent.elapsed) }
         return values.joined(separator: ", ")

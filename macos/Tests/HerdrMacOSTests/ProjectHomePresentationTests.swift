@@ -132,15 +132,41 @@ struct ProjectHomePresentationTests {
         #expect(!lane.track[0].isHollow)
         #expect(lane.track[1].state == .hollow(reason: "No base branch to compare against"))
         #expect(lane.track[2].state == .hollow(reason: "gh is not signed in"))
-        #expect(lane.track[3].state == .hollow(reason: "gh is not signed in"))
 
         let loading = CoreGithubStatus(available: false, loading: true, stale: false, lastSuccessAtUnixMS: nil, unavailableReason: nil)
         let pending = board([checkout("feature", github: loading)], []).lanes[0]
         #expect(pending.track[2].state == .hollow(reason: "Looking up the pull request…"))
 
-        let none = board([checkout("feature")], []).lanes[0]
+        let unanswered = board([checkout("feature")], []).lanes[0]
+        #expect(unanswered.track[2].state == .hollow(reason: "GitHub has not answered yet"))
+
+        let answered = CoreGithubStatus(available: true, loading: false, stale: false, lastSuccessAtUnixMS: 1, unavailableReason: nil)
+        let none = board([checkout("feature", github: answered)], []).lanes[0]
         #expect(none.track[2].state == .hollow(reason: "No pull request for this branch"))
-        #expect(none.track[3].state == .hollow(reason: "No pull request for this branch"))
+    }
+
+    @Test func withoutAPullRequestTheTrackStopsAtOneHollowPRChip() {
+        // CI and Merged derive from the pull request; twelve lanes of three
+        // hollow chips said nothing, so a lane without a PR stops at `PR`.
+        let none = board([checkout("feature", ahead: 2)], []).lanes[0]
+        #expect(none.track.map(\.kind) == [.changes, .commits, .pullRequest])
+        #expect(none.track.map(\.isHollow) == [false, false, true])
+        // A branch the base already contains is read from ancestry, not
+        // GitHub, so that Merged is still drawn, filled.
+        let contained = board([checkout("feature")], [], facts: [
+            "\(Self.root).worktrees/feature": ProjectHomeWorktreeFact(merged: true),
+        ]).lanes[0]
+        #expect(contained.track.map(\.kind) == [.changes, .commits, .pullRequest, .merged])
+        #expect(!contained.track[3].isHollow)
+        let notYet = board([checkout("feature")], [], facts: [
+            "\(Self.root).worktrees/feature": ProjectHomeWorktreeFact(merged: false),
+        ]).lanes[0]
+        #expect(notYet.track.map(\.kind) == [.changes, .commits, .pullRequest])
+        let withRequest = board([checkout("feature", pullRequest: pullRequest(4))], [], facts: [
+            "\(Self.root).worktrees/feature": ProjectHomeWorktreeFact(merged: false),
+        ]).lanes[0]
+        #expect(withRequest.track.map(\.kind) == ProjectHomeStageKind.allCases)
+        #expect(withRequest.track[4].state == .hollow(reason: "Not merged into main"))
     }
 
     @Test func checksFollowTheStatusModelMappingAndAnUnknownResultIsHollow() {
@@ -159,9 +185,9 @@ struct ProjectHomePresentationTests {
         #expect(merged.label == "merged" && !merged.isHollow)
         let byAncestry = board([checkout("feature")], [], facts: [
             "\(Self.root).worktrees/feature": ProjectHomeWorktreeFact(merged: true),
-        ]).lanes[0].track[4]
+        ]).lanes[0].track[3]
         #expect(byAncestry.tooltip == "Merged into main by ancestry")
-        let notYet = board([checkout("feature")], [], facts: [
+        let notYet = board([checkout("feature", pullRequest: pullRequest(9))], [], facts: [
             "\(Self.root).worktrees/feature": ProjectHomeWorktreeFact(merged: false),
         ]).lanes[0].track[4]
         #expect(notYet.state == .hollow(reason: "Not merged into main"))
@@ -171,6 +197,7 @@ struct ProjectHomePresentationTests {
         let lane = board([checkout("gone", exists: false, dirty: true, changed: 2, pullRequest: pullRequest(3))], []).lanes[0]
         #expect(lane.isMissing)
         #expect(!lane.canOpen)
+        #expect(lane.track.map(\.kind) == [.changes, .commits, .pullRequest])
         #expect(lane.track.filter(\.isHollow).count == lane.track.count)
         #expect(lane.track[0].state == .hollow(reason: "Worktree folder is missing"))
     }
@@ -222,6 +249,10 @@ struct ProjectHomePresentationTests {
         #expect(away.cards[0].depth == 0)
         #expect(away.cards[0].fromParentCaption == "↳ from Orchestrator")
         #expect(away.cards[0].foreignParentPaneID == "p-root")
+        #expect(home.cards[0].foreignChildPaneIDs == ["p-child"])
+        #expect(home.cards[0].toLanesCaption == "↳ to wt")
+        #expect(result.family(of: "p-root") == ["p-root", "p-child"])
+        #expect(result.family(of: "p-child") == ["p-root", "p-child"])
         #expect(result.lineage(of: "p-child").map(\.label) == ["Orchestrator", "Worker in worktree"])
         #expect(result.lineage(of: "p-child").map(\.laneLabel) == ["main", "wt"])
     }
@@ -311,7 +342,77 @@ struct ProjectHomePresentationTests {
             checkouts: [checkout("notes", primary: true)], agents: []
         ))
         #expect(folder.lanes[0].kindIcon == "folder")
-        #expect(folder.lanes[0].track.map(\.state) == Array(repeating: .hollow(reason: "Not a Git repository"), count: 5))
+        #expect(folder.lanes[0].track.map(\.state) == Array(repeating: .hollow(reason: "Not a Git repository"), count: 3))
+    }
+
+    @Test func aParentFannedOutAcrossLanesNamesTwoLanesAndCountsTheRest() {
+        var parent = agent("p-root", "Orchestrator")
+        parent.lineageChildPaneIDs = ["c-1", "c-2", "c-3", "c-4"]
+        var children: [SidebarAgent] = []
+        for pane in ["c-1", "c-2", "c-3", "c-4"] {
+            var child = agent(pane, "Worker \(pane)")
+            child.lineageDepth = 1
+            children.append(child)
+        }
+        let result = board([
+            checkout("main", panes: ["p-root"], primary: true),
+            checkout("alpha", panes: ["c-1", "c-2"]),
+            checkout("beta", panes: ["c-3"]),
+            checkout("gamma", panes: ["c-4"]),
+        ], [parent] + children)
+        let root = result.card("p-root")!
+        #expect(root.foreignChildLaneLabels == ["alpha", "alpha", "beta", "gamma"])
+        #expect(root.toLanesCaption == "↳ to alpha, beta +1")
+        #expect(result.family(of: "p-root") == ["p-root", "c-1", "c-2", "c-3", "c-4"])
+        #expect(result.family(of: "c-3") == ["p-root", "c-3"])
+        #expect(result.card("c-1")!.toLanesCaption == nil)
+    }
+
+    // MARK: Lane order and strip fold
+
+    @Test func lanesKeepTheirSlotsWhileOpenAndNewOnesAppendUntilSorted() {
+        let quiet = checkout("quiet", panes: ["p-q"])
+        let busy = checkout("busy", panes: ["p-b"], summary: CoreCheckoutAgentSummary(needsYou: 1))
+        let first = board([quiet, busy], [agent("p-q", "Quiet"), agent("p-b", "Busy")])
+        let opened = ProjectHomeLaneOrder.settle(nil, projectPath: Self.root, rankedLanes: first.lanes)
+        #expect(opened.laneIDs == ["checkout-busy", "checkout-quiet"])
+        #expect(opened.isRanked(against: first.lanes))
+
+        // Quiet enters Needs You, busy leaves it, and a third checkout
+        // appears: the slots hold, the new lane goes last.
+        let quietNow = checkout("quiet", panes: ["p-q"], summary: CoreCheckoutAgentSummary(needsYou: 2))
+        let busyNow = checkout("busy", panes: ["p-b"], summary: CoreCheckoutAgentSummary(working: 1))
+        let extra = checkout("extra", panes: ["p-e"], summary: CoreCheckoutAgentSummary(needsYou: 3))
+        let later = board([quietNow, busyNow, extra], [agent("p-q", "Quiet"), agent("p-b", "Busy"), agent("p-e", "Extra")])
+        #expect(later.lanes.map(\.id) == ["checkout-extra", "checkout-quiet", "checkout-busy"])
+        let held = ProjectHomeLaneOrder.settle(opened, projectPath: Self.root, rankedLanes: later.lanes)
+        #expect(held.laneIDs == ["checkout-busy", "checkout-quiet", "checkout-extra"])
+        #expect(held.apply(to: later.lanes).map(\.id) == held.laneIDs)
+        #expect(!held.isRanked(against: later.lanes))
+
+        // A filter narrows the lanes but not their order.
+        #expect(held.apply(to: later.filtered(query: "Extra").lanes).map(\.id) == ["checkout-extra"])
+        #expect(held.apply(to: later.filtered(query: "quiet").lanes + later.filtered(query: "busy").lanes).map(\.id)
+                == ["checkout-busy", "checkout-quiet"])
+
+        // A gone lane drops; Sort or another project re-ranks.
+        let fewer = ProjectHomeLaneOrder.settle(held, projectPath: Self.root, rankedLanes: first.lanes)
+        #expect(fewer.laneIDs == ["checkout-busy", "checkout-quiet"])
+        #expect(ProjectHomeLaneOrder.settle(nil, projectPath: Self.root, rankedLanes: later.lanes).laneIDs == later.lanes.map(\.id))
+        #expect(ProjectHomeLaneOrder.settle(held, projectPath: "/elsewhere", rankedLanes: later.lanes).laneIDs == later.lanes.map(\.id))
+    }
+
+    @Test func theStripShowsTwoRowsAndKeepsOneSlotForTheMoreChip() {
+        #expect(ProjectHomeAttentionFold.perRow(width: 660, cardWidth: 200, spacing: 8) == 3)
+        #expect(ProjectHomeAttentionFold.perRow(width: 615, cardWidth: 200, spacing: 8) == 2)
+        #expect(ProjectHomeAttentionFold.perRow(width: 100, cardWidth: 200, spacing: 8) == 1)
+        #expect(ProjectHomeAttentionFold.visibleCount(total: 6, perRow: 3, expanded: false) == 6)
+        #expect(ProjectHomeAttentionFold.visibleCount(total: 7, perRow: 3, expanded: false) == 5)
+        #expect(ProjectHomeAttentionFold.visibleCount(total: 12, perRow: 3, expanded: false) == 5)
+        #expect(ProjectHomeAttentionFold.visibleCount(total: 12, perRow: 3, expanded: true) == 12)
+        #expect(ProjectHomeAttentionFold.visibleCount(total: 3, perRow: 1, expanded: false) == 1)
+        #expect(ProjectHomeAttentionFold.moreLabel(hidden: 7) == "+7 more")
+        #expect(ProjectHomeAttentionFold.fewerLabel == "Show fewer")
     }
 
     // MARK: Search

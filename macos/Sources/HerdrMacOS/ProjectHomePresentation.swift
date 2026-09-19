@@ -115,11 +115,28 @@ struct ProjectHomeCard: Equatable, Identifiable {
     /// own checkout and is a root here, captioned with whose work it is.
     let foreignParentPaneID: String?
     let foreignParentLabel: String?
+    /// Children that live in other lanes, in the core's order, with the
+    /// label of the lane each one sits in; the fan-out a lane cannot nest.
+    let foreignChildPaneIDs: [String]
+    let foreignChildLaneLabels: [String]
+
+    /// How many lanes the `↳ to` caption names before it counts the rest.
+    static let namedForeignLanes = 2
 
     var id: String { agent.paneID }
     var stallNotice: String? { agent.stallNotice }
     /// `↳ from <parent>`, drawn under a root whose parent is elsewhere.
     var fromParentCaption: String? { foreignParentLabel.map { "↳ from \($0)" } }
+    /// `↳ to <branch>, <branch> +N`, drawn under a parent whose children
+    /// were moved to other lanes, so the fan-out is readable without hover.
+    var toLanesCaption: String? {
+        var lanes: [String] = []
+        for label in foreignChildLaneLabels where !lanes.contains(label) { lanes.append(label) }
+        guard !lanes.isEmpty else { return nil }
+        let named = lanes.prefix(Self.namedForeignLanes).joined(separator: ", ")
+        let rest = lanes.count - Self.namedForeignLanes
+        return rest > 0 ? "↳ to \(named) +\(rest)" : "↳ to \(named)"
+    }
 }
 
 /// One checkout, drawn as a full-width band.
@@ -248,6 +265,8 @@ struct ProjectHomeBoard: Equatable {
             }
         }
 
+        var laneLabels: [String: String] = [:]
+        for checkout in input.checkouts { laneLabels[checkout.id] = checkout.label }
         var lanes: [ProjectHomeLane] = []
         for checkout in input.checkouts {
             let laneAgents: [SidebarAgent] = projectAgents.filter { checkoutByPane[$0.paneID] == checkout.id }
@@ -256,6 +275,7 @@ struct ProjectHomeBoard: Equatable {
                 input: input,
                 agents: laneAgents,
                 laneOf: checkoutByPane,
+                laneLabels: laneLabels,
                 parentOf: parentOf,
                 byPane: byPane,
                 order: order
@@ -292,6 +312,7 @@ struct ProjectHomeBoard: Equatable {
         input: ProjectHomeInput,
         agents: [SidebarAgent],
         laneOf: [String: String],
+        laneLabels: [String: String],
         parentOf: [String: String],
         byPane: [String: SidebarAgent],
         order: [String: Int]
@@ -311,7 +332,7 @@ struct ProjectHomeBoard: Equatable {
             canOpen: checkout.exists,
             track: track(for: checkout, input: input, fact: fact),
             cards: cards(
-                in: checkout, agents: agents, laneOf: laneOf, parentOf: parentOf,
+                in: checkout, agents: agents, laneOf: laneOf, laneLabels: laneLabels, parentOf: parentOf,
                 byPane: byPane, order: order, connected: input.connected
             ),
             uninstrumentedReason: line?.uninstrumentedReason,
@@ -339,11 +360,20 @@ struct ProjectHomeBoard: Equatable {
         in checkout: CoreCheckoutSnapshot,
         agents: [SidebarAgent],
         laneOf: [String: String],
+        laneLabels: [String: String],
         parentOf: [String: String],
         byPane: [String: SidebarAgent],
         order: [String: Int],
         connected: Bool
     ) -> [ProjectHomeCard] {
+        // A child is foreign when the lane it sits in is not this one and the
+        // claim is the one the forest honours (the first parent to claim it).
+        func foreignChildren(of agent: SidebarAgent) -> [SidebarAgent] {
+            agent.lineageChildPaneIDs
+                .compactMap { byPane[$0] }
+                .filter { parentOf[$0.paneID] == agent.paneID && laneOf[$0.paneID] != checkout.id }
+                .sorted { (order[$0.paneID] ?? .max) < (order[$1.paneID] ?? .max) }
+        }
         func localParent(of agent: SidebarAgent) -> String? {
             guard let parent = parentOf[agent.paneID], laneOf[parent] == checkout.id else { return nil }
             return parent
@@ -363,6 +393,7 @@ struct ProjectHomeBoard: Equatable {
             let foreignParent = parent == nil
                 ? parentOf[agent.paneID].flatMap { laneOf[$0] == checkout.id ? nil : byPane[$0] }
                 : nil
+            let foreign = foreignChildren(of: agent)
             result.append(ProjectHomeCard(
                 agent: agent,
                 status: AgentStatusPresentation(agent: agent, connected: connected),
@@ -371,7 +402,9 @@ struct ProjectHomeBoard: Equatable {
                 parentPaneID: parent,
                 childPaneIDs: children.map(\.paneID),
                 foreignParentPaneID: foreignParent?.paneID,
-                foreignParentLabel: foreignParent?.identityLabel
+                foreignParentLabel: foreignParent?.identityLabel,
+                foreignChildPaneIDs: foreign.map(\.paneID),
+                foreignChildLaneLabels: foreign.compactMap { laneOf[$0.paneID].flatMap { laneLabels[$0] } }
             ))
             stack.append(contentsOf: children.reversed().map { ($0, depth + 1, agent.paneID) })
         }
@@ -384,14 +417,20 @@ struct ProjectHomeBoard: Equatable {
                 parentPaneID: nil,
                 childPaneIDs: [],
                 foreignParentPaneID: nil,
-                foreignParentLabel: nil
+                foreignParentLabel: nil,
+                foreignChildPaneIDs: [],
+                foreignChildLaneLabels: []
             ))
         }
         return result
     }
 
-    /// The five stages, each filled from the checkout's own facts or hollow
-    /// with the reason it could not be.
+    /// The stages, each filled from the checkout's own facts or hollow with
+    /// the reason it could not be. CI and Merged derive from the pull request,
+    /// so without one the track stops at a single hollow `PR` chip that says
+    /// why; twelve lanes of `PR · CI · Merged` outlines said nothing. The one
+    /// exception is a branch the base already contains: that Merged is read
+    /// from ancestry, not from GitHub, so it is still drawn filled.
     private static func track(
         for checkout: CoreCheckoutSnapshot,
         input: ProjectHomeInput,
@@ -401,11 +440,12 @@ struct ProjectHomeBoard: Equatable {
             ProjectHomeTrackStage(kind: kind, label: kind.title, state: .hollow(reason: reason),
                                   color: HideTheme.muted, tooltip: "\(kind.title): \(reason)")
         }
+        let withoutPullRequest: [ProjectHomeStageKind] = [.changes, .commits, .pullRequest]
         guard input.isGit else {
-            return ProjectHomeStageKind.allCases.map { hollow($0, "Not a Git repository") }
+            return withoutPullRequest.map { hollow($0, "Not a Git repository") }
         }
         guard checkout.exists else {
-            return ProjectHomeStageKind.allCases.map { hollow($0, "Worktree folder is missing") }
+            return withoutPullRequest.map { hollow($0, "Worktree folder is missing") }
         }
 
         let changes: ProjectHomeTrackStage
@@ -434,7 +474,7 @@ struct ProjectHomeBoard: Equatable {
         }
 
         let pullRequest: ProjectHomeTrackStage
-        let ci: ProjectHomeTrackStage
+        var ci: ProjectHomeTrackStage?
         if let request = checkout.pullRequest {
             let state = CheckoutCardPresentation.pullRequestState(request)
             let stale = CheckoutCardPresentation.staleNotice(checkout.github).map { " · last known \($0)" } ?? ""
@@ -457,16 +497,15 @@ struct ProjectHomeBoard: Equatable {
             }
         } else if checkout.github.loading {
             pullRequest = hollow(.pullRequest, "Looking up the pull request…")
-            ci = hollow(.ci, "Looking up the pull request…")
         } else if let reason = checkout.github.unavailableReason {
             pullRequest = hollow(.pullRequest, reason)
-            ci = hollow(.ci, reason)
+        } else if !checkout.github.available {
+            pullRequest = hollow(.pullRequest, "GitHub has not answered yet")
         } else {
             pullRequest = hollow(.pullRequest, "No pull request for this branch")
-            ci = hollow(.ci, "No pull request for this branch")
         }
 
-        let merged: ProjectHomeTrackStage
+        var merged: ProjectHomeTrackStage?
         if checkout.pullRequest?.badge == .merged {
             merged = ProjectHomeTrackStage(
                 kind: .merged, label: "merged", state: .filled, color: HideTheme.PullRequest.merged,
@@ -477,13 +516,13 @@ struct ProjectHomeBoard: Equatable {
                 kind: .merged, label: "merged", state: .filled, color: HideTheme.PullRequest.merged,
                 tooltip: "Merged into \(checkout.baseBranch ?? "the base branch") by ancestry"
             )
-        } else if fact?.merged == false {
+        } else if checkout.pullRequest != nil, fact?.merged == false {
             merged = hollow(.merged, "Not merged into \(checkout.baseBranch ?? "the base branch")")
-        } else {
+        } else if checkout.pullRequest != nil {
             merged = hollow(.merged, "Merge state not read yet")
         }
 
-        return [changes, commits, pullRequest, ci, merged]
+        return [changes, commits, pullRequest] + [ci, merged].compactMap { $0 }
     }
 
     /// The board narrowed to a query: a lane whose own name matches keeps
@@ -527,6 +566,24 @@ struct ProjectHomeBoard: Equatable {
         )
     }
 
+    /// The cards a hover or selection raises: the card, its ancestors and its
+    /// descendants across every lane, so a parent's fan-out into other
+    /// checkouts lights up with it (PRD rule 5, round 2).
+    func family(of paneID: String) -> Set<String> {
+        guard let start = card(paneID) else { return [] }
+        var result: Set<String> = [paneID]
+        var cursor = start.parentPaneID ?? start.foreignParentPaneID
+        while let parent = cursor, result.insert(parent).inserted, let card = card(parent) {
+            cursor = card.parentPaneID ?? card.foreignParentPaneID
+        }
+        var stack = start.childPaneIDs + start.foreignChildPaneIDs
+        while let child = stack.popLast() {
+            guard result.insert(child).inserted, let card = card(child) else { continue }
+            stack.append(contentsOf: card.childPaneIDs + card.foreignChildPaneIDs)
+        }
+        return result
+    }
+
     func lane(containing paneID: String) -> ProjectHomeLane? {
         lanes.first { lane in lane.cards.contains { $0.id == paneID } }
     }
@@ -550,6 +607,77 @@ struct ProjectHomeBoard: Equatable {
             cursor = card.parentPaneID ?? card.foreignParentPaneID
         }
         return chain.reversed()
+    }
+}
+
+/// The slots lanes keep while the page stays open. Attention rank decides
+/// the order when Home opens and when the operator asks for a sort; between
+/// those moments a lane keeps its place, a lane that entered Needs You gets
+/// its mark and the strip surfaces it, and a new checkout appends at the
+/// bottom, so the lane being read never moves under the pointer.
+struct ProjectHomeLaneOrder: Equatable {
+    let projectPath: String
+    let laneIDs: [String]
+
+    /// The order to draw `rankedLanes` in: rank order when there is no order
+    /// yet or the project changed, otherwise the kept order with gone lanes
+    /// dropped and new lanes appended in rank order.
+    static func settle(
+        _ previous: ProjectHomeLaneOrder?,
+        projectPath: String,
+        rankedLanes: [ProjectHomeLane]
+    ) -> ProjectHomeLaneOrder {
+        let ranked = rankedLanes.map(\.id)
+        guard let previous, previous.projectPath == projectPath else {
+            return ProjectHomeLaneOrder(projectPath: projectPath, laneIDs: ranked)
+        }
+        let present = Set(ranked)
+        var kept = previous.laneIDs.filter { present.contains($0) }
+        let known = Set(kept)
+        kept.append(contentsOf: ranked.filter { !known.contains($0) })
+        return ProjectHomeLaneOrder(projectPath: projectPath, laneIDs: kept)
+    }
+
+    /// `lanes` in this order; a lane the order does not know (a filter
+    /// cannot add one, but a stale order could miss one) keeps rank order at
+    /// the end.
+    func apply(to lanes: [ProjectHomeLane]) -> [ProjectHomeLane] {
+        var slot: [String: Int] = [:]
+        for (index, id) in laneIDs.enumerated() { slot[id] = index }
+        return lanes.enumerated().sorted { left, right in
+            let l = slot[left.element.id] ?? laneIDs.count + left.offset
+            let r = slot[right.element.id] ?? laneIDs.count + right.offset
+            return l < r
+        }.map(\.element)
+    }
+
+    /// Whether a sort would move anything: false when the kept order is
+    /// already the rank order, so the control can say so.
+    func isRanked(against rankedLanes: [ProjectHomeLane]) -> Bool {
+        apply(to: rankedLanes).map(\.id) == rankedLanes.map(\.id)
+    }
+}
+
+/// How the Needs You strip folds: two rows of compact cards, with the last
+/// slot given to a `+N more` chip when there is more, and everything on
+/// demand behind it (PRD rule 4, round 2).
+enum ProjectHomeAttentionFold: Equatable {
+    static let rows = 2
+    static let fewerLabel = "Show fewer"
+
+    static func moreLabel(hidden: Int) -> String { "+\(hidden) more" }
+
+    /// Cards per row at `width`; never fewer than one.
+    static func perRow(width: CGFloat, cardWidth: CGFloat, spacing: CGFloat) -> Int {
+        max(1, Int(((width + spacing) / (cardWidth + spacing)).rounded(.down)))
+    }
+
+    /// How many cards are drawn. Everything when it fits in the rows or the
+    /// operator expanded; otherwise the rows minus the chip's slot.
+    static func visibleCount(total: Int, perRow: Int, expanded: Bool) -> Int {
+        let capacity = rows * perRow
+        guard total > capacity, !expanded else { return total }
+        return max(0, capacity - 1)
     }
 }
 
