@@ -29226,7 +29226,7 @@
       "x": 0,
       "y": 3700,
       "name": "Band / Scratch",
-      "width": 3080,
+      "width": 4460,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -29257,6 +29257,1601 @@
           "width": "fill_container",
           "height": 1,
           "fill": "$--color-divider"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "scratch-sidebar-pinning",
+      "x": 0,
+      "y": 3800,
+      "name": "Scratch / Sidebar pinning",
+      "clip": false,
+      "width": 1300,
+      "height": 944,
+      "fill": "$--color-canvas",
+      "layout": "horizontal",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-lg",
+      "children": [
+        {
+          "type": "frame",
+          "id": "scratch-pin-0-wrapper",
+          "name": "State / Pin 0 · today",
+          "width": 292,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "scratch-pin-0-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Pin 0 · today",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "scratch-pin0-inactive-state-3-qZcwf",
+              "name": "Sidebar / Pin 0 · today",
+              "clip": true,
+              "width": 292,
+              "height": 900,
+              "fill": "$--color-sidebar",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "scratch-pin0-inactive-state-3-DhP5X",
+                  "name": "Controls",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin0-inactive-state-3-zLkqf",
+                      "name": "Mode switcher (HideChoiceGroup segmented)",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": "$--spacing-xxs",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin0-inactive-state-3-s2m1lG",
+                          "name": "Choice Projects",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "scratch-pin0-inactive-state-3-n2coe8",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "Projects",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin0-inactive-state-3-G9z4I",
+                          "name": "Choice Agents",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "scratch-pin0-inactive-state-3-mQryP",
+                              "name": "Label",
+                              "fill": "$--color-secondary",
+                              "content": "Agents",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin0-inactive-state-3-H2WUDM",
+                      "name": "Search row",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin0-inactive-state-3-RjWXM",
+                          "name": "Search (a Button shaped like a field - 32, radius 8)",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "scratch-pin0-inactive-state-3-acXfe",
+                              "name": "Placeholder",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "scratch-pin0-inactive-state-3-fhOul",
+                                  "name": "Magnifier",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "search",
+                                  "library": "lucide",
+                                  "fill": "$--color-muted"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "scratch-pin0-inactive-state-3-X82Ld",
+                                  "name": "Label",
+                                  "fill": "$--color-secondary",
+                                  "content": "Search",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "id": "scratch-pin0-inactive-state-3-bPip6",
+                              "type": "ref",
+                              "ref": "Ec2W1",
+                              "name": "Shortcut"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin0-inactive-state-3-ogq8a",
+                          "name": "Icon button folder-plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "scratch-pin0-inactive-state-3-R6uD6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "folder-plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin0-inactive-state-3-SvdTb",
+                          "name": "Icon button plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "scratch-pin0-inactive-state-3-AgSM6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "scratch-pin0-inactive-state-3-QqMPc",
+                  "name": "Attention groups",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "scratch-pin0-inactive-state-3-Z4DCTS",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Needs You",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Needs You"
+                        },
+                        "rVsKB": {
+                          "content": "1"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-q8VhA",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / 결제 멱등키 PR",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "!",
+                          "fill": "$--color-warning"
+                        },
+                        "x0h40": {
+                          "content": "결제 멱등키 PR",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "1m",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Approval",
+                          "fill": "$--color-warning",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "DB 마이그레이션 실행을 승인하세요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-yHroq",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Done",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Done"
+                        },
+                        "rVsKB": {
+                          "content": "2"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-vrp4i",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / 실패 관측 정보 기록",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "x0h40": {
+                          "content": "실패 관측 정보 기록",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "0s",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "관측 기록 PR 열림, 리뷰 대기",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin0-inactive-state-3-ZJ7gQ",
+                      "name": "lineage caption / drawn ABOVE the row it belongs to",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "scratch-pin0-inactive-state-3-Ss3Wd",
+                          "name": "Elbow",
+                          "fill": "$--color-muted",
+                          "content": "↳",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "scratch-pin0-inactive-state-3-jCfix",
+                          "name": "Origin",
+                          "fill": "$--color-muted",
+                          "content": "from w72:pX",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-csMSx",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / GitHub 작업 흐름 설계",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "x0h40": {
+                          "content": "GitHub 작업 흐름 설계",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "56s",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "상태 설계 정리 완료, #12 리뷰 필요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "scratch-pin0-inactive-state-3-projects-tree",
+                  "name": "Projects tree",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "scratch-pin0-inactive-state-3-section",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Projects - Recent activity",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Projects · Recent activity"
+                        },
+                        "rVsKB": {
+                          "content": "18"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-project-hide",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-down"
+                        },
+                        "JkPyX": {
+                          "content": "herdr-ide"
+                        },
+                        "nZkan": {
+                          "content": "3 agents · now"
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-checkout-focus-wrap",
+                      "type": "frame",
+                      "name": "Selected child checkout geometry",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm",
+                        "$--spacing-none",
+                        "$--spacing-lg"
+                      ],
+                      "children": [
+                        {
+                          "id": "scratch-pin0-inactive-state-3-checkout-focus",
+                          "type": "ref",
+                          "ref": "pPtY6",
+                          "name": "Checkout / sidebar-projects-focus",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-md",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-sm"
+                          ],
+                          "descendants": {
+                            "IxbXq": {
+                              "content": "sidebar-projects-focus"
+                            },
+                            "BWWvl/ZIZFR": {
+                              "icon": "chevron-right"
+                            },
+                            "YLQKV": {
+                              "enabled": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-project-task-factory",
+                      "type": "frame",
+                      "name": "Top-level group separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-project-task-factory-row",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "task-factory"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 4m"
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-fold",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "scratch-pin0-inactive-state-3-fold-row",
+                      "type": "ref",
+                      "ref": "inactive-fold-row",
+                      "name": "Inactive projects / Collapsed",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "inactive-fold-chevron": {
+                          "icon": "chevron-right"
+                        },
+                        "inactive-fold-label": {
+                          "content": "Inactive projects 4"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "scratch-pin-2-wrapper",
+          "name": "State / Pin 2 · Pinned section",
+          "width": 292,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "scratch-pin-2-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Pin 2 · Pinned section",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "scratch-pin2-inactive-state-3-qZcwf",
+              "name": "Sidebar / Pin 2 · Pinned section",
+              "clip": true,
+              "width": 292,
+              "height": 900,
+              "fill": "$--color-sidebar",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "scratch-pin2-inactive-state-3-DhP5X",
+                  "name": "Controls",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin2-inactive-state-3-zLkqf",
+                      "name": "Mode switcher (HideChoiceGroup segmented)",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": "$--spacing-xxs",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin2-inactive-state-3-s2m1lG",
+                          "name": "Choice Projects",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "scratch-pin2-inactive-state-3-n2coe8",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "Projects",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin2-inactive-state-3-G9z4I",
+                          "name": "Choice Agents",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "scratch-pin2-inactive-state-3-mQryP",
+                              "name": "Label",
+                              "fill": "$--color-secondary",
+                              "content": "Agents",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin2-inactive-state-3-H2WUDM",
+                      "name": "Search row",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin2-inactive-state-3-RjWXM",
+                          "name": "Search (a Button shaped like a field - 32, radius 8)",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "scratch-pin2-inactive-state-3-acXfe",
+                              "name": "Placeholder",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "scratch-pin2-inactive-state-3-fhOul",
+                                  "name": "Magnifier",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "search",
+                                  "library": "lucide",
+                                  "fill": "$--color-muted"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "scratch-pin2-inactive-state-3-X82Ld",
+                                  "name": "Label",
+                                  "fill": "$--color-secondary",
+                                  "content": "Search",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "id": "scratch-pin2-inactive-state-3-bPip6",
+                              "type": "ref",
+                              "ref": "Ec2W1",
+                              "name": "Shortcut"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin2-inactive-state-3-ogq8a",
+                          "name": "Icon button folder-plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "scratch-pin2-inactive-state-3-R6uD6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "folder-plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin2-inactive-state-3-SvdTb",
+                          "name": "Icon button plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "scratch-pin2-inactive-state-3-AgSM6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "scratch-pin2-inactive-state-3-QqMPc",
+                  "name": "Attention groups",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "scratch-pin2-inactive-state-3-Z4DCTS",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Needs You",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Needs You"
+                        },
+                        "rVsKB": {
+                          "content": "1"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-q8VhA",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / 결제 멱등키 PR",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "!",
+                          "fill": "$--color-warning"
+                        },
+                        "x0h40": {
+                          "content": "결제 멱등키 PR",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "1m",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Approval",
+                          "fill": "$--color-warning",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "DB 마이그레이션 실행을 승인하세요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-yHroq",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Done",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Done"
+                        },
+                        "rVsKB": {
+                          "content": "2"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-vrp4i",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / 실패 관측 정보 기록",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "x0h40": {
+                          "content": "실패 관측 정보 기록",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "0s",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "관측 기록 PR 열림, 리뷰 대기",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin2-inactive-state-3-ZJ7gQ",
+                      "name": "lineage caption / drawn ABOVE the row it belongs to",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "scratch-pin2-inactive-state-3-Ss3Wd",
+                          "name": "Elbow",
+                          "fill": "$--color-muted",
+                          "content": "↳",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "scratch-pin2-inactive-state-3-jCfix",
+                          "name": "Origin",
+                          "fill": "$--color-muted",
+                          "content": "from w72:pX",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-csMSx",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / GitHub 작업 흐름 설계",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "x0h40": {
+                          "content": "GitHub 작업 흐름 설계",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "56s",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "상태 설계 정리 완료, #12 리뷰 필요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "scratch-pin2-inactive-state-3-projects-tree",
+                  "name": "Projects tree",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "scratch-pin2-pinned-section",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Pinned",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Pinned"
+                        },
+                        "rVsKB": {
+                          "content": "2"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-project-hide",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-down"
+                        },
+                        "JkPyX": {
+                          "content": "herdr-ide"
+                        },
+                        "nZkan": {
+                          "content": "3 agents · now"
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-checkout-focus-wrap",
+                      "type": "frame",
+                      "name": "Selected child checkout geometry",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm",
+                        "$--spacing-none",
+                        "$--spacing-lg"
+                      ],
+                      "children": [
+                        {
+                          "id": "scratch-pin2-inactive-state-3-checkout-focus",
+                          "type": "ref",
+                          "ref": "pPtY6",
+                          "name": "Checkout / sidebar-projects-focus",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-md",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-sm"
+                          ],
+                          "descendants": {
+                            "IxbXq": {
+                              "content": "sidebar-projects-focus"
+                            },
+                            "BWWvl/ZIZFR": {
+                              "icon": "chevron-right"
+                            },
+                            "YLQKV": {
+                              "enabled": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "scratch-pin2-gap-a",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "scratch-pin2-project-ctong",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / ctong",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "ctong"
+                        },
+                        "nZkan": {
+                          "content": "2 agents · 1h"
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-section",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Projects - Recent activity",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Projects · Recent activity"
+                        },
+                        "rVsKB": {
+                          "content": "16"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-project-sasu",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "sasu"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 12m"
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-gap-b",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-project-task-factory-row",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "task-factory"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 4m"
+                        }
+                      }
+                    },
+                    {
+                      "id": "scratch-pin2-gap-c",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "scratch-pin2-inactive-state-3-fold-row",
+                      "type": "ref",
+                      "ref": "inactive-fold-row",
+                      "name": "Inactive projects / Collapsed",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "inactive-fold-chevron": {
+                          "icon": "chevron-right"
+                        },
+                        "inactive-fold-label": {
+                          "content": "Inactive projects 4"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "scratch-pin-menu-wrapper",
+          "name": "State / Row menu",
+          "width": 292,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "scratch-pin-menu-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Row menu",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "scratch-pin-menu-board",
+              "name": "Row menu / pinned project",
+              "width": 292,
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-md",
+              "fill": "$--color-sidebar",
+              "children": [
+                {
+                  "id": "scratch-pin-menu-section",
+                  "type": "ref",
+                  "ref": "O79KF",
+                  "name": "Section / Pinned",
+                  "width": "fill_container",
+                  "descendants": {
+                    "VOd6D": {
+                      "content": "Pinned"
+                    },
+                    "rVsKB": {
+                      "content": "2"
+                    },
+                    "eK6gz": {
+                      "enabled": false
+                    },
+                    "g7fzt": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "scratch-pin-menu-project",
+                  "type": "ref",
+                  "ref": "qdhY0",
+                  "name": "Project / herdr-ide",
+                  "width": "fill_container",
+                  "descendants": {
+                    "iBYjj": {
+                      "icon": "chevron-down"
+                    },
+                    "JkPyX": {
+                      "content": "herdr-ide"
+                    },
+                    "nZkan": {
+                      "content": "3 agents · now"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "scratch-pin-menu",
+                  "name": "Context menu / project row (⋯ and right-click share it)",
+                  "width": 220,
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-none"
+                  ],
+                  "fill": "$--color-panel",
+                  "cornerRadius": "$--radius-md",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inside",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin-menu-item-0",
+                      "name": "Item / Unpin",
+                      "width": "fill_container",
+                      "height": 24,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "scratch-pin-menu-text-0",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Unpin",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin-menu-item-1",
+                      "name": "Item / Refresh GitHub status",
+                      "width": "fill_container",
+                      "height": 24,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "scratch-pin-menu-text-1",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Refresh GitHub status",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin-menu-item-2",
+                      "name": "Item / New worktree…",
+                      "width": "fill_container",
+                      "height": 24,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "scratch-pin-menu-text-2",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "New worktree…",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin-menu-div-3",
+                      "name": "Divider",
+                      "width": "fill_container",
+                      "height": 1,
+                      "fill": "$--color-divider"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin-menu-item-4",
+                      "name": "Item / Remove project…",
+                      "width": "fill_container",
+                      "height": 24,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "scratch-pin-menu-text-4",
+                          "name": "Label",
+                          "fill": "$--color-danger",
+                          "content": "Remove project…",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "scratch-pin-dialog-wrapper",
+          "name": "State / Remove project…",
+          "width": 300,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "scratch-pin-dialog-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Remove project…",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "scratch-pin-dialogs",
+              "name": "Remove project dialogs",
+              "width": 300,
+              "layout": "vertical",
+              "gap": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "scratch-pin-dialog",
+                  "name": "Alert / Remove project with open panes",
+                  "width": 300,
+                  "layout": "vertical",
+                  "gap": "$--spacing-lg",
+                  "padding": "$--spacing-xl",
+                  "fill": "$--color-panel",
+                  "cornerRadius": "$--radius-lg",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inside",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "scratch-pin-dialog-title",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": "Remove herdr-ide from Hide?",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-headline",
+                      "fontWeight": "600",
+                      "textGrowth": "fixed-width",
+                      "width": 252
+                    },
+                    {
+                      "type": "text",
+                      "id": "scratch-pin-dialog-body",
+                      "name": "Text",
+                      "fill": "$--color-secondary",
+                      "content": "Closes 3 panes (2 running agents). The folder, repository, and worktrees stay on disk.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 252
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin-dialog-buttons",
+                      "name": "Buttons",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "justifyContent": "end",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin-dialog-cancel",
+                          "name": "Button / Cancel",
+                          "height": 28,
+                          "padding": [
+                            0,
+                            "$--spacing-lg"
+                          ],
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-sm",
+                          "alignItems": "center",
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "scratch-pin-dialog-cancel-t",
+                              "name": "Text",
+                              "fill": "$--color-primary",
+                              "content": "Cancel",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin-dialog-confirm",
+                          "name": "Button / Close 3 panes and remove",
+                          "height": 28,
+                          "padding": [
+                            0,
+                            "$--spacing-lg"
+                          ],
+                          "fill": "$--color-danger",
+                          "cornerRadius": "$--radius-sm",
+                          "alignItems": "center",
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "scratch-pin-dialog-confirm-t",
+                              "name": "Text",
+                              "fill": "$--color-primary",
+                              "content": "Close 3 panes and remove",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "scratch-pin-dialog-np",
+                  "name": "Alert / Remove project without panes (today)",
+                  "width": 300,
+                  "layout": "vertical",
+                  "gap": "$--spacing-lg",
+                  "padding": "$--spacing-xl",
+                  "fill": "$--color-panel",
+                  "cornerRadius": "$--radius-lg",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inside",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "scratch-pin-dialog-np-title",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": "Remove herdr-ide from Hide?",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-headline",
+                      "fontWeight": "600",
+                      "textGrowth": "fixed-width",
+                      "width": 252
+                    },
+                    {
+                      "type": "text",
+                      "id": "scratch-pin-dialog-np-body",
+                      "name": "Text",
+                      "fill": "$--color-secondary",
+                      "content": "Hide will remove only its registration. The folder, repository, worktrees, and running processes stay untouched.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 252
+                    },
+                    {
+                      "type": "frame",
+                      "id": "scratch-pin-dialog-np-buttons",
+                      "name": "Buttons",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "justifyContent": "end",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin-dialog-np-cancel",
+                          "name": "Button / Cancel",
+                          "height": 28,
+                          "padding": [
+                            0,
+                            "$--spacing-lg"
+                          ],
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-sm",
+                          "alignItems": "center",
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "scratch-pin-dialog-np-cancel-t",
+                              "name": "Text",
+                              "fill": "$--color-primary",
+                              "content": "Cancel",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "scratch-pin-dialog-np-confirm",
+                          "name": "Button / Close 3 panes and remove",
+                          "height": 28,
+                          "padding": [
+                            0,
+                            "$--spacing-lg"
+                          ],
+                          "fill": "$--color-danger",
+                          "cornerRadius": "$--radius-sm",
+                          "alignItems": "center",
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "scratch-pin-dialog-np-confirm-t",
+                              "name": "Text",
+                              "fill": "$--color-primary",
+                              "content": "Remove registration",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -31140,7 +32735,7 @@
           "width": "fill_container"
         }
       ],
-      "x": 0,
+      "x": 1380,
       "y": 3800
     },
     {
@@ -34345,7 +35940,7 @@
           ]
         }
       ],
-      "x": 500,
+      "x": 1880,
       "y": 3800
     },
     {
@@ -37731,7 +39326,7 @@
           ]
         }
       ],
-      "x": 1380,
+      "x": 2760,
       "y": 3800
     },
     {
@@ -40350,7 +41945,7 @@
           ]
         }
       ],
-      "x": 1880,
+      "x": 3260,
       "y": 3800
     }
   ],
