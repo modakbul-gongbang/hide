@@ -32529,6 +32529,134 @@
     "--text-preview-slant": {
       "type": "number",
       "value": 12
+    },
+    "--ratio-home-child-node": {
+      "type": "number",
+      "value": 0.75
+    },
+    "--ratio-home-max-scale": {
+      "type": "number",
+      "value": 1.15
+    },
+    "--size-home-agent-node-live": {
+      "type": "number",
+      "value": 11
+    },
+    "--size-home-agent-node-old": {
+      "type": "number",
+      "value": 7
+    },
+    "--size-home-agent-node-recent": {
+      "type": "number",
+      "value": 9
+    },
+    "--size-home-agent-orbit": {
+      "type": "number",
+      "value": 54
+    },
+    "--size-home-canvas-inset": {
+      "type": "number",
+      "value": 48
+    },
+    "--size-home-card": {
+      "type": "number",
+      "value": 248
+    },
+    "--size-home-card-offset": {
+      "type": "number",
+      "value": 14
+    },
+    "--size-home-checkout-node": {
+      "type": "number",
+      "value": 10
+    },
+    "--size-home-checkout-node-max": {
+      "type": "number",
+      "value": 14
+    },
+    "--size-home-checkout-node-step": {
+      "type": "number",
+      "value": 1
+    },
+    "--size-home-checkout-ring": {
+      "type": "number",
+      "value": 130
+    },
+    "--size-home-checkout-ring-step": {
+      "type": "number",
+      "value": 16
+    },
+    "--size-home-child-orbit": {
+      "type": "number",
+      "value": 36
+    },
+    "--size-home-count-gap": {
+      "type": "number",
+      "value": 12
+    },
+    "--size-home-edge": {
+      "type": "number",
+      "value": 1.5
+    },
+    "--size-home-halo": {
+      "type": "number",
+      "value": 3
+    },
+    "--size-home-header": {
+      "type": "number",
+      "value": 44
+    },
+    "--size-home-hit-margin": {
+      "type": "number",
+      "value": 6
+    },
+    "--size-home-label-gap": {
+      "type": "number",
+      "value": 4
+    },
+    "--size-home-label-glyph": {
+      "type": "number",
+      "value": 5.5
+    },
+    "--size-home-label-height": {
+      "type": "number",
+      "value": 14
+    },
+    "--size-home-label-max": {
+      "type": "number",
+      "value": 104
+    },
+    "--size-home-label-wide-glyph": {
+      "type": "number",
+      "value": 10
+    },
+    "--size-home-pr-edge": {
+      "type": "number",
+      "value": 2
+    },
+    "--size-home-pr-node": {
+      "type": "number",
+      "value": 5
+    },
+    "--size-home-pr-offset": {
+      "type": "number",
+      "value": 38
+    },
+    "--size-home-project-node": {
+      "type": "number",
+      "value": 16
+    },
+    "--size-home-rail": {
+      "type": "number",
+      "value": 264
+    },
+    "--size-home-rail-collapse": {
+      "type": "number",
+      "value": 720
+    },
+    "--size-home-selection-ring-inset": {
+      "type": "number",
+      "value": 3
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

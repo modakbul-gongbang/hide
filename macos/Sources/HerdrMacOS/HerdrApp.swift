@@ -22,6 +22,22 @@ enum KeepOpenShortcutPolicy {
     }
 }
 
+/// Project Home's chord and its Escape take the monitor path for the same
+/// reason as Keep Open: the terminal under the overlay would otherwise eat
+/// both. Escape closes Home only while nothing above it - a sheet or a
+/// switcher - has the keyboard.
+@MainActor
+enum ProjectHomeShortcutPolicy {
+    static func shouldToggle(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && ShellMenuCommand.projectHome.shortcut.matches(event)
+    }
+
+    static func shouldClose(_ event: NSEvent, visible: Bool, sheetOpen: Bool) -> Bool {
+        event.type == .keyDown && event.keyCode == 53 && visible && !sheetOpen
+    }
+}
+
 @MainActor
 enum MainWindowPresentation {
     static func present(_ window: NSWindow, application: NSApplication = .shared, background: Bool = false) {
@@ -268,6 +284,25 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
             if KeepOpenShortcutPolicy.shouldKeepOpen(event) {
                 MainActor.assumeIsolated {
                     self.model.keepActiveEditorTabOpen()
+                }
+                return nil
+            }
+            if ProjectHomeShortcutPolicy.shouldToggle(event) {
+                MainActor.assumeIsolated {
+                    self.model.toggleProjectHome()
+                }
+                return nil
+            }
+            let homeCloses = MainActor.assumeIsolated {
+                ProjectHomeShortcutPolicy.shouldClose(
+                    event,
+                    visible: self.model.projectHomeVisible,
+                    sheetOpen: self.model.showSearch || self.model.showFileSearch || self.model.showSettings
+                )
+            }
+            if homeCloses {
+                MainActor.assumeIsolated {
+                    self.model.projectHomeVisible = false
                 }
                 return nil
             }
@@ -629,6 +664,7 @@ struct ShellCommands: Commands {
             menuButton(.toggleLeftSidebar) { model.toggleLeftSidebar() }
             menuButton(.toggleSidebarView) { model.toggleSidebarContent() }
             menuButton(.toggleRightPanel) { model.toggleRightPanel() }
+            menuButton(.projectHome) { model.toggleProjectHome() }
 
             Divider()
 

@@ -289,6 +289,15 @@ private struct HideEmptyCheckoutState: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(HideTheme.spacingXXXL)
+        } else if ProjectHomeEntryPolicy.drawsHome(
+            startState: model.checkoutStartState,
+            hasCheckout: model.focusedCheckout != nil,
+            projectionNotice: model.localProjectionNotice
+        ) {
+            // A checkout with no tab used to say "No terminal open" and
+            // nothing else. Project Home takes that state: the whole project
+            // at a glance, with Start new terminal still in its header.
+            ProjectHome()
         } else {
             VStack(spacing: 13) {
                 Image(systemName: model.localProjectionNotice != nil ? "exclamationmark.triangle" : (model.focusedCheckout == nil ? "square.stack.3d.up" : "terminal"))
@@ -316,8 +325,9 @@ private struct HideEmptyCheckoutState: View {
                         .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                         .accessibilityIdentifier("hide-empty-state-new-workspace")
                 } else {
-                    switch model.checkoutStartState {
-                    case .starting:
+                    // `.idle` never reaches here: `ProjectHomeEntryPolicy`
+                    // hands that state to Project Home above.
+                    if case .starting = model.checkoutStartState {
                         Text("Starting terminal")
                             .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                             .foregroundStyle(HideTheme.primary)
@@ -328,7 +338,7 @@ private struct HideEmptyCheckoutState: View {
                             .frame(maxWidth: 360)
                         ProgressView()
                             .controlSize(.small)
-                    case .started:
+                    } else if case .started = model.checkoutStartState {
                         Text("Terminal is starting")
                             .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                             .foregroundStyle(HideTheme.primary)
@@ -337,7 +347,7 @@ private struct HideEmptyCheckoutState: View {
                             .foregroundStyle(HideTheme.secondary)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 360)
-                    case let .failed(message):
+                    } else if case let .failed(message) = model.checkoutStartState {
                         Text("Couldn't start terminal")
                             .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                             .foregroundStyle(HideTheme.primary)
@@ -352,22 +362,6 @@ private struct HideEmptyCheckoutState: View {
                             }
                         }
                             .buttonStyle(HideTextButtonStyle(appearance: .prominent))
-                    case .idle:
-                        // This state used to promise a terminal Hide never
-                        // started: nothing calls `startTerminal` from here.
-                        // The empty state now carries the control that starts
-                        // one, and says only what pressing it does.
-                        Text("No terminal open")
-                            .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
-                            .foregroundStyle(HideTheme.primary)
-                        Text("This checkout has no terminal pane. Start one to fill the workspace at its path.")
-                            .hideFont(size: HideTheme.Typography.subhead)
-                            .foregroundStyle(HideTheme.secondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 360)
-                        Button("Start new terminal") { model.addTab() }
-                            .buttonStyle(HideTextButtonStyle(appearance: .prominent))
-                            .accessibilityIdentifier("hide-empty-state-start-terminal")
                     }
                 }
             }

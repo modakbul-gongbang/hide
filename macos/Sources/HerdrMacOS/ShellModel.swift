@@ -160,6 +160,14 @@ final class ShellModel: ObservableObject {
     /// sets it; the sheet opens on the first tab otherwise.
     var settingsInitialTab: HideSettingsTab = .general
     @Published var showPetDashboard = false
+    /// Project Home drawn over a checkout that has tabs. Session-local like
+    /// the Agents scope: the core owns nothing about it and nothing persists
+    /// it. The empty checkout state draws Home without this flag.
+    @Published var projectHomeVisible = false
+    /// Where Project Home last drew each node, so a status change never
+    /// moves one. Not published: a topology change already arrives with a
+    /// snapshot, and a view reads the cache while drawing that snapshot.
+    let projectHomeLayout = ProjectHomeLayoutCache()
     let recentNavigation = RecentNavigationPresentation()
     private(set) var projectSwitcherCycle: ProjectSwitcherCycle? {
         get { recentNavigation.projectCycle }
@@ -841,6 +849,10 @@ final class ShellModel: ObservableObject {
         showPetDashboard = true
     }
 
+    func toggleProjectHome() {
+        projectHomeVisible.toggle()
+    }
+
     func selectAgent(paneID: String) {
         guard let agent = agents.first(where: { $0.paneID == paneID }) else {
             interactionNotice = "Agent pane \(paneID) is no longer available."
@@ -1124,6 +1136,7 @@ final class ShellModel: ObservableObject {
     }
 
     func selectCheckout(_ checkout: CoreCheckoutSnapshot) {
+        projectHomeVisible = false
         let action = CheckoutSelectionPolicy.action(for: checkout)
         HideLaunchTrace.mark(
             "checkout.selection",
@@ -1190,6 +1203,7 @@ final class ShellModel: ObservableObject {
     }
 
     func selectAgent(_ agent: SidebarAgent) {
+        projectHomeVisible = false
         guard let identity = workspaces.lazy.compactMap({ workspace in
             workspace.checkouts.lazy.compactMap { checkout in
                 checkout.tabs.contains(where: { tab in
@@ -1826,6 +1840,7 @@ final class ShellModel: ObservableObject {
     }
 
     func addTab() {
+        projectHomeVisible = false
         guard let workspace = focusedWorkspace else {
             interactionNotice = "Create or register a workspace before adding a tab."
             return
