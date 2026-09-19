@@ -159,7 +159,7 @@ enum HideTheme {
     /// system's own neutral ladder rather than on Seti's. Seti's own neutral,
     /// `#6D8086`, is a dark slate that reads as a speck against the panel at
     /// 12px - which is what made `.gitignore` and `Cargo.toml` look unrendered.
-    /// These two are DESIGN.md's `mute` and `charcoal` steps.
+    /// These two are DESIGN.md's `file-icon-neutral` and `file-icon-document` colors.
     static let fileIconNeutralHex = "#9C9C9D"
     static let fileIconDocumentHex = "#D3D3D4"
     /// Monospaced content sizes at a pane's default scale. The per-pane zoom

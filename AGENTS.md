@@ -53,7 +53,7 @@ Read `docs/ARCHITECTURE.md` in full before changing anything under `herdr-core/`
 
 - The core owns all state behind one `Mutex<Runtime>`; the shell dispatches typed events in and pulls one snapshot out when the notifier announces, and holds no authority of its own.
 - Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale, and changes those on the event that asked for it, telling Herdr afterwards.
-  While that notification is pending, Herdr's move is read as confirmation; with nothing pending, a move Herdr makes on its own is followed and diagnosed; a refusal or a timeout keeps the core's value and says so.
+  While that notification is pending, Herdr's move is read as confirmation; with nothing pending, a move Herdr makes on its own is followed and a diagnostic records it; a refusal or a timeout keeps the core's value and records a diagnostic.
   Zoom, splits, closes and resizes still wait for Herdr, because their geometry decides the PTY size.
 - The notifier announces once per burst, and `herdr_core_snapshot` clears its latch **before** it takes the lock; clearing it after the read would swallow a change that landed during the read.
   Launch creates the core once, after the runtime resolution has finished, and never replaces it.
@@ -61,6 +61,7 @@ Read `docs/ARCHITECTURE.md` in full before changing anything under `herdr-core/`
 - A path outside every registered checkout never reaches the core; the shell hands it to macOS and reveals rather than opens anything executable.
 - A delegated child pane is moved to its own tab, never split into the operator's pane, and a delegated row can only be Working or Seen; `docs/status-model.md` owns the ownership axis and the stall clock.
 - An attach lives only while its tab is among the last five shown (`ATTACHED_TAB_LIMIT`); a released pane keeps its projection entry as `released`, because a missing entry reads as a failure.
+- Design principle #13 governs what reaches the screen: a failure the operator cannot act on goes to the diagnostic log, and an alert, a banner, or a sheet is a PRD decision, not a default.
 
 ## Herdr API Contract
 
@@ -119,7 +120,7 @@ Conventions:
 
 ## Design Reference
 
-Read `DESIGN.md` before changing any surface a user looks at; it is the design source of truth for the macOS shell, and the Raycast references it records carry an MIT attribution context.
+Read `DESIGN.md` before changing any surface a user looks at; it is the design source of truth for the macOS shell.
 `HideTheme` in `macos/Sources/HerdrMacOS/HideTheme.swift` carries its tokens into the shell: a new color, radius, or spacing value is added there and used from there, never written inline, and a case the system does not cover is raised as a proposed addition rather than settled with a one-off value.
 Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception.
 Run `node scripts/check-design-contract.mjs` before delivery; it is the entrypoint `design-contract.yml` runs.
@@ -154,7 +155,7 @@ Each state row is a `ref` of the master with `descendants` overrides (`enabled: 
 The states are the ones the code produces and the spec line says where (`ChangedFileRow`, `HideIconButton`); a state the app cannot reach is not drawn.
 
 There is no band for a feature's design, because `main` takes a PRD and its implementation in one pull-request merge and nothing runs at the merge to move a board.
-A PRD draws the screen it changes as the `Screen /` board itself, one frame per state the data can produce; on that branch the board is the target until the code catches up, and on `main` it is what was built.
+A PRD draws the screen it changes as the `Screen /` board itself, one frame per state the operator sees differently; a state that only changes a log line has no frame. On that branch the board is the target until the code catches up, and on `main` it is what was built.
 The target is kept outside the canvas: the PRD commit's `hide.pen`, and the boards exported to `agents/runs/<slug>/design/` when implementation starts.
 A component the design needs and does not have is drawn under a `Proposed /` name and recorded in the PRD's Decisions table, so the addition is a decision a reviewer sees rather than a shape that appeared.
 A review is adopted the same way: its tokens land in `HideTheme.swift`, its components are renamed into `Component /`, the `Screen /` boards are redrawn on them in the pull request that ships the code, and the `Review /` boards are deleted.
