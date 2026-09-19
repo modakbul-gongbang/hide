@@ -19,12 +19,23 @@ Hide 내부 브라우저를 요청받으면 `browser-pane.mjs`를 통해 `hide.b
 실제 Hide 창에서 pane의 페이지 표시, 오류 안내, 글자 크기와 여백을 확인한다.
 재시도로 표시가 복구된 것과 최초 실행 오류를 수정한 것을 구분해서 보고한다.
 
+## Open from the Explorer
+
+The shell's one entrypoint is the Explorer context menu item `Open in Browser Pane` on a file row.
+`BrowserPaneOpener` runs the bundled host twice with the `node` the login PATH resolves: `profiles`, then `open` with the file as a `file://` URL, the keyboard-focused pane as `--target-pane`, and a `--key` derived from the file path, so choosing the same file again reuses its pane instead of opening a second one.
+The profile is chosen by the shell, not by the operator: the running managed profile whose state changed most recently.
+With no running profile the notice reads `No running chromux profile. Launch one with chromux launch <name>.` and no pane is opened.
+The item is disabled, with the reason as its tooltip, while the same file is already opening (`Opening…`), when `node` is not on PATH, when Hide is not connected to Herdr, when there is no focused pane, and on a remote tree.
+A host refusal, such as the plugin being linked to another installation or a paused profile, reaches the notice as the host's own last line; a request that has not answered after thirty seconds is ended and reported as `Browser pane did not open in time`.
+`WorkspaceOutlineMenuPresentation.browserPaneAvailability` owns the reasons and `BrowserPaneOpener` owns the selection, the key, and the deadline; both are tested without a host.
+
 ## Open from an agent terminal
 
 Requirements: Node.js 22 or newer, the Herdr runtime pinned in [herdr-bundle.json](../macos/Sources/HerdrMacOS/Resources/herdr-bundle.json), and chromux on the process PATH.
 Select an existing managed chromux profile explicitly.
 `live` and `external-*` profiles are not accepted by this host.
 The profile must use chromux's unpaused default mode and a loopback TCP daemon.
+`--url` takes `http(s)`, `about:blank`, and a `file://` URL with an absolute local path and no host.
 
 From this checkout:
 
@@ -41,6 +52,7 @@ node /Applications/hide.app/Contents/Resources/browser-pane/browser-pane.mjs ope
   --profile work --target-pane w1:p1 --url http://localhost:3000
 ```
 
+`profiles` prints `profiles`, the managed names, and `entries`, one object per profile with `name`, `running` (its chromux state file exists) and `state_modified_at` (that file's modification time, ISO 8601, or null); a caller that read only the names keeps working.
 Inside Herdr, omitting `--target-pane` selects the calling pane, never the UI-focused pane.
 Outside Herdr, the target must be explicit.
 New panes inherit the target's working directory and use `--no-focus`.

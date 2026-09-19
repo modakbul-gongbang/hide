@@ -11487,7 +11487,7 @@
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 25841,
+      "width": 28977,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -13956,8 +13956,516 @@
     },
     {
       "type": "frame",
-      "id": "pvt-board",
+      "id": "dk-board",
       "x": 1320,
+      "y": 0,
+      "name": "Screen / Editor / Document kinds",
+      "width": 1488,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "dk-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "04 Document kinds",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "text",
+          "id": "dk-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "content": "One toolbar for every kind (Component / Document toolbar). The core names the kind; the overlay removes what the kind cannot use: a PDF and an image hide Wrap, a PDF shows Find disabled (tooltip \"Find is unavailable for PDF\"), Unsaved and the Markdown group never appear outside text and Markdown. EditorViewerOverlay.editorContent, PDFDocumentSurface.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "dk-text",
+          "name": "Text file (main.rs)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "dk-text-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "Text file (main.rs)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "id": "dk-text-tb",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "Text file (main.rs) toolbar",
+              "width": 740,
+              "descendants": {
+                "PzQD9": {
+                  "content": "fixture-repo / main.rs"
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "dk-text-body",
+              "name": "Source",
+              "width": 740,
+              "height": 120,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "dk-text-l1",
+                  "name": "Line",
+                  "fill": "$--color-primary",
+                  "content": "1   fn main() {",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-editor-base",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "text",
+                  "id": "dk-text-l2",
+                  "name": "Line",
+                  "fill": "$--color-primary",
+                  "content": "2       println!(\"hello\");",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-editor-base",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "text",
+                  "id": "dk-text-l3",
+                  "name": "Line",
+                  "fill": "$--color-primary",
+                  "content": "3   }",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-editor-base",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dk-md",
+          "name": "Markdown in Preview (README.md)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "dk-md-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "Markdown in Preview (README.md)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "id": "dk-md-tb",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "Markdown in Preview (README.md) toolbar",
+              "width": 740,
+              "descendants": {
+                "PzQD9": {
+                  "content": "fixture-repo / README.md"
+                },
+                "ohhBb": {
+                  "enabled": true
+                },
+                "Z7dRWF": {
+                  "enabled": false
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "dk-md-body",
+              "name": "Rendered document",
+              "width": 740,
+              "height": 120,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "dk-md-h",
+                  "name": "Heading",
+                  "fill": "$--color-primary",
+                  "content": "Fixture",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-display",
+                  "fontWeight": "600",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "text",
+                  "id": "dk-md-p",
+                  "name": "Paragraph",
+                  "fill": "$--color-secondary",
+                  "content": "A readable paragraph at the document measure.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dk-image",
+          "name": "Image (shot.png)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "dk-image-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "Image (shot.png)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "id": "dk-image-tb",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "Image (shot.png) toolbar",
+              "width": 740,
+              "descendants": {
+                "PzQD9": {
+                  "content": "fixture-repo / assets / shot.png"
+                },
+                "WGU46": {
+                  "opacity": "$--opacity-disabled"
+                },
+                "Z7dRWF": {
+                  "enabled": false
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "dk-image-body",
+              "name": "Image fitted to the area",
+              "width": 740,
+              "height": 120,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "dk-image-sample",
+                  "name": "Bitmap",
+                  "width": 160,
+                  "height": 88,
+                  "fill": "$--color-wash-muted",
+                  "cornerRadius": "$--radius-xs"
+                }
+              ],
+              "alignItems": "center",
+              "justifyContent": "center"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dk-pdf",
+          "name": "PDF (report.pdf, or any file with the %PDF- signature)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "dk-pdf-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "PDF (report.pdf, or any file with the %PDF- signature)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "id": "dk-pdf-tb",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "PDF (report.pdf, or any file with the %PDF- signature) toolbar",
+              "width": 740,
+              "descendants": {
+                "PzQD9": {
+                  "content": "fixture-repo / docs / report.pdf"
+                },
+                "WGU46": {
+                  "opacity": "$--opacity-disabled"
+                },
+                "Z7dRWF": {
+                  "enabled": false
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "dk-pdf-body",
+              "name": "PDFKit page, continuous vertical, fitted to width",
+              "width": 740,
+              "height": 120,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "padding": "$--spacing-none",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "dk-pdf-page",
+                  "name": "Page",
+                  "width": "fill_container",
+                  "height": 96,
+                  "fill": "$--asbuilt-pdf-page",
+                  "padding": "$--spacing-lg",
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "dk-pdf-t1",
+                      "name": "Page text",
+                      "fill": "$--color-background",
+                      "content": "Hide file viewer adapters - page 1",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-title",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "dk-pdf-t2",
+                      "name": "Page text",
+                      "fill": "$--color-background",
+                      "content": "This text is selectable in PDFView.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-title",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dk-binary",
+          "name": "Not UTF-8 (blob.bin)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "dk-binary-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "Not UTF-8 (blob.bin)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "id": "dk-binary-tb",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "Not UTF-8 (blob.bin) toolbar",
+              "width": 740,
+              "descendants": {
+                "PzQD9": {
+                  "content": "fixture-repo / blob.bin"
+                },
+                "WGU46": {
+                  "opacity": "$--opacity-disabled"
+                },
+                "Z7dRWF": {
+                  "opacity": "$--opacity-disabled"
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "dk-binary-body",
+              "name": "Empty state",
+              "width": 740,
+              "height": 120,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "dk-binary-body-t",
+                  "name": "Empty title",
+                  "fill": "$--color-secondary",
+                  "content": "Preview only",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-headline",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "dk-binary-body-m",
+                  "name": "Empty message",
+                  "fill": "$--color-secondary",
+                  "content": "This file type cannot be shown as text.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": 360,
+                  "textAlign": "center"
+                }
+              ],
+              "alignItems": "center",
+              "justifyContent": "center"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "dk-pdf-failed",
+          "name": "PDF that PDFKit cannot decode (broken.pdf)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "dk-pdf-failed-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "PDF that PDFKit cannot decode (broken.pdf)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "id": "dk-pdf-failed-tb",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "PDF that PDFKit cannot decode (broken.pdf) toolbar",
+              "width": 740,
+              "descendants": {
+                "PzQD9": {
+                  "content": "fixture-repo / docs / broken.pdf"
+                },
+                "WGU46": {
+                  "opacity": "$--opacity-disabled"
+                },
+                "Z7dRWF": {
+                  "enabled": false
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "dk-pdf-failed-body",
+              "name": "Empty state",
+              "width": 740,
+              "height": 120,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "dk-pdf-failed-body-t",
+                  "name": "Empty title",
+                  "fill": "$--color-secondary",
+                  "content": "PDF unavailable",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-headline",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "dk-pdf-failed-body-m",
+                  "name": "Empty message",
+                  "fill": "$--color-secondary",
+                  "content": "PDFKit could not decode this file.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": 360,
+                  "textAlign": "center"
+                }
+              ],
+              "alignItems": "center",
+              "justifyContent": "center"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "pvt-board",
+      "x": 2888,
       "y": 0,
       "name": "Screen / Workbench / Preview tab",
       "width": 1488,
@@ -14579,8 +15087,1257 @@
     },
     {
       "type": "frame",
+      "id": "fm-board",
+      "x": 4456,
+      "y": 0,
+      "name": "Screen / Panel / Explorer file menu",
+      "width": 1488,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "fm-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "05 Explorer file context menu",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "text",
+          "id": "fm-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "content": "Native NSMenu on a file row, VS Code order: New File, New Folder | Open with Default App, Open in Browser Pane | Reveal in Finder, Copy Path, Copy Relative Path | Rename | Delete ⌘⌫. A folder row has no open items. Open in Browser Pane stays listed when it cannot act; it is disabled and the tooltip carries the one reason (WorkspaceOutlineMenuPresentation.browserPaneAvailability).",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "fm-enabled",
+          "name": "File row, every item enabled",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "fm-enabled-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "File row, every item enabled",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "frame",
+              "id": "fm-enabled-scene",
+              "name": "Scene",
+              "width": "fill_container",
+              "gap": "$--spacing-md",
+              "alignItems": "start",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "fm-enabled-tree",
+                  "name": "Explorer rows",
+                  "width": 300,
+                  "fill": "$--color-panel",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-sm",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fm-enabled-tree-r1",
+                      "name": "row / broken.pdf",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r1-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r1-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-enabled-tree-r1-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "file-text",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r1-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-enabled-tree-r1-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "broken.pdf",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-enabled-tree-r2",
+                      "name": "row / index.html",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r2-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r2-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-enabled-tree-r2-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "code",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r2-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-enabled-tree-r2-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "index.html",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ],
+                      "fill": "$--color-selected-wash",
+                      "cornerRadius": "$--radius-xs"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-enabled-tree-r3",
+                      "name": "row / report.pdf",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r3-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r3-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-enabled-tree-r3-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "file-text",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-enabled-tree-r3-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-enabled-tree-r3-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "report.pdf",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "fm-menu",
+                  "name": "Component / Explorer file menu",
+                  "reusable": true,
+                  "width": 240,
+                  "fill": "$--color-elevated",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "cornerRadius": "$--radius-md",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fm-new-file",
+                      "name": "New File",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-new-file-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "New File",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-new-folder",
+                      "name": "New Folder",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-new-folder-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "New Folder",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-sep1",
+                      "name": "Separator",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ],
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "fm-sep1-r",
+                          "name": "Hairline",
+                          "width": "fill_container",
+                          "height": 1,
+                          "fill": "$--color-divider"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-open-default",
+                      "name": "Open with Default App",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-open-default-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "Open with Default App",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-open-browser",
+                      "name": "Open in Browser Pane",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-open-browser-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "Open in Browser Pane",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-sep2",
+                      "name": "Separator",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ],
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "fm-sep2-r",
+                          "name": "Hairline",
+                          "width": "fill_container",
+                          "height": 1,
+                          "fill": "$--color-divider"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-reveal",
+                      "name": "Reveal in Finder",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-reveal-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "Reveal in Finder",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-copy-path",
+                      "name": "Copy Path",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-copy-path-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "Copy Path",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-copy-rel",
+                      "name": "Copy Relative Path",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-copy-rel-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "Copy Relative Path",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-sep3",
+                      "name": "Separator",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ],
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "fm-sep3-r",
+                          "name": "Hairline",
+                          "width": "fill_container",
+                          "height": 1,
+                          "fill": "$--color-divider"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-rename",
+                      "name": "Rename",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-rename-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "Rename",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-sep4",
+                      "name": "Separator",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ],
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "fm-sep4-r",
+                          "name": "Hairline",
+                          "width": "fill_container",
+                          "height": 1,
+                          "fill": "$--color-divider"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-delete",
+                      "name": "Delete",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "gap": "$--spacing-md",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fm-delete-t",
+                          "name": "Item",
+                          "fill": "$--color-primary",
+                          "content": "Delete",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "type": "text",
+                          "id": "fm-delete-k",
+                          "name": "Chord",
+                          "fill": "$--color-secondary",
+                          "content": "⌘⌫",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "fm-disabled",
+          "name": "Node.js missing: Open in Browser Pane disabled, reason in the tooltip",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "fm-disabled-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "Node.js missing: Open in Browser Pane disabled, reason in the tooltip",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "frame",
+              "id": "fm-disabled-scene",
+              "name": "Scene",
+              "width": "fill_container",
+              "gap": "$--spacing-md",
+              "alignItems": "start",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "fm-disabled-tree",
+                  "name": "Explorer rows",
+                  "width": 300,
+                  "fill": "$--color-panel",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-sm",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fm-disabled-tree-r1",
+                      "name": "row / broken.pdf",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r1-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r1-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-disabled-tree-r1-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "file-text",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r1-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-disabled-tree-r1-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "broken.pdf",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-disabled-tree-r2",
+                      "name": "row / index.html",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r2-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r2-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-disabled-tree-r2-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "code",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r2-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-disabled-tree-r2-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "index.html",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ],
+                      "fill": "$--color-selected-wash",
+                      "cornerRadius": "$--radius-xs"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-disabled-tree-r3",
+                      "name": "row / report.pdf",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r3-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r3-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-disabled-tree-r3-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "file-text",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-disabled-tree-r3-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-disabled-tree-r3-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "report.pdf",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "fm-menu-disabled",
+                  "type": "ref",
+                  "ref": "fm-menu",
+                  "name": "Menu with the item disabled",
+                  "descendants": {
+                    "fm-open-browser": {
+                      "opacity": "$--opacity-disabled"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "fm-tip",
+                  "name": "Tooltip",
+                  "fill": "$--color-balloon",
+                  "cornerRadius": "$--radius-sm",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "fm-tip-t",
+                      "name": "Reason",
+                      "fill": "$--color-primary",
+                      "content": "Node.js is not on PATH",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "fm-opening",
+          "name": "Same file already opening",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "fm-opening-label",
+              "name": "Label",
+              "fill": "$--color-secondary",
+              "content": "Same file already opening",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "frame",
+              "id": "fm-opening-scene",
+              "name": "Scene",
+              "width": "fill_container",
+              "gap": "$--spacing-md",
+              "alignItems": "start",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "fm-opening-tree",
+                  "name": "Explorer rows",
+                  "width": 300,
+                  "fill": "$--color-panel",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-sm",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fm-opening-tree-r1",
+                      "name": "row / broken.pdf",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r1-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r1-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-opening-tree-r1-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "file-text",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r1-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-opening-tree-r1-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "broken.pdf",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-opening-tree-r2",
+                      "name": "row / index.html",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r2-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r2-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-opening-tree-r2-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "code",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r2-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-opening-tree-r2-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "index.html",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ],
+                      "fill": "$--color-selected-wash",
+                      "cornerRadius": "$--radius-xs"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "fm-opening-tree-r3",
+                      "name": "row / report.pdf",
+                      "width": "fill_container",
+                      "height": 22,
+                      "padding": [
+                        0,
+                        "$--spacing-md",
+                        0,
+                        27
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r3-cs",
+                          "name": "Chevron slot",
+                          "width": 15,
+                          "height": "fit_content(0)",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": []
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r3-is",
+                          "name": "Icon slot",
+                          "width": 18,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "fm-opening-tree-r3-i",
+                              "name": "Kind",
+                              "width": 13,
+                              "height": 13,
+                              "icon": "file-text",
+                              "library": "lucide",
+                              "fill": "$--color-file-neutral"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fm-opening-tree-r3-ll",
+                          "name": "Label lane",
+                          "width": "fill_container",
+                          "padding": [
+                            0,
+                            0,
+                            0,
+                            "$--asbuilt-tree-label-offset"
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fm-opening-tree-r3-l",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "report.pdf",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "normal",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "fm-menu-opening",
+                  "type": "ref",
+                  "ref": "fm-menu",
+                  "name": "Menu while opening",
+                  "descendants": {
+                    "fm-open-browser": {
+                      "opacity": "$--opacity-disabled"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "fm-tip-opening",
+                  "name": "Tooltip",
+                  "fill": "$--color-balloon",
+                  "cornerRadius": "$--radius-sm",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "fm-tip-opening-t",
+                      "name": "Reason",
+                      "fill": "$--color-primary",
+                      "content": "Opening…",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "arb009",
-      "x": 2888,
+      "x": 6024,
       "y": 0,
       "name": "Screen / Sidebar / Agent row states",
       "clip": false,
@@ -15022,7 +16779,7 @@
     {
       "type": "frame",
       "id": "arb00l",
-      "x": 4208,
+      "x": 7344,
       "y": 0,
       "name": "Screen / Pane / Header states",
       "clip": false,
@@ -15776,7 +17533,7 @@
     {
       "type": "frame",
       "id": "acv-main",
-      "x": 5528,
+      "x": 8664,
       "y": 0,
       "name": "Screen / Pane / Conversation - Main Claude working",
       "width": 760,
@@ -16169,7 +17926,7 @@
     {
       "type": "frame",
       "id": "acv-codex",
-      "x": 6368,
+      "x": 9504,
       "y": 0,
       "name": "Screen / Pane / Conversation - Codex idle",
       "width": 760,
@@ -16485,7 +18242,7 @@
     {
       "type": "frame",
       "id": "acv-terminal",
-      "x": 7208,
+      "x": 10344,
       "y": 0,
       "name": "Screen / Pane / Conversation - Terminal baseline",
       "width": 760,
@@ -16677,7 +18434,7 @@
     {
       "type": "frame",
       "id": "acv-needs-you",
-      "x": 8048,
+      "x": 11184,
       "y": 0,
       "name": "Screen / Pane / Conversation - Needs You fallback",
       "width": 760,
@@ -16894,7 +18651,7 @@
     {
       "type": "frame",
       "id": "acv-empty",
-      "x": 8888,
+      "x": 12024,
       "y": 0,
       "name": "Screen / Pane / Conversation - Empty",
       "width": 760,
@@ -17070,7 +18827,7 @@
     {
       "type": "frame",
       "id": "acv-failed",
-      "x": 9728,
+      "x": 12864,
       "y": 0,
       "name": "Screen / Pane / Conversation - Failed",
       "width": 760,
@@ -17659,7 +19416,7 @@
           "padding": "$--spacing-lg"
         }
       ],
-      "x": 10568,
+      "x": 13704,
       "y": 0
     },
     {
@@ -18077,13 +19834,13 @@
           ]
         }
       ],
-      "x": 12488,
+      "x": 15624,
       "y": 0
     },
     {
       "type": "frame",
       "id": "Snwg0",
-      "x": 13664,
+      "x": 16800,
       "y": 0,
       "name": "Screen / Agents / My Work status groups",
       "width": 1488,
@@ -18451,7 +20208,7 @@
     {
       "type": "frame",
       "id": "Vmhg4",
-      "x": 15232,
+      "x": 18368,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -20215,7 +21972,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 15604,
+      "x": 18740,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -21693,7 +23450,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 16039,
+      "x": 19175,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -25052,7 +26809,7 @@
     {
       "type": "frame",
       "id": "eXxKb",
-      "x": 16474,
+      "x": 19610,
       "y": 0,
       "name": "Screen / Pane / Relationship modal",
       "width": 1488,
@@ -25268,7 +27025,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 18042,
+      "x": 21178,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -26892,7 +28649,7 @@
     {
       "type": "frame",
       "id": "c3Lf5",
-      "x": 18477,
+      "x": 21613,
       "y": 0,
       "name": "Screen / Overview / Project task forest",
       "width": 520,
@@ -27710,7 +29467,7 @@
     {
       "type": "frame",
       "id": "AZvEA",
-      "x": 19077,
+      "x": 22213,
       "y": 0,
       "name": "Screen / Overview / Inspect without moving",
       "width": 900,
@@ -27807,7 +29564,7 @@
     {
       "type": "frame",
       "id": "wzrRI",
-      "x": 20057,
+      "x": 23193,
       "y": 0,
       "name": "Screen / Workbench / Parent",
       "width": 1488,
@@ -29140,7 +30897,7 @@
     {
       "type": "frame",
       "id": "IhnIO",
-      "x": 21625,
+      "x": 24761,
       "y": 0,
       "name": "Screen / Workbench / Delegated child tab",
       "width": 1488,
@@ -29287,7 +31044,7 @@
     {
       "type": "frame",
       "id": "m5T3n1",
-      "x": 23193,
+      "x": 26329,
       "y": 0,
       "name": "Screen / Overview / Availability states",
       "width": 1080,
@@ -29735,7 +31492,7 @@
     {
       "type": "frame",
       "id": "n2oTPf",
-      "x": 24353,
+      "x": 27489,
       "y": 0,
       "name": "Screen / Explorer / Git in workbench",
       "width": 1488,
@@ -30760,6 +32517,10 @@
     "--size-device-test-stage-col": {
       "type": "number",
       "value": 64
+    },
+    "--asbuilt-pdf-page": {
+      "type": "color",
+      "value": "#FFFFFF"
     },
     "--font-style-preview": {
       "type": "string",

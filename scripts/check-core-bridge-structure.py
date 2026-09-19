@@ -52,6 +52,7 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
         ("struct", "CoreEditorSnapshot", "internal"),
         ("enum", "CoreEditorTabKind", "internal"),
         ("struct", "CoreEditorTabSnapshot", "internal"),
+        ("enum", "CoreDocumentKind", "internal"),
         ("struct", "CoreEditorDocumentSnapshot", "internal"),
         ("struct", "CoreEditorConflict", "internal"),
     ),

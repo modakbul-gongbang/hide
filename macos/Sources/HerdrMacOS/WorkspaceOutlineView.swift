@@ -138,6 +138,11 @@ struct WorkspaceFileOperations {
     var rename: (_ path: URL, _ name: String) -> Void
     var move: (_ path: URL, _ destination: URL) -> Void
     var requestTrash: (WorkspaceOutlineTrashPrompt) -> Void
+    var openWithDefaultApp: (_ file: URL) -> Void
+    var openInBrowserPane: (_ file: URL) -> Void
+    /// Asked when the menu is built, so the item is enabled or carries its
+    /// reason for the moment it is shown (D-08).
+    var browserPaneAvailability: (_ file: URL) -> BrowserPaneOpenAvailability
 }
 
 /// A row draws hover, but it does not decide it.
@@ -967,6 +972,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             }
             let subject = node ?? rootNode
             let menu = NSMenu()
+            // The presentation decides enablement; AppKit's automatic
+            // validation would re-enable every item that has a target.
+            menu.autoenablesItems = false
             for item in WorkspaceOutlineMenuPresentation.items(for: target, isRemote: false) {
                 switch item {
                 case .separator:
@@ -979,6 +987,10 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                         entry.keyEquivalent = command.shortcut.menuKeyEquivalent
                         entry.keyEquivalentModifierMask = command.shortcut.modifierFlags
                     }
+                    if item == .openInBrowserPane, let reason = fileOperations.browserPaneAvailability(subject.url).reason {
+                        entry.isEnabled = false
+                        entry.toolTip = reason
+                    }
                     menu.addItem(entry)
                 }
             }
@@ -989,6 +1001,8 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             switch item {
             case .newFile: #selector(menuNewFile(_:))
             case .newFolder: #selector(menuNewFolder(_:))
+            case .openWithDefaultApp: #selector(menuOpenWithDefaultApp(_:))
+            case .openInBrowserPane: #selector(menuOpenInBrowserPane(_:))
             case .revealInFinder: #selector(menuReveal(_:))
             case .copyPath: #selector(menuCopyPath(_:))
             case .copyRelativePath: #selector(menuCopyRelativePath(_:))
@@ -1017,6 +1031,16 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         @objc private func menuNewFolder(_ sender: Any?) {
             guard let node = subject(of: sender), let parent = creationParent(for: node) else { return }
             beginCreate(kind: .folder, in: parent)
+        }
+
+        @objc private func menuOpenWithDefaultApp(_ sender: Any?) {
+            guard let node = subject(of: sender), !node.isDirectory else { return }
+            fileOperations.openWithDefaultApp(node.url)
+        }
+
+        @objc private func menuOpenInBrowserPane(_ sender: Any?) {
+            guard let node = subject(of: sender), !node.isDirectory else { return }
+            fileOperations.openInBrowserPane(node.url)
         }
 
         @objc private func menuReveal(_ sender: Any?) {

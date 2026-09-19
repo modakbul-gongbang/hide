@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
-import { parseOpen, bindingTokens, lastJsonDocument } from './browser-pane.mjs';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { parseOpen, bindingTokens, lastJsonDocument, listProfiles } from './browser-pane.mjs';
 import { readEnvironment, environmentRegistry } from './environment.mjs';
 
 const environment = { HERDR_ENV: '1', HERDR_PANE_ID: 'w1:p2' };
@@ -34,7 +36,7 @@ test('ambiguous, unsafe and unscoped requests fail before opening anything', () 
     ['--profile', '../work', '--url', 'about:blank'],
     ['--profile', 'live', '--url', 'about:blank'],
     ['--profile', 'external-test', '--url', 'about:blank'],
-    ['--profile', 'work', '--url', 'file:///tmp/local'],
+    ['--profile', 'work', '--url', 'file://host/share/local'],
     ['--profile', 'work', '--url', 'javascript:alert(1)'],
     ['--profile', 'work'], [...args, '--session', 'existing'],
     [...args, '--profile', 'other'], [...args, '--typo', 'value'],
@@ -42,6 +44,27 @@ test('ambiguous, unsafe and unscoped requests fail before opening anything', () 
   ]) assert.throws(() => parseOpen(invalid, environment));
   assert.equal(parseOpen([...args, '--key', 'x'.repeat(80)], environment).bindingID.length, 80);
   assert.equal(parseOpen([...args, '--target-pane', 'w9:p8'], {}).targetPane, 'w9:p8');
+});
+
+test('a local file URL opens, so the Explorer can show a document in a pane', () => {
+  const request = parseOpen(['--profile', 'work', '--url', 'file:///Users/example/repo/docs/index.html', '--key', 'file-abc'], environment);
+  assert.equal(request.url, 'file:///Users/example/repo/docs/index.html');
+  assert.equal(request.bindingID, 'file-abc');
+  const encoded = parseOpen(['--profile', 'work', '--url', 'file:///tmp/a%20b/%ED%95%9C%EA%B8%80.pdf'], environment);
+  assert.equal(encoded.url, 'file:///tmp/a%20b/%ED%95%9C%EA%B8%80.pdf');
+});
+
+test('profiles lists managed names as before and says which are running and since when', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'hide-browser-profiles-'));
+  try {
+    for (const name of ['work', 'personal', 'live', 'external-1234', 'bad name']) await mkdir(path.join(home, 'profiles', name), { recursive: true });
+    await writeFile(path.join(home, 'profiles', 'work', '.state'), JSON.stringify({ port: 9300, daemonPort: 9301 }));
+    await writeFile(path.join(home, 'profiles', 'stray-file'), 'not a profile');
+    const listed = await listProfiles({ CHROMUX_HOME: home });
+    assert.deepEqual(listed.profiles, ['personal', 'work']);
+    assert.deepEqual(listed.entries.map(entry => [entry.name, entry.running, entry.state_modified_at === null]), [['personal', false, true], ['work', true, false]]);
+    assert.ok(!Number.isNaN(Date.parse(listed.entries[1].state_modified_at)));
+  } finally { await rm(home, { recursive: true, force: true }); }
 });
 
 test('host metadata preserves the exact selected target and profile without storage or URL', () => {

@@ -1340,6 +1340,14 @@ Controls use HideIconButton and the shared tooltip/accessibility renderer.
 Unsaved drafts and the existing read-only/conflict notices remain visible in either mode.
 Diff tabs retain their existing viewer.
 
+The core names each open file's kind (`document_kind`: text, markdown, image, pdf, binary) and the overlay picks the adapter from it; the toolbar is the same bar in every kind, with the controls a kind cannot use taken away rather than left dead.
+A PDF, recognised by its `%PDF-` signature whatever its name, shows in PDFKit's view: continuous vertical pages fitted to the width, text selectable, nothing editable.
+Its toolbar keeps the breadcrumb and the two reveals, shows Find disabled with the tooltip `Find is unavailable for PDF`, and hides Wrap, the Markdown mode group and Unsaved, which a PDF can never earn.
+A PDF that PDFKit cannot decode, cannot be read, or is password-protected shows the `PDF unavailable` empty state with the reason under the same toolbar.
+An image hides Wrap as well; a file that is not UTF-8 shows the `Preview only` empty state with `This file type cannot be shown as text.` and keeps Wrap disabled beside a disabled Find.
+The size and read-only reasons are unchanged.
+`Screen / Editor / Document kinds` in the design canvas draws one frame per kind, including the PDF failure.
+
 Markdown files alone show the centered Preview/Edit HideChoiceGroup.
 The core owns mode and source wrapping per open file tab; another tab has independent choices, returning to a tab restores them, and close/reopen or app restart starts Preview with source wrapping off.
 These choices share the existing ephemeral editor-tab lifecycle and are not added to persisted UI state.
@@ -1385,9 +1393,16 @@ The core's rules are fixed by `runtime/tests/editor_preview.rs`, the shell's by 
 
 ## Explorer file management
 
-The local tree's context menu is the native `NSMenu`, in VS Code's order: New File, New Folder, a separator, Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
-The empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
+The local tree's context menu is the native `NSMenu`, in VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App, Open in Browser Pane and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
+A folder row has no open items, because its open is Reveal in Finder; the empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
 `WorkspaceOutlineMenuPresentation` decides the item set, so the menu a click gets is a value a test can ask for.
+
+Open with Default App hands the file to macOS through the existing external opener, and a refusal is the notice `macOS could not open <path>: <reason>`.
+Open in Browser Pane stays in the menu whether or not it can act; when it cannot, the item is disabled and its tooltip carries the one reason, in the order the operator can act on it: `Remote files open on their device`, `Opening…`, `Node.js is not on PATH`, `Not connected to Herdr`, `No focused pane to open beside`.
+The menu does not auto-enable, so the disabled state is the presentation's decision and not AppKit's.
+The outcome of an open is a notice: the host's own sentence when it refused, `No running chromux profile. Launch one with chromux launch <name>.` when nothing is running, `Browser pane did not open in time` after thirty seconds.
+`Screen / Panel / Explorer file menu` in the design canvas draws the file menu enabled and with the item disabled.
+`docs/BROWSER_PANES.md` owns how the pane is opened and which profile is chosen.
 
 Delete has two entry points, the menu item and `⌘⌫` while the tree holds the keyboard, and both end in the same confirmation: an alert titled `Move 'name' to Trash?`, a folder told that everything in it goes too, and both told the item can be restored from Finder, with Cancel as the default and Move to Trash as the destructive button.
 Nothing reaches the core without that alert; Cancel and Esc send nothing.

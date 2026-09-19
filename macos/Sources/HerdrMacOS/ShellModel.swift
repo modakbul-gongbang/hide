@@ -188,6 +188,18 @@ final class ShellModel: ObservableObject {
     /// Panes with a fork in flight, which is what puts "forking…" in the
     /// header and what a failure is attributed to.
     @Published private(set) var panesForking: Set<String> = []
+    /// Files with an Open in Browser Pane request in flight, keyed by path,
+    /// which is what disables the item for that file until the host answers
+    /// (D-09: one request per file at a time).
+    @Published private(set) var browserPaneOpensInFlight: Set<String> = []
+    /// Resolved once per launch, like the agent CLIs: PATH does not change
+    /// under a running app, and the menu asks on every right-click.
+    private lazy var browserPaneHost: BrowserPaneOpener.Host? = {
+        guard let node = BrowserPaneOpener.nodeExecutable(),
+              let script = BrowserPaneOpener.hostScript()
+        else { return nil }
+        return BrowserPaneOpener.Host(node: node, script: script)
+    }()
 
     /// Relationship Open and parent Return share this target-scoped outcome.
     /// Generic bridge errors remain available to the status bar, but are not
@@ -1542,6 +1554,74 @@ final class ShellModel: ObservableObject {
 
     func requestExplorerTrash(_ prompt: WorkspaceOutlineTrashPrompt) {
         explorerTrashPrompt = prompt
+    }
+
+    /// Open with Default App is an explicit choice, so the file goes to
+    /// whatever macOS opens it with; the terminal link's executable guard is
+    /// for a guessed click, not a menu (D-05).
+    func openWithDefaultApp(_ file: URL) {
+        interactionNotice = nil
+        ExternalFileOpener.open(file) { [weak self] message in
+            self?.interactionNotice = message
+        }
+    }
+
+    /// What the Explorer item reads when the menu opens (D-08).
+    func browserPaneAvailability(for file: URL) -> BrowserPaneOpenAvailability {
+        WorkspaceOutlineMenuPresentation.browserPaneAvailability(.init(
+            isRemote: isRemoteContext,
+            nodeOnPath: browserPaneHost != nil,
+            herdrConnected: herdrIsConnected,
+            hasFocusedPane: focusedPaneID != nil,
+            opening: browserPaneOpensInFlight.contains(file.standardizedFileURL.path)
+        ))
+    }
+
+    /// Shows the file in a browser pane split right of the focused pane.
+    ///
+    /// A pane already bound to this file is left exactly as it is, without a
+    /// host call, so choosing the item twice converges on one pane (D-07,
+    /// B9). Otherwise one host process runs under the opener's deadline and
+    /// its refusal, verbatim, is the notice (B13).
+    func openInBrowserPane(_ file: URL) {
+        let path = file.standardizedFileURL.path
+        interactionNotice = nil
+        if let reason = browserPaneAvailability(for: file).reason {
+            interactionNotice = reason
+            return
+        }
+        guard let host = browserPaneHost, let targetPane = focusedPaneID else { return }
+        let key = BrowserPaneOpener.bindingKey(for: file)
+        let bound = workspaces.lazy
+            .flatMap(\.checkouts)
+            .flatMap(\.tabs)
+            .flatMap(\.panes)
+            .contains { pane in
+                if case .browser(let binding) = pane.content { return binding.bindingID == key }
+                return false
+            }
+        if bound {
+            HideLaunchTrace.mark("explorer.browser_pane.reused", detail: key)
+            return
+        }
+        browserPaneOpensInFlight.insert(path)
+        HideLaunchTrace.mark("explorer.browser_pane.opening", detail: key)
+        BrowserPaneOpener.open(
+            file: file,
+            targetPane: targetPane,
+            host: host,
+            environment: HideRuntimeEnvironment.childEnvironment()
+        ) { [weak self] result in
+            guard let self else { return }
+            self.browserPaneOpensInFlight.remove(path)
+            switch result {
+            case .success:
+                HideLaunchTrace.mark("explorer.browser_pane.opened", detail: key)
+            case .failure(let failure):
+                HideLaunchTrace.mark("explorer.browser_pane.failed", detail: key)
+                self.interactionNotice = failure.message
+            }
+        }
     }
 
     /// The one call that sends `path_trash`. Cancel and Esc clear the

@@ -50,8 +50,10 @@ import Testing
         #expect(decorations.decoration(for: "/repo/removed/file.swift", isDirectory: false)?.badge == "D")
     }
 
+    /// B5, D-04: a file row carries the two open items between creation and
+    /// reveal; a folder row, the empty area and a remote tree do not.
     @Test func localRowsGetTheFullMenuInVSCodeOrderAndTheEmptyAreaOnlyCreates() {
-        let expected: [WorkspaceOutlineMenuItem] = [
+        let folder: [WorkspaceOutlineMenuItem] = [
             .newFile, .newFolder,
             .separator,
             .revealInFinder, .copyPath, .copyRelativePath,
@@ -60,9 +62,53 @@ import Testing
             .separator,
             .delete,
         ]
-        #expect(WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: true), isRemote: false) == expected)
-        #expect(WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: false), isRemote: false) == expected)
+        let file: [WorkspaceOutlineMenuItem] = [
+            .newFile, .newFolder,
+            .separator,
+            .openWithDefaultApp, .openInBrowserPane,
+            .separator,
+            .revealInFinder, .copyPath, .copyRelativePath,
+            .separator,
+            .rename,
+            .separator,
+            .delete,
+        ]
+        #expect(WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: true), isRemote: false) == folder)
+        #expect(WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: false), isRemote: false) == file)
         #expect(WorkspaceOutlineMenuPresentation.items(for: .emptyArea, isRemote: false) == [.newFile, .newFolder])
+        #expect(WorkspaceOutlineMenuItem.openWithDefaultApp.title == "Open with Default App")
+        #expect(WorkspaceOutlineMenuItem.openInBrowserPane.title == "Open in Browser Pane")
+        #expect(!WorkspaceOutlineMenuPresentation.items(for: .item(isDirectory: false), isRemote: true).contains(.openInBrowserPane))
+    }
+
+    /// B12, B14, D-08: one reason at a time, in the order the operator can
+    /// act on it, and none once every condition holds.
+    @Test func browserPaneItemGivesOneReasonAtATime() {
+        typealias Conditions = WorkspaceOutlineMenuPresentation.BrowserPaneConditions
+        let ready = Conditions(isRemote: false, nodeOnPath: true, herdrConnected: true, hasFocusedPane: true, opening: false)
+        #expect(WorkspaceOutlineMenuPresentation.browserPaneAvailability(ready) == .available)
+        #expect(WorkspaceOutlineMenuPresentation.browserPaneAvailability(ready).reason == nil)
+
+        var conditions = ready
+        conditions.nodeOnPath = false
+        #expect(WorkspaceOutlineMenuPresentation.browserPaneAvailability(conditions) == .unavailable("Node.js is not on PATH"))
+        conditions = ready
+        conditions.herdrConnected = false
+        #expect(WorkspaceOutlineMenuPresentation.browserPaneAvailability(conditions) == .unavailable("Not connected to Herdr"))
+        conditions = ready
+        conditions.hasFocusedPane = false
+        #expect(WorkspaceOutlineMenuPresentation.browserPaneAvailability(conditions) == .unavailable("No focused pane to open beside"))
+        conditions = ready
+        conditions.opening = true
+        #expect(WorkspaceOutlineMenuPresentation.browserPaneAvailability(conditions) == .unavailable("Opening…"))
+        conditions = ready
+        conditions.isRemote = true
+        #expect(WorkspaceOutlineMenuPresentation.browserPaneAvailability(conditions) == .unavailable("Remote files open on their device"))
+
+        // Several reasons at once still read as one: the in-flight request
+        // outranks a missing tool, because it resolves on its own.
+        conditions = Conditions(isRemote: false, nodeOnPath: false, herdrConnected: false, hasFocusedPane: false, opening: true)
+        #expect(WorkspaceOutlineMenuPresentation.browserPaneAvailability(conditions) == .unavailable("Opening…"))
     }
 
     @Test func remoteRowsOfferOnlyTheTwoCopies() {
