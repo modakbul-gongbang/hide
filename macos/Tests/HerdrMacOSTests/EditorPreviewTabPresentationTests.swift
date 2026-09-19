@@ -78,4 +78,20 @@ struct EditorPreviewTabPresentationTests {
         #expect(ShellMenuCommand.keepOpen.displayShortcut == "⇧⌘K")
         #expect(ShellMenuCommand.keepOpen.scope == .applicationMenu)
     }
+
+    /// The chord is pressed while the editor holds the keyboard, so the local
+    /// monitor answers it the way it answers Reopen Closed Tab; a plain ⌘K
+    /// (Search) and a key-up are not it.
+    @MainActor
+    @Test func keepOpenChordIsAnsweredRegardlessOfFocus() {
+        func event(_ type: NSEvent.EventType, _ modifiers: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.keyEvent(
+                with: type, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0,
+                context: nil, characters: "K", charactersIgnoringModifiers: "k", isARepeat: false, keyCode: 40
+            )!
+        }
+        #expect(KeepOpenShortcutPolicy.shouldKeepOpen(event(.keyDown, [.command, .shift])))
+        #expect(!KeepOpenShortcutPolicy.shouldKeepOpen(event(.keyDown, [.command])))
+        #expect(!KeepOpenShortcutPolicy.shouldKeepOpen(event(.keyUp, [.command, .shift])))
+    }
 }

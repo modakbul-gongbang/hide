@@ -10,6 +10,18 @@ enum ReopenShortcutPolicy {
     }
 }
 
+/// Keep Open reaches the model through the same local monitor as Reopen
+/// Closed Tab: the chord is pressed while the editor or a terminal holds the
+/// keyboard, and either responder can consume a key equivalent before the
+/// application menu sees it.
+@MainActor
+enum KeepOpenShortcutPolicy {
+    static func shouldKeepOpen(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && ShellMenuCommand.keepOpen.shortcut.matches(event)
+    }
+}
+
 @MainActor
 enum MainWindowPresentation {
     static func present(_ window: NSWindow, application: NSApplication = .shared, background: Bool = false) {
@@ -250,6 +262,12 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
             if ReopenShortcutPolicy.shouldReopen(event) {
                 MainActor.assumeIsolated {
                     self.model.reopenClosed()
+                }
+                return nil
+            }
+            if KeepOpenShortcutPolicy.shouldKeepOpen(event) {
+                MainActor.assumeIsolated {
+                    self.model.keepActiveEditorTabOpen()
                 }
                 return nil
             }
