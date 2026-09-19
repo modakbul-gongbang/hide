@@ -249,6 +249,9 @@ struct EditorViewerOverlay: View {
                 unavailable(title: "Image unavailable", message: "The image could not be decoded.")
             }
         }
+        // The image fills the document area like every other kind, so the
+        // toolbar stays at the top instead of centring with a small image.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func conflictBar(_ conflict: CoreEditorConflict) -> some View {
