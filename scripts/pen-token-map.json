@@ -170,6 +170,7 @@
     "--size-home-track-connector": "Home.trackConnectorWidth",
     "--size-home-inspector": "Home.inspectorWidth",
     "--size-home-inspector-fold": "Home.inspectorFoldWidth",
+    "--size-home-search-min": "Home.searchMinWidth",
     "--size-home-child-rail": "Home.childRailInset"
   },
   "unmapped": {

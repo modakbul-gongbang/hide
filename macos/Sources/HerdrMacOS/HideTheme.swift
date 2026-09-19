@@ -384,6 +384,10 @@ enum HideTheme {
         /// keeps the column beside two cards; a 900pt window with both
         /// panels open drops under it and folds.
         static let inspectorFoldWidth: CGFloat = 700
+        /// The header's filter field gives way first: it shrinks to this
+        /// before the counts, the filter and the start control wrap under
+        /// the title.
+        static let searchMinWidth: CGFloat = 160
     }
 
     enum Layout {
