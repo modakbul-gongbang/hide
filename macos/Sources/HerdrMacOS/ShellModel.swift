@@ -2209,8 +2209,14 @@ final class ShellModel: ObservableObject {
     }
 
     func toggleProjectHome() {
-        guard !isRemoteContext, focusedWorkspace != nil else {
-            interactionNotice = "Project Home is available for a local project."
+        // Only the menu chord reaches these refusals: the tab-strip toggle is
+        // not drawn without a local focused workspace.
+        guard !isRemoteContext else {
+            interactionNotice = "Project Home shows local projects only."
+            return
+        }
+        guard focusedWorkspace != nil else {
+            interactionNotice = "Select a project in the sidebar to open its Project Home."
             return
         }
         projectHomeVisible.toggle()
