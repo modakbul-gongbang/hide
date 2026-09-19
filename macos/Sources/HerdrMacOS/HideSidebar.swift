@@ -14,7 +14,7 @@ struct HideSidebar: View {
                 AgentScopePicker()
             }
 
-            SidebarList {
+            SidebarList(revealTopRowID: pinnedHeaderRowID) {
                 switch model.sidebarContent {
                 case .projects:
                     projectsContent
@@ -37,6 +37,15 @@ struct HideSidebar: View {
         .accessibilityIdentifier("hide-sidebar")
     }
 
+    /// The `Pinned` header's row id while it leads the Projects list, so the
+    /// list shows it when it appears rather than staying scrolled below it.
+    private var pinnedHeaderRowID: String? {
+        guard model.sidebarContent == .projects,
+              case .header(let title, _)? = model.sidebarProjectSections.rows.first,
+              title == SidebarProjectSections.pinnedTitle else { return nil }
+        return SidebarProjectRow.header(title: title, count: 0).id
+    }
+
     @ViewBuilder
     private var projectsContent: some View {
         // What is waiting, then what finished while the operator was away,
@@ -49,31 +58,35 @@ struct HideSidebar: View {
             }
         }
 
-        HideSectionLabel(title: "Projects · Recent activity", count: model.workspaces.count)
+        // Pinned projects sit under their own header, drawn only while there
+        // is one; the activity header counts the rest (D-02). Headers are
+        // rows of the same list so a pinned project moves instead of being
+        // reinserted, which kept the list scrolled past the new header.
+        ForEach(model.sidebarProjectSections.rows) { row in
+            switch row {
+            case .header(let title, let count):
+                HideSectionLabel(title: title, count: count)
+            case .workspace(let workspace, let hierarchyLevel):
+                WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
+            case .inactiveProjects(let group, let folded):
+                InactiveFoldRow(
+                    title: "Inactive projects",
+                    count: folded.count,
+                    itemName: "project",
+                    expanded: group.expanded,
+                    accessibilityID: "hide-inactive-projects-\(group.deviceID)",
+                    hierarchyLevel: .root,
+                    action: { model.toggleInactiveProjects(in: group) }
+                )
+                .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
+            }
+        }
         if model.workspaces.isEmpty {
             EmptySidebarRow(
                 systemImage: "square.stack.3d.up",
                 title: "No projects yet",
                 detail: "Add a folder to create your first project."
             )
-        } else {
-            ForEach(model.sidebarProjectRows) { row in
-                switch row {
-                case .workspace(let workspace, let hierarchyLevel):
-                    WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
-                case .inactiveProjects(let group, let folded):
-                    InactiveFoldRow(
-                        title: "Inactive projects",
-                        count: folded.count,
-                        itemName: "project",
-                        expanded: group.expanded,
-                        accessibilityID: "hide-inactive-projects-\(group.deviceID)",
-                        hierarchyLevel: .root,
-                        action: { model.toggleInactiveProjects(in: group) }
-                    )
-                    .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
-                }
-            }
         }
     }
 
@@ -677,17 +690,7 @@ private struct WorkspaceNavigatorRow: View {
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Menu {
-                    if workspace.isGit && workspace.remoteTargetID == nil {
-                        Button("Refresh GitHub status") { model.requestGithubStatus(workspace, refresh: true) }
-                    }
-                    Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
-                        .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
-                    Divider()
-                    if workspace.registered {
-                        Button(WorktreeMenuPolicy.removeRegistration, role: .destructive) {
-                            model.requestRemoveWorkspace(workspace)
-                        }
-                    }
+                    projectMenuItems
                 } label: {
                     Image(systemName: "ellipsis")
                         .hideFont(size: HideTheme.Typography.body, weight: .bold)
@@ -702,6 +705,9 @@ private struct WorkspaceNavigatorRow: View {
             }
             .padding(.leading, hierarchyLevel.contentLeadingInset)
             .padding(.trailing, HideTheme.spacingSM)
+            // The same items as `⋯`, the way checkout rows already offer
+            // theirs on right-click (D-05).
+            .contextMenu { projectMenuItems }
 
             if workspace.expanded {
                 ForEach(model.activeCheckouts(in: workspace)) { checkout in
@@ -731,6 +737,31 @@ private struct WorkspaceNavigatorRow: View {
         }
         .padding(.bottom, HideTheme.spacingSM)
         .onAppear { model.requestGithubStatus(workspace) }
+    }
+
+    /// Pin and removal exist only for a local registration: a temporary folder
+    /// row has nothing to store the pin in and nothing to unregister (D-06),
+    /// and a remote project is the device's own, projected from its session.
+    @ViewBuilder
+    private var projectMenuItems: some View {
+        let isLocalRegistration = workspace.registered && workspace.remoteTargetID == nil
+        if isLocalRegistration {
+            Button(workspace.pinned ? WorktreeMenuPolicy.unpinProject : WorktreeMenuPolicy.pinProject) {
+                model.setWorkspacePinned(workspace, pinned: !workspace.pinned)
+            }
+            Divider()
+        }
+        if workspace.isGit && workspace.remoteTargetID == nil {
+            Button("Refresh GitHub status") { model.requestGithubStatus(workspace, refresh: true) }
+        }
+        Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
+            .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
+        if isLocalRegistration {
+            Divider()
+            Button(WorktreeMenuPolicy.removeProject, role: .destructive) {
+                model.requestRemoveWorkspace(workspace)
+            }
+        }
     }
 
     private func checkoutGroup(

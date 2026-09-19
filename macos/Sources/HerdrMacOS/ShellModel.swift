@@ -516,13 +516,14 @@ final class ShellModel: ObservableObject {
         }
     }
 
-    var sidebarProjectRows: [SidebarProjectRow] {
-        SidebarInactiveProjection.projectRows(workspaces, groups: inactiveProjectGroups)
+    var sidebarProjectSections: SidebarProjectSections {
+        SidebarProjectSections(workspaces, groups: inactiveProjectGroups)
     }
 
-    /// Project rows in exactly the order the Projects view draws them.
+    /// Project rows in exactly the order the Projects view draws them: the
+    /// `Pinned` section first, then the activity list.
     var sidebarVisibleWorkspaces: [CoreWorkspaceSnapshot] {
-        sidebarProjectRows.compactMap { row in
+        sidebarProjectSections.rows.compactMap { row in
             guard case .workspace(let workspace, _) = row else { return nil }
             return workspace
         }
@@ -1544,6 +1545,10 @@ final class ShellModel: ObservableObject {
 
     func requestRemoveWorkspace(_ workspace: CoreWorkspaceSnapshot) {
         workspaceToRemove = workspace
+    }
+
+    func setWorkspacePinned(_ workspace: CoreWorkspaceSnapshot, pinned: Bool) {
+        core.setWorkspacePinned(workspace.id, pinned: pinned)
     }
 
     func confirmRemoveWorkspace() {

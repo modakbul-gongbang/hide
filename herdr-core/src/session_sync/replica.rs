@@ -417,7 +417,9 @@ impl SessionReplica {
                         next_tab_label,
                         ..CheckoutSnapshot::default()
                     }],
+                    pinned: false,
                     inactive_checkouts: Default::default(),
+                    removal: Default::default(),
                 }
             })
             .collect::<Vec<_>>();

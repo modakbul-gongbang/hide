@@ -11487,7 +11487,7 @@
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 29897,
+      "width": 31177,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -11528,7 +11528,7 @@
       "y": 0,
       "name": "Screen / Sidebar / Projects",
       "clip": false,
-      "width": 1240,
+      "width": 2520,
       "height": 944,
       "fill": "$--color-canvas",
       "layout": "horizontal",
@@ -12724,7 +12724,7 @@
         {
           "type": "frame",
           "id": "inactive-state-3-wrapper",
-          "name": "State / Project fold · collapsed",
+          "name": "State / Project fold · collapsed · Pin 0",
           "width": 292,
           "layout": "vertical",
           "gap": "$--spacing-sm",
@@ -12734,7 +12734,7 @@
               "id": "inactive-state-3-label",
               "name": "State label",
               "fill": "$--color-secondary",
-              "content": "Project fold · collapsed",
+              "content": "Project fold · collapsed · Pin 0",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-subhead",
               "fontWeight": "600"
@@ -13949,6 +13949,1041 @@
               ]
             }
           ]
+        },
+        {
+          "type": "frame",
+          "id": "pin-pin-2-wrapper",
+          "name": "State / Pinned 2",
+          "width": 292,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "pin-pin-2-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Pinned 2",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pin-pin2-inactive-state-3-qZcwf",
+              "name": "Sidebar / Pin 2 · Pinned section",
+              "clip": true,
+              "width": 292,
+              "height": 900,
+              "fill": "$--color-sidebar",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pin-pin2-inactive-state-3-DhP5X",
+                  "name": "Controls",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pin-pin2-inactive-state-3-zLkqf",
+                      "name": "Mode switcher (HideChoiceGroup segmented)",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": "$--spacing-xxs",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pin-pin2-inactive-state-3-s2m1lG",
+                          "name": "Choice Projects",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pin-pin2-inactive-state-3-n2coe8",
+                              "name": "Label",
+                              "fill": "$--color-primary",
+                              "content": "Projects",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pin-pin2-inactive-state-3-G9z4I",
+                          "name": "Choice Agents",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pin-pin2-inactive-state-3-mQryP",
+                              "name": "Label",
+                              "fill": "$--color-secondary",
+                              "content": "Agents",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-subhead",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pin-pin2-inactive-state-3-H2WUDM",
+                      "name": "Search row",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pin-pin2-inactive-state-3-RjWXM",
+                          "name": "Search (a Button shaped like a field - 32, radius 8)",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pin-pin2-inactive-state-3-acXfe",
+                              "name": "Placeholder",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "pin-pin2-inactive-state-3-fhOul",
+                                  "name": "Magnifier",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "search",
+                                  "library": "lucide",
+                                  "fill": "$--color-muted"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pin-pin2-inactive-state-3-X82Ld",
+                                  "name": "Label",
+                                  "fill": "$--color-secondary",
+                                  "content": "Search",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "id": "pin-pin2-inactive-state-3-bPip6",
+                              "type": "ref",
+                              "ref": "Ec2W1",
+                              "name": "Shortcut"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pin-pin2-inactive-state-3-ogq8a",
+                          "name": "Icon button folder-plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pin-pin2-inactive-state-3-R6uD6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "folder-plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pin-pin2-inactive-state-3-SvdTb",
+                          "name": "Icon button plus",
+                          "width": 32,
+                          "height": 32,
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--asbuilt-sidebar-search-radius",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pin-pin2-inactive-state-3-AgSM6",
+                              "name": "Glyph",
+                              "width": 14,
+                              "height": 14,
+                              "icon": "plus",
+                              "library": "lucide",
+                              "fill": "$--color-secondary"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pin-pin2-inactive-state-3-QqMPc",
+                  "name": "Attention groups",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "pin-pin2-inactive-state-3-Z4DCTS",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Needs You",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Needs You"
+                        },
+                        "rVsKB": {
+                          "content": "1"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-q8VhA",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / 결제 멱등키 PR",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "!",
+                          "fill": "$--color-warning"
+                        },
+                        "x0h40": {
+                          "content": "결제 멱등키 PR",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "1m",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Approval",
+                          "fill": "$--color-warning",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "DB 마이그레이션 실행을 승인하세요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-yHroq",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Done",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Done"
+                        },
+                        "rVsKB": {
+                          "content": "2"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-vrp4i",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / 실패 관측 정보 기록",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "x0h40": {
+                          "content": "실패 관측 정보 기록",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "0s",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "관측 기록 PR 열림, 리뷰 대기",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pin-pin2-inactive-state-3-ZJ7gQ",
+                      "name": "lineage caption / drawn ABOVE the row it belongs to",
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pin-pin2-inactive-state-3-Ss3Wd",
+                          "name": "Elbow",
+                          "fill": "$--color-muted",
+                          "content": "↳",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "pin-pin2-inactive-state-3-jCfix",
+                          "name": "Origin",
+                          "fill": "$--color-muted",
+                          "content": "from w72:pX",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-csMSx",
+                      "type": "ref",
+                      "ref": "HXWFK",
+                      "name": "Row / GitHub 작업 흐름 설계",
+                      "width": "fill_container",
+                      "descendants": {
+                        "PCeNa": {
+                          "content": "✓",
+                          "fill": "$--color-success"
+                        },
+                        "x0h40": {
+                          "content": "GitHub 작업 흐름 설계",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        "w4jdH": {
+                          "content": "56s",
+                          "enabled": true
+                        },
+                        "jb7mF": {
+                          "enabled": false
+                        },
+                        "X6LdE": {
+                          "content": "Done",
+                          "fill": "$--color-success",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        "BsCNW": {
+                          "content": "상태 설계 정리 완료, #12 리뷰 필요",
+                          "fill": "$--color-primary",
+                          "fontSize": "$--text-caption"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pin-pin2-inactive-state-3-projects-tree",
+                  "name": "Projects tree",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "id": "pin-pin2-pinned-section",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Pinned",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Pinned"
+                        },
+                        "rVsKB": {
+                          "content": "2"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-project-hide",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / herdr-ide",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-down"
+                        },
+                        "JkPyX": {
+                          "content": "herdr-ide"
+                        },
+                        "nZkan": {
+                          "content": "3 agents · now"
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-checkout-focus-wrap",
+                      "type": "frame",
+                      "name": "Selected child checkout geometry",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm",
+                        "$--spacing-none",
+                        "$--spacing-lg"
+                      ],
+                      "children": [
+                        {
+                          "id": "pin-pin2-inactive-state-3-checkout-focus",
+                          "type": "ref",
+                          "ref": "pPtY6",
+                          "name": "Checkout / sidebar-projects-focus",
+                          "width": "fill_container",
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-md",
+                          "padding": [
+                            "$--spacing-none",
+                            "$--spacing-sm"
+                          ],
+                          "descendants": {
+                            "IxbXq": {
+                              "content": "sidebar-projects-focus"
+                            },
+                            "BWWvl/ZIZFR": {
+                              "icon": "chevron-right"
+                            },
+                            "YLQKV": {
+                              "enabled": false
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "pin-pin2-gap-a",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "pin-pin2-project-ctong",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / ctong",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "ctong"
+                        },
+                        "nZkan": {
+                          "content": "2 agents · 1h"
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-section",
+                      "type": "ref",
+                      "ref": "O79KF",
+                      "name": "Section / Projects - Recent activity",
+                      "width": "fill_container",
+                      "descendants": {
+                        "VOd6D": {
+                          "content": "Projects · Recent activity"
+                        },
+                        "rVsKB": {
+                          "content": "16"
+                        },
+                        "eK6gz": {
+                          "enabled": false
+                        },
+                        "g7fzt": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-project-sasu",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / sasu",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "sasu"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 12m"
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-gap-b",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-project-task-factory-row",
+                      "type": "ref",
+                      "ref": "qdhY0",
+                      "name": "Project / task-factory",
+                      "width": "fill_container",
+                      "descendants": {
+                        "iBYjj": {
+                          "icon": "chevron-right"
+                        },
+                        "JkPyX": {
+                          "content": "task-factory"
+                        },
+                        "nZkan": {
+                          "content": "1 agent · 4m"
+                        }
+                      }
+                    },
+                    {
+                      "id": "pin-pin2-gap-c",
+                      "type": "frame",
+                      "name": "Top-level sibling separation",
+                      "width": "fill_container",
+                      "height": 8
+                    },
+                    {
+                      "id": "pin-pin2-inactive-state-3-fold-row",
+                      "type": "ref",
+                      "ref": "inactive-fold-row",
+                      "name": "Inactive projects / Collapsed",
+                      "width": "fill_container",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-md",
+                        "$--spacing-none",
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "inactive-fold-chevron": {
+                          "icon": "chevron-right"
+                        },
+                        "inactive-fold-label": {
+                          "content": "Inactive projects 4"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pin-pin-menu-wrapper",
+          "name": "State / Row menu",
+          "width": 292,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "pin-pin-menu-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Row menu",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pin-pin-menu-board",
+              "name": "Row menu / pinned project",
+              "width": 292,
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-md",
+              "fill": "$--color-sidebar",
+              "children": [
+                {
+                  "id": "pin-pin-menu-section",
+                  "type": "ref",
+                  "ref": "O79KF",
+                  "name": "Section / Pinned",
+                  "width": "fill_container",
+                  "descendants": {
+                    "VOd6D": {
+                      "content": "Pinned"
+                    },
+                    "rVsKB": {
+                      "content": "2"
+                    },
+                    "eK6gz": {
+                      "enabled": false
+                    },
+                    "g7fzt": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "pin-pin-menu-project",
+                  "type": "ref",
+                  "ref": "qdhY0",
+                  "name": "Project / herdr-ide",
+                  "width": "fill_container",
+                  "descendants": {
+                    "iBYjj": {
+                      "icon": "chevron-down"
+                    },
+                    "JkPyX": {
+                      "content": "herdr-ide"
+                    },
+                    "nZkan": {
+                      "content": "3 agents · now"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "pin-pin-menu",
+                  "name": "Context menu / project row (⋯ and right-click share it)",
+                  "width": 220,
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-none"
+                  ],
+                  "fill": "$--color-panel",
+                  "cornerRadius": "$--radius-md",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inside",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pin-pin-menu-item-0",
+                      "name": "Item / Unpin",
+                      "width": "fill_container",
+                      "height": 24,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pin-pin-menu-text-0",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Unpin",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pin-pin-menu-item-1",
+                      "name": "Item / Refresh GitHub status",
+                      "width": "fill_container",
+                      "height": 24,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pin-pin-menu-text-1",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Refresh GitHub status",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pin-pin-menu-item-2",
+                      "name": "Item / New worktree…",
+                      "width": "fill_container",
+                      "height": 24,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pin-pin-menu-text-2",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "New worktree…",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pin-pin-menu-div-3",
+                      "name": "Divider",
+                      "width": "fill_container",
+                      "height": 1,
+                      "fill": "$--color-divider"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pin-pin-menu-item-4",
+                      "name": "Item / Remove project…",
+                      "width": "fill_container",
+                      "height": 24,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pin-pin-menu-text-4",
+                          "name": "Label",
+                          "fill": "$--color-danger",
+                          "content": "Remove project…",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pin-pin-dialog-wrapper",
+          "name": "State / Remove project…",
+          "width": 300,
+          "layout": "vertical",
+          "gap": "$--spacing-sm",
+          "children": [
+            {
+              "type": "text",
+              "id": "pin-pin-dialog-label",
+              "name": "State label",
+              "fill": "$--color-secondary",
+              "content": "Remove project…",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pin-pin-dialogs",
+              "name": "Remove project dialogs",
+              "width": 300,
+              "layout": "vertical",
+              "gap": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pin-pin-dialog",
+                  "name": "Alert / Remove project with open panes",
+                  "width": 300,
+                  "layout": "vertical",
+                  "gap": "$--spacing-lg",
+                  "padding": "$--spacing-xl",
+                  "fill": "$--color-panel",
+                  "cornerRadius": "$--radius-lg",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inside",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pin-pin-dialog-title",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": "Remove herdr-ide from Hide?",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-headline",
+                      "fontWeight": "600",
+                      "textGrowth": "fixed-width",
+                      "width": 252
+                    },
+                    {
+                      "type": "text",
+                      "id": "pin-pin-dialog-body",
+                      "name": "Text",
+                      "fill": "$--color-secondary",
+                      "content": "Closes 3 panes (2 running agents). The folder, repository, and worktrees stay on disk.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 252
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pin-pin-dialog-buttons",
+                      "name": "Buttons",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "justifyContent": "end",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pin-pin-dialog-cancel",
+                          "name": "Button / Cancel",
+                          "height": 28,
+                          "padding": [
+                            0,
+                            "$--spacing-lg"
+                          ],
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-sm",
+                          "alignItems": "center",
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pin-pin-dialog-cancel-t",
+                              "name": "Text",
+                              "fill": "$--color-primary",
+                              "content": "Cancel",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pin-pin-dialog-confirm",
+                          "name": "Button / Close 3 panes and remove",
+                          "height": 28,
+                          "padding": [
+                            0,
+                            "$--spacing-lg"
+                          ],
+                          "fill": "$--color-danger",
+                          "cornerRadius": "$--radius-sm",
+                          "alignItems": "center",
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pin-pin-dialog-confirm-t",
+                              "name": "Text",
+                              "fill": "$--color-primary",
+                              "content": "Close 3 panes and remove",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pin-pin-dialog-np",
+                  "name": "Alert / Remove project without panes (today)",
+                  "width": 300,
+                  "layout": "vertical",
+                  "gap": "$--spacing-lg",
+                  "padding": "$--spacing-xl",
+                  "fill": "$--color-panel",
+                  "cornerRadius": "$--radius-lg",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inside",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pin-pin-dialog-np-title",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": "Remove herdr-ide from Hide?",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-headline",
+                      "fontWeight": "600",
+                      "textGrowth": "fixed-width",
+                      "width": 252
+                    },
+                    {
+                      "type": "text",
+                      "id": "pin-pin-dialog-np-body",
+                      "name": "Text",
+                      "fill": "$--color-secondary",
+                      "content": "Hide will remove only its registration. The folder, repository, worktrees, and running processes stay untouched.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": 252
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pin-pin-dialog-np-buttons",
+                      "name": "Buttons",
+                      "width": "fill_container",
+                      "gap": "$--spacing-sm",
+                      "justifyContent": "end",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pin-pin-dialog-np-cancel",
+                          "name": "Button / Cancel",
+                          "height": 28,
+                          "padding": [
+                            0,
+                            "$--spacing-lg"
+                          ],
+                          "fill": "$--color-elevated",
+                          "cornerRadius": "$--radius-sm",
+                          "alignItems": "center",
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pin-pin-dialog-np-cancel-t",
+                              "name": "Text",
+                              "fill": "$--color-primary",
+                              "content": "Cancel",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pin-pin-dialog-np-confirm",
+                          "name": "Button / Remove registration",
+                          "height": 28,
+                          "padding": [
+                            0,
+                            "$--spacing-lg"
+                          ],
+                          "fill": "$--color-danger",
+                          "cornerRadius": "$--radius-sm",
+                          "alignItems": "center",
+                          "justifyContent": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pin-pin-dialog-np-confirm-t",
+                              "name": "Text",
+                              "fill": "$--color-primary",
+                              "content": "Remove registration",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ],
       "gap": "$--spacing-lg",
@@ -13957,7 +14992,7 @@
     {
       "type": "frame",
       "id": "dk-board",
-      "x": 1320,
+      "x": 2600,
       "y": 0,
       "name": "Screen / Editor / Document kinds",
       "width": 1488,
@@ -15275,13 +16310,13 @@
           ]
         }
       ],
-      "x": 2888,
+      "x": 4168,
       "y": 0
     },
     {
       "type": "frame",
       "id": "pvt-board",
-      "x": 3808,
+      "x": 5088,
       "y": 0,
       "name": "Screen / Workbench / Preview tab",
       "width": 1488,
@@ -15904,7 +16939,7 @@
     {
       "type": "frame",
       "id": "fm-board",
-      "x": 5376,
+      "x": 6656,
       "y": 0,
       "name": "Screen / Panel / Explorer file menu",
       "width": 1488,
@@ -17153,7 +18188,7 @@
     {
       "type": "frame",
       "id": "arb009",
-      "x": 6944,
+      "x": 8224,
       "y": 0,
       "name": "Screen / Sidebar / Agent row states",
       "clip": false,
@@ -17595,7 +18630,7 @@
     {
       "type": "frame",
       "id": "arb00l",
-      "x": 8264,
+      "x": 9544,
       "y": 0,
       "name": "Screen / Pane / Header states",
       "clip": false,
@@ -18349,7 +19384,7 @@
     {
       "type": "frame",
       "id": "acv-main",
-      "x": 9584,
+      "x": 10864,
       "y": 0,
       "name": "Screen / Pane / Conversation - Main Claude working",
       "width": 760,
@@ -18742,7 +19777,7 @@
     {
       "type": "frame",
       "id": "acv-codex",
-      "x": 10424,
+      "x": 11704,
       "y": 0,
       "name": "Screen / Pane / Conversation - Codex idle",
       "width": 760,
@@ -19058,7 +20093,7 @@
     {
       "type": "frame",
       "id": "acv-terminal",
-      "x": 11264,
+      "x": 12544,
       "y": 0,
       "name": "Screen / Pane / Conversation - Terminal baseline",
       "width": 760,
@@ -19250,7 +20285,7 @@
     {
       "type": "frame",
       "id": "acv-needs-you",
-      "x": 12104,
+      "x": 13384,
       "y": 0,
       "name": "Screen / Pane / Conversation - Needs You fallback",
       "width": 760,
@@ -19467,7 +20502,7 @@
     {
       "type": "frame",
       "id": "acv-empty",
-      "x": 12944,
+      "x": 14224,
       "y": 0,
       "name": "Screen / Pane / Conversation - Empty",
       "width": 760,
@@ -19643,7 +20678,7 @@
     {
       "type": "frame",
       "id": "acv-failed",
-      "x": 13784,
+      "x": 15064,
       "y": 0,
       "name": "Screen / Pane / Conversation - Failed",
       "width": 760,
@@ -20232,7 +21267,7 @@
           "padding": "$--spacing-lg"
         }
       ],
-      "x": 14624,
+      "x": 15904,
       "y": 0
     },
     {
@@ -20650,13 +21685,13 @@
           ]
         }
       ],
-      "x": 16544,
+      "x": 17824,
       "y": 0
     },
     {
       "type": "frame",
       "id": "Snwg0",
-      "x": 17720,
+      "x": 19000,
       "y": 0,
       "name": "Screen / Agents / My Work status groups",
       "width": 1488,
@@ -21024,7 +22059,7 @@
     {
       "type": "frame",
       "id": "Vmhg4",
-      "x": 19288,
+      "x": 20568,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -22788,7 +23823,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 19660,
+      "x": 20940,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -24266,7 +25301,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 20095,
+      "x": 21375,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -27625,7 +28660,7 @@
     {
       "type": "frame",
       "id": "eXxKb",
-      "x": 20530,
+      "x": 21810,
       "y": 0,
       "name": "Screen / Pane / Relationship modal",
       "width": 1488,
@@ -27841,7 +28876,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 22098,
+      "x": 23378,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -29465,7 +30500,7 @@
     {
       "type": "frame",
       "id": "c3Lf5",
-      "x": 22533,
+      "x": 23813,
       "y": 0,
       "name": "Screen / Overview / Project task forest",
       "width": 520,
@@ -30283,7 +31318,7 @@
     {
       "type": "frame",
       "id": "AZvEA",
-      "x": 23133,
+      "x": 24413,
       "y": 0,
       "name": "Screen / Overview / Inspect without moving",
       "width": 900,
@@ -30380,7 +31415,7 @@
     {
       "type": "frame",
       "id": "wzrRI",
-      "x": 24113,
+      "x": 25393,
       "y": 0,
       "name": "Screen / Workbench / Parent",
       "width": 1488,
@@ -31713,7 +32748,7 @@
     {
       "type": "frame",
       "id": "IhnIO",
-      "x": 25681,
+      "x": 26961,
       "y": 0,
       "name": "Screen / Workbench / Delegated child tab",
       "width": 1488,
@@ -31860,7 +32895,7 @@
     {
       "type": "frame",
       "id": "m5T3n1",
-      "x": 27249,
+      "x": 28529,
       "y": 0,
       "name": "Screen / Overview / Availability states",
       "width": 1080,
@@ -32308,7 +33343,7 @@
     {
       "type": "frame",
       "id": "n2oTPf",
-      "x": 28409,
+      "x": 29689,
       "y": 0,
       "name": "Screen / Explorer / Git in workbench",
       "width": 1488,

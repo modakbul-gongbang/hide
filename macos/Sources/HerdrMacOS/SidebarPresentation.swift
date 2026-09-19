@@ -1,11 +1,18 @@
 import Foundation
 
 enum SidebarProjectRow: Identifiable {
+    /// A section header drawn as a list row, so a project row keeps one
+    /// identity whether it sits under `Pinned` or under the activity list
+    /// and the list animates a pin as a move rather than a removal and an
+    /// insertion that leaves the list scrolled past the new header.
+    case header(title: String, count: Int)
     case workspace(CoreWorkspaceSnapshot, level: SidebarHierarchyLevel)
     case inactiveProjects(CoreInactiveProjectGroupSnapshot, [CoreWorkspaceSnapshot])
 
     var id: String {
         switch self {
+        case .header(let title, _):
+            "header:\(title)"
         case .workspace(let workspace, _):
             "workspace:\(workspace.id)"
         case .inactiveProjects(let group, _):
@@ -42,6 +49,63 @@ enum SidebarHierarchyLevel: Equatable {
 
     var selectionLeadingInset: CGFloat {
         contentLeadingInset - HideTheme.spacingSM
+    }
+}
+
+/// The Projects list as the sidebar draws it: the pinned rows under their own
+/// section, then the activity rows with the device folds. Both halves keep
+/// the core's order; the split only reads the flag the core set (D-02).
+struct SidebarProjectSections {
+    static let pinnedTitle = "Pinned"
+    static let recentTitle = "Projects · Recent activity"
+
+    let pinned: [CoreWorkspaceSnapshot]
+    /// Every project the `Pinned` section does not show, folded or not: the
+    /// `Projects · Recent activity` count.
+    let recent: [CoreWorkspaceSnapshot]
+    /// The list in drawing order: the `Pinned` header and its rows only
+    /// while a project is pinned, then the activity header, its rows and
+    /// the device folds.
+    let rows: [SidebarProjectRow]
+
+    init(_ workspaces: [CoreWorkspaceSnapshot], groups: [CoreInactiveProjectGroupSnapshot]) {
+        pinned = workspaces.filter(\.pinned)
+        recent = workspaces.filter { !$0.pinned }
+        var rows: [SidebarProjectRow] = []
+        if !pinned.isEmpty {
+            rows.append(.header(title: Self.pinnedTitle, count: pinned.count))
+            rows.append(contentsOf: pinned.map { .workspace($0, level: .root) })
+        }
+        rows.append(.header(title: Self.recentTitle, count: recent.count))
+        rows.append(contentsOf: SidebarInactiveProjection.projectRows(recent, groups: groups))
+        self.rows = rows
+    }
+}
+
+/// The `Remove project…` confirmation (D-10). The counts are the core's; the
+/// copy names them so the button says what confirming does.
+struct WorkspaceRemovalPrompt: Equatable {
+    let title: String
+    let message: String
+    let confirmLabel: String
+
+    init(label: String, removal: CoreWorkspaceRemovalGateSnapshot) {
+        title = "Remove \(label) from Hide?"
+        if removal.paneCount == 0 {
+            message = "Hide will remove only its registration. The folder, repository, worktrees, and running processes stay untouched."
+            confirmLabel = "Remove registration"
+        } else {
+            let panes = Self.count(removal.paneCount, "pane")
+            let agents = removal.runningAgentCount > 0
+                ? " (\(Self.count(removal.runningAgentCount, "running agent")))"
+                : ""
+            message = "Closes \(panes)\(agents). The folder, repository, and worktrees stay on disk."
+            confirmLabel = "Close \(panes) and remove"
+        }
+    }
+
+    private static func count(_ value: Int, _ noun: String) -> String {
+        "\(value) \(noun)\(value == 1 ? "" : "s")"
     }
 }
 

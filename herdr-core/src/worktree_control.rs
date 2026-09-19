@@ -15,9 +15,9 @@ pub fn spawn_worktree_close(
     thread::Builder::new()
         .name("herdr-core-worktree-close".into())
         .spawn(move || {
-            let result = close_worktree_panes(
+            let result = close_checkout_panes(
                 context.api_connector.as_ref(),
-                &checkout_path,
+                std::slice::from_ref(&checkout_path),
                 &pane_ids,
                 CONFIRM_TIMEOUT,
             );
@@ -41,6 +41,46 @@ pub fn spawn_worktree_close(
         })
         .map(|_| ())
         .map_err(|error| format!("worktree close worker could not be started: {error}"))
+}
+
+/// `Remove project…`: closes every pane in the project's checkouts and waits
+/// for Herdr to confirm, the same handshake a worktree deletion uses, then
+/// hands the answer to the runtime, which alone removes the registration.
+pub fn spawn_workspace_close(
+    context: LiveContext,
+    workspace_id: String,
+    checkout_paths: Vec<String>,
+    pane_ids: Vec<String>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-workspace-close".into())
+        .spawn(move || {
+            let result = close_checkout_panes(
+                context.api_connector.as_ref(),
+                &checkout_paths,
+                &pane_ids,
+                CONFIRM_TIMEOUT,
+            );
+            if let Some(runtime) = context.runtime.upgrade() {
+                match runtime.lock() {
+                    Ok(mut guard) => {
+                        guard.ingest_workspace_close_result(&workspace_id, result);
+                    }
+                    Err(error) => {
+                        trace(
+                            &checkout_paths.join(","),
+                            &pane_ids,
+                            "publish_failed",
+                            Some(&error.to_string()),
+                        );
+                        return;
+                    }
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("workspace close worker could not be started: {error}"))
 }
 
 pub fn spawn_worktree_open(
@@ -374,12 +414,17 @@ fn trace(path: &str, pane_ids: &[String], stage: &str, error: Option<&str>) {
     );
 }
 
-fn close_worktree_panes(
+/// Closes `pane_ids` and waits until Herdr's snapshot lists none of them and
+/// no pane at any of `paths`, so the caller's next step cannot run beside a
+/// pane that is still there.
+fn close_checkout_panes(
     connector: &dyn ApiConnector,
-    path: &str,
+    paths: &[String],
     pane_ids: &[String],
     timeout: Duration,
 ) -> Result<(), String> {
+    let path = paths.join(",");
+    let path = path.as_str();
     let result = (|| {
         for pane_id in pane_ids {
             trace(path, std::slice::from_ref(pane_id), "close_requested", None);
@@ -411,7 +456,7 @@ fn close_worktree_panes(
                 .pointer("/snapshot/panes")
                 .and_then(Value::as_array)
                 .ok_or("Herdr close confirmation is missing snapshot.panes")?;
-            let (present, pane_at_checkout) = confirmation_state(panes, path)?;
+            let (present, pane_at_checkout) = confirmation_state(panes, paths)?;
             if pane_ids.iter().all(|id| !present.contains(id)) && !pane_at_checkout {
                 return Ok(());
             }
@@ -431,7 +476,7 @@ fn close_worktree_panes(
     result
 }
 
-fn confirmation_state(panes: &[Value], path: &str) -> Result<(Vec<String>, bool), String> {
+fn confirmation_state(panes: &[Value], paths: &[String]) -> Result<(Vec<String>, bool), String> {
     let present = panes
         .iter()
         .map(|pane| {
@@ -443,9 +488,11 @@ fn confirmation_state(panes: &[Value], path: &str) -> Result<(Vec<String>, bool)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let pane_at_checkout = panes.iter().any(|pane| {
-        ["cwd", "foreground_cwd"]
-            .into_iter()
-            .any(|key| pane.get(key).and_then(Value::as_str) == Some(path))
+        ["cwd", "foreground_cwd"].into_iter().any(|key| {
+            pane.get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|cwd| paths.iter().any(|path| path == cwd))
+        })
     });
     Ok((present, pane_at_checkout))
 }
@@ -603,9 +650,9 @@ mod tests {
         let server = server(vec![
             json!({"error":{"code":"confirmation_required","message":"close refused"}}),
         ]);
-        let result = close_worktree_panes(
+        let result = close_checkout_panes(
             &server,
-            "/fixture/topic",
+            &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             CONFIRM_TIMEOUT,
         );
@@ -620,9 +667,9 @@ mod tests {
             snapshot(&["w1:p2", "w2:p1"]),
             snapshot(&["w2:p1"]),
         ]);
-        close_worktree_panes(
+        close_checkout_panes(
             &server,
-            "/fixture/topic",
+            &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             CONFIRM_TIMEOUT,
         )
@@ -640,7 +687,7 @@ mod tests {
             "cwd":"/fixture/topic",
             "foreground_cwd":"/fixture/topic"
         })];
-        let (ids, at_checkout) = confirmation_state(&panes, "/fixture/topic").unwrap();
+        let (ids, at_checkout) = confirmation_state(&panes, &["/fixture/topic".into()]).unwrap();
         assert_eq!(ids, vec!["w2:p1"]);
         assert!(at_checkout);
     }
@@ -656,9 +703,9 @@ mod tests {
                 json!({"result":invalid}),
             ]);
             assert!(
-                close_worktree_panes(
+                close_checkout_panes(
                     &server,
-                    "/fixture/topic",
+                    &["/fixture/topic".into()],
                     &["w1:p1".into()],
                     CONFIRM_TIMEOUT
                 )
@@ -670,9 +717,9 @@ mod tests {
     fn confirmation_timeout_cannot_authorize_removal() {
         let server = server(vec![json!({"result":{"type":"ok"}}), snapshot(&["w1:p1"])]);
         assert!(
-            close_worktree_panes(
+            close_checkout_panes(
                 &server,
-                "/fixture/topic",
+                &["/fixture/topic".into()],
                 &["w1:p1".into()],
                 Duration::from_millis(20)
             )

@@ -105,10 +105,14 @@ struct ShellView: View {
             .background(HideTheme.panel)
         }
         .alert(item: $model.workspaceToRemove) { workspace in
-            Alert(
-                title: Text("Remove \(workspace.label) from Hide?"),
-                message: Text("Hide will remove only its registration. The folder, repository, worktrees, and running processes stay untouched."),
-                primaryButton: .destructive(Text("Remove registration"), action: model.confirmRemoveWorkspace),
+            // The counts are read at presentation from the current row, so a
+            // pane that opened or closed since the menu click is counted.
+            let current = model.workspaces.first { $0.id == workspace.id } ?? workspace
+            let prompt = WorkspaceRemovalPrompt(label: current.label, removal: current.removal)
+            return Alert(
+                title: Text(prompt.title),
+                message: Text(prompt.message),
+                primaryButton: .destructive(Text(prompt.confirmLabel), action: model.confirmRemoveWorkspace),
                 secondaryButton: .cancel()
             )
         }

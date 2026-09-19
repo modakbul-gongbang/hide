@@ -466,6 +466,47 @@ mod tests {
         let _ = fs::remove_dir(root);
     }
 
+    /// B5. A pinned registration comes back pinned, and a store written before
+    /// registrations carried the flag loads every project unpinned with no
+    /// warning.
+    #[test]
+    fn registration_pin_survives_relaunch_and_an_older_store_loads_unpinned() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-core-registration-pin-{}",
+            std::process::id()
+        ));
+        let path = root.join("state.json");
+        let state = UiStateSnapshot {
+            workspace_registrations: vec![WorkspaceRegistration {
+                id: "workspace:alpha".to_owned(),
+                label: "Alpha".to_owned(),
+                path: "/repo/alpha".to_owned(),
+                device_id: "local".to_owned(),
+                pinned: true,
+            }],
+            ..UiStateSnapshot::default()
+        };
+
+        save(&path, &state, &PaneTerminalSizes::new()).expect("persist the pin");
+        let (restored, _sizes, disposition) = load(&path);
+
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(
+            restored.workspace_registrations,
+            state.workspace_registrations
+        );
+
+        let older = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null,
+            "workspace_registrations":[{"id":"workspace:alpha","label":"Alpha","path":"/repo/alpha"}]}"#;
+        let (older_state, _sizes, older_disposition) = decode(older);
+        assert_eq!(older_disposition, LoadDisposition::Loaded);
+        assert_eq!(older_state.workspace_registrations.len(), 1);
+        assert!(!older_state.workspace_registrations[0].pinned);
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
+    }
+
     #[test]
     fn corrupt_and_unknown_schema_states_fall_back_without_blocking() {
         for source in [

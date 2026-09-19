@@ -47,8 +47,8 @@ pub(crate) mod cleanup;
 #[path = "worktree_control.rs"]
 mod worktree_control;
 pub use worktree_control::{
-    WorktreeTaskOutcome, WorktreeTaskRequest, spawn_branch_migration, spawn_worktree_close,
-    spawn_worktree_create, spawn_worktree_open,
+    WorktreeTaskOutcome, WorktreeTaskRequest, spawn_branch_migration, spawn_workspace_close,
+    spawn_worktree_close, spawn_worktree_create, spawn_worktree_open,
 };
 
 /// Everything a terminal session spawn needs from the live configuration.

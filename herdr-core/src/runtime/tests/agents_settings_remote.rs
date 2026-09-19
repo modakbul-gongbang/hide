@@ -970,12 +970,14 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             label: "a".to_owned(),
             path: root_a.clone(),
             device_id: "local".to_owned(),
+            pinned: false,
         },
         WorkspaceRegistration {
             id: "workspace:b".to_owned(),
             label: "b".to_owned(),
             path: root_b.clone(),
             device_id: "local".to_owned(),
+            pinned: false,
         },
     ];
     runtime.rebuild_catalog();
@@ -1144,6 +1146,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
         label: "Remote selection leak".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let local_pane = pane("wL:p1", checkout_path);
     let selected_workspace = workspace(
@@ -1616,6 +1619,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         label: "read-record".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id =

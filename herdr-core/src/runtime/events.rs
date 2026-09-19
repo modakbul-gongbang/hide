@@ -148,6 +148,12 @@ pub(super) struct RemoveWorkspacePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct WorkspacePinSetPayload {
+    pub(super) workspace_id: String,
+    pub(super) pinned: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct RegisterDevicePayload {
     pub(super) id: String,
     pub(super) label: String,
@@ -661,6 +667,7 @@ pub(super) enum Event {
     FocusDevice(FocusDevicePayload),
     InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
     InactiveProjectsToggle(InactiveProjectsTogglePayload),
+    WorkspacePinSet(WorkspacePinSetPayload),
     RemoveWorkspace(RemoveWorkspacePayload),
     RegisterDevice(RegisterDevicePayload),
     RemoveDevice(RemoveDevicePayload),
@@ -794,6 +801,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "inactive_projects_toggle" => {
             decode!(InactiveProjectsTogglePayload, InactiveProjectsToggle)
         }
+        "workspace_pin_set" => decode!(WorkspacePinSetPayload, WorkspacePinSet),
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
         "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
         "remove_device" => decode!(RemoveDevicePayload, RemoveDevice),
@@ -1049,6 +1057,27 @@ impl Runtime {
             }
             Event::CreateWorkspace(payload) => {
                 if let Some(context) = self.live.as_ref().cloned() {
+                    // A folder whose removal is still closing panes keeps the
+                    // registration id it is about to lose; adding it now would
+                    // open a pane in that workspace and then watch the retire
+                    // delete the registration under it, with nothing to say
+                    // the add did not stick.
+                    if let Some(workspace_id) = self.workspace_removal_in_flight_for(&payload.path)
+                    {
+                        self.set_error(
+                            "workspace.remove_in_flight",
+                            format!(
+                                "{} is still being removed; wait for its panes to close, then add it again",
+                                payload.path
+                            ),
+                            false,
+                        );
+                        self.push_diagnostic(
+                            "workspace.create.refused_during_removal",
+                            format!("Workspace {workspace_id} removal is closing panes"),
+                        );
+                        return true;
+                    }
                     if !self
                         .workspace_creations_in_flight
                         .insert(payload.path.clone())
@@ -1399,60 +1428,8 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
-            Event::RemoveWorkspace(payload) => {
-                // Removing a registration never closes Herdr workspaces. An
-                // occupied project would immediately return through discovery.
-                if self.snapshot.navigator.workspaces.iter().any(|workspace| {
-                    workspace.id == payload.workspace_id
-                        && (!workspace.session_workspace_ids.is_empty()
-                            || workspace
-                                .checkouts
-                                .iter()
-                                .any(|checkout| checkout.has_panes))
-                }) {
-                    self.set_error(
-                        "workspace.registration_in_use",
-                        "This project is still open in Herdr. Close or move its panes and workspaces, then remove the registration again. Files and worktrees are kept.",
-                        true,
-                    );
-                    crate::diagnostic!(serde_json::json!({
-                        "component": "registration", "kind": "remove.in_use",
-                        "workspace_id": payload.workspace_id,
-                    }));
-                    return true;
-                }
-                let before = self.snapshot.ui_state.workspace_registrations.len();
-                self.snapshot
-                    .ui_state
-                    .workspace_registrations
-                    .retain(|registration| registration.id != payload.workspace_id);
-                if before == self.snapshot.ui_state.workspace_registrations.len() {
-                    return false;
-                }
-                // Retire the accepted projection directly. Rebuilding the
-                // filesystem catalog here ran git while holding the mutex.
-                self.snapshot
-                    .navigator
-                    .workspaces
-                    .retain(|workspace| workspace.id != payload.workspace_id);
-                if let Some(catalog) = &mut self.last_accepted_catalog {
-                    catalog.retain(|workspace| workspace.id != payload.workspace_id);
-                }
-                self.snapshot
-                    .ui_state
-                    .collapsed_workspace_ids
-                    .retain(|id| id != &payload.workspace_id);
-                self.resync_navigator_focus();
-                self.persist_current_ui_state();
-                self.push_diagnostic(
-                    "workspace.unregistered",
-                    format!(
-                        "Unregistered workspace {} without touching its files",
-                        payload.workspace_id
-                    ),
-                );
-                true
-            }
+            Event::WorkspacePinSet(payload) => self.set_workspace_pinned(payload),
+            Event::RemoveWorkspace(payload) => self.remove_workspace(payload),
             Event::RegisterDevice(payload) => {
                 let id = payload.id.trim().to_owned();
                 let label = payload.label.trim().to_owned();

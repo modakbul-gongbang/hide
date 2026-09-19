@@ -507,7 +507,9 @@ fn workspace(
         session_workspace_ids: Vec::new(),
         last_activity_unix_ms: None,
         checkouts,
+        pinned: false,
         inactive_checkouts: Default::default(),
+        removal: Default::default(),
     }
 }
 
@@ -635,6 +637,7 @@ fn tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
         label: "order".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id = workspace::checkout_id_for_path("workspace:order", Path::new(checkout_path));
@@ -987,6 +990,7 @@ fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
             label: format!("workspace {index}"),
             path: path.to_string_lossy().into_owned(),
             device_id: "local".to_owned(),
+            pinned: false,
         })
         .collect();
     runtime.rebuild_catalog();

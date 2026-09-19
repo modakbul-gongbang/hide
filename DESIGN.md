@@ -478,6 +478,14 @@ It is recomputed from the core's timestamp on each snapshot, so it ages while th
 The project name takes the row's width first; the trailing detail truncates in a narrow sidebar rather than pushing the name out.
 Raised Needs You and Done groups retain their status ordering above Projects.
 
+A registered project can be pinned from its row menu, the same `Pin` / `Unpin` item in the trailing `⋯` menu and the row's right-click menu, which otherwise carry the same items.
+Pinned projects are drawn once, under a `Pinned N` section header that sits between the raised groups and `Projects · Recent activity`, and only while at least one project is pinned; the activity header stays and counts the unpinned projects.
+Inside `Pinned` the order is the tree's own, device first and then latest activity, so a local pin always precedes a remote one and pins never repeat per device.
+The section header is the existing sidebar section label with no pin glyph, the row is the ordinary project row with its disclosure, selection and trailing detail, and nothing changes in Search.
+The pin lives on the project's registration (`WorkspaceRegistration.pinned`), so it survives a relaunch, an older state file reads as unpinned, an unregistered folder row offers neither `Pin` nor `Remove project…`, and removing the registration takes the pin with it.
+A pinned project is exempt from the device's `Inactive projects` fold whatever its activity; its own stale worktrees still fold behind its `Inactive N` row.
+The remote navigation context, chosen from the sidebar's device selector, carries no pins because its wire carries none.
+
 Inactive work is folded without changing that activity order.
 A project's merged, closed, or seven-day inactive secondary checkouts move behind one trailing `Inactive N` disclosure, while its primary and every checkout with live work, local changes, unpushed commits, or current focus remain visible.
 When every checkout in a project is inactive, the project moves behind the trailing `Inactive projects N` disclosure for its device.
@@ -552,9 +560,13 @@ GitHub and disk popovers use the same dark panel surface as existing PR details 
 The cleanup sheet uses the existing 440pt worktree dialog width and a 560pt height with a scrolling list.
 Colors, typography, spacing, corners, status marks and tooltip/accessibility help come from the shared shell system.
 
-Remove Registration removes only Hide's registration and never deletes files, worktrees or Herdr workspaces.
-The action is offered only for registered projects and retains its existing confirmation.
-An in-use project stays registered and reports how to close or move its Herdr workspaces before retrying.
+`Remove project…` removes only Hide's registration and never deletes files, worktrees, sessions or Herdr workspaces; it is offered only for registered projects, from the same row menus as the pin.
+A project Herdr has no pane in is confirmed with the registration-only copy (`Hide will remove only its registration. …`, `Remove registration`).
+A project with panes is not refused: the confirmation reads the core's counts (`Closes 3 panes (2 running agents). The folder, repository, and worktrees stay on disk.`, destructive `Close 3 panes and remove`, `Cancel`), the parenthetical is omitted at zero running agents and the nouns follow their counts.
+On confirmation the core sends `pane.close` for every pane in the project's checkouts from a worker outside the runtime mutex and waits for Herdr's snapshot to confirm they are gone, the same handshake worktree deletion uses; only that confirmation removes the registration and its row.
+A timeout or refusal leaves the project registered with the reason in the error banner, and a repeated `Remove project…` continues from the panes that remain; a repeat while the close is still running starts nothing.
+Removing the project that holds the focused checkout moves focus and the pane selection to the next project, the way a Herdr restart does, so no sync reports the closed pane as unavailable.
+A registration id is keyed by its folder, so adding that folder back while the close is still running is refused with the reason in the banner (`workspace.remove_in_flight`), removing a project whose first pane is still being opened is refused the same way (`workspace.create_in_flight`), and an add that lands anyway cancels the removal and says so (`workspace.remove_cancelled`) rather than losing the project it just opened a pane in.
 A completed removal disappears from the core snapshot and a repeated request is a quiet no-op.
 Save failures remain caller-visible; normal no-op results never become alerts.
 
