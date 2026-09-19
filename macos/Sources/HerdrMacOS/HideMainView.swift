@@ -16,6 +16,12 @@ struct HideMainView: View {
                    model.core.snapshot?.editor.activeTabID != nil {
                     EditorViewerOverlay()
                 }
+                // Project Home over a checkout that has tabs. It sits above
+                // the editor too, because the operator raised it last; the
+                // canvas underneath keeps its terminals and their sizes.
+                if !model.isRemoteContext, model.projectHomeVisible {
+                    ProjectHome(mode: .overlay)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(1)
@@ -76,6 +82,18 @@ private struct HideTabStrip: View {
                     action: model.toggleLeftSidebar
                 )
                 .accessibilityIdentifier("hide-restore-left-sidebar")
+            }
+
+            if model.focusedWorkspace != nil, !model.isRemoteContext {
+                HideIconButton(
+                    systemImage: "square.grid.2x2",
+                    help: "Project Home",
+                    variant: .toolbar,
+                    isSelected: model.projectHomeVisible,
+                    command: .menu(.projectHome),
+                    action: model.toggleProjectHome
+                )
+                .accessibilityIdentifier("hide-project-home-toggle")
             }
 
             if model.focusedWorkspace != nil {

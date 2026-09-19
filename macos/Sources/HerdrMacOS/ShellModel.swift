@@ -151,6 +151,11 @@ final class ShellModel: ObservableObject {
     @Published var activeSurface: ShellSurface = .terminal
     @Published private(set) var sidebarContent: SidebarContent = .projects
     @Published var agentListScope: AgentListScope = .mine
+    /// Whether Project Home is drawn over the pane canvas of a checkout that
+    /// has tabs. Session-local like `agentListScope`: it is not core state,
+    /// it is never persisted, and any action that opens a pane or a checkout
+    /// clears it, because the terminal is where the operator acts.
+    @Published var projectHomeVisible = false
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
     @Published var showSearch = false { didSet { refreshHintSheetState() } }
@@ -1124,6 +1129,7 @@ final class ShellModel: ObservableObject {
     }
 
     func selectCheckout(_ checkout: CoreCheckoutSnapshot) {
+        projectHomeVisible = false
         let action = CheckoutSelectionPolicy.action(for: checkout)
         HideLaunchTrace.mark(
             "checkout.selection",
@@ -1190,6 +1196,7 @@ final class ShellModel: ObservableObject {
     }
 
     func selectAgent(_ agent: SidebarAgent) {
+        projectHomeVisible = false
         guard let identity = workspaces.lazy.compactMap({ workspace in
             workspace.checkouts.lazy.compactMap { checkout in
                 checkout.tabs.contains(where: { tab in
@@ -1826,6 +1833,7 @@ final class ShellModel: ObservableObject {
     }
 
     func addTab() {
+        projectHomeVisible = false
         guard let workspace = focusedWorkspace else {
             interactionNotice = "Create or register a workspace before adding a tab."
             return
@@ -2189,6 +2197,35 @@ final class ShellModel: ObservableObject {
         showSidebarContent(sidebarContent.alternate)
     }
 
+    /// Project Home is drawn in the checkout's empty state, so the toggle is
+    /// only for a checkout that has tabs; there the overlay sits over the
+    /// canvas until Escape, the same toggle, or an action that opens
+    /// something. Remote contexts keep their own empty state.
+    var projectHomeIsEmptyState: Bool {
+        guard !isRemoteContext, localProjectionNotice == nil, focusedCheckout != nil,
+              case .idle = checkoutStartState
+        else { return false }
+        return true
+    }
+
+    func toggleProjectHome() {
+        // Only the menu chord reaches these refusals: the tab-strip toggle is
+        // not drawn without a local focused workspace.
+        guard !isRemoteContext else {
+            interactionNotice = "Project Home shows local projects only."
+            return
+        }
+        guard focusedWorkspace != nil else {
+            interactionNotice = "Select a project in the sidebar to open its Project Home."
+            return
+        }
+        projectHomeVisible.toggle()
+    }
+
+    func closeProjectHome() {
+        projectHomeVisible = false
+    }
+
     func toggleRightPanel() {
         core.persistUIState(rightPanelVisible: !rightPanelVisible)
     }
@@ -2386,6 +2423,7 @@ final class ShellModel: ObservableObject {
     /// working in. Reaching for the tab you are already on must change
     /// nothing.
     func focusUnifiedTab(_ item: ShellTabItem) {
+        projectHomeVisible = false
         guard !item.active else { return }
         switch item.kind {
         case .herdr(let tab): focusTab(tab)

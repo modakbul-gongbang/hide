@@ -32529,6 +32529,46 @@
     "--text-preview-slant": {
       "type": "number",
       "value": 12
+    },
+    "--size-home-attention-card": {
+      "type": "number",
+      "value": 200
+    },
+    "--size-home-card": {
+      "type": "number",
+      "value": 232
+    },
+    "--size-home-child-card": {
+      "type": "number",
+      "value": 214
+    },
+    "--size-home-child-rail": {
+      "type": "number",
+      "value": 9
+    },
+    "--size-home-inspector": {
+      "type": "number",
+      "value": 280
+    },
+    "--size-home-inspector-fold": {
+      "type": "number",
+      "value": 700
+    },
+    "--size-home-track": {
+      "type": "number",
+      "value": 22
+    },
+    "--size-home-track-connector": {
+      "type": "number",
+      "value": 10
+    },
+    "--size-home-track-stage-min": {
+      "type": "number",
+      "value": 60
+    },
+    "--size-home-search-min": {
+      "type": "number",
+      "value": 160
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

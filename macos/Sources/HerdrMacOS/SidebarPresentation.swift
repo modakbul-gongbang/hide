@@ -102,9 +102,20 @@ struct SidebarCheckoutPresentation: Equatable {
         agents: [SidebarAgent],
         connected: Bool = true
     ) {
+        self.init(projectPath: workspace.path, checkout: checkout, agents: agents, connected: connected)
+    }
+
+    /// The same summary from the project's path alone, for a caller (Project
+    /// Home's lane header) that has the checkouts without the workspace.
+    init(
+        projectPath: String,
+        checkout: CoreCheckoutSnapshot,
+        agents: [SidebarAgent],
+        connected: Bool = true
+    ) {
         let summary = checkout.agentSummary
         agentCount = summary.total
-        isPrimary = !checkout.isWorktree && checkout.path == workspace.path
+        isPrimary = !checkout.isWorktree && checkout.path == projectPath
         isDetached = checkout.worktree.map { $0.branch == nil } ?? false
         let pathDetail: String
         if isDetached {

@@ -16,6 +16,7 @@ The former Final, R2, R3, handoff candidates, and the Overview family-only compa
 - The pane header distinguishes the pane shown by Hide from the terminal that owns the native keyboard responder.
 - Explorer decorates its existing native file tree from the normalized Changes projection and does not own another Git reader.
 - Provider artwork, agent identity, status, ownership, instrumentation, and lineage come from the same canonical projection on every surface.
+- Project Home draws a checkout's empty state and an operator-raised overlay as one lane per checkout with a Git progress track and lineage-nested agent cards; inspecting a card never moves terminal focus, and opening a pane, a checkout or a tab closes the overlay.
 
 `My Work` is intentionally session-local.
 No runtime preference, migration, or cross-launch persistence is implied.
