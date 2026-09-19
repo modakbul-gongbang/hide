@@ -594,6 +594,30 @@ struct PaneShortcutSettingsTests {
         #expect(window.terminalView(at: NSPoint(x: 320, y: 240)) === terminal)
     }
 
+    /// Project Home is layered over the pane content and pans on the wheel;
+    /// the wheel must stop at it rather than scroll the terminal it hides.
+    @MainActor
+    @Test func aWheelOwnerLayeredOverATerminalKeepsTheWheel() {
+        let window = PaneCommandWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
+        let terminal = ImeTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        )
+        let map = ProjectHomeInputView(frame: NSRect(x: 0, y: 0, width: 400, height: 480))
+        content.addSubview(terminal)
+        content.addSubview(map)
+        window.contentView = content
+
+        #expect(window.terminalView(at: NSPoint(x: 200, y: 240)) == nil)
+        #expect(window.terminalView(at: NSPoint(x: 520, y: 240)) === terminal)
+    }
+
     /// A continuous wheel over the SwiftUI sidebar resolves its real native
     /// scroller once rather than repeating the full responder-tree hit test.
     @MainActor
