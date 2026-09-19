@@ -404,8 +404,10 @@ A write failure publishes the existing caller-visible save error.
 FFI destruction stops producers and joins the last save outside the mutex; forced process termination does not guarantee a pending save.
 Standalone unit runtimes without a worker context retain synchronous persistence outside any shared runtime mutex.
 
-Regression owners are `projects_follow_authoritative_activity_and_identical_snapshots_settle`, `overview_tracks_live_checkout_panes_and_drops_retired_lineage`, and the two `removing_registration_*` tests.
-Native acceptance uses many private projects, Search and disclosure, live pane retirement/movement, and successful versus in-use registration removal.
+A pin is one more key in the same sort and one more exclusion in the same fold pass; `workspace_pin_set` re-sorts the projected list in place and persists through the existing off-lock save, and the removal counts ride the checkout summary pass rather than a second visit of the panes.
+Closing a project's panes for `Remove project…` runs on the same worker pattern as worktree deletion, outside the mutex, with one in-flight close per project.
+Regression owners are `projects_follow_authoritative_activity_and_identical_snapshots_settle`, `overview_tracks_live_checkout_panes_and_drops_retired_lineage`, `pinned_projects_lead_their_device_in_activity_order`, `pinning_a_registration_reorders_the_row_and_persists_the_flag`, and the `removing_a_registration_*` and `removing_registration_*` tests.
+Native acceptance uses many private projects, Search and disclosure, live pane retirement/movement, pin and unpin, and registration removal with and without open panes.
 Measure baseline and candidate idle/driven work separately with the same project/pane count; tests alone do not prove native responsiveness.
 
 ### Project history, disk and cleanup
