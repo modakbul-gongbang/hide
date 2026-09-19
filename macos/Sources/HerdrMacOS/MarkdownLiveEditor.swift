@@ -37,7 +37,16 @@ struct MarkdownLiveEditor: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.delegate = context.coordinator
-        textView.isRichText = false
+        // The plan's styles are per-range attributes, which is rich text to
+        // AppKit: a plain-text view keeps one attribute set for the whole
+        // storage and re-applies its typing attributes to all of it, which
+        // turned a document into the heading the caret was in.
+        textView.isRichText = true
+        textView.usesFontPanel = false
+        textView.usesRuler = false
+        textView.importsGraphics = false
+        textView.allowsImageEditing = false
+        textView.isAutomaticLinkDetectionEnabled = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -342,6 +351,10 @@ final class MarkdownLiveGlyphGenerator: NSObject, NSLayoutManagerDelegate {
 /// link places the caret, because in an editor a click is an edit (D-08).
 final class MarkdownLiveTextView: NSTextView {
     var openLink: ((URL) -> Void)?
+
+    /// Paste and drop bring text only: the source is what gets styled, so
+    /// attributes riding on a rich clipboard have nowhere to go.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
 
     override func setFrameSize(_ newSize: NSSize) {
         let horizontal = max(HideTheme.spacingLG, (newSize.width - HideTheme.Editor.documentWidth) / 2)

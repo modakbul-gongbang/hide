@@ -92,6 +92,76 @@ struct MarkdownLiveEditorTests {
         #expect(font.fontName.contains("Inter") && font.pointSize == HideTheme.Editor.documentFontSize)
     }
 
+    /// The storage keeps one attribute set per span, so a caret in the
+    /// heading, a composition there, and a key event there leave the body alone.
+    @Test func editingInsideAHeadingLeavesTheBodyAtItsOwnSize() async throws {
+        let (host, view, coordinator) = try await hosted("# Title\n\nbody text\n")
+        defer { withExtendedLifetime(host) {} }
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        window.makeFirstResponder(view)
+        #expect(view.isRichText)
+        func bodySize(_ step: String) throws {
+            let at = (view.string as NSString).range(of: "text").location
+            let body = try #require(view.textStorage?.attribute(.font, at: at, effectiveRange: nil) as? NSFont)
+            #expect(body.pointSize == HideTheme.Editor.documentFontSize, "\(step): body at \(body.pointSize)")
+        }
+        view.setSelectedRange(NSRange(location: 7, length: 0), affinity: .downstream, stillSelecting: false)
+        let underlined: [NSAttributedString.Key: Any] = [.underlineStyle: NSUnderlineStyle.single.rawValue]
+        let composing = NSRange(location: NSNotFound, length: 0)
+        view.setMarkedText(NSAttributedString(string: "ㅎ", attributes: underlined), selectedRange: NSRange(location: 1, length: 0), replacementRange: composing)
+        try bodySize("composing in the heading")
+        view.setMarkedText(NSAttributedString(string: "한", attributes: underlined), selectedRange: NSRange(location: 1, length: 0), replacementRange: composing)
+        view.insertText(NSAttributedString(string: "한"), replacementRange: composing)
+        let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "X", charactersIgnoringModifiers: "X",
+            isARepeat: false, keyCode: 7))
+        view.keyDown(with: key)
+        #expect(view.string == "# Title한X\n\nbody text\n")
+        try bodySize("typed in the heading")
+        try await eventually { coordinator.plan.length == view.string.utf16.count && !coordinator.plan.spans.isEmpty }
+        try bodySize("parsed")
+        let heading = try #require(view.textStorage?.attribute(.font, at: 8, effectiveRange: nil) as? NSFont)
+        #expect(heading.pointSize == HideTheme.Editor.headingFontSizes[0])
+    }
+
+    @Test func pastingRichTextBringsOnlyItsCharacters() async throws {
+        let (host, view, coordinator) = try await hosted("# Title\n\nbody text\n")
+        defer { withExtendedLifetime(host) {} }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("hide.markdownLive.test"))
+        defer { pasteboard.releaseGlobally() }
+        let rich = NSAttributedString(string: "pasted", attributes: [.font: NSFont.systemFont(ofSize: 40)])
+        pasteboard.clearContents()
+        pasteboard.writeObjects([rich])
+        view.setSelectedRange(NSRange(location: 9, length: 0))
+        #expect(view.readSelection(from: pasteboard))
+        #expect(view.string == "# Title\n\npastedbody text\n")
+        try await eventually { coordinator.plan.length == view.string.utf16.count && !coordinator.plan.spans.isEmpty }
+        let font = try #require(view.textStorage?.attribute(.font, at: 10, effectiveRange: nil) as? NSFont)
+        #expect(font.pointSize == HideTheme.Editor.documentFontSize && font.fontName.contains("Inter"))
+    }
+
+    @Test func breakingAParagraphKeepsTheHeadingAboveItAtItsOwnSize() async throws {
+        let source = "# Release notes\n\nPlain text with **bold**, `code` and a [link](https://example.com) here.\n\n## Next\n"
+        let (host, view, coordinator) = try await hosted(source)
+        defer { withExtendedLifetime(host) {} }
+        let insertAt = (source as NSString).range(of: "code`").location + 4
+        view.setSelectedRange(NSRange(location: insertAt, length: 0))
+        view.insertText("\n", replacementRange: view.selectedRange())
+        try await eventually { coordinator.plan.length == view.string.utf16.count && !coordinator.plan.spans.isEmpty && coordinator.plan.spans.contains { $0.style.code && $0.range.length == 5 } }
+        view.setMarkedText("ㅎ", selectedRange: NSRange(location: 1, length: 0), replacementRange: view.selectedRange())
+        view.setMarkedText("한", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: insertAt + 1, length: 1))
+        view.unmarkText()
+        view.insertText("", replacementRange: view.selectedRange())
+        try await eventually { coordinator.plan.length == view.string.utf16.count && coordinator.plan.spans.contains { $0.style.code && $0.range.length == 6 } }
+        #expect(view.string.contains("`code\n한`"))
+        for probe in ["Plain", "bold", " and a ", "here."] {
+            let at = (view.string as NSString).range(of: probe).location
+            let font = try #require(view.textStorage?.attribute(.font, at: at, effectiveRange: nil) as? NSFont)
+            #expect(font.pointSize == HideTheme.Editor.documentFontSize, "\(probe) at \(font.pointSize)")
+        }
+    }
+
     @Test func koreanAndEnglishWrapInsideTheCentredMeasure() async throws {
         let source = Array(repeating: "한국어 문서에서 줄바꿈을 확인합니다. English words wrap inside the document.", count: 12).joined(separator: " ") + "\n"
         let (host, view, _) = try await hosted(source, width: 1000)
