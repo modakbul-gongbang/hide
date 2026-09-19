@@ -68,10 +68,22 @@ enum ProjectHomeGraphLayout {
         static let restVelocity: CGFloat = 0.05
         static let maxTicks = 240
         static let labelNudgeStep: CGFloat = .pi / 36
-        static let labelNudgeRounds = 24
+        static let labelNudgeRounds = 48
     }
 
     // MARK: Seeding
+
+    /// The arc a parent's children need: every label side by side with a
+    /// gap, so the orbit is wide enough for them before any force runs.
+    /// A single child needs no more than the base orbit.
+    static func orbit(base: CGFloat, spread: CGFloat, siblings: [Node]) -> CGFloat {
+        guard siblings.count > 1, spread > 0 else { return base }
+        let needed = siblings.reduce(CGFloat(0)) { $0 + labelFrame(for: $1, at: .zero).width }
+        return max(base, needed / spread)
+    }
+
+    static let agentSpread: CGFloat = .pi * 0.9
+    static let childSpread: CGFloat = .pi * 0.7
 
     /// Where a node starts, and what pulls it once the simulation runs.
     ///
@@ -79,13 +91,28 @@ enum ProjectHomeGraphLayout {
     /// by rank; each agent sits on an arc facing away from the centre around
     /// its checkout, each child on a smaller arc around its parent, and a
     /// pull request just outside its checkout. Every angle is a function of
-    /// rank and sibling count, so the seed is the same for the same topology.
+    /// rank and sibling count, and every orbit of the labels it must hold,
+    /// so the seed is the same for the same topology.
     static func seeds(for topology: Topology) -> [String: CGPoint] {
         let byID = Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) })
+        let byParent = Dictionary(grouping: topology.nodes.filter { $0.kind == .agent || $0.kind == .child }, by: { $0.parentID ?? "" })
         var seeds: [String: CGPoint] = [:]
-        let checkoutCount = topology.nodes.filter { $0.kind == .checkout }.count
-        let ring = HideTheme.Home.checkoutRingRadius
-            + CGFloat(max(0, checkoutCount - 3)) * HideTheme.Home.checkoutRingRadiusPerCheckout
+        let checkouts = topology.nodes.filter { $0.kind == .checkout }
+        // The ring holds every checkout's reach side by side: its agent
+        // orbit across, plus the widest label among the checkout and its
+        // agents, so neighbouring constellations start clear of each other.
+        // Children hang outward from their agent and take no ring room. It
+        // never shrinks below the base ring widened per checkout.
+        let reaches = checkouts.map { checkout -> CGFloat in
+            let agents = byParent[checkout.id] ?? []
+            let widest = (agents + [checkout]).map { labelFrame(for: $0, at: .zero).width }.max() ?? 0
+            return orbit(base: HideTheme.Home.agentOrbitRadius, spread: agentSpread, siblings: agents) * 2 + widest
+        }
+        let ring = max(
+            HideTheme.Home.checkoutRingRadius
+                + CGFloat(max(0, checkouts.count - 3)) * HideTheme.Home.checkoutRingRadiusPerCheckout,
+            reaches.reduce(0, +) / (2 * .pi)
+        )
 
         func place(_ node: Node) -> CGPoint {
             if let cached = seeds[node.id] { return cached }
@@ -101,16 +128,19 @@ enum ProjectHomeGraphLayout {
                     preconditionFailure("\(node.id) has no parent to orbit")
                 }
                 let centre = place(parent)
-                let outward = atan2(centre.y, centre.x)
+                // A child hangs above its agent on screen, clear of the
+                // agent's own label below it; everything else faces away
+                // from the project.
+                let outward = node.kind == .child ? -CGFloat.pi / 2 : atan2(centre.y, centre.x)
                 let orbit: CGFloat
                 let spread: CGFloat
                 switch node.kind {
                 case .agent:
-                    orbit = HideTheme.Home.agentOrbitRadius
-                    spread = .pi * 0.9
+                    spread = agentSpread
+                    orbit = Self.orbit(base: HideTheme.Home.agentOrbitRadius, spread: spread, siblings: byParent[parentID] ?? [])
                 case .child:
-                    orbit = HideTheme.Home.childOrbitRadius
-                    spread = .pi * 0.7
+                    spread = childSpread
+                    orbit = Self.orbit(base: HideTheme.Home.childOrbitRadius, spread: spread, siblings: byParent[parentID] ?? [])
                 default:
                     orbit = HideTheme.Home.pullRequestOffset
                     spread = 0
@@ -224,38 +254,73 @@ enum ProjectHomeGraphLayout {
 
     // MARK: Labels
 
-    /// The label's frame below a node, in layout points.
+    /// How much wider a label can be than its layout width once drawn: the
+    /// fit shrinks the map to `minScale` but the type only to
+    /// `labelMinFontScale`, so at the smallest fit a label covers this much
+    /// more of the map than its points say.
+    static let labelSlack = HideTheme.Home.labelMinFontScale / HideTheme.Home.minScale
+
+    /// The room a label claims below a node, in layout points: its width at
+    /// the worst fit, a gap either side, and the label height.
     static func labelFrame(for node: Node, at point: CGPoint) -> CGRect {
-        CGRect(
-            x: point.x - node.labelWidth / 2,
+        let width = node.labelWidth * labelSlack + HideTheme.Home.labelGap * 2
+        return CGRect(
+            x: point.x - width / 2,
             y: point.y + node.radius + HideTheme.Home.labelGap,
-            width: node.labelWidth,
+            width: width,
             height: HideTheme.Home.labelHeight
         )
     }
 
-    /// After rest, two labels may still cross. The later node in the stable
-    /// order is turned a step around its parent, repeatedly and alternating
-    /// sides, until its label clears every other; a bounded number of rounds
-    /// keeps a crowded arc from looping. The project never moves.
+    /// The disc a node occupies, in layout points.
+    static func discFrame(for node: Node, at point: CGPoint) -> CGRect {
+        CGRect(x: point.x - node.radius, y: point.y - node.radius, width: node.radius * 2, height: node.radius * 2)
+    }
+
+    /// After rest, a label may still cross another label or another node's
+    /// disc. The later node in the stable order is turned a step around its
+    /// parent, away from whatever it crossed, until it clears every earlier
+    /// node; a bounded number of rounds keeps a crowded arc from looping.
+    /// The project never moves.
     private static func separateLabels(_ positions: [String: CGPoint], topology: Topology) -> [String: CGPoint] {
         var positions = positions
         let nodes = topology.nodes.filter { $0.kind != .project }
+        let project = topology.nodes.first { $0.kind == .project }
+        func crosses(_ node: Node, _ other: Node) -> Bool {
+            let a = positions[node.id]!, b = positions[other.id]!
+            let label = labelFrame(for: node, at: a), disc = discFrame(for: node, at: a)
+            let otherLabel = labelFrame(for: other, at: b), otherDisc = discFrame(for: other, at: b)
+            return label.intersects(otherLabel) || label.intersects(otherDisc)
+                || disc.intersects(otherLabel) || disc.intersects(otherDisc)
+        }
         for _ in 0..<Tuning.labelNudgeRounds {
             var moved = false
             for (index, node) in nodes.enumerated() {
                 guard let parentID = node.parentID, let centre = positions[parentID] else { continue }
-                let frame = labelFrame(for: node, at: positions[node.id]!)
-                let collides = nodes[..<index].contains { other in
-                    frame.intersects(labelFrame(for: other, at: positions[other.id]!))
-                }
-                guard collides else { continue }
+                let blocker = nodes[..<index].first { crosses(node, $0) }
+                    ?? project.flatMap { crosses(node, $0) ? $0 : nil }
+                guard let blocker else { continue }
                 let point = positions[node.id]!
                 let dx = point.x - centre.x, dy = point.y - centre.y
                 let orbit = hypot(dx, dy)
-                let sign: CGFloat = index.isMultiple(of: 2) ? 1 : -1
-                let angle = atan2(dy, dx) + sign * Tuning.labelNudgeStep
-                positions[node.id] = CGPoint(x: centre.x + orbit * cos(angle), y: centre.y + orbit * sin(angle))
+                let angle = atan2(dy, dx)
+                if blocker.id == parentID {
+                    // Crossing the parent itself: no turn clears it, so the
+                    // node steps outward instead.
+                    let grown = orbit + HideTheme.Home.labelHeight / 2
+                    positions[node.id] = CGPoint(x: centre.x + grown * cos(angle), y: centre.y + grown * sin(angle))
+                    moved = true
+                    continue
+                }
+                let blockerPoint = positions[blocker.id]!
+                var away = angle - atan2(blockerPoint.y - centre.y, blockerPoint.x - centre.x)
+                away = atan2(sin(away), cos(away))
+                // Turn away from what was crossed; a blocker dead ahead or on
+                // the parent itself turns by the node's own parity so two
+                // siblings never chase each other round the ring.
+                let sign: CGFloat = away > 0.001 ? 1 : away < -0.001 ? -1 : (index.isMultiple(of: 2) ? 1 : -1)
+                let turned = angle + sign * Tuning.labelNudgeStep
+                positions[node.id] = CGPoint(x: centre.x + orbit * cos(turned), y: centre.y + orbit * sin(turned))
                 moved = true
             }
             if !moved { break }

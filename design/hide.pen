@@ -32536,7 +32536,7 @@
     },
     "--ratio-home-max-scale": {
       "type": "number",
-      "value": 1.15
+      "value": 1.6
     },
     "--size-home-agent-node-live": {
       "type": "number",
@@ -32552,11 +32552,11 @@
     },
     "--size-home-agent-orbit": {
       "type": "number",
-      "value": 54
+      "value": 48
     },
     "--size-home-canvas-inset": {
       "type": "number",
-      "value": 48
+      "value": 32
     },
     "--size-home-card": {
       "type": "number",
@@ -32580,7 +32580,7 @@
     },
     "--size-home-checkout-ring": {
       "type": "number",
-      "value": 130
+      "value": 120
     },
     "--size-home-checkout-ring-step": {
       "type": "number",
@@ -32588,7 +32588,7 @@
     },
     "--size-home-child-orbit": {
       "type": "number",
-      "value": 36
+      "value": 40
     },
     "--size-home-count-gap": {
       "type": "number",
@@ -32624,7 +32624,7 @@
     },
     "--size-home-label-max": {
       "type": "number",
-      "value": 104
+      "value": 120
     },
     "--size-home-label-wide-glyph": {
       "type": "number",
@@ -32648,15 +32648,23 @@
     },
     "--size-home-rail": {
       "type": "number",
-      "value": 264
+      "value": 232
     },
     "--size-home-rail-collapse": {
       "type": "number",
-      "value": 720
+      "value": 640
     },
     "--size-home-selection-ring-inset": {
       "type": "number",
       "value": 3
+    },
+    "--ratio-home-label-min-font-scale": {
+      "type": "number",
+      "value": 0.85
+    },
+    "--ratio-home-min-scale": {
+      "type": "number",
+      "value": 0.7
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

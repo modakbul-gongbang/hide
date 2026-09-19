@@ -84,8 +84,9 @@ enum ProjectHomeFixture {
         return (workspace, agents)
     }
 
-    /// Twelve checkouts and thirty agents, some with long Korean names, for
-    /// the label-separation guarantee.
+    /// Twelve checkouts and thirty agents, some with long Korean names and
+    /// a delegated child on every checkout with three or more, for the
+    /// label-separation guarantee.
     static func twelveCheckouts() -> (CoreWorkspaceSnapshot, [SidebarAgent]) {
         var checkouts: [CoreCheckoutSnapshot] = []
         var agents: [SidebarAgent] = []
@@ -104,10 +105,13 @@ enum ProjectHomeFixture {
                 panes.append(id)
                 let group = ["seen", "working", "needs_you", "done"][(index + slot) % 4]
                 let symbol = ["○", "●", "?", "✓"][(index + slot) % 4]
+                // The third pane is delegated by the first.
+                let children = slot == 0 && count >= 3 ? ["p\(pane + 1)"] : []
                 agents.append(agent(id, identity: names[(index + slot) % names.count], group: group, symbol: symbol,
                                     demand: group == "needs_you" ? "question" : "none",
                                     activity: group == "working" ? "working" : "stopped",
-                                    emphasized: group != "seen", lastActivity: "17890000\(String(format: "%05d", pane))"))
+                                    emphasized: group != "seen", children: children, depth: slot == 2 ? 1 : 0,
+                                    delegated: slot == 2, lastActivity: "17890000\(String(format: "%05d", pane))"))
             }
             checkouts.append(checkout("c\(index)", branch: index == 0 ? "main" : "feature/branch-\(index)", panes: panes, isWorktree: index != 0,
                                       pullRequest: index % 3 == 0 ? pullRequest(100 + index) : nil))

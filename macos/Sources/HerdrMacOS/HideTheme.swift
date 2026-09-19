@@ -357,16 +357,22 @@ enum HideTheme {
     /// at scale 1; the view fits the map to the canvas and never asks the
     /// layout to move a node for a window size (DESIGN.md, Project Home).
     enum Home {
-        static let railWidth: CGFloat = 264
+        static let railWidth: CGFloat = 232
         static let headerHeight: CGFloat = 44
-        static let canvasInset: CGFloat = 48
-        /// A map smaller than its canvas grows to fill it up to this; a
-        /// larger one scrolls at scale 1, so a label never shrinks under the
-        /// width the layout separated it at.
-        static let maxScale: CGFloat = 1.15
+        static let canvasInset: CGFloat = 32
+        /// The map is fitted to its canvas between these two scales: grown
+        /// to fill a large canvas, shrunk for a small one down to the floor,
+        /// and scrolled past it. Labels scale with the map so what the
+        /// layout separated stays separated.
+        static let minScale: CGFloat = 0.7
+        static let maxScale: CGFloat = 1.6
+        /// Labels shrink with the map only down to this, and never grow with
+        /// it: a large canvas spreads the nodes and keeps the type at the
+        /// caption size.
+        static let labelMinFontScale: CGFloat = 0.85
         /// Below this canvas width the attention rail folds away and the
         /// header counts carry the glance alone.
-        static let railCollapseWidth: CGFloat = 720
+        static let railCollapseWidth: CGFloat = 640
         static let projectNodeRadius: CGFloat = 16
         /// A checkout grows one step per agent from the base up to the cap, so
         /// the busiest worktree is the largest hub without dwarfing the rest.
@@ -380,12 +386,12 @@ enum HideTheme {
         static let pullRequestNodeRadius: CGFloat = 5
         /// The checkout ring starts here and widens per checkout so twelve hubs
         /// keep their orbits apart.
-        static let checkoutRingRadius: CGFloat = 130
+        static let checkoutRingRadius: CGFloat = 120
         static let checkoutRingRadiusPerCheckout: CGFloat = 16
-        static let agentOrbitRadius: CGFloat = 54
-        static let childOrbitRadius: CGFloat = 36
+        static let agentOrbitRadius: CGFloat = 48
+        static let childOrbitRadius: CGFloat = 40
         static let pullRequestOffset: CGFloat = 38
-        static let labelMaxWidth: CGFloat = 104
+        static let labelMaxWidth: CGFloat = 120
         static let labelGap: CGFloat = 4
         static let labelHeight: CGFloat = 14
         /// Width estimates for label collision at the caption size: one for

@@ -1262,7 +1262,8 @@ Agent size is one of `Home.agentNodeRadii`: within the hour, within the day, old
 Labels are always drawn under every node at the caption size, cut by a glyph-width estimate (`labelGlyphWidth`, `labelWideGlyphWidth` for CJK) to `Home.labelMaxWidth`; the full text stays in the hover card and the accessibility label.
 A checkout carries a second micro monospaced line only when it has something to say: `↑ahead`, `↓behind`, `N changes`.
 Layout runs only when the topology key changes, warm-starts every existing node from the session cache so a status change moves nothing, decays to rest inside the tick cap, and then nudges any two labels that still cross around their parent in a fixed order.
-The map is fitted to the canvas: grown up to `Home.maxScale` when smaller, scrolled at scale 1 when larger, so a label is never drawn narrower than the width the layout separated it at.
+The ring is sized so every checkout's agent orbit and widest label sit side by side; agents fan away from the project, a child hangs above its agent on screen, and a label claims its width at the smallest fit plus a gap either side, so what the layout cleared stays clear at every scale.
+The map is fitted to the canvas between `Home.minScale` and `Home.maxScale`, with the label face scaled alongside down to `Home.labelMinFontScale`, and scrolls from the centre once the floor is reached.
 
 Selection is local to the view.
 Clicking a node selects it and draws its depth-two neighbourhood at full strength with the rest at the dimmed opacity squared; clicking the selected node opens it; clicking empty canvas or the header's `Whole project` returns to the full map.
@@ -1271,10 +1272,10 @@ Hovering narrows the emphasis to the node's own neighbours and shows a card besi
 
 The header sits outside the canvas: the project name, the four group counts in the pet badge colours with Seen in secondary, the stale notice, `Whole project` while a selection is active, the close control while the page is an overlay, and `Start new terminal` as the prominent action.
 The attention rail at `Home.railWidth` lists Needs You and Done in the core's order under the shared section label; one click selects the node on the map, a second opens the pane.
-Below `Home.railCollapseWidth` the rail folds away and the header counts carry the glance.
+Below `Home.railCollapseWidth` the rail folds away and the header counts carry the glance as mark and number, the word moving to the tooltip; the counts take the same compact form while the stale notice needs the room.
 
-States: loading (no snapshot) draws nothing; no checkouts draws the project node and its sentence; checkouts without agents draw the hubs and their sentence; disconnected keeps the last projection dimmed under the notice; the remote empty state is untouched.
-`ProjectHomePresentationTests` owns every state, label, colour and ordering decision; `ProjectHomeGraphLayoutTests` owns determinism, one-arrival stability, label separation on a twelve-checkout thirty-agent fixture, and the depth-two neighbourhood.
+States: loading (no snapshot) draws nothing; no checkouts draws the project node and its sentence; checkouts without agents draw the hubs and their sentence; disconnected keeps the last projection dimmed under the `Herdr reconnecting` notice; the remote empty state is untouched.
+`ProjectHomePresentationTests` owns every state, label, colour and ordering decision; `ProjectHomeGraphLayoutTests` owns determinism, one-arrival stability, label separation on a twelve-checkout thirty-agent fixture with delegation, and the depth-two neighbourhood; `ProjectHomeCanvasRenderTests` hosts the canvas offscreen for the hover card and the fit at twelve checkouts.
 The design canvas board for Home is pending; the tokens are in the Foundations sheet.
 
 Remove Registration removes only Hide's registration and never deletes files, worktrees or Herdr workspaces.

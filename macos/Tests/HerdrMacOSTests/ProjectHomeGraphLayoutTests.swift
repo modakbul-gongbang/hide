@@ -12,14 +12,20 @@ struct ProjectHomeGraphLayoutTests {
         ProjectHomePresentation.build(workspace: fixture.0, agents: fixture.1, connected: true).topology
     }
 
+    /// Pairs whose labels cross each other or the other node's disc.
     private func overlappingLabels(_ result: ProjectHomeGraphLayout.Result, _ topology: ProjectHomeGraphLayout.Topology) -> [(String, String)] {
         let nodes = topology.nodes
         var pairs: [(String, String)] = []
         for i in nodes.indices {
             for j in nodes.indices where j > i {
-                let a = ProjectHomeGraphLayout.labelFrame(for: nodes[i], at: result.positions[nodes[i].id]!)
-                let b = ProjectHomeGraphLayout.labelFrame(for: nodes[j], at: result.positions[nodes[j].id]!)
-                if a.intersects(b) { pairs.append((nodes[i].id, nodes[j].id)) }
+                let a = result.positions[nodes[i].id]!, b = result.positions[nodes[j].id]!
+                let labelA = ProjectHomeGraphLayout.labelFrame(for: nodes[i], at: a)
+                let labelB = ProjectHomeGraphLayout.labelFrame(for: nodes[j], at: b)
+                let discA = ProjectHomeGraphLayout.discFrame(for: nodes[i], at: a)
+                let discB = ProjectHomeGraphLayout.discFrame(for: nodes[j], at: b)
+                if labelA.intersects(labelB) || labelA.intersects(discB) || labelB.intersects(discA) {
+                    pairs.append((nodes[i].id, nodes[j].id))
+                }
             }
         }
         return pairs
@@ -163,13 +169,19 @@ struct ProjectHomeGraphLayoutTests {
         let small = CGRect(x: -100, y: -100, width: 200, height: 200)
         let grown = ProjectHomeFit(bounds: small, canvas: CGSize(width: 800, height: 600))
         #expect(grown.scale == HideTheme.Home.maxScale)
+        #expect(grown.labelFontScale == 1)
         #expect(!grown.scrolls)
         #expect(grown.canvasPoint(.zero) == CGPoint(x: 400, y: 300))
+        let snug = CGRect(x: -400, y: -300, width: 800, height: 600)
+        let shrunk = ProjectHomeFit(bounds: snug, canvas: CGSize(width: 700, height: 600))
+        #expect(shrunk.scale < 1 && shrunk.scale >= HideTheme.Home.minScale)
+        #expect(!shrunk.scrolls)
+        #expect(shrunk.labelFontScale == HideTheme.Home.labelMinFontScale)
         let large = CGRect(x: -500, y: -400, width: 1000, height: 800)
         let scrolled = ProjectHomeFit(bounds: large, canvas: CGSize(width: 400, height: 300))
-        #expect(scrolled.scale == 1)
+        #expect(scrolled.scale == HideTheme.Home.minScale)
         #expect(scrolled.scrolls)
-        #expect(scrolled.content.width == 1000 + HideTheme.Home.canvasInset * 2)
+        #expect(scrolled.content.width == 1000 * HideTheme.Home.minScale + HideTheme.Home.canvasInset * 2)
         let back = scrolled.layoutPoint(scrolled.canvasPoint(CGPoint(x: 12, y: -34)))
         #expect(abs(back.x - 12) < 0.001 && abs(back.y + 34) < 0.001)
     }

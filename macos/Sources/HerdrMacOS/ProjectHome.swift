@@ -27,13 +27,16 @@ struct ProjectHome: View {
 
     var body: some View {
         let home = home
-        VStack(spacing: HideTheme.spacingNone) {
-            ProjectHomeHeader(home: home, focus: $focus)
-            Rectangle()
-                .fill(HideTheme.divider)
-                .frame(height: HideTheme.Layout.hairlineWidth)
-            GeometryReader { proxy in
-                let showsRail = proxy.size.width >= HideTheme.Home.railCollapseWidth && !home.rail.isEmpty
+        GeometryReader { proxy in
+            // Below the collapse width the rail folds into the canvas and
+            // the header keeps only what fits on one line.
+            let compact = proxy.size.width < HideTheme.Home.railCollapseWidth
+            VStack(spacing: HideTheme.spacingNone) {
+                ProjectHomeHeader(home: home, compact: compact, focus: $focus)
+                Rectangle()
+                    .fill(HideTheme.divider)
+                    .frame(height: HideTheme.Layout.hairlineWidth)
+                let showsRail = !compact && !home.rail.isEmpty
                 HStack(spacing: HideTheme.spacingNone) {
                     ProjectHomeCanvas(
                         home: home,
@@ -100,38 +103,57 @@ struct ProjectHome: View {
 private struct ProjectHomeHeader: View {
     @EnvironmentObject private var model: ShellModel
     let home: ProjectHomeModel
+    /// The page is narrower than the rail collapse width.
+    let compact: Bool
     @Binding var focus: String?
 
+    /// Counts show their mark instead of their word where the row is short
+    /// of room: a narrow page, or the stale notice taking the words' place.
+    private var compactCounts: Bool { compact || home.stale }
+
     var body: some View {
+        let compact = compactCounts
         HStack(spacing: HideTheme.spacingMD) {
             Text(home.projectName)
                 .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                 .foregroundStyle(HideTheme.primary)
                 .lineLimit(1)
-            HStack(spacing: HideTheme.Home.countGap) {
+                .layoutPriority(1)
+            HStack(spacing: compact ? HideTheme.spacingSM : HideTheme.Home.countGap) {
                 ForEach(home.counts.entries, id: \.label) { entry in
                     HStack(spacing: HideTheme.spacingXS) {
+                        if compact {
+                            AgentStatusMark(symbol: entry.symbol, color: entry.count > 0 ? entry.color : HideTheme.muted)
+                        }
                         Text("\(entry.count)")
                             .hideFont(size: HideTheme.Typography.title, weight: .semibold, design: .monospaced)
                             .foregroundStyle(entry.count > 0 ? entry.color : HideTheme.muted)
-                        Text(entry.label)
-                            .hideFont(size: HideTheme.Typography.caption, weight: .medium)
-                            .foregroundStyle(entry.count > 0 ? HideTheme.secondary : HideTheme.muted)
+                        if !compact {
+                            Text(entry.label)
+                                .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                                .foregroundStyle(entry.count > 0 ? HideTheme.secondary : HideTheme.muted)
+                        }
                     }
+                    .fixedSize()
                     .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(entry.count) \(entry.label)")
+                    .hideTooltip(entry.label)
                 }
             }
             if home.stale {
-                Label("Live status unavailable while Herdr reconnects", systemImage: "bolt.slash")
+                Label("Herdr reconnecting", systemImage: "bolt.slash")
                     .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                     .foregroundStyle(HideTheme.warning)
                     .lineLimit(1)
+                    .hideTooltip("Live status unavailable while Herdr reconnects")
+                    .accessibilityLabel("Live status unavailable while Herdr reconnects")
                     .accessibilityIdentifier("project-home-stale")
             }
             Spacer(minLength: HideTheme.spacingSM)
             if focus != nil {
                 Button("Whole project") { focus = nil }
                     .buttonStyle(HideTextButtonStyle(appearance: .quiet))
+                    .fixedSize()
                     .hideTooltip("Show every checkout and agent")
                     .accessibilityIdentifier("project-home-whole-project")
             }
@@ -147,6 +169,7 @@ private struct ProjectHomeHeader: View {
             }
             Button("Start new terminal") { model.addTab() }
                 .buttonStyle(HideTextButtonStyle(appearance: .prominent))
+                .fixedSize()
                 .hideTooltip("Start new terminal", command: .menu(.newTab))
                 .accessibilityIdentifier("project-home-start-terminal")
         }
@@ -160,8 +183,9 @@ private struct ProjectHomeHeader: View {
 
 /// The map. One drawing pass over the presentation's nodes and edges, hit
 /// testing as a pure function of the positions, and a card beside the
-/// hovered node.
-private struct ProjectHomeCanvas: View {
+/// hovered node. Internal so a test can host it with a hover set, since a
+/// background window never receives the pointer.
+struct ProjectHomeCanvas: View {
     let home: ProjectHomeModel
     let positions: [String: CGPoint]
     @Binding var focus: String?
@@ -234,6 +258,7 @@ private struct ProjectHomeCanvas: View {
                 }
             }
             .scrollDisabled(!fit.scrolls)
+            .defaultScrollAnchor(.center)
         }
         .clipped()
         .accessibilityIdentifier("project-home-canvas")
@@ -242,7 +267,7 @@ private struct ProjectHomeCanvas: View {
     private func draw(in context: inout GraphicsContext, fit: ProjectHomeFit, emphasized: Set<String>?) {
         func strength(_ ids: String...) -> Double {
             guard let emphasized else { return 1 }
-            return ids.allSatisfy { emphasized.contains($0) } ? 1 : HideTheme.Opacity.dimmed * HideTheme.Opacity.dimmed
+            return ids.allSatisfy { emphasized.contains($0) } ? 1 : HideTheme.Opacity.dimmed
         }
         for edge in home.edges {
             guard let a = positions[edge.from], let b = positions[edge.to] else { continue }
@@ -290,7 +315,7 @@ private struct ProjectHomeCanvas: View {
                 context.stroke(disc, with: .color(node.color.opacity(opacity)), lineWidth: node.delegated ? HideTheme.Layout.hairlineWidth : HideTheme.Home.edgeWidth)
                 if let symbol = node.symbol {
                     let mark = Text(symbol)
-                        .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale, weight: .bold, design: .monospaced))
+                        .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale * fit.labelFontScale, weight: .bold, design: .monospaced))
                         .foregroundColor(node.color.opacity(opacity))
                     context.draw(mark, at: centre, anchor: .center)
                 }
@@ -317,27 +342,27 @@ private struct ProjectHomeCanvas: View {
             let weight: Font.Weight = node.kind == .project || node.kind == .checkout ? .semibold : .regular
             let label = context.resolve(
                 Text(node.label)
-                    .font(HideTheme.font(size: HideTheme.Typography.caption * fontScale, weight: weight, design: .default))
+                    .font(HideTheme.font(size: HideTheme.Typography.caption * fontScale * fit.labelFontScale, weight: weight, design: .default))
                     .foregroundColor(labelColor.opacity(opacity))
             )
-            let size = label.measure(in: CGSize(width: HideTheme.Home.labelMaxWidth, height: HideTheme.Home.labelHeight))
+            let size = label.measure(in: CGSize(width: HideTheme.Home.labelMaxWidth * fit.labelFontScale, height: HideTheme.Home.labelHeight * fit.labelFontScale))
             context.draw(label, in: CGRect(x: frame.midX - size.width / 2, y: frame.minY, width: size.width, height: size.height))
             if let detail = node.detail {
                 let line = context.resolve(
                     Text(detail)
-                        .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale, weight: .regular, design: .monospaced))
+                        .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale * fit.labelFontScale, weight: .regular, design: .monospaced))
                         .foregroundColor(HideTheme.muted.opacity(opacity))
                 )
-                let detailSize = line.measure(in: CGSize(width: HideTheme.Home.labelMaxWidth, height: HideTheme.Home.labelHeight))
+                let detailSize = line.measure(in: CGSize(width: HideTheme.Home.labelMaxWidth * fit.labelFontScale, height: HideTheme.Home.labelHeight * fit.labelFontScale))
                 context.draw(line, in: CGRect(x: frame.midX - detailSize.width / 2, y: frame.maxY, width: detailSize.width, height: detailSize.height))
             }
             if node.missing {
                 let badge = context.resolve(
                     Text("missing")
-                        .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale, weight: .medium, design: .default))
+                        .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale * fit.labelFontScale, weight: .medium, design: .default))
                         .foregroundColor(HideTheme.danger.opacity(opacity))
                 )
-                let badgeSize = badge.measure(in: CGSize(width: HideTheme.Home.labelMaxWidth, height: HideTheme.Home.labelHeight))
+                let badgeSize = badge.measure(in: CGSize(width: HideTheme.Home.labelMaxWidth * fit.labelFontScale, height: HideTheme.Home.labelHeight * fit.labelFontScale))
                 context.draw(badge, in: CGRect(x: frame.midX - badgeSize.width / 2, y: frame.maxY, width: badgeSize.width, height: badgeSize.height))
             }
         }
@@ -359,7 +384,7 @@ struct ProjectHomeFit: Equatable {
         let inset = HideTheme.Home.canvasInset
         let available = CGSize(width: max(1, canvas.width - inset * 2), height: max(1, canvas.height - inset * 2))
         let fit = bounds.isEmpty ? 1 : min(available.width / bounds.width, available.height / bounds.height)
-        scale = min(HideTheme.Home.maxScale, max(1, fit))
+        scale = min(HideTheme.Home.maxScale, max(HideTheme.Home.minScale, fit))
         let mapSize = CGSize(width: bounds.width * scale + inset * 2, height: bounds.height * scale + inset * 2)
         content = CGSize(width: max(canvas.width, mapSize.width), height: max(canvas.height, mapSize.height))
         origin = CGPoint(
@@ -369,6 +394,10 @@ struct ProjectHomeFit: Equatable {
     }
 
     var scrolls: Bool { content.width > canvas.width || content.height > canvas.height }
+
+    /// The type size the labels are drawn at: the caption scaled with the
+    /// map, never below the floor.
+    var labelFontScale: CGFloat { min(1, max(HideTheme.Home.labelMinFontScale, scale)) }
 
     func canvasPoint(_ point: CGPoint) -> CGPoint {
         CGPoint(x: origin.x + point.x * scale, y: origin.y + point.y * scale)

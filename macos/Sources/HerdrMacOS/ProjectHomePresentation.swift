@@ -92,12 +92,14 @@ struct ProjectHomeCounts: Equatable {
 
     static let zero = ProjectHomeCounts(needsYou: 0, done: 0, working: 0, seen: 0)
 
-    var entries: [(label: String, count: Int, color: Color)] {
+    /// Each group with the mark the agent rows draw for it, so a compact
+    /// header can show the mark in place of the word.
+    var entries: [(label: String, symbol: String, count: Int, color: Color)] {
         [
-            ("Needs You", needsYou, HideTheme.warning),
-            ("Done", done, HideTheme.success),
-            ("Working", working, HideTheme.agentWorking),
-            ("Seen", seen, HideTheme.secondary),
+            ("Needs You", "?", needsYou, HideTheme.warning),
+            ("Done", "✓", done, HideTheme.success),
+            ("Working", "●", working, HideTheme.agentWorking),
+            ("Seen", "○", seen, HideTheme.secondary),
         ]
     }
 }
@@ -176,11 +178,16 @@ enum ProjectHomePresentation {
     ) -> ProjectHomeModel {
         guard let workspace else { return .loading }
         let checkouts = orderedCheckouts(workspace)
-        let checkoutByPane = Dictionary(uniqueKeysWithValues: checkouts.flatMap { checkout in
-            checkout.tabs.flatMap(\.panes).map { ($0.id, checkout) }
-        })
+        // A pane belongs to the first checkout that lists it and an agent to
+        // its first row: a checkout is keyed by path and can hold tabs from
+        // several Herdr workspaces, so a repeat is a projection to draw
+        // once, not a reason to trap.
+        let checkoutByPane = Dictionary(
+            checkouts.flatMap { checkout in checkout.tabs.flatMap(\.panes).map { ($0.id, checkout) } },
+            uniquingKeysWith: { first, _ in first }
+        )
         let projectAgents = agents.filter { checkoutByPane[$0.paneID] != nil }
-        let agentByPane = Dictionary(uniqueKeysWithValues: projectAgents.map { ($0.paneID, $0) })
+        let agentByPane = Dictionary(projectAgents.map { ($0.paneID, $0) }, uniquingKeysWith: { first, _ in first })
         // A child hangs off its parent only when the parent is on this map.
         let parentByChild: [String: String] = Dictionary(
             projectAgents.flatMap { parent in
