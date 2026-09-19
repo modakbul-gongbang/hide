@@ -161,6 +161,10 @@ struct ProjectHomeLane: Equatable, Identifiable {
     /// The Overview's attention rank, kept so a test can read why the lane
     /// sits where it does.
     let rank: Int
+    /// The sidebar Workspace row's agent summary, the same value the row
+    /// draws its chip and tooltip from, so the header says what is inside
+    /// the lane even when its cards are scrolled away.
+    let summary: SidebarCheckoutPresentation
 
     private var byID: [String: ProjectHomeCard] {
         Dictionary(uniqueKeysWithValues: cards.map { ($0.id, $0) })
@@ -338,7 +342,10 @@ struct ProjectHomeBoard: Equatable {
             uninstrumentedReason: line?.uninstrumentedReason,
             uninstrumentedLabel: line?.uninstrumentedLabel,
             pullRequest: checkout.pullRequest,
-            rank: rank(checkout)
+            rank: rank(checkout),
+            summary: SidebarCheckoutPresentation(
+                projectPath: input.projectPath, checkout: checkout, agents: input.agents, connected: input.connected
+            )
         )
     }
 
@@ -553,7 +560,7 @@ struct ProjectHomeBoard: Equatable {
                 cards: lane.cards.filter { kept.contains($0.id) },
                 uninstrumentedReason: lane.uninstrumentedReason,
                 uninstrumentedLabel: lane.uninstrumentedLabel,
-                pullRequest: lane.pullRequest, rank: lane.rank
+                pullRequest: lane.pullRequest, rank: lane.rank, summary: lane.summary
             )
         }
         let visible = Set(lanes.flatMap(\.cards).map(\.id))
@@ -616,8 +623,15 @@ struct ProjectHomeBoard: Equatable {
 /// its mark and the strip surfaces it, and a new checkout appends at the
 /// bottom, so the lane being read never moves under the pointer.
 struct ProjectHomeLaneOrder: Equatable {
+    /// The rank a lane has while an agent in it needs the operator.
+    static let needsYouRank = 0
+
     let projectPath: String
     let laneIDs: [String]
+    /// The lanes that were in Needs You when the order was last ranked. A
+    /// lane in Needs You now and not here entered it while its slot was
+    /// frozen, and its header says so until the next rank.
+    let needsYouAtRank: Set<String>
 
     /// The order to draw `rankedLanes` in: rank order when there is no order
     /// yet or the project changed, otherwise the kept order with gone lanes
@@ -629,13 +643,22 @@ struct ProjectHomeLaneOrder: Equatable {
     ) -> ProjectHomeLaneOrder {
         let ranked = rankedLanes.map(\.id)
         guard let previous, previous.projectPath == projectPath else {
-            return ProjectHomeLaneOrder(projectPath: projectPath, laneIDs: ranked)
+            return ProjectHomeLaneOrder(
+                projectPath: projectPath, laneIDs: ranked,
+                needsYouAtRank: Set(rankedLanes.filter { $0.rank == needsYouRank }.map(\.id))
+            )
         }
         let present = Set(ranked)
         var kept = previous.laneIDs.filter { present.contains($0) }
         let known = Set(kept)
         kept.append(contentsOf: ranked.filter { !known.contains($0) })
-        return ProjectHomeLaneOrder(projectPath: projectPath, laneIDs: kept)
+        return ProjectHomeLaneOrder(projectPath: projectPath, laneIDs: kept, needsYouAtRank: previous.needsYouAtRank)
+    }
+
+    /// The lanes that entered Needs You since the last rank and are still
+    /// in it; a lane that left it again drops out on its own.
+    func enteredNeedsYou(in lanes: [ProjectHomeLane]) -> Set<String> {
+        Set(lanes.filter { $0.rank == Self.needsYouRank && !needsYouAtRank.contains($0.id) }.map(\.id))
     }
 
     /// `lanes` in this order; a lane the order does not know (a filter

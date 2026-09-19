@@ -8,6 +8,9 @@ struct ProjectHomeLaneView: View {
     /// The family the page raised across every lane (hover or selection);
     /// nil means nothing is raised anywhere.
     let raisedPaneIDs: Set<String>?
+    /// The checkout entered Needs You while its slot was frozen; the header
+    /// carries the mark until the lanes are ranked again.
+    let enteredNeedsYou: Bool
     let shownPaneID: String?
     let onHover: (String?) -> Void
     let onSelect: (String) -> Void
@@ -43,7 +46,7 @@ struct ProjectHomeLaneView: View {
             Rectangle().fill(HideTheme.divider).frame(height: HideTheme.Layout.hairlineWidth)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Checkout \(lane.label), \(lane.cards.count) agents")
+        .accessibilityLabel("Checkout \(lane.label), \(lane.cards.count) agents\(enteredNeedsYou ? ", entered Needs You" : "")")
         .accessibilityIdentifier("project-home-lane-\(lane.id)")
     }
 
@@ -63,6 +66,15 @@ struct ProjectHomeLaneView: View {
                         .foregroundStyle(HideTheme.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    if enteredNeedsYou {
+                        AgentStatusMark(symbol: "?", color: HideTheme.warning)
+                            .hideTooltip("Entered Needs You since the lanes were sorted")
+                            .accessibilityLabel("Entered Needs You since the lanes were sorted")
+                    }
+                    if lane.summary.agentCount > 0 {
+                        WorkspaceAgentSummary(presentation: lane.summary)
+                            .hideTooltip(lane.summary.detailTooltip)
+                    }
                     if lane.isDetached { HideBadge(label: "detached", color: HideTheme.secondary) }
                     if lane.isMissing { HideBadge(label: "missing", color: HideTheme.danger) }
                     if lane.isPrimary { HideBadge(label: "primary", color: HideTheme.secondary) }

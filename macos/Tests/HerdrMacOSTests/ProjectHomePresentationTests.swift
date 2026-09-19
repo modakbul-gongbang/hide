@@ -318,6 +318,20 @@ struct ProjectHomePresentationTests {
         #expect(quiet.track[1].label == "↑1 ↓0")
         #expect(quiet.uninstrumentedReason == "Hooks are not installed")
         #expect(quiet.uninstrumentedLabel == "Uninstrumented")
+        #expect(quiet.summary.agentCount == 0)
+    }
+
+    @Test func aLaneHeaderCarriesTheSidebarRowsAgentSummary() {
+        var summary = CoreCheckoutAgentSummary(needsYou: 1, working: 2)
+        summary.representativePaneID = "p-q"
+        let lane = board(
+            [checkout("feature", panes: ["p-q", "p-w1", "p-w2"], summary: summary)],
+            [agent("p-q", "Ask", group: "needs_you", symbol: "?", status: "Question"), agent("p-w1", "One"), agent("p-w2", "Two")]
+        ).lanes[0]
+        #expect(lane.summary.agentCount == 3)
+        #expect(lane.summary.status?.symbol == "?")
+        #expect(lane.summary.representativeAgentKind == "claude")
+        #expect(lane.summary.detailTooltip.hasPrefix("Needs You: 1 · Working: 2"))
     }
 
     @Test func aDisconnectedBoardKeepsItsCardsAndCountsAndMarksEveryStatusDisconnected() {
@@ -394,6 +408,16 @@ struct ProjectHomePresentationTests {
         #expect(held.apply(to: later.filtered(query: "Extra").lanes).map(\.id) == ["checkout-extra"])
         #expect(held.apply(to: later.filtered(query: "quiet").lanes + later.filtered(query: "busy").lanes).map(\.id)
                 == ["checkout-busy", "checkout-quiet"])
+
+        // Quiet entered Needs You while its slot was frozen and extra
+        // arrived already in it, so both carry the mark; busy was there at
+        // the rank and does not. A sort clears them.
+        #expect(opened.needsYouAtRank == ["checkout-busy"])
+        #expect(held.enteredNeedsYou(in: later.lanes) == Set(["checkout-quiet", "checkout-extra"]))
+        let sorted = ProjectHomeLaneOrder.settle(nil, projectPath: Self.root, rankedLanes: later.lanes)
+        #expect(sorted.enteredNeedsYou(in: later.lanes).isEmpty)
+        // A lane that leaves Needs You again drops the mark on its own.
+        #expect(held.enteredNeedsYou(in: first.lanes).isEmpty)
 
         // A gone lane drops; Sort or another project re-ranks.
         let fewer = ProjectHomeLaneOrder.settle(held, projectPath: Self.root, rankedLanes: first.lanes)

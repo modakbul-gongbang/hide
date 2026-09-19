@@ -278,6 +278,7 @@ struct ProjectHome: View {
     private func lanes(_ board: ProjectHomeBoard, width: CGFloat) -> some View {
         let raised = raisedFamily(in: board)
         let lanes = laneOrder?.apply(to: board.lanes) ?? board.lanes
+        let entered = laneOrder?.enteredNeedsYou(in: board.lanes) ?? []
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: HideTheme.spacingNone) {
@@ -290,6 +291,7 @@ struct ProjectHome: View {
                             lane: lane,
                             selectedPaneID: selectedPaneID,
                             raisedPaneIDs: raised,
+                            enteredNeedsYou: entered.contains(lane.id),
                             shownPaneID: model.focusedPaneID,
                             onHover: { hoveredPaneID = $0 },
                             onSelect: { select($0, in: board) },
