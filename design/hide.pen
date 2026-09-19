@@ -32552,7 +32552,7 @@
     },
     "--size-home-inspector-fold": {
       "type": "number",
-      "value": 960
+      "value": 700
     },
     "--size-home-track": {
       "type": "number",

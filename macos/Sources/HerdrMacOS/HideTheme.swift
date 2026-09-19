@@ -379,9 +379,11 @@ enum HideTheme {
         static let trackConnectorWidth: CGFloat = 10
         /// The inspector column that opens beside the lanes on selection.
         static let inspectorWidth: CGFloat = 280
-        /// The page keeps the lanes readable on a narrow window by folding
-        /// the inspector under the lanes below this width.
-        static let inspectorFoldWidth: CGFloat = 960
+        /// Below this page width the inspector folds under the lanes. At the
+        /// ordinary three-column window the page is about 760pt wide, which
+        /// keeps the column beside two cards; a 900pt window with both
+        /// panels open drops under it and folds.
+        static let inspectorFoldWidth: CGFloat = 700
     }
 
     enum Layout {
