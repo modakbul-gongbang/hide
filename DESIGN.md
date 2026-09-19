@@ -1243,6 +1243,40 @@ GitHub and disk popovers use the same dark panel surface as existing PR details 
 The cleanup sheet uses the existing 440pt worktree dialog width and a 560pt height with a scrolling list.
 Colors, typography, spacing, corners, status marks and tooltip/accessibility help come from the shared shell system.
 
+#### Project Home
+
+A checkout with no tab draws Project Home instead of the old "No terminal open" sentence, and the same page opens over a checkout with tabs from the tab strip's leading `square.grid.2x2` control, View > Project Home (`⇧⌘H`), and closes on Escape, the same control, or any action that opens a pane or a checkout.
+The overlay flag is session-local on `ShellModel` like the Agents scope; the core owns nothing about it and nothing persists it.
+A remote context keeps its existing empty state and never draws the overlay.
+
+Home is a constellation: the project node fixed at the centre, checkouts on a ring, agents orbiting their checkout, delegated children on a smaller orbit around their parent, and a pull request as the checkout's outward edge.
+`ProjectHomePresentation` decides every node, edge, label and colour from the core's final values; `ProjectHomeGraphLayout` decides where they sit; `ProjectHome` draws them in one `Canvas` pass and dispatches the existing agent, checkout, pull request and new-tab intents.
+
+Encoding follows the rest of the shell.
+An agent node's fill and ring are its `AgentStatusPresentation` colour with the status mark drawn inside; a read demand keeps its hue at the read opacity, and a disconnected server draws `⊘` on every agent and dims the whole map under the `bolt.slash` notice.
+A delegated child is drawn at `Home.childNodeScale` with a dashed edge; a lineage root whose descendant has stalled carries a warning halo, solid for `hard` and at secondary opacity for `soft`, and nothing pulses.
+A checkout is an elevated disc with the branch icon, sized by its agent count from `Home.checkoutNodeRadius` in `checkoutNodeRadiusStep` steps to `checkoutNodeRadiusMax`; a missing worktree is a hollow dashed ring with a `missing` badge and cannot be opened.
+A pull request is a `Home.pullRequestNodeRadius` dot in `HideTheme.PullRequest` state colour on an edge of the same colour, labelled `#number`; its full label carries the state and the CI word.
+Agent size is one of `Home.agentNodeRadii`: within the hour, within the day, older; an activity the core could only express as a Herdr sequence takes the middle size.
+
+Labels are always drawn under every node at the caption size, cut by a glyph-width estimate (`labelGlyphWidth`, `labelWideGlyphWidth` for CJK) to `Home.labelMaxWidth`; the full text stays in the hover card and the accessibility label.
+A checkout carries a second micro monospaced line only when it has something to say: `↑ahead`, `↓behind`, `N changes`.
+Layout runs only when the topology key changes, warm-starts every existing node from the session cache so a status change moves nothing, decays to rest inside the tick cap, and then nudges any two labels that still cross around their parent in a fixed order.
+The map is fitted to the canvas: grown up to `Home.maxScale` when smaller, scrolled at scale 1 when larger, so a label is never drawn narrower than the width the layout separated it at.
+
+Selection is local to the view.
+Clicking a node selects it and draws its depth-two neighbourhood at full strength with the rest at the dimmed opacity squared; clicking the selected node opens it; clicking empty canvas or the header's `Whole project` returns to the full map.
+On entry the selection is the focused pane's agent, else the focused checkout.
+Hovering narrows the emphasis to the node's own neighbours and shows a card beside it: identity, status word, elapsed, the core's second line, the stall notice, and the checkout.
+
+The header sits outside the canvas: the project name, the four group counts in the pet badge colours with Seen in secondary, the stale notice, `Whole project` while a selection is active, the close control while the page is an overlay, and `Start new terminal` as the prominent action.
+The attention rail at `Home.railWidth` lists Needs You and Done in the core's order under the shared section label; one click selects the node on the map, a second opens the pane.
+Below `Home.railCollapseWidth` the rail folds away and the header counts carry the glance.
+
+States: loading (no snapshot) draws nothing; no checkouts draws the project node and its sentence; checkouts without agents draw the hubs and their sentence; disconnected keeps the last projection dimmed under the notice; the remote empty state is untouched.
+`ProjectHomePresentationTests` owns every state, label, colour and ordering decision; `ProjectHomeGraphLayoutTests` owns determinism, one-arrival stability, label separation on a twelve-checkout thirty-agent fixture, and the depth-two neighbourhood.
+The design canvas board for Home is pending; the tokens are in the Foundations sheet.
+
 Remove Registration removes only Hide's registration and never deletes files, worktrees or Herdr workspaces.
 The action is offered only for registered projects and retains its existing confirmation.
 An in-use project stays registered and reports how to close or move its Herdr workspaces before retrying.
