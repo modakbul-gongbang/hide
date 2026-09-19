@@ -96,9 +96,12 @@ The child receives exactly `HOME`, `PATH`, `USER`, `LOGNAME` and `TMPDIR` (`hide
 `--bare` cannot be used, because it never reads the keychain.
 `CLAUDE_CONFIG_DIR` is no longer an environment key Hide reads: the child does not receive it, so the CLI uses its default configuration directory.
 
-The parser reads the `Current …` lines as `Current (session|week)( (<scope>))?: <n>% (used|left) · resets <Mon> <D> at <h>[:mm](am|pm) (<IANA zone>)`.
-`Current week (all models)` is the row, every other `Current week` line is a scoped bucket under it, `Current session` is read and dropped, and `left` is `100 - n`.
-The reset instant is the next wall-clock match in the printed zone, resolved through the system tz database (`herdr-core/src/zoneinfo.rs`); a match that passed within the last window is the reset that just passed, so the row reads as expired until the next read.
+The parser reads the `Current week` lines as `Current week (<scope>): <n>% (used|left)[ · resets <Mon> <D>[, <YYYY>] at <h>[:mm](am|pm) (<IANA zone>)]`.
+`Current week (all models)` is the row, every other `Current week` line is a scoped bucket under it, and `left` is `100 - n`.
+A `Current session` line only proves the CLI read its login; nothing past its prefix is parsed, because the CLI prints the session line without a reset until a session starts, and a first read after an idle morning once failed on that line alone.
+The CLI prints ` · resets …` only when the window has a reset and the year only when the reset falls in another year.
+A row line without a reset is the `reset_missing` failure, a bucket line without one is an unavailable bucket, and a reset the reader cannot read is `reset_format`.
+The reset instant is the printed year's wall clock in the printed zone, or without a year the next wall-clock match, resolved through the system tz database (`herdr-core/src/zoneinfo.rs`); a match that passed within the last window is the reset that just passed, so the row reads as expired until the next read.
 The observed 2.1.274 output is fixed as a test fixture under `herdr-core/tests/fixtures/claude-usage/`, and the parsed reset agrees with the CLI's own `.usage-cache.json` value for the same window.
 Only English output is parsed; another locale reads as unavailable.
 
