@@ -9,7 +9,7 @@ target_repository: "modakbul-gongbang/hide"
 target_branch: "main"
 screen_evidence: "screenshot"
 created_at: "2026-09-19"
-updated_at: "2026-09-19"
+updated_at: "2026-09-19"  # amended: list editing rules (D-14, B16-B22)
 ---
 
 # PRD: Markdown Live Preview: Obsidian식 결합 편집 뷰
@@ -23,7 +23,7 @@ macOS 14·MIT 호환 네이티브 라이브러리가 없다는 조사 결과(Mar
 
 ## Non-goals
 
-- 표·이미지·HTML 블록·각주·체크박스 리스트는 Live 뷰에서 서식으로 그리지 않고 모노스페이스 원문으로 보인다 (D-03). 사용자는 그 부분을 소스로 읽는다. 표나 체크박스 위젯 요청이 들어오면 다시 연다.
+- 표·이미지·HTML 블록·각주·체크박스 리스트는 Live 뷰에서 서식으로 그리지 않고(체크박스 `- [ ]`의 Enter 이어쓰기도 없다) 모노스페이스 원문으로 보인다 (D-03). 사용자는 그 부분을 소스로 읽는다. 표나 체크박스 위젯 요청이 들어오면 다시 연다.
 - 읽기 전용 렌더 Preview 모드는 없앤다 (D-02). 링크 클릭·표 셀 구분 읽기 뷰는 Live 뷰가 대신한다. Obsidian의 Reading view 같은 세 번째 모드 요청이 들어오면 다시 연다.
 - 마크업 숨김에 애니메이션은 없다 (D-04). 커서 이동 시 줄 폭이 즉시 바뀐다.
 - Live 뷰에 줄 번호 룰러와 Wrap 토글은 없다 (D-05). 소스 모드는 지금 그대로다.
@@ -46,6 +46,7 @@ macOS 14·MIT 호환 네이티브 라이브러리가 없다는 조사 결과(Mar
 | D-10 | 자동저장·draft 에코 버퍼·탭 전환·닫기 시 저장 의도 전달은 소스 모드의 기존 경로를 바꾸지 않고 그대로 쓴다. 서식 적용은 스토리지의 문자열을 바꾸지 않는다. | DESIGN.md의 기존 draft/autosave 계약 |
 | D-11 | `design/hide.pen`에 `Screen / Editor / Markdown live`(서식 줄, 커서 줄 마크업 노출, 코드 블록, 빈 문서, 256 KB 초과 notice) 보드를 그리고, `DESIGN.md`의 File document toolbar and Markdown 문단을 새 두 모드에 맞게 다시 쓴다. | AGENTS.md 디자인 캔버스 규칙 |
 | D-12 | 원칙 반영: engineering/principles.md와 design/principles.md(oh-my-principle fa5186d)를 전부 읽었다. rule 1은 Preview 뷰 삭제로, rule 6·7은 D-01·D-06으로, rule 15는 D-07로, design rule 3은 편집 중 서식 확인에 모드 전환이 필요 없는 것으로, design rule 9는 B9~B12로 번역했다. design rule 11(구조적으로 다른 후보 제시)은 사용자가 Obsidian 방식을 이미 지정해 적용하지 않았다. | sasu principles list |
+| D-14 | 리스트 편집 규칙을 orca(stablyai/orca, MIT)의 Tiptap 에디터 동작에서 그대로 옮긴다. 구현은 코드가 아니라 규칙을 옮기는 것이며(orca는 ProseMirror 문서 모델, hide는 소스 텍스트), NSTextView의 `insertNewline`·`insertTab`·`insertBacktab`·`deleteBackward`를 가로채 현재 줄의 마커를 읽고 텍스트를 넣는다. 규칙: (1) 줄 머리에 `- `, `* `, `1. `을 치면 그 줄은 리스트 항목이다(소스 기반이므로 별도 변환 없음, 커서가 떠나면 서식으로 보인다); (2) 항목 안에서 Enter는 같은 들여쓰기·같은 마커의 새 항목이고 번호 리스트는 다음 번호다; (3) 빈 항목에서 Enter는 마커를 지우고 리스트를 빠져나온다; (4) Tab은 항목을 한 단계 들여쓰고 Shift-Tab은 내어쓰며, 중첩 번호 리스트는 자기 열에서 1부터 센다; (5) 빈 항목에서 Backspace는 마커만 지운다; (6) `1. `만 있는 줄에서 Enter는 리스트 탈출이 아니라 글자 그대로 둔다(orca의 모호성 처리); (7) 같은 열의 번호는 Enter·Tab·Shift-Tab·Backspace 뒤에 1부터 다시 매긴다; (8) IME 조합 중(`hasMarkedText`)에는 (2)~(7)을 전부 건너뛴다. 두 모드(Live, Source) 모두에 적용한다. | 사용자 "ㄱㄱ 저거 잘 orca꺼 베껴서 넣어보는거 추가해서 안내해" (2026-09-19); 규칙 출처 orca `rich-markdown-list-continuation.ts`, `rich-markdown-list-indent.ts`, `rich-markdown-key-handler.ts` |
 | D-13 | 배포: `agents/config.json`대로 run worktree에서 구현하고 PR로 전달하며 CI를 지켜본다. | agents/config.json delivery.mode=pr |
 
 ## Behaviors
@@ -67,11 +68,19 @@ macOS 14·MIT 호환 네이티브 라이브러리가 없다는 조사 결과(Mar
 | B13 | 10,000줄 이하 문서에서 타이핑·커서 이동에 눈에 띄는 지연이 없다: 키 입력당 파싱과 속성 적용 시간을 측정해 `docs/PERFORMANCE_TESTING.md`의 형식(idle·driven 분리)으로 run 디렉터리에 기록한다. | D-07 |
 | B14 | 코어 스냅샷의 탭 필드가 `markdown_live`이고, 이전 `markdown_preview`를 읽는 코드와 `MarkdownPreview.swift`·`MarkdownDocumentTests`·Preview 전용 문구가 트리에 없다. | D-02 |
 | B15 | `design/hide.pen`에 D-11 보드가 있고 `node scripts/check-design-contract.mjs`가 통과하며 `DESIGN.md` 문단이 두 모드를 설명한다. | D-11 |
+| B16 | 리스트 항목 끝에서 Enter를 치면 다음 줄이 같은 들여쓰기의 `- ` 항목으로 시작하고, 번호 리스트면 다음 번호(`3. `)로 시작하며 커서가 마커 뒤에 놓인다. | D-14 |
+| B17 | 마커만 남은 빈 항목에서 Enter를 치면 마커가 사라지고 빈 일반 줄이 되며, 번호 리스트였으면 그 아래 남은 항목의 번호가 1부터 다시 매겨진다. | D-14 |
+| B18 | 항목에서 Tab을 치면 한 단계(공백 2칸) 들여써지고 번호 항목은 중첩 열의 `1.`이 되며, Shift-Tab은 한 단계 내어쓰고 원래 열의 번호로 돌아간다. 리스트 밖에서 Tab은 지금처럼 탭 문자다. | D-14 |
+| B19 | 마커만 남은 빈 항목에서 Backspace를 치면 마커만 사라지고 줄은 남는다. 글자가 있는 항목에서는 일반 Backspace다. | D-14 |
+| B20 | `1. `만 친 줄에서 Enter를 치면 그 줄은 글자 그대로 남고 다음 줄은 일반 줄이다. | D-14 |
+| B21 | 한글을 조합하는 중에는 Enter·Tab·Backspace가 조합기의 동작을 그대로 따르고 리스트 규칙이 끼어들지 않는다. 조합이 끝난 뒤의 Enter부터 B16이 적용된다. | D-14 |
+| B22 | B16~B21은 Source 모드에서도 같이 동작하고, 그 결과 파일 내용은 사용자가 손으로 친 것과 같은 평범한 마크다운이다(특수 문자·숨은 마크업 없음). | D-14 |
 
 ## Technical structure
 
 - `macos/Sources/HerdrMacOS/`: Live 뷰는 `HighlightedCodeEditor`와 같은 TextKit 1 구성(NSTextStorage → 커스텀 NSLayoutManager → NSTextContainer → NSTextView)이며, 마크다운 구조를 소스 범위로 돌려주는 파서 어댑터와 커서 줄에 따라 숨김 범위를 계산하는 순수 함수(테스트가 값으로 묻는다)가 분리된다. 새 색·크기는 `HideTheme`에서만 온다.
 - `herdr-core`: 탭 스냅샷 필드 이름 변경(`markdown_live`)과 그 이벤트 페이로드. C ABI 시그니처는 그대로다.
+- 리스트 편집 규칙(D-14)은 마커 파싱과 다음 줄 텍스트 계산을 순수 함수로 두어 테스트가 값으로 묻고, NSTextView 서브클래스는 그 결과를 넣기만 한다. Live·Source 두 뷰가 같은 함수를 쓴다.
 - 파서: Foundation 우선, 부족하면 `apple/swift-markdown`을 `macos/Vendor`에 path 패키지로(D-06).
 - 다른 서비스·스키마·인프라 변경 없음.
 
