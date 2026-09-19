@@ -37,6 +37,8 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
     var markdownPreview: Bool? = nil
     var wrap: Bool? = nil
     let dirty: Bool
+    /// The checkout's replaceable preview tab (PRD editor-preview-tab D-07).
+    var preview: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -49,6 +51,7 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
         case wrap
         case diffCommitted = "diff_committed"
         case dirty
+        case preview
     }
 }
 

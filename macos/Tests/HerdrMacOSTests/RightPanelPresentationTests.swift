@@ -237,7 +237,8 @@ struct RightPanelPresentationTests {
                 "label": "README.md",
                 "kind": "file",
                 "diff_committed": null,
-                "dirty": true
+                "dirty": true,
+                "preview": false
             }],
             "active_tab_id": "file:w:c:/repo/README.md",
             "document": {

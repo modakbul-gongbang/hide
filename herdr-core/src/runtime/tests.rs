@@ -7,6 +7,8 @@ use crate::fake_herdr::FakeHerdr;
 mod agents_settings_remote;
 #[path = "tests/devices.rs"]
 mod devices;
+#[path = "tests/editor_preview.rs"]
+mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
 mod editor_reopen;
 #[path = "tests/lineage.rs"]

@@ -70,6 +70,7 @@
     "--text-terminal-base": "terminalBaseFontSize",
     "--text-editor-base": "editorBaseFontSize",
     "--text-editor-document": "Editor.documentFontSize",
+    "--text-preview-slant": "Typography.previewSlant",
     "--proposed-conversation-measure": "Conversation.measureWidth",
     "--proposed-conversation-time-rail": "Conversation.timeRailWidth",
     "--proposed-conversation-body-line-spacing": "Conversation.bodyLineSpacing",

@@ -277,18 +277,29 @@ impl Runtime {
         })
     }
 
+    /// Shows a prepared file tab. `preview` is what the click asked for: a
+    /// single click wants the checkout's preview slot, every other entry
+    /// point wants an ordinary tab (PRD editor-preview-tab D-09). A file that
+    /// already has a tab is focused, and an ordinary open of the file that
+    /// currently holds the preview slot promotes it where it sits (D-10, B4).
     pub(super) fn show_file_tab(
         &mut self,
         prepared: PreparedFileTab,
         workspace_id: &str,
         checkout_id: &str,
         path: &str,
+        preview: bool,
     ) {
         let tab_id = match prepared {
-            PreparedFileTab::Open(tab_id) => tab_id,
+            PreparedFileTab::Open(tab_id) => {
+                if !preview {
+                    self.promote_editor_tab(&tab_id);
+                }
+                tab_id
+            }
             PreparedFileTab::Read { tab_id, document } => {
                 self.editor_documents.insert(tab_id.clone(), document);
-                self.snapshot.editor.tabs.push(EditorTabSnapshot {
+                let tab = EditorTabSnapshot {
                     id: tab_id.clone(),
                     workspace_id: workspace_id.to_owned(),
                     checkout_id: checkout_id.to_owned(),
@@ -304,9 +315,9 @@ impl Runtime {
                     markdown_preview: true,
                     wrap: false,
                     dirty: false,
-                });
-                // A new file tab takes a slot at the end of the strip.
-                self.rebuild_tab_strips();
+                    preview,
+                };
+                self.place_editor_tab(tab);
                 tab_id
             }
         };
@@ -314,6 +325,116 @@ impl Runtime {
             self.set_error("file.focus_failed", message, false);
         }
         self.snapshot.ui_state.selected_path = Some(path.to_owned());
+    }
+
+    /// Puts a new editor tab into the strip.
+    ///
+    /// An ordinary tab takes a slot at the end. A preview tab takes the
+    /// checkout's preview slot: when the checkout already has a preview tab
+    /// that is clean, the new tab replaces it in place, inheriting its strip
+    /// slot, and the replaced tab's document, Markdown mode and wrap state
+    /// are dropped without a Recent Closed entry (D-04). A dirty preview tab
+    /// is never replaced: it is promoted where it sits and the new preview
+    /// opens beside it (D-05). File and diff tabs share the one slot (D-02).
+    fn place_editor_tab(&mut self, tab: EditorTabSnapshot) {
+        let replaced = tab.preview.then(|| {
+            self.snapshot
+                .editor
+                .tabs
+                .iter()
+                .position(|held| {
+                    held.preview
+                        && held.workspace_id == tab.workspace_id
+                        && held.checkout_id == tab.checkout_id
+                })
+                .map(|index| (index, self.snapshot.editor.tabs[index].dirty))
+        });
+        match replaced.flatten() {
+            Some((index, false)) => {
+                let old = self.retire_editor_tab(index);
+                let old_entry = StripTabSnapshot::editor(&old).id;
+                let new_entry = StripTabSnapshot::editor(&tab).id;
+                for order in self.checkout_tab_order.values_mut() {
+                    for entry in order.iter_mut().filter(|entry| **entry == old_entry) {
+                        *entry = new_entry.clone();
+                    }
+                }
+                for pending in self.pending_tab_move.values_mut() {
+                    for entry in pending
+                        .desired
+                        .iter_mut()
+                        .filter(|entry| **entry == old_entry)
+                    {
+                        *entry = new_entry.clone();
+                    }
+                }
+                self.push_diagnostic(
+                    "editor.preview_replaced",
+                    format!("Preview tab {} replaced by {}", old.id, tab.id),
+                );
+                self.snapshot.editor.tabs.insert(index, tab);
+            }
+            Some((index, true)) => {
+                let dirty = &mut self.snapshot.editor.tabs[index];
+                dirty.preview = false;
+                let kept = dirty.id.clone();
+                self.push_diagnostic(
+                    "editor.preview_kept_dirty",
+                    format!("Dirty preview tab {kept} kept and promoted"),
+                );
+                self.snapshot.editor.tabs.push(tab);
+            }
+            None => self.snapshot.editor.tabs.push(tab),
+        }
+        self.rebuild_tab_strips();
+    }
+
+    /// Takes an editor tab out of the runtime: its snapshot entry, its
+    /// document, its place in the focus history, and, when it was the active
+    /// diff, the Changes selection it was showing. The caller decides what
+    /// the removal means: a close records it for reopening, a preview
+    /// replacement does not.
+    fn retire_editor_tab(&mut self, index: usize) -> EditorTabSnapshot {
+        let tab = self.snapshot.editor.tabs.remove(index);
+        let was_active = self.snapshot.editor.active_tab_id.as_deref() == Some(tab.id.as_str());
+        self.editor_documents.remove(&tab.id);
+        self.editor_tab_history.retain(|known| known != &tab.id);
+        if was_active {
+            self.snapshot.editor.active_tab_id = None;
+            self.snapshot.editor.document = None;
+            if tab.kind == EditorTabKind::Diff {
+                self.snapshot.changes.selected_path = None;
+                self.snapshot.changes.diff = None;
+            }
+        }
+        tab
+    }
+
+    /// Makes a preview tab an ordinary tab in the same slot. Returns whether
+    /// anything changed: promoting a tab that is already ordinary is a
+    /// no-op, and a tab that is not open is refused with a reason.
+    pub(super) fn promote_editor_tab(&mut self, tab_id: &str) -> bool {
+        let Some(tab) = self
+            .snapshot
+            .editor
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == tab_id)
+        else {
+            self.set_error(
+                "editor.keep_open_unknown_tab",
+                format!("Editor tab {tab_id} is not open"),
+                false,
+            );
+            return true;
+        };
+        if !tab.preview {
+            return false;
+        }
+        tab.preview = false;
+        self.push_diagnostic("editor.preview_promoted", format!("Tab {tab_id} kept open"));
+        self.rebuild_tab_strips();
+        true
     }
 
     pub(super) fn focus_editor_tab_context(&mut self, tab_id: &str) -> Result<(), String> {
@@ -361,9 +482,17 @@ impl Runtime {
         Ok(())
     }
 
-    pub(super) fn open_file_tab(&mut self, workspace_id: &str, checkout_id: &str, path: &str) {
+    pub(super) fn open_file_tab(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        preview: bool,
+    ) {
         match self.prepare_file_tab(workspace_id, checkout_id, path) {
-            Ok(prepared) => self.show_file_tab(prepared, workspace_id, checkout_id, path),
+            Ok(prepared) => self.show_file_tab(prepared, workspace_id, checkout_id, path, preview),
+            // The read failed before anything moved, so an existing preview
+            // tab keeps its slot (B15).
             Err(message) => self.set_error("file.open_failed", message, true),
         }
     }
@@ -384,9 +513,14 @@ impl Runtime {
         checkout_id: &str,
         path: &str,
         committed: bool,
+        preview: bool,
     ) {
         let tab_id = Self::diff_tab_id(workspace_id, checkout_id, path, committed);
-        if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+        if self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+            if !preview {
+                self.promote_editor_tab(&tab_id);
+            }
+        } else {
             let name = Path::new(path)
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -397,7 +531,7 @@ impl Runtime {
             } else {
                 "working diff"
             };
-            self.snapshot.editor.tabs.push(EditorTabSnapshot {
+            self.place_editor_tab(EditorTabSnapshot {
                 id: tab_id.clone(),
                 workspace_id: workspace_id.to_owned(),
                 checkout_id: checkout_id.to_owned(),
@@ -408,8 +542,8 @@ impl Runtime {
                 markdown_preview: true,
                 wrap: false,
                 dirty: false,
+                preview,
             });
-            self.rebuild_tab_strips();
         }
         if let Err(message) = self.activate_editor_tab(&tab_id) {
             self.set_error("diff.focus_failed", message, false);
@@ -496,7 +630,7 @@ impl Runtime {
             return true;
         };
         let was_active = self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id);
-        let closed_tab = self.snapshot.editor.tabs.remove(index);
+        let closed_tab = self.retire_editor_tab(index);
         if closed_tab.kind == EditorTabKind::File {
             let key = self.next_recent_closed_key();
             let checkout_path = self
@@ -518,15 +652,7 @@ impl Runtime {
             });
         }
         self.rebuild_tab_strips();
-        self.editor_documents.remove(tab_id);
-        self.editor_tab_history.retain(|known| known != tab_id);
         if was_active {
-            self.snapshot.editor.active_tab_id = None;
-            self.snapshot.editor.document = None;
-            if closed_tab.kind == EditorTabKind::Diff {
-                self.snapshot.changes.selected_path = None;
-                self.snapshot.changes.diff = None;
-            }
             while let Some(previous_id) = self.editor_tab_history.pop() {
                 if self
                     .snapshot
@@ -1997,7 +2123,7 @@ impl Runtime {
                                 tab_id: tab_id.clone(),
                                 document,
                             };
-                            self.show_file_tab(prepared, workspace_id, checkout_id, path);
+                            self.show_file_tab(prepared, workspace_id, checkout_id, path, false);
                             if let Err(message) = self.focus_editor_tab_context(&tab_id) {
                                 self.set_reopen_notices(vec![live::ReopenNotice {
                                 pane_id: None,

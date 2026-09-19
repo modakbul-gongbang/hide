@@ -1891,7 +1891,9 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
-    func openFile(_ url: URL) {
+    /// `preview` is the Explorer single click; Cmd+P, a double-click and every
+    /// other caller open an ordinary tab (PRD editor-preview-tab D-09).
+    func openFile(_ url: URL, preview: Bool = false) {
         guard !isRemoteContext,
               let workspace = focusedWorkspace,
               let checkout = focusedCheckout
@@ -1899,8 +1901,23 @@ final class ShellModel: ObservableObject {
             interactionNotice = "Select a local workspace before opening a file."
             return
         }
-        core.openFile(url, workspaceID: workspace.id, checkoutID: checkout.id)
+        core.openFile(url, workspaceID: workspace.id, checkoutID: checkout.id, preview: preview)
         interactionNotice = nil
+    }
+
+    /// Keep Open from the menu: the active editor tab, if it is a preview,
+    /// becomes an ordinary tab. With no editor tab active there is nothing
+    /// to keep, and the menu item is a no-op rather than a notice.
+    func keepActiveEditorTabOpen() {
+        guard let tabID = core.snapshot?.editor.activeTabID else { return }
+        core.keepFileTabOpen(tabID)
+    }
+
+    /// A double-click on a strip title. A Herdr tab has no preview state, so
+    /// only an editor entry sends anything.
+    func keepUnifiedTabOpen(_ item: ShellTabItem) {
+        guard case .editor(let tab) = item.kind, item.preview else { return }
+        core.keepFileTabOpen(tab.id)
     }
 
     func focusEditorTab(_ tab: CoreEditorTabSnapshot) {
@@ -2107,8 +2124,8 @@ final class ShellModel: ObservableObject {
         core.snapshot?.changes ?? .empty
     }
 
-    func selectChangedFile(_ path: String?, committed: Bool = false) {
-        core.selectChangedFile(path: path, committed: committed)
+    func selectChangedFile(_ path: String?, committed: Bool = false, preview: Bool = false) {
+        core.selectChangedFile(path: path, committed: committed, preview: preview)
     }
 
     /// What the summary card shows beyond the checkout row's own facts.

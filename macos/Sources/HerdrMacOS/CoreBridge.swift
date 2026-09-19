@@ -859,16 +859,25 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func openFile(_ url: URL, workspaceID: String, checkoutID: String) {
+    /// `preview` asks for the checkout's replaceable preview tab, which is
+    /// what an Explorer single click means; every other entry point opens an
+    /// ordinary tab. The core decides replacement and promotion.
+    func openFile(_ url: URL, workspaceID: String, checkoutID: String, preview: Bool = false) {
         dispatch(kind: "file_open", payload: [
             "path": url.path,
             "workspace_id": workspaceID,
             "checkout_id": checkoutID,
+            "preview": preview,
         ])
     }
 
     func focusFileTab(_ tabID: String) {
         dispatch(kind: "file_focus", payload: ["tab_id": tabID])
+    }
+
+    /// Keep Open: the preview tab becomes an ordinary tab in the same slot.
+    func keepFileTabOpen(_ tabID: String) {
+        dispatch(kind: "file_keep_open", payload: ["tab_id": tabID])
     }
 
     /// The explorer's five filesystem changes. Each is one event: the core
@@ -1034,12 +1043,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     /// Selects the changed file whose diff the changes view shows, or clears
     /// the selection when `path` is nil.
-    func selectChangedFile(path: String?, committed: Bool = false) {
+    func selectChangedFile(path: String?, committed: Bool = false, preview: Bool = false) {
         dispatch(
             kind: "changes_select",
             payload: [
                 "path": path.map { $0 as Any } ?? NSNull(),
                 "committed": committed,
+                "preview": preview,
             ]
         )
     }

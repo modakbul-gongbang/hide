@@ -29,6 +29,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
     case search
     case openFile = "open_file"
     case closeTab = "close_tab"
+    case keepOpen = "keep_open"
     case reopenClosedTab = "reopen_closed_tab"
     case toggleLeftSidebar = "toggle_left_sidebar"
     case toggleSidebarView = "toggle_sidebar_view"
@@ -63,6 +64,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .search: "Search"
         case .openFile: "Open File"
         case .closeTab: "Close Tab"
+        case .keepOpen: "Keep Open"
         case .reopenClosedTab: "Reopen Closed Tab"
         case .toggleLeftSidebar: "Toggle Left Sidebar"
         case .toggleSidebarView: "Toggle Sidebar View"
@@ -83,6 +85,7 @@ enum ShellMenuCommand: String, CaseIterable, Identifiable, Sendable {
         case .search: PaneShortcut(key: "k", modifiers: [.command])
         case .openFile: PaneShortcut(key: "p", modifiers: [.command])
         case .closeTab: PaneShortcut(key: "w", modifiers: [.command])
+        case .keepOpen: PaneShortcut(key: "k", modifiers: [.command, .shift])
         case .reopenClosedTab: PaneShortcut(key: "t", modifiers: [.command, .shift])
         case .toggleLeftSidebar: PaneShortcut(key: "b", modifiers: [.command])
         case .toggleSidebarView: PaneShortcut(key: "e", modifiers: [.command])

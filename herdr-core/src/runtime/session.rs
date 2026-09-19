@@ -467,6 +467,11 @@ impl Runtime {
             self.pending_tab_move.remove(&payload.checkout_id);
             self.checkout_tab_order
                 .insert(payload.checkout_id.clone(), desired_ids);
+            // A preview tab the operator placed by hand is one they mean to
+            // keep (B7); the rebuild below draws the promoted slot.
+            if moved.preview {
+                self.promote_editor_tab(&moved.source_id);
+            }
             self.rebuild_tab_strips();
             return true;
         }
@@ -651,14 +656,7 @@ impl Runtime {
                     .filter(|tab| {
                         tab.workspace_id == checkout.workspace_id && tab.checkout_id == checkout.id
                     })
-                    .map(|tab| match tab.kind {
-                        EditorTabKind::File => {
-                            StripTabSnapshot::file(tab.id.clone(), tab.label.clone())
-                        }
-                        EditorTabKind::Diff => {
-                            StripTabSnapshot::diff(tab.id.clone(), tab.label.clone())
-                        }
-                    })
+                    .map(StripTabSnapshot::editor)
                     .collect::<Vec<_>>();
                 let stored = order.entry(checkout.id.clone()).or_default();
                 // A held reorder lands the moment Herdr reports the order it
@@ -2498,9 +2496,13 @@ impl Runtime {
                         .map(|(workspace, checkout)| (workspace.id.clone(), checkout.id.clone()))
                 {
                     match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
-                        Ok(prepared) => {
-                            self.show_file_tab(prepared, &workspace_id, &checkout_id, &destination)
-                        }
+                        Ok(prepared) => self.show_file_tab(
+                            prepared,
+                            &workspace_id,
+                            &checkout_id,
+                            &destination,
+                            false,
+                        ),
                         Err(message) => {
                             if let Some(slot) = self.snapshot.explorer_operation.as_mut() {
                                 slot.message = Some(message.clone());
@@ -2925,11 +2927,14 @@ impl Runtime {
         }
         self.snapshot.ui_state.selected_path = Some(payload.path.clone());
         if let Some(prepared) = prepared {
+            // A revealed path was named on purpose: a terminal link or a
+            // Markdown link opens an ordinary tab, not the preview (D-09).
             self.show_file_tab(
                 prepared,
                 &payload.workspace_id,
                 &payload.checkout_id,
                 &payload.path,
+                false,
             );
         }
         self.push_diagnostic(
