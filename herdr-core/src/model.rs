@@ -1029,13 +1029,39 @@ pub enum EditorTabKind {
     Diff,
 }
 
+/// What kind of document an open file is, decided once by the core when the
+/// file is read (`files::open`) and drawn by the shell as one view per kind.
+/// Adding a kind is one variant here and one case in the shell's switch;
+/// nothing else in the shell inspects extensions or bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentKind {
+    Text,
+    Markdown,
+    Image,
+    Pdf,
+    /// Not UTF-8 and not a kind the shell can draw on its own.
+    Binary,
+}
+
+impl DocumentKind {
+    /// Only text-backed kinds take a draft; the others never carry
+    /// `contents_utf8`, so an edit has nothing to apply to.
+    pub fn is_editable(self) -> bool {
+        matches!(self, Self::Text | Self::Markdown)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorDocumentSnapshot {
     pub path: String,
     pub language: Option<String>,
+    pub document_kind: DocumentKind,
     pub contents_utf8: Option<String>,
     pub opened_modified_at_unix_ms: Option<u64>,
     pub dirty: bool,
+    /// Why an otherwise editable document takes no edits: its size or its
+    /// permissions. The kind, not this field, says a PDF or image is read-only.
     pub readonly_reason: Option<String>,
     pub conflict: Option<EditorConflictSnapshot>,
 }

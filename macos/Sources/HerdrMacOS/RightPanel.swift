@@ -90,7 +90,10 @@ struct RightPanel: View {
                         createDirectory: { parent, name in model.core.createDirectory(root: activeRoot, parent: parent, name: name) },
                         rename: { path, name in model.core.renamePath(root: activeRoot, path: path, name: name) },
                         move: { path, destination in model.core.movePath(root: activeRoot, path: path, destination: destination) },
-                        requestTrash: model.requestExplorerTrash
+                        requestTrash: model.requestExplorerTrash,
+                        openWithDefaultApp: model.openWithDefaultApp,
+                        openInBrowserPane: model.openInBrowserPane,
+                        browserPaneAvailability: model.browserPaneAvailability
                     )
                 )
             }
