@@ -575,7 +575,9 @@ private struct HideBrandHeader: View {
     }
 }
 
-private struct HideSectionLabel: View {
+/// A section heading with its count, shared by the sidebar's groups and
+/// Project Home's attention rail so the same group reads the same way.
+struct HideSectionLabel: View {
     let title: String
     let count: Int?
 

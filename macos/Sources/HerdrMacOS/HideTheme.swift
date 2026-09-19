@@ -352,6 +352,82 @@ enum HideTheme {
         static func laneColor(_ lane: Int) -> Color { lanes[lane % lanes.count] }
     }
 
+    /// Project Home's constellation: the project at the centre, checkouts on
+    /// a ring, agents orbiting their checkout. Geometry is in layout points
+    /// at scale 1; the view fits the map to the canvas and never asks the
+    /// layout to move a node for a window size (DESIGN.md, Project Home).
+    enum Home {
+        static let railWidth: CGFloat = 232
+        static let headerHeight: CGFloat = 44
+        static let canvasInset: CGFloat = 32
+        /// The map is fitted to its canvas: grown up to this to fill a large
+        /// one, shrunk without a floor for a small one. Nodes, rings and
+        /// labels all scale with it.
+        static let maxScale: CGFloat = 1.8
+        /// Labels shrink with the map only down to this.
+        static let labelMinFontScale: CGFloat = 0.85
+        /// Labels are laid out clear of each other down to this scale; below
+        /// it the type has stopped shrinking and a label can cross what the
+        /// layout cleared, so it sits on a plate.
+        static let labelClearScale: CGFloat = 0.75
+        /// Below this scale only the hubs and the Needs You and Done agents
+        /// keep their labels; a Working or Seen label returns on hover or
+        /// when zoomed in.
+        static let labelThresholdScale: CGFloat = 0.55
+        /// Zoom is a multiplier over the fit, pinched or ⌘-scrolled between
+        /// these; a scroll unit turns into this much zoom.
+        static let zoomMin: CGFloat = 0.5
+        static let zoomMax: CGFloat = 4
+        static let zoomPerScrollUnit: CGFloat = 0.01
+        /// A mouse wheel reports lines, not points; one line is this far.
+        static let wheelLineHeight: CGFloat = 10
+        /// A press that moves further than this is a drag that pans.
+        static let dragThreshold: CGFloat = 3
+        /// Below this canvas width the attention rail folds away and the
+        /// header counts carry the glance alone.
+        static let railCollapseWidth: CGFloat = 640
+        static let projectNodeRadius: CGFloat = 18
+        /// A checkout grows one step per agent from the base up to the cap, so
+        /// the busiest worktree is the largest hub without dwarfing the rest.
+        static let checkoutNodeRadius: CGFloat = 14
+        static let checkoutNodeRadiusStep: CGFloat = 1
+        static let checkoutNodeRadiusMax: CGFloat = 18
+        /// Three agent sizes by recency of last activity: older than a day,
+        /// within a day, within the hour.
+        static let agentNodeRadii: [CGFloat] = [8, 9, 11]
+        static let childNodeScale: CGFloat = 0.75
+        /// A Needs You agent sits in a soft halo this many radii wide, so it
+        /// is found on the map before its label is read.
+        static let attentionHaloScale: CGFloat = 3
+        /// The checkout ring starts here and widens per checkout so twelve hubs
+        /// keep their orbits apart.
+        static let checkoutRingRadius: CGFloat = 120
+        static let checkoutRingRadiusPerCheckout: CGFloat = 16
+        static let agentOrbitRadius: CGFloat = 52
+        static let childOrbitRadius: CGFloat = 40
+        static let labelMaxWidth: CGFloat = 120
+        static let labelGap: CGFloat = 4
+        static let labelHeight: CGFloat = 14
+        /// Width estimates for label collision at the caption size: one for
+        /// Latin glyphs, one for CJK, which are wider and never truncated by
+        /// the same character count.
+        static let labelGlyphWidth: CGFloat = 5.5
+        static let labelWideGlyphWidth: CGFloat = 10
+        /// The chips under a checkout hub: changed files, ahead and behind,
+        /// pull request.
+        static let chipHeight: CGFloat = 16
+        static let chipPadding: CGFloat = 6
+        static let chipGap: CGFloat = 4
+        static let chipGlyphWidth: CGFloat = 5.5
+        static let edgeWidth: CGFloat = 1.5
+        static let haloWidth: CGFloat = 3
+        static let selectionRingInset: CGFloat = 3
+        static let cardWidth: CGFloat = 248
+        static let cardOffset: CGFloat = 14
+        static let hitMargin: CGFloat = 6
+        static let countGap: CGFloat = 12
+    }
+
     enum Layout {
         static let pullRequestPopoverWidth: CGFloat = 360
         static let relationshipListMaxHeight: CGFloat = 360

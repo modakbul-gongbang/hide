@@ -16,6 +16,14 @@ struct HideMainView: View {
                    model.core.snapshot?.editor.activeTabID != nil {
                     EditorViewerOverlay()
                 }
+                if ProjectHomeEntryPolicy.drawsOverlay(
+                    visible: model.projectHomeVisible,
+                    remote: model.isRemoteContext,
+                    hasCheckout: model.focusedCheckout != nil
+                ) {
+                    ProjectHome()
+                        .accessibilityIdentifier("project-home-overlay")
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(1)
@@ -79,6 +87,15 @@ private struct HideTabStrip: View {
             }
 
             if model.focusedWorkspace != nil {
+                HideIconButton(
+                    systemImage: "square.grid.2x2",
+                    help: "Project Home",
+                    variant: .toolbar,
+                    isSelected: model.projectHomeVisible,
+                    command: .menu(.projectHome),
+                    action: model.toggleProjectHome
+                )
+                .accessibilityIdentifier("hide-project-home-toggle")
                 HStack(spacing: HideTheme.spacingNone) {
                     ScrollViewReader { scroll in
                     ScrollView(.horizontal, showsIndicators: false) {

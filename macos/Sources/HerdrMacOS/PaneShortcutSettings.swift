@@ -400,6 +400,14 @@ enum PaneMenuPolicy {
     }
 }
 
+/// A view that answers the wheel itself and covers a terminal.
+///
+/// `PaneCommandWindow` hands a wheel to the terminal under the pointer unless
+/// something that scrolls sits above it; an `NSScrollView` says so by type, and
+/// a view that pans or zooms on the wheel without scrolling says so by adopting
+/// this. Without it the wheel reaches the terminal the view hides.
+protocol PaneWheelOwner: NSView {}
+
 enum PaneScrollPolicy {
     /// Herdr's documented terminal.scroll modifiers use crossterm's bitset.
     static func modifiers(_ flags: NSEvent.ModifierFlags) -> Int {
@@ -547,8 +555,9 @@ final class PaneCommandWindow: NSWindow {
             if let terminal = view as? TerminalView { return terminal }
             // A view that scrolls on its own keeps the wheel before any
             // terminal beneath it does. The explorer tree and the file viewer
-            // are both NSScrollView-backed and cover the pane canvas.
-            if view is NSScrollView { return nil }
+            // are both NSScrollView-backed and cover the pane canvas; the
+            // Project Home map pans and zooms on the wheel and says so.
+            if view is NSScrollView || view is PaneWheelOwner { return nil }
             candidate = view.superview
         }
         // `hitTest` landed on something that neither scrolls nor belongs to a
