@@ -13,12 +13,28 @@ enum HideTheme {
         return font
     }()
 
-    @MainActor static func font(size: CGFloat, weight: SwiftUI.Font.Weight, design: SwiftUI.Font.Design) -> SwiftUI.Font {
-        if design == .monospaced { return .system(size: size, weight: weight, design: .monospaced) }
-        return SwiftUI.Font(nativeFont(size: size, weight: weight))
+    @MainActor static func font(
+        size: CGFloat,
+        weight: SwiftUI.Font.Weight,
+        design: SwiftUI.Font.Design,
+        italic: Bool = false
+    ) -> SwiftUI.Font {
+        if design == .monospaced {
+            let system = SwiftUI.Font.system(size: size, weight: weight, design: .monospaced)
+            return italic ? system.italic() : system
+        }
+        return SwiftUI.Font(nativeFont(size: size, weight: weight, italic: italic))
     }
 
-    @MainActor static func nativeFont(size: CGFloat, weight: SwiftUI.Font.Weight = .regular) -> NSFont {
+    /// The bundled Inter face carries weight and optical-size axes and no
+    /// italic, so the italic variant is the same face slanted by
+    /// `Typography.previewSlant` through the font matrix rather than a
+    /// second font file. Every italic chrome label takes it from here.
+    @MainActor static func nativeFont(
+        size: CGFloat,
+        weight: SwiftUI.Font.Weight = .regular,
+        italic: Bool = false
+    ) -> NSFont {
         let numericWeight: Double = switch weight {
         case .ultraLight: 100
         case .thin: 200
@@ -35,7 +51,13 @@ enum HideTheme {
                 kCTFontFeatureSelectorIdentifierKey: kStylisticAltThreeOnSelector]],
             kCTFontVariationAttribute: [NSNumber(value: 0x77676874): numericWeight],
         ] as CFDictionary)
-        return CTFontCreateWithGraphicsFont(inter, size, nil, descriptor) as NSFont
+        guard italic else {
+            return CTFontCreateWithGraphicsFont(inter, size, nil, descriptor) as NSFont
+        }
+        var matrix = CGAffineTransform(
+            a: 1, b: 0, c: tan(Typography.previewSlant * .pi / 180), d: 1, tx: 0, ty: 0
+        )
+        return CTFontCreateWithGraphicsFont(inter, size, &matrix, descriptor) as NSFont
     }
     /// The excluded pet dashboard retains its existing appearance (N2).
     /// These are active surface tokens, not a second copy of its components.
@@ -81,6 +103,10 @@ enum HideTheme {
         static let title: CGFloat = 13
         static let headline: CGFloat = 17
         static let display: CGFloat = 30
+        /// The italic variant of the chrome face, as the oblique angle in
+        /// degrees the font matrix applies. A preview tab's title is the one
+        /// place the strip draws it (PRD editor-preview-tab D-06).
+        static let previewSlant: CGFloat = 12
     }
     enum Editor {
         static let contentInset = spacingMD

@@ -11487,7 +11487,7 @@
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 24273,
+      "width": 25841,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -13956,8 +13956,631 @@
     },
     {
       "type": "frame",
-      "id": "arb009",
+      "id": "pvt-board",
       "x": 1320,
+      "y": 0,
+      "name": "Screen / Workbench / Preview tab",
+      "width": 1488,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-xl",
+      "children": [
+        {
+          "type": "text",
+          "id": "pvt-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "Preview tab",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "text",
+          "id": "pvt-spec",
+          "name": "Spec",
+          "fill": "$--color-secondary",
+          "content": "One click in Explorer or Changes opens the file or diff in the checkout's one preview slot: the title is drawn in the theme's italic variant (--text-preview-slant, an oblique of the same Inter face; pen substitutes the family's own italic) and the tooltip and accessibility label read \"name · Preview\". The next single click replaces the slot in place. Double-click on the Explorer row or the title, the first edit, Keep Open (⇧⌘K) or a drag promotes the tab: the same slot, the title upright, nothing else changes. Colours, the close button and the keycap are the tab's ordinary ones (B17). A dirty preview is never replaced: it is promoted where it sits and the new preview opens beside it (B8).",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "pvt-preview",
+          "name": "State / Preview",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pvt-preview-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Preview",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pvt-preview-strip",
+              "name": "Work tab strip",
+              "width": "fill_container",
+              "height": 32,
+              "fill": "$--color-panel",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pvt-p-work",
+                  "name": "Tab 작업",
+                  "width": 180,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "gap": "$--spacing-sm",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm",
+                    "$--spacing-none",
+                    "$--spacing-md"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": {
+                    "right": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pvt-p-work-icon",
+                      "name": "Type icon",
+                      "library": "lucide",
+                      "icon": "columns-2",
+                      "width": 14,
+                      "height": 14,
+                      "fill": "$--color-secondary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pvt-p-work-label",
+                      "name": "Tab label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "작업",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "id": "pvt-p-work-close",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Close tab",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "x"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pvt-p-readme",
+                  "name": "Tab README.md preview",
+                  "width": 180,
+                  "height": 32,
+                  "fill": "$--color-elevated",
+                  "gap": "$--spacing-sm",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm",
+                    "$--spacing-none",
+                    "$--spacing-md"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": {
+                    "right": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pvt-p-readme-icon",
+                      "name": "Type icon",
+                      "library": "lucide",
+                      "icon": "file-text",
+                      "width": 14,
+                      "height": 14,
+                      "fill": "$--color-primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pvt-p-readme-label",
+                      "name": "Tab label",
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "README.md",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "600",
+                      "fontStyle": "$--font-style-preview"
+                    },
+                    {
+                      "id": "pvt-p-readme-close",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Close tab",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "x"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pvt-preview-strip-space",
+                  "name": "Tab elastic space",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "id": "pvt-preview-strip-new",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "New tab",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "plus"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "pvt-preview-note",
+              "name": "State note",
+              "fill": "$--color-secondary",
+              "content": "Single click on README.md: a new tab at the end of the strip, active, italic title.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pvt-promoted",
+          "name": "State / Promoted",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pvt-promoted-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Promoted",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pvt-promoted-strip",
+              "name": "Work tab strip",
+              "width": "fill_container",
+              "height": 32,
+              "fill": "$--color-panel",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pvt-k-work",
+                  "name": "Tab 작업",
+                  "width": 180,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "gap": "$--spacing-sm",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm",
+                    "$--spacing-none",
+                    "$--spacing-md"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": {
+                    "right": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pvt-k-work-icon",
+                      "name": "Type icon",
+                      "library": "lucide",
+                      "icon": "columns-2",
+                      "width": 14,
+                      "height": 14,
+                      "fill": "$--color-secondary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pvt-k-work-label",
+                      "name": "Tab label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "작업",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "id": "pvt-k-work-close",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Close tab",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "x"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pvt-k-readme",
+                  "name": "Tab README.md",
+                  "width": 180,
+                  "height": 32,
+                  "fill": "$--color-elevated",
+                  "gap": "$--spacing-sm",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm",
+                    "$--spacing-none",
+                    "$--spacing-md"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": {
+                    "right": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pvt-k-readme-icon",
+                      "name": "Type icon",
+                      "library": "lucide",
+                      "icon": "file-text",
+                      "width": 14,
+                      "height": 14,
+                      "fill": "$--color-primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pvt-k-readme-label",
+                      "name": "Tab label",
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "README.md",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "id": "pvt-k-readme-close",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Close tab",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "x"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pvt-promoted-strip-space",
+                  "name": "Tab elastic space",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "id": "pvt-promoted-strip-new",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "New tab",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "plus"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "pvt-promoted-note",
+              "name": "State note",
+              "fill": "$--color-secondary",
+              "content": "Double-click, edit, Keep Open or drag: the title turns upright in the same slot.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pvt-dirty",
+          "name": "State / Dirty preview kept",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pvt-dirty-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Dirty preview kept",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pvt-dirty-strip",
+              "name": "Work tab strip",
+              "width": "fill_container",
+              "height": 32,
+              "fill": "$--color-panel",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pvt-d-work",
+                  "name": "Tab 작업",
+                  "width": 180,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "gap": "$--spacing-sm",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm",
+                    "$--spacing-none",
+                    "$--spacing-md"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": {
+                    "right": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pvt-d-work-icon",
+                      "name": "Type icon",
+                      "library": "lucide",
+                      "icon": "columns-2",
+                      "width": 14,
+                      "height": 14,
+                      "fill": "$--color-secondary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pvt-d-work-label",
+                      "name": "Tab label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "작업",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "id": "pvt-d-work-close",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Close tab",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "x"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pvt-d-readme",
+                  "name": "Tab README.md dirty",
+                  "width": 180,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "gap": "$--spacing-sm",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm",
+                    "$--spacing-none",
+                    "$--spacing-md"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": {
+                    "right": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pvt-d-readme-icon",
+                      "name": "Type icon",
+                      "library": "lucide",
+                      "icon": "file-text",
+                      "width": 14,
+                      "height": 14,
+                      "fill": "$--color-secondary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pvt-d-readme-label",
+                      "name": "Tab label",
+                      "fill": "$--color-secondary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "README.md",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "pvt-d-readme-dirty",
+                      "name": "Dirty dot 5",
+                      "width": 5,
+                      "height": 5,
+                      "fill": "$--color-secondary"
+                    },
+                    {
+                      "id": "pvt-d-readme-close",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Close tab",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "x"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pvt-d-notes",
+                  "name": "Tab notes.md preview",
+                  "width": 180,
+                  "height": 32,
+                  "fill": "$--color-elevated",
+                  "gap": "$--spacing-sm",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm",
+                    "$--spacing-none",
+                    "$--spacing-md"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": {
+                    "right": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pvt-d-notes-icon",
+                      "name": "Type icon",
+                      "library": "lucide",
+                      "icon": "file-text",
+                      "width": 14,
+                      "height": 14,
+                      "fill": "$--color-primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pvt-d-notes-label",
+                      "name": "Tab label",
+                      "fill": "$--color-primary",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "notes.md",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "600",
+                      "fontStyle": "$--font-style-preview"
+                    },
+                    {
+                      "id": "pvt-d-notes-close",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Close tab",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "x"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "pvt-dirty-strip-space",
+                  "name": "Tab elastic space",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "id": "pvt-dirty-strip-new",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "New tab",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "plus"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "pvt-dirty-note",
+              "name": "State note",
+              "fill": "$--color-secondary",
+              "content": "README.md was edited (promoted, dirty mark) when notes.md was clicked: notes.md opens as the new preview beside it.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "arb009",
+      "x": 2888,
       "y": 0,
       "name": "Screen / Sidebar / Agent row states",
       "clip": false,
@@ -14399,7 +15022,7 @@
     {
       "type": "frame",
       "id": "arb00l",
-      "x": 2640,
+      "x": 4208,
       "y": 0,
       "name": "Screen / Pane / Header states",
       "clip": false,
@@ -15153,7 +15776,7 @@
     {
       "type": "frame",
       "id": "acv-main",
-      "x": 3960,
+      "x": 5528,
       "y": 0,
       "name": "Screen / Pane / Conversation - Main Claude working",
       "width": 760,
@@ -15546,7 +16169,7 @@
     {
       "type": "frame",
       "id": "acv-codex",
-      "x": 4800,
+      "x": 6368,
       "y": 0,
       "name": "Screen / Pane / Conversation - Codex idle",
       "width": 760,
@@ -15862,7 +16485,7 @@
     {
       "type": "frame",
       "id": "acv-terminal",
-      "x": 5640,
+      "x": 7208,
       "y": 0,
       "name": "Screen / Pane / Conversation - Terminal baseline",
       "width": 760,
@@ -16054,7 +16677,7 @@
     {
       "type": "frame",
       "id": "acv-needs-you",
-      "x": 6480,
+      "x": 8048,
       "y": 0,
       "name": "Screen / Pane / Conversation - Needs You fallback",
       "width": 760,
@@ -16271,7 +16894,7 @@
     {
       "type": "frame",
       "id": "acv-empty",
-      "x": 7320,
+      "x": 8888,
       "y": 0,
       "name": "Screen / Pane / Conversation - Empty",
       "width": 760,
@@ -16447,7 +17070,7 @@
     {
       "type": "frame",
       "id": "acv-failed",
-      "x": 8160,
+      "x": 9728,
       "y": 0,
       "name": "Screen / Pane / Conversation - Failed",
       "width": 760,
@@ -17036,7 +17659,7 @@
           "padding": "$--spacing-lg"
         }
       ],
-      "x": 9000,
+      "x": 10568,
       "y": 0
     },
     {
@@ -17454,13 +18077,13 @@
           ]
         }
       ],
-      "x": 10920,
+      "x": 12488,
       "y": 0
     },
     {
       "type": "frame",
       "id": "Snwg0",
-      "x": 12096,
+      "x": 13664,
       "y": 0,
       "name": "Screen / Agents / My Work status groups",
       "width": 1488,
@@ -17828,7 +18451,7 @@
     {
       "type": "frame",
       "id": "Vmhg4",
-      "x": 13664,
+      "x": 15232,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -19592,7 +20215,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 14036,
+      "x": 15604,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -21070,7 +21693,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 14471,
+      "x": 16039,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -24429,7 +25052,7 @@
     {
       "type": "frame",
       "id": "eXxKb",
-      "x": 14906,
+      "x": 16474,
       "y": 0,
       "name": "Screen / Pane / Relationship modal",
       "width": 1488,
@@ -24645,7 +25268,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 16474,
+      "x": 18042,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -26269,7 +26892,7 @@
     {
       "type": "frame",
       "id": "c3Lf5",
-      "x": 16909,
+      "x": 18477,
       "y": 0,
       "name": "Screen / Overview / Project task forest",
       "width": 520,
@@ -27087,7 +27710,7 @@
     {
       "type": "frame",
       "id": "AZvEA",
-      "x": 17509,
+      "x": 19077,
       "y": 0,
       "name": "Screen / Overview / Inspect without moving",
       "width": 900,
@@ -27184,7 +27807,7 @@
     {
       "type": "frame",
       "id": "wzrRI",
-      "x": 18489,
+      "x": 20057,
       "y": 0,
       "name": "Screen / Workbench / Parent",
       "width": 1488,
@@ -28517,7 +29140,7 @@
     {
       "type": "frame",
       "id": "IhnIO",
-      "x": 20057,
+      "x": 21625,
       "y": 0,
       "name": "Screen / Workbench / Delegated child tab",
       "width": 1488,
@@ -28664,7 +29287,7 @@
     {
       "type": "frame",
       "id": "m5T3n1",
-      "x": 21625,
+      "x": 23193,
       "y": 0,
       "name": "Screen / Overview / Availability states",
       "width": 1080,
@@ -29112,7 +29735,7 @@
     {
       "type": "frame",
       "id": "n2oTPf",
-      "x": 22785,
+      "x": 24353,
       "y": 0,
       "name": "Screen / Explorer / Git in workbench",
       "width": 1488,
@@ -30137,6 +30760,14 @@
     "--size-device-test-stage-col": {
       "type": "number",
       "value": 64
+    },
+    "--font-style-preview": {
+      "type": "string",
+      "value": "italic"
+    },
+    "--text-preview-slant": {
+      "type": "number",
+      "value": 12
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"
