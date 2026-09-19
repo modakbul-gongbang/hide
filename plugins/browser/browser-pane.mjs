@@ -39,7 +39,10 @@ export function parseOpen(args, environment) {
   if (sources.length !== 1) throw new Error('Choose exactly one of --url, --session or --target-id.');
   if (options.url) {
     const url = new URL(options.url);
-    if (!['http:', 'https:'].includes(url.protocol) && options.url !== 'about:blank') throw new Error('Only http(s) URLs and about:blank can be opened.');
+    // A file URL is how Hide's Explorer shows a local document in a pane; it
+    // names a path, never a host, so one with a host is refused with the rest.
+    const localFile = url.protocol === 'file:' && !url.host && url.pathname.startsWith('/');
+    if (!['http:', 'https:'].includes(url.protocol) && !localFile && options.url !== 'about:blank') throw new Error('Only http(s) URLs, file URLs and about:blank can be opened.');
   }
   if (options.session) identifier(options.session, 'session');
   if (options['target-id']) identifier(options['target-id'], 'target-id');
@@ -316,19 +319,34 @@ async function maintainLease(environment) {
   }
 }
 
+// The managed profiles this host accepts, with whether each is running. A
+// profile is running while chromux keeps its `.state` file, and the file's
+// modification time is when that profile last (re)started, which is what a
+// caller choosing "the most recently used running profile" orders by.
+// `profiles` stays the plain name list an agent already reads; the detail
+// rides beside it under `entries`.
+export async function listProfiles(environment) {
+  const root = path.join(environment.CHROMUX_HOME, 'profiles');
+  const directories = await readdir(root, { withFileTypes: true });
+  const entries = [];
+  for (const entry of directories) {
+    if (!entry.isDirectory() || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(entry.name) || entry.name === 'live' || entry.name.startsWith('external-')) continue;
+    const state = await stat(path.join(root, entry.name, '.state')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+    entries.push({ name: entry.name, running: state !== null, state_modified_at: state ? state.mtime.toISOString() : null });
+  }
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+  return { profiles: entries.map(entry => entry.name), entries };
+}
+
 async function main(args) {
   const environment = readEnvironment();
   switch (args[0]) {
     case 'host': await host(environment); break;
     case 'lease': await maintainLease(environment); break;
     case 'open': console.log(JSON.stringify(await openPane(parseOpen(args.slice(1), environment), environment), null, 2)); break;
-    case 'profiles': {
-      const entries = await readdir(path.join(environment.CHROMUX_HOME, 'profiles'), { withFileTypes: true });
-      console.log(JSON.stringify({ profiles: entries.filter(entry => entry.isDirectory() && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(entry.name) && entry.name !== 'live' && !entry.name.startsWith('external-')).map(entry => entry.name) }));
-      break;
-    }
+    case 'profiles': console.log(JSON.stringify(await listProfiles(environment))); break;
     case 'help': case undefined:
-      console.log('node browser-pane.mjs open --profile NAME [--target-pane ID] (--url URL | --session NAME | --target-id ID) [--placement split|tab] [--direction right|down] [--key ID]\nnode browser-pane.mjs profiles\nRepeated identical requests reuse the pane without navigating or focusing it.');
+      console.log('node browser-pane.mjs open --profile NAME [--target-pane ID] (--url URL | --session NAME | --target-id ID) [--placement split|tab] [--direction right|down] [--key ID]\nnode browser-pane.mjs profiles   (names, and per profile whether it is running and when its state last changed)\nRepeated identical requests reuse the pane without navigating or focusing it.');
       break;
     default: throw new Error('Unknown command. Run browser-pane.mjs help.');
   }

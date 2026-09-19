@@ -243,6 +243,7 @@ struct RightPanelPresentationTests {
             "document": {
                 "path": "/repo/README.md",
                 "language": "markdown",
+                "document_kind": "text",
                 "contents_utf8": "draft",
                 "opened_modified_at_unix_ms": 1,
                 "dirty": true,
