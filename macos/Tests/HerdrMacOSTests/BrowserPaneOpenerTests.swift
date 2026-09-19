@@ -8,7 +8,7 @@ struct BrowserPaneOpenerTests {
         node: URL(fileURLWithPath: "/opt/node/bin/node"),
         script: URL(fileURLWithPath: "/Applications/hide.app/Contents/Resources/browser-pane/browser-pane.mjs")
     )
-    private let file = URL(fileURLWithPath: "/Users/me/repo/docs/한글 index.html")
+    private let file = URL(fileURLWithPath: "/Users/example/repo/docs/한글 index.html")
 
     private func profiles(_ entries: String) -> String {
         #"{"profiles":[],"entries":[\#(entries)]}"#
@@ -32,8 +32,8 @@ struct BrowserPaneOpenerTests {
     /// D-07: the key is the file's, within the host's identifier rule.
     @Test func theBindingKeyFollowsTheFileAndFitsTheHostsIdentifierRule() {
         let key = BrowserPaneOpener.bindingKey(for: file)
-        #expect(key == BrowserPaneOpener.bindingKey(for: URL(fileURLWithPath: "/Users/me/repo/docs/../docs/한글 index.html")))
-        #expect(key != BrowserPaneOpener.bindingKey(for: URL(fileURLWithPath: "/Users/me/repo/docs/other.html")))
+        #expect(key == BrowserPaneOpener.bindingKey(for: URL(fileURLWithPath: "/Users/example/repo/docs/../docs/한글 index.html")))
+        #expect(key != BrowserPaneOpener.bindingKey(for: URL(fileURLWithPath: "/Users/example/repo/docs/other.html")))
         #expect(key.count <= 80)
         #expect(key.hasPrefix("file-"))
         #expect(key.range(of: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$", options: .regularExpression) != nil)
@@ -64,7 +64,7 @@ struct BrowserPaneOpenerTests {
         #expect(calls.allSatisfy { $0.environment["PATH"] == "/opt/node/bin" })
         #expect(calls.allSatisfy { $0.timeout > 0 && $0.timeout <= BrowserPaneOpener.deadline })
         #expect(calls[0].arguments == [host.script.path, "profiles"])
-        #expect(file.standardizedFileURL.absoluteString.hasPrefix("file:///Users/me/repo/docs/"))
+        #expect(file.standardizedFileURL.absoluteString.hasPrefix("file:///Users/example/repo/docs/"))
         #expect(file.standardizedFileURL.absoluteString.hasSuffix("%20index.html"))
         #expect(calls[1].arguments == [
             host.script.path, "open",

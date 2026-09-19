@@ -47,8 +47,8 @@ test('ambiguous, unsafe and unscoped requests fail before opening anything', () 
 });
 
 test('a local file URL opens, so the Explorer can show a document in a pane', () => {
-  const request = parseOpen(['--profile', 'work', '--url', 'file:///Users/me/repo/docs/index.html', '--key', 'file-abc'], environment);
-  assert.equal(request.url, 'file:///Users/me/repo/docs/index.html');
+  const request = parseOpen(['--profile', 'work', '--url', 'file:///Users/example/repo/docs/index.html', '--key', 'file-abc'], environment);
+  assert.equal(request.url, 'file:///Users/example/repo/docs/index.html');
   assert.equal(request.bindingID, 'file-abc');
   const encoded = parseOpen(['--profile', 'work', '--url', 'file:///tmp/a%20b/%ED%95%9C%EA%B8%80.pdf'], environment);
   assert.equal(encoded.url, 'file:///tmp/a%20b/%ED%95%9C%EA%B8%80.pdf');
