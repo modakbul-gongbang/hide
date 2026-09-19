@@ -280,8 +280,26 @@ fn session_path_falls_back_to_the_newest_file_for_the_working_directory() {
     let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Claude, "idle");
     target.cwd = Some("/Users/example".to_owned());
+    // The cwd search serves only a pane Herdr has no session for; a reported
+    // session whose file is not there yet is missing, not the neighbour's.
+    target.agent_session = None;
 
     assert_eq!(reader.session_path(&target).unwrap(), newer);
+}
+
+#[test]
+fn session_path_of_a_reported_session_without_a_file_is_missing() {
+    let root = tempdir().unwrap();
+    let project = root.path().join(".claude/projects/-Users-example");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("bbbbbbbb-0000-0000-0000-000000000000.jsonl"), "").unwrap();
+
+    let mut reader = LocalSessionReader::new(root.path());
+    let mut target = pane("w1:p1", AgentKind::Claude, "idle");
+    target.cwd = Some("/Users/example".to_owned());
+
+    let error = reader.session_path(&target).unwrap_err();
+    assert_eq!(format!("{error:#}"), "session_file_missing");
 }
 
 #[test]
@@ -307,6 +325,7 @@ fn codex_session_falls_back_through_the_recent_day_directories() {
     let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Codex, "idle");
     target.cwd = Some("/Users/example/projects/mine".to_owned());
+    target.agent_session = None;
 
     assert_eq!(reader.session_path(&target).unwrap(), mine);
 }

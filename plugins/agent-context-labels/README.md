@@ -288,7 +288,8 @@ A session's name is derived at no provider cost and settles once, so the row tha
 - Claude Code writes an `ai-title` record into its session JSONL; the last one is the name, cut to 80 characters. Until one exists the first human turn stands in, and the watcher logs `session_title_missing` once for the pane.
 - Codex has no title record, so the first human turn, whitespace-collapsed and cut to 30 characters, is the name.
 - A session with neither yields no name, and nothing is written.
-- A pane whose session Herdr has not recorded yet is not named at all: the watcher would otherwise read the newest transcript in the directory, which belongs to another pane when two agents share it.
+- A pane whose session Herdr has not recorded yet is not named at all, and neither is a pane whose recorded session has no transcript file yet (Claude Code writes it on the first turn): the watcher would otherwise read the newest transcript in the directory, which belongs to another pane when two agents share it, and the pane would carry its neighbour's name until its own first turn.
+  Until the file appears the watcher logs `raw_session_unavailable` with `session_file_missing` for the pane and publishes nothing.
 
 The name goes where the reader already looks, under one ownership rule: the plugin writes only what nobody else has written, or what it wrote itself last time.
 
