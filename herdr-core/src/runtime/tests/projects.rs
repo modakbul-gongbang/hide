@@ -910,63 +910,97 @@ fn cleanup_review_without_live_state_is_visible_and_never_deletes() {
     );
 }
 
+/// B11, D-12. `Open in History` on another checkout's header is one event:
+/// the checkout comes forward and the panel is on History afterwards, and
+/// the same event on the focused checkout only moves the section. A path
+/// the navigator does not list moves nothing and records the error.
 #[test]
-fn overview_inspection_does_not_focus_or_repeat_publish() {
-    struct CountConnections(std::sync::mpsc::Sender<()>);
-    impl hide_herdr_client::ApiConnector for CountConnections {
-        fn connect(
-            &self,
-        ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError> {
-            let _ = self.0.send(());
-            Err(hide_herdr_client::ApiError::Transport(
-                "fixture refused".into(),
-            ))
-        }
-    }
-    let mut runtime = live_runtime();
+fn overview_open_section_focuses_the_checkout_and_switches_the_panel_in_one_event() {
+    let mut runtime = runtime();
     runtime.ingest_session(Ok(context_payload()));
-    let mut target = runtime.snapshot.navigator.workspaces[1].checkouts[0].clone();
-    target.workspace_id = runtime.snapshot.navigator.workspaces[0].id.clone();
-    runtime.snapshot.navigator.workspaces[0]
-        .checkouts
-        .push(target.clone());
-    let project = runtime.snapshot.navigator.workspaces[0].clone();
-    runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+    let alpha = runtime.snapshot.navigator.workspaces[1].clone();
+    let zeta = runtime.snapshot.navigator.workspaces[0].clone();
+    runtime.focus_checkout(&zeta.id, &zeta.checkouts[0].id);
+    runtime.snapshot.ui_state.right_panel_visible = false;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Overview;
+    let event = |path: &str, section: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "overview_open_section",
+            "payload": {"checkout_path": path, "section": section}
+        }))
+        .unwrap()
+    };
+    assert!(runtime.dispatch_json(&event(&alpha.checkouts[0].path, "changes")));
+    assert_eq!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(alpha.checkouts[0].id.as_str())
+    );
+    assert!(runtime.snapshot.ui_state.right_panel_visible);
+    assert_eq!(
+        runtime.snapshot.ui_state.right_panel_section,
+        RightPanelSection::Changes
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+
     let focused = runtime.snapshot.focused.clone();
     let navigator = runtime.snapshot.navigator.clone();
     let ui = runtime.snapshot.ui_state.clone();
-    let (send, receive) = std::sync::mpsc::channel();
-    runtime.live.as_mut().unwrap().api_connector = Arc::new(CountConnections(send));
-    let event = serde_json::to_vec(&serde_json::json!({
-        "schema_version": 2, "kind": "overview_select", "payload": {"checkout_path": target.path}
-    }))
-    .unwrap();
-    runtime.dispatch_json(&event);
+    assert!(runtime.dispatch_json(&event("/tmp/hide-context-nowhere", "changes")));
     assert_eq!(
-        runtime.snapshot.card.inspected_checkout_path,
-        Some(target.path)
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("overview.unknown_checkout")
     );
     assert_eq!(runtime.snapshot.focused, focused);
     assert_eq!(runtime.snapshot.navigator, navigator);
     assert_eq!(runtime.snapshot.ui_state, ui);
-    assert!(
-        !runtime.dispatch_json(&event),
-        "Repeating an inspection has no effects"
+}
+
+/// B13, D-11. `New agent here` is one task operation in the slot the
+/// worktree sheet uses: the provider rides on it for the shell to start,
+/// a provider Hide has no launcher for is refused before anything is
+/// requested, and without a live Herdr the operation fails in place rather
+/// than hanging in `working`.
+#[test]
+fn agent_start_in_checkout_reports_through_the_task_operation_slot() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let checkout = runtime.snapshot.navigator.workspaces[0].checkouts[0].clone();
+    let event = |path: &str, provider: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "agent_start_in_checkout",
+            "payload": {"checkout_path": path, "provider": provider}
+        }))
+        .unwrap()
+    };
+    assert!(runtime.dispatch_json(&event(&checkout.path, "gemini")));
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("agent_start.unknown_provider")
     );
+    assert!(runtime.snapshot.task_operation.is_none());
+
+    assert!(runtime.dispatch_json(&event(&checkout.path, "claude")));
+    let operation = runtime.snapshot.task_operation.clone().expect("operation");
+    assert_eq!(operation.kind, "agent_start");
+    assert_eq!(operation.agent_kind.as_deref(), Some("claude"));
+    assert_eq!(operation.phase, "failed");
     assert!(
-        receive
-            .recv_timeout(std::time::Duration::from_millis(30))
-            .is_err(),
-        "Inspection sent a Herdr request"
+        operation
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("live Herdr connection"))
     );
-    let pane = &target.tabs[0].panes[0].id;
-    runtime.dispatch_json(&operator_focus_event(pane));
-    assert!(
-        receive
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .is_ok(),
-        "Explicit Open must notify Herdr"
-    );
+    assert_eq!(operation.pane_id, None);
 }
 
 #[test]

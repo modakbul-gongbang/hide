@@ -159,6 +159,70 @@ pub fn spawn_worktree_create(
         .map_err(|error| format!("worktree create worker could not be started: {error}"))
 }
 
+/// `New agent here`: one new tab whose cwd is the checkout, in the Herdr
+/// workspace that already holds the checkout's panes, or a new workspace on
+/// the checkout when Herdr holds none (Herdr drops a workspace with its last
+/// pane, so a listed checkout can have no workspace behind it). The result
+/// lands in the same task operation slot the worktree sheet uses, and the
+/// shell starts the provider in the returned pane exactly as it does there.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckoutTabRequest {
+    pub id: u64,
+    pub checkout_path: String,
+    pub label: String,
+    /// The Herdr workspace to open the tab in; `None` creates a workspace.
+    pub session_workspace_id: Option<String>,
+}
+
+pub fn spawn_checkout_tab_create(
+    context: LiveContext,
+    request: CheckoutTabRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-checkout-tab-create".into())
+        .spawn(move || {
+            let result = create_checkout_tab(context.api_connector.as_ref(), &request);
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_task_operation_result(request.id, result);
+                } else {
+                    return;
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("checkout tab worker could not be started: {error}"))
+}
+
+fn create_checkout_tab(
+    connector: &dyn ApiConnector,
+    request: &CheckoutTabRequest,
+) -> Result<WorktreeTaskOutcome, String> {
+    let pane_id = match &request.session_workspace_id {
+        Some(workspace_id) => {
+            let result = control_request(
+                connector,
+                "tab.create",
+                wire::tab_create_params(workspace_id, &request.checkout_path, &request.label)?,
+            )?;
+            wire::created_tab(result)?.1
+        }
+        None => {
+            let result = control_request(
+                connector,
+                "workspace.create",
+                wire::workspace_create_params(&request.checkout_path, &request.label)?,
+            )?;
+            wire::created_workspace_pane(result)?
+        }
+    };
+    Ok(WorktreeTaskOutcome {
+        path: request.checkout_path.clone(),
+        pane_id,
+    })
+}
+
 pub fn spawn_branch_migration(
     context: LiveContext,
     request: WorktreeTaskRequest,

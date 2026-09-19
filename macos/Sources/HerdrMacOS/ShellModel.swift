@@ -173,6 +173,9 @@ final class ShellModel: ObservableObject {
     /// The Explorer item waiting for the Move to Trash modal's answer.
     @Published var explorerTrashPrompt: WorkspaceOutlineTrashPrompt?
     @Published var worktreeToDelete: CoreGitWorktree?
+    /// The Projects list row the sidebar scrolls to on `Reveal in sidebar`.
+    /// The nonce makes a repeat on the same row a new request.
+    @Published private(set) var sidebarReveal: SidebarRevealRequest?
     @Published var deleteWorktreeBranch = false
     private var handledRemovalIDs: Set<UInt64> = []
     @Published var worktreeWorkspace: CoreWorkspaceSnapshot?
@@ -1738,6 +1741,55 @@ final class ShellModel: ObservableObject {
         ])
     }
 
+    /// The Overview header's `N files` chip and `Open in History`: the
+    /// checkout comes forward and the panel shows History, in one event.
+    func openHistory(for checkout: CoreCheckoutSnapshot) {
+        core.dispatch(kind: "overview_open_section", payload: [
+            "checkout_path": checkout.path,
+            "section": RightPanelSection.changes.rawValue,
+        ])
+    }
+
+    /// `New agent here ▸`: one tab with the checkout as its cwd, then the
+    /// provider started in it through the same task operation the New
+    /// worktree sheet reports through. `provider` is `terminal` for the tab
+    /// alone, else an `AgentProvider` raw value.
+    func startAgent(in checkout: CoreCheckoutSnapshot, provider: String) {
+        guard requireLocalHerdrMutationReadiness() else { return }
+        core.dispatch(kind: "agent_start_in_checkout", payload: [
+            "checkout_path": checkout.path,
+            "provider": provider,
+        ])
+    }
+
+    /// `Reveal in sidebar`: the Projects list opens on the agent's project
+    /// with its checkout unfolded, so the row is where the sidebar keeps it.
+    func revealAgentInSidebar(_ agent: SidebarAgent) {
+        guard let (workspace, checkout) = workspaces.lazy.compactMap({ workspace in
+            workspace.checkouts.first { checkout in
+                checkout.tabs.flatMap(\.panes).contains { $0.id == agent.paneID }
+            }.map { (workspace, $0) }
+        }).first else {
+            interactionNotice = "Agent pane \(agent.paneID) is no longer listed in a project."
+            return
+        }
+        showSidebarContent(.projects)
+        if !workspace.expanded { toggleWorkspace(workspace) }
+        if !isCheckoutExpanded(checkout) { toggleCheckoutExpansion(checkout) }
+        if workspace.inactiveCheckouts.checkoutIDs.contains(checkout.id), !workspace.inactiveCheckouts.expanded {
+            toggleInactiveCheckouts(in: workspace)
+        }
+        sidebarReveal = SidebarRevealRequest(
+            rowID: SidebarProjectRow.workspace(workspace, level: .root).id,
+            nonce: (sidebarReveal?.nonce ?? 0) &+ 1
+        )
+    }
+
+    func copyPaneID(_ paneID: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(paneID, forType: .string)
+    }
+
     func copyCheckoutPath(_ checkout: CoreCheckoutSnapshot) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(checkout.path, forType: .string)
@@ -1790,9 +1842,11 @@ final class ShellModel: ObservableObject {
             }
             return
         }
-        if operation.kind == "worktree_create" {
-            worktreeWorkspace = nil
-            worktreeDraft = WorktreeSheetDraft()
+        if operation.kind == "worktree_create" || operation.kind == "agent_start" {
+            if operation.kind == "worktree_create" {
+                worktreeWorkspace = nil
+                worktreeDraft = WorktreeSheetDraft()
+            }
             if let raw = operation.agentKind, let provider = AgentProvider(rawValue: raw) {
                 guard requireLocalHerdrMutationReadiness() else { return }
                 core.startAgentInCreatedPane(

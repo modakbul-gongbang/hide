@@ -19,7 +19,6 @@ const owners = [
   'HideSearchField',
   'HideInputSurface',
   'HideCheckboxStyle',
-  'HideDisclosureStyle',
   'HideInteractiveButtonStyle',
   'HideEmptyState',
   'HideMenuChipLabel',
@@ -80,8 +79,7 @@ function violations(directory, structureOnly = false) {
   const shellInventory = inventory(shell);
   const sidebarInventory = inventory(sidebar);
   const settingsInventory = inventory(settings);
-  if ((overviewInventory['native-style:pickerStyle:segmented'] ?? 0) > 0) problems.push('CheckoutOverview.swift: use the shared choice control instead of stock segmented appearance');
-  if ([shellInventory, sidebarInventory, settingsInventory].some(counted => (counted['native-style:pickerStyle:segmented'] ?? 0) > 0)) {
+  if ([overviewInventory, shellInventory, sidebarInventory, settingsInventory].some(counted => (counted['native-style:pickerStyle:segmented'] ?? 0) > 0)) {
     problems.push('Known selector surface: use HideChoiceGroup instead of stock segmented appearance');
   }
   const cleanupInventory = inventory(cleanup);
@@ -89,9 +87,9 @@ function violations(directory, structureOnly = false) {
       || (sidebarInventory['native-style:toggleStyle:checkbox'] ?? 0) > 0) {
     problems.push('Known checkbox surface: use HideCheckboxStyle instead of stock checkbox appearance');
   }
-  if ((overviewInventory['control:DisclosureGroup'] ?? 0) > 0 && !hasModifierCall(overview, 'disclosureGroupStyle', 'HideDisclosureStyle')) problems.push('CheckoutOverview.swift: apply the shared disclosure appearance');
+  // The Overview has no mode choice since right-panel-overview D-01: it is one
+  // list, so it is not a selector surface and needs no HideChoiceGroup.
   const requiredChoiceGroups = [
-    ['CheckoutOverview.swift', overview],
     ['ShellView.swift', shell],
     [sidebarFile, sidebar],
     ['HideSettings.swift', settings],

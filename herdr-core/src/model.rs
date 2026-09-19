@@ -1589,6 +1589,15 @@ pub struct WorktreeSnapshot {
     pub nested: bool,
     pub merged: Option<bool>,
     pub upstream_state: String,
+    /// Commits the upstream has that this branch does not, as of the last
+    /// fetch. Absent when the branch has no upstream, the upstream is gone,
+    /// or the count could not be read; `upstream_state` says which, so the
+    /// Overview draws no cell, `?`, or a number rather than a silent zero.
+    pub behind_upstream: Option<u32>,
+    /// When a linked worktree was added: the creation time of its
+    /// `.git/worktrees/<name>` entry. The main worktree has none, and it
+    /// leads the Overview's list regardless.
+    pub created_at_unix_ms: Option<u64>,
     pub unavailable_reason: Option<String>,
     pub last_fetch_at_unix_ms: Option<u64>,
     pub measured_at_unix_ms: Option<u64>,
@@ -1714,7 +1723,6 @@ pub struct ProjectWorktreesSnapshot {
     pub pull_requests: Vec<PullRequestSnapshot>,
     pub pull_request_window: String,
     pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
-    pub history: Option<crate::worktrees::history::GitHistorySnapshot>,
     pub shared_git_path: Option<String>,
     pub shared_git_disk: DiskUsageSnapshot,
     pub disk_total_bytes: Option<u64>,
@@ -1770,7 +1778,6 @@ pub struct DiskUsageSnapshot {
 /// and whether the worktree may be removed.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CheckoutCardSnapshot {
-    pub inspected_checkout_path: Option<String>,
     /// Absent when nothing is selected, or when the selection is a remote
     /// checkout - remote worktree management is out of scope, so no card.
     pub checkout_id: Option<String>,

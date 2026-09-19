@@ -133,9 +133,8 @@ export function foundations(variables, mapped) {
         ['color-agent-working', 'agent working'], ['color-success', 'success'], ['color-warning', 'warning'], ['color-danger', 'danger'],
       ])),
 
-      section('pr', 'Pull request and graph', 'Status colours a row shows for a pull request, and the four lanes the Overview graph cycles through.', column('pr-body', 'Rows', [
+      section('pr', 'Pull request and diff', 'Status colours a row shows for a pull request, and the tints a diff draws.', column('pr-body', 'Rows', [
         chips(v, 'pr-set', [['color-pr-open', 'open'], ['color-pr-merged', 'merged'], ['color-pr-closed', 'closed'], ['color-pr-draft', 'draft']]),
-        chips(v, 'lane-set', [['color-graph-lane-1', 'lane 1'], ['color-graph-lane-2', 'lane 2'], ['color-graph-lane-3', 'lane 3'], ['color-graph-lane-4', 'lane 4']]),
         chips(v, 'diff-set', [['color-diff-added', 'diff added'], ['color-diff-removed', 'diff removed'], ['color-divider', 'divider'], ['color-hover-wash', 'hover wash']]),
       ], {gap: '$--spacing-md'})),
 

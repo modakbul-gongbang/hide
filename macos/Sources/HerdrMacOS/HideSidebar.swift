@@ -14,7 +14,7 @@ struct HideSidebar: View {
                 AgentScopePicker()
             }
 
-            SidebarList(revealTopRowID: pinnedHeaderRowID) {
+            SidebarList(revealTopRowID: pinnedHeaderRowID, reveal: model.sidebarReveal) {
                 switch model.sidebarContent {
                 case .projects:
                     projectsContent
