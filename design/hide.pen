@@ -14954,7 +14954,7 @@
                         {
                           "type": "frame",
                           "id": "pin-pin-dialog-np-confirm",
-                          "name": "Button / Close 3 panes and remove",
+                          "name": "Button / Remove registration",
                           "height": 28,
                           "padding": [
                             0,

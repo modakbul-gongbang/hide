@@ -669,6 +669,96 @@ fn removing_the_focused_project_moves_focus_off_its_closed_panes() {
     assert!(runtime.snapshot.status.last_error.is_none());
 }
 
+/// A registration id is keyed by its path, so adding the folder back while
+/// its removal is still closing panes would name the entry the retire is
+/// about to delete. Each side refuses the other with a visible reason, and a
+/// creation that lands anyway cancels the removal rather than losing the
+/// project it just opened a pane in.
+#[test]
+fn adding_a_folder_while_its_removal_closes_panes_is_refused_and_a_landed_add_cancels_it() {
+    let (mut runtime, registration) = registered_context_runtime();
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    assert!(
+        runtime
+            .workspace_removals_in_flight
+            .contains(&registration.id)
+    );
+
+    let create = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "create_workspace",
+        "payload": {"path": registration.path, "label": "Alpha again", "initialize_git": false}
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&create));
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_in_flight");
+    assert!(
+        !runtime
+            .workspace_creations_in_flight
+            .contains(&registration.path),
+        "the refused add starts no worker"
+    );
+
+    // The back-stop: a creation for the same id that got past the front
+    // door (another spelling of the path) lands while the close is pending.
+    runtime.snapshot.status.last_error = None;
+    runtime
+        .workspace_creations_in_flight
+        .insert("/tmp/./hide-context-alpha".to_owned());
+    assert!(runtime.ingest_workspace_creation(
+        "/tmp/./hide-context-alpha",
+        Ok(live::WorkspaceCreationOutcome {
+            registration: registration.clone(),
+            base_registrations: vec![registration.clone()],
+            registrations: vec![registration.clone()],
+            workspaces: Vec::new(),
+            session: context_payload(),
+            created_pane_id: Some("w1:p1".to_owned()),
+            git_init_error: None,
+        }),
+        3,
+    ));
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_cancelled");
+    assert!(
+        !runtime
+            .workspace_removals_in_flight
+            .contains(&registration.id)
+    );
+    assert!(
+        !runtime.ingest_workspace_close_result(&registration.id, Ok(())),
+        "the close's late answer authorizes nothing"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration.clone()],
+        "the project stays registered"
+    );
+}
+
+/// The mirror: removing a project whose creation is still opening its first
+/// pane would be undone when that creation lands, so it is refused.
+#[test]
+fn removing_a_project_whose_creation_is_in_flight_is_refused() {
+    let (mut runtime, registration) = registered_context_runtime();
+    runtime
+        .workspace_creations_in_flight
+        .insert(registration.path.clone());
+
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.create_in_flight");
+    assert!(
+        !runtime
+            .workspace_removals_in_flight
+            .contains(&registration.id)
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration]
+    );
+}
+
 /// B14. Without a live Herdr connection the panes cannot be closed, so the
 /// registration stays and the banner says why instead of a half-removed row.
 #[test]

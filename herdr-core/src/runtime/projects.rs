@@ -740,6 +740,16 @@ impl Runtime {
         {
             return false;
         }
+        // The mirror of the create-side refusal: a creation still running
+        // for this folder will push the registration back after the retire.
+        if self.workspace_creation_in_flight_for(&payload.workspace_id) {
+            self.set_error(
+                "workspace.create_in_flight",
+                "This project is still being added; wait for its first pane, then remove it",
+                false,
+            );
+            return true;
+        }
         let (checkout_paths, pane_ids) = self
             .snapshot
             .navigator
@@ -818,6 +828,43 @@ impl Runtime {
 
     /// Drops the registration and its row. Files, worktrees and Herdr
     /// workspaces are never touched here.
+    /// The registration id a removal is still closing panes for, when
+    /// `path` names that same folder. Ids are path-keyed, so the folder and
+    /// the registration cannot be told apart by id alone. The registration is
+    /// still listed while the close runs, so its stored path is the
+    /// comparison; nothing is resolved on disk under the lock.
+    pub(super) fn workspace_removal_in_flight_for(&self, path: &str) -> Option<String> {
+        if self.workspace_removals_in_flight.is_empty() {
+            return None;
+        }
+        let requested = Path::new(path);
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .filter(|registration| self.workspace_removals_in_flight.contains(&registration.id))
+            .find(|registration| Path::new(&registration.path) == requested)
+            .map(|registration| registration.id.clone())
+    }
+
+    /// Whether a creation still running names the folder `workspace_id`
+    /// registers; creation is keyed by the requested path, not the id.
+    fn workspace_creation_in_flight_for(&self, workspace_id: &str) -> bool {
+        if self.workspace_creations_in_flight.is_empty() {
+            return false;
+        }
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .filter(|registration| registration.id == workspace_id)
+            .any(|registration| {
+                self.workspace_creations_in_flight
+                    .iter()
+                    .any(|path| Path::new(path) == Path::new(&registration.path))
+            })
+    }
+
     fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
         let before = self.snapshot.ui_state.workspace_registrations.len();
         self.snapshot

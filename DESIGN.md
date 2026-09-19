@@ -1256,6 +1256,8 @@ A project Herdr has no pane in is confirmed with the registration-only copy (`Hi
 A project with panes is not refused: the confirmation reads the core's counts (`Closes 3 panes (2 running agents). The folder, repository, and worktrees stay on disk.`, destructive `Close 3 panes and remove`, `Cancel`), the parenthetical is omitted at zero running agents and the nouns follow their counts.
 On confirmation the core sends `pane.close` for every pane in the project's checkouts from a worker outside the runtime mutex and waits for Herdr's snapshot to confirm they are gone, the same handshake worktree deletion uses; only that confirmation removes the registration and its row.
 A timeout or refusal leaves the project registered with the reason in the error banner, and a repeated `Remove project…` continues from the panes that remain; a repeat while the close is still running starts nothing.
+Removing the project that holds the focused checkout moves focus and the pane selection to the next project, the way a Herdr restart does, so no sync reports the closed pane as unavailable.
+A registration id is keyed by its folder, so adding that folder back while the close is still running is refused with the reason in the banner (`workspace.remove_in_flight`), removing a project whose first pane is still being opened is refused the same way (`workspace.create_in_flight`), and an add that lands anyway cancels the removal and says so (`workspace.remove_cancelled`) rather than losing the project it just opened a pane in.
 A completed removal disappears from the core snapshot and a repeated request is a quiet no-op.
 Save failures remain caller-visible; normal no-op results never become alerts.
 

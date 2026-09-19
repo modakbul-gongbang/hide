@@ -3064,6 +3064,25 @@ impl Runtime {
                 return true;
             }
         };
+        // A path the front-door check could not match (a symlink, a
+        // different spelling) can still land on an id whose removal is
+        // closing panes. The worker has already opened this project's first
+        // pane, so the removal is the request that gives way: dropping it
+        // from the in-flight set makes the close's late answer authorize
+        // nothing, and the banner says which request won.
+        if self
+            .workspace_removals_in_flight
+            .remove(&outcome.registration.id)
+        {
+            self.set_error(
+                "workspace.remove_cancelled",
+                format!(
+                    "{} was added again while its removal was closing panes; the project stays registered",
+                    outcome.registration.label
+                ),
+                false,
+            );
+        }
         let catalog_inputs_match =
             self.snapshot.ui_state.workspace_registrations == outcome.base_registrations;
         if catalog_inputs_match {

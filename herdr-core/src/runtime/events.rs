@@ -1046,6 +1046,27 @@ impl Runtime {
             }
             Event::CreateWorkspace(payload) => {
                 if let Some(context) = self.live.as_ref().cloned() {
+                    // A folder whose removal is still closing panes keeps the
+                    // registration id it is about to lose; adding it now would
+                    // open a pane in that workspace and then watch the retire
+                    // delete the registration under it, with nothing to say
+                    // the add did not stick.
+                    if let Some(workspace_id) = self.workspace_removal_in_flight_for(&payload.path)
+                    {
+                        self.set_error(
+                            "workspace.remove_in_flight",
+                            format!(
+                                "{} is still being removed; wait for its panes to close, then add it again",
+                                payload.path
+                            ),
+                            false,
+                        );
+                        self.push_diagnostic(
+                            "workspace.create.refused_during_removal",
+                            format!("Workspace {workspace_id} removal is closing panes"),
+                        );
+                        return true;
+                    }
                     if !self
                         .workspace_creations_in_flight
                         .insert(payload.path.clone())
