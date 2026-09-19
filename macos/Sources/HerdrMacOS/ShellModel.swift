@@ -523,8 +523,7 @@ final class ShellModel: ObservableObject {
     /// Project rows in exactly the order the Projects view draws them: the
     /// `Pinned` section first, then the activity list.
     var sidebarVisibleWorkspaces: [CoreWorkspaceSnapshot] {
-        let sections = sidebarProjectSections
-        return sections.pinned + sections.rows.compactMap { row in
+        sidebarProjectSections.rows.compactMap { row in
             guard case .workspace(let workspace, _) = row else { return nil }
             return workspace
         }

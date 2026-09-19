@@ -14,7 +14,7 @@ struct HideSidebar: View {
                 AgentScopePicker()
             }
 
-            SidebarList {
+            SidebarList(revealTopRowID: pinnedHeaderRowID) {
                 switch model.sidebarContent {
                 case .projects:
                     projectsContent
@@ -37,6 +37,15 @@ struct HideSidebar: View {
         .accessibilityIdentifier("hide-sidebar")
     }
 
+    /// The `Pinned` header's row id while it leads the Projects list, so the
+    /// list shows it when it appears rather than staying scrolled below it.
+    private var pinnedHeaderRowID: String? {
+        guard model.sidebarContent == .projects,
+              case .header(let title, _)? = model.sidebarProjectSections.rows.first,
+              title == SidebarProjectSections.pinnedTitle else { return nil }
+        return SidebarProjectRow.header(title: title, count: 0).id
+    }
+
     @ViewBuilder
     private var projectsContent: some View {
         // What is waiting, then what finished while the operator was away,
@@ -50,40 +59,34 @@ struct HideSidebar: View {
         }
 
         // Pinned projects sit under their own header, drawn only while there
-        // is one; the activity list below counts the rest (D-02).
-        let sections = model.sidebarProjectSections
-        if !sections.pinned.isEmpty {
-            HideSectionLabel(title: "Pinned", count: sections.pinned.count)
-            ForEach(sections.pinned) { workspace in
-                WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: .root)
+        // is one; the activity header counts the rest (D-02). Headers are
+        // rows of the same list so a pinned project moves instead of being
+        // reinserted, which kept the list scrolled past the new header.
+        ForEach(model.sidebarProjectSections.rows) { row in
+            switch row {
+            case .header(let title, let count):
+                HideSectionLabel(title: title, count: count)
+            case .workspace(let workspace, let hierarchyLevel):
+                WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
+            case .inactiveProjects(let group, let folded):
+                InactiveFoldRow(
+                    title: "Inactive projects",
+                    count: folded.count,
+                    itemName: "project",
+                    expanded: group.expanded,
+                    accessibilityID: "hide-inactive-projects-\(group.deviceID)",
+                    hierarchyLevel: .root,
+                    action: { model.toggleInactiveProjects(in: group) }
+                )
+                .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
             }
         }
-
-        HideSectionLabel(title: "Projects · Recent activity", count: sections.recent.count)
         if model.workspaces.isEmpty {
             EmptySidebarRow(
                 systemImage: "square.stack.3d.up",
                 title: "No projects yet",
                 detail: "Add a folder to create your first project."
             )
-        } else {
-            ForEach(sections.rows) { row in
-                switch row {
-                case .workspace(let workspace, let hierarchyLevel):
-                    WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
-                case .inactiveProjects(let group, let folded):
-                    InactiveFoldRow(
-                        title: "Inactive projects",
-                        count: folded.count,
-                        itemName: "project",
-                        expanded: group.expanded,
-                        accessibilityID: "hide-inactive-projects-\(group.deviceID)",
-                        hierarchyLevel: .root,
-                        action: { model.toggleInactiveProjects(in: group) }
-                    )
-                    .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
-                }
-            }
         }
     }
 

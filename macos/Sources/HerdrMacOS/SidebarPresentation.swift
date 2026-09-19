@@ -1,11 +1,18 @@
 import Foundation
 
 enum SidebarProjectRow: Identifiable {
+    /// A section header drawn as a list row, so a project row keeps one
+    /// identity whether it sits under `Pinned` or under the activity list
+    /// and the list animates a pin as a move rather than a removal and an
+    /// insertion that leaves the list scrolled past the new header.
+    case header(title: String, count: Int)
     case workspace(CoreWorkspaceSnapshot, level: SidebarHierarchyLevel)
     case inactiveProjects(CoreInactiveProjectGroupSnapshot, [CoreWorkspaceSnapshot])
 
     var id: String {
         switch self {
+        case .header(let title, _):
+            "header:\(title)"
         case .workspace(let workspace, _):
             "workspace:\(workspace.id)"
         case .inactiveProjects(let group, _):
@@ -49,16 +56,29 @@ enum SidebarHierarchyLevel: Equatable {
 /// section, then the activity rows with the device folds. Both halves keep
 /// the core's order; the split only reads the flag the core set (D-02).
 struct SidebarProjectSections {
+    static let pinnedTitle = "Pinned"
+    static let recentTitle = "Projects · Recent activity"
+
     let pinned: [CoreWorkspaceSnapshot]
     /// Every project the `Pinned` section does not show, folded or not: the
     /// `Projects · Recent activity` count.
     let recent: [CoreWorkspaceSnapshot]
+    /// The list in drawing order: the `Pinned` header and its rows only
+    /// while a project is pinned, then the activity header, its rows and
+    /// the device folds.
     let rows: [SidebarProjectRow]
 
     init(_ workspaces: [CoreWorkspaceSnapshot], groups: [CoreInactiveProjectGroupSnapshot]) {
         pinned = workspaces.filter(\.pinned)
         recent = workspaces.filter { !$0.pinned }
-        rows = SidebarInactiveProjection.projectRows(recent, groups: groups)
+        var rows: [SidebarProjectRow] = []
+        if !pinned.isEmpty {
+            rows.append(.header(title: Self.pinnedTitle, count: pinned.count))
+            rows.append(contentsOf: pinned.map { .workspace($0, level: .root) })
+        }
+        rows.append(.header(title: Self.recentTitle, count: recent.count))
+        rows.append(contentsOf: SidebarInactiveProjection.projectRows(recent, groups: groups))
+        self.rows = rows
     }
 }
 

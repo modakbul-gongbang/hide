@@ -231,12 +231,30 @@ private func presentationWorkspace(
 
     #expect(sections.pinned.map(\.id) == ["local-pinned", "remote-pinned"])
     #expect(sections.recent.map(\.id) == ["active", "folded"])
-    #expect(sections.rows.map(\.id) == ["workspace:active", "inactive-projects:local"])
+    #expect(sections.rows.map(\.id) == [
+        "header:Pinned",
+        "workspace:local-pinned",
+        "workspace:remote-pinned",
+        "header:Projects · Recent activity",
+        "workspace:active",
+        "inactive-projects:local",
+    ])
+    guard case .header(_, let pinnedCount) = sections.rows[0],
+          case .header(_, let recentCount) = sections.rows[3] else {
+        Issue.record("the headers are list rows")
+        return
+    }
+    #expect(pinnedCount == 2)
+    #expect(recentCount == 2)
 
     let unpinned = SidebarProjectSections([active, folded], groups: [group])
     #expect(unpinned.pinned.isEmpty)
     #expect(unpinned.recent.count == 2)
-    #expect(unpinned.rows.map(\.id) == ["workspace:active", "inactive-projects:local"])
+    #expect(unpinned.rows.map(\.id) == [
+        "header:Projects · Recent activity",
+        "workspace:active",
+        "inactive-projects:local",
+    ])
 }
 
 /// B5, B9. A row from a wire without the pin or the removal counts, which is
