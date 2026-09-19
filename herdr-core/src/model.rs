@@ -1593,7 +1593,6 @@ pub struct WorktreeSnapshot {
     /// fetch. Absent when the branch has no upstream, the upstream is gone,
     /// or the count could not be read; `upstream_state` says which, so the
     /// Overview draws no cell, `?`, or a number rather than a silent zero.
-    #[serde(default)]
     pub behind_upstream: Option<u32>,
     /// When a linked worktree was added: the creation time of its
     /// `.git/worktrees/<name>` entry. The main worktree has none, and it

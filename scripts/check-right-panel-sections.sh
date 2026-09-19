@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The right panel presents exactly Overview, Explorer and Changes, and
+# The right panel presents exactly Overview, Explorer and History, and
 # the Workbench name it used to carry appears in no string the operator can
 # read. The section set is asserted by the Swift suite; this asserts the name
 # is gone from every user-facing surface, which no unit test can see.
