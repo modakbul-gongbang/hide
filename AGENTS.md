@@ -61,8 +61,7 @@ Read `docs/ARCHITECTURE.md` in full before changing anything under `herdr-core/`
 - A path outside every registered checkout never reaches the core; the shell hands it to macOS and reveals rather than opens anything executable.
 - A delegated child pane is moved to its own tab, never split into the operator's pane, and a delegated row can only be Working or Seen; `docs/status-model.md` owns the ownership axis and the stall clock.
 - An attach lives only while its tab is among the last five shown (`ATTACHED_TAB_LIMIT`); a released pane keeps its projection entry as `released`, because a missing entry reads as a failure.
-- A failure the operator cannot act on goes to the diagnostic log, never to the screen: the caller that engineering principle #10 makes the outcome visible to is the core, not the operator.
-  A screen carries a state only when the operator would do something different on seeing it, in the smallest form that says it (a mark, a dimmed row, a disabled control); an alert, a banner, or a sheet is a PRD decision, not a default.
+- Design principle #13 governs what reaches the screen: a failure the operator cannot act on goes to the diagnostic log, and an alert, a banner, or a sheet is a PRD decision, not a default.
 
 ## Herdr API Contract
 
