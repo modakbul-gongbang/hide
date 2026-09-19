@@ -485,6 +485,25 @@ pub(super) struct GitWorktreeOpenPayload {
     pub(super) checkout_path: String,
 }
 
+/// `overview_open_section`: one checkout brought forward and the right
+/// panel moved to `section` in the same event, so the screen never shows
+/// the half of the move a refusal would leave (AGENTS.md, "a user action is
+/// one event").
+#[derive(Debug, Deserialize)]
+pub(super) struct OverviewOpenSectionPayload {
+    pub(super) checkout_path: String,
+    pub(super) section: String,
+}
+
+/// `agent_start_in_checkout`: a new tab in the checkout's Herdr workspace
+/// with the checkout as its cwd, and the provider the shell then starts in
+/// it. `terminal` means the tab alone.
+#[derive(Debug, Deserialize)]
+pub(super) struct AgentStartInCheckoutPayload {
+    pub(super) checkout_path: String,
+    pub(super) provider: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct GitWorktreeSetBasePayload {
     pub(super) repository_root: String,
@@ -724,8 +743,8 @@ pub(super) enum Event {
     /// completed worktree removal. All three say "read again now" about a
     /// different set of readers, and none needs a target: the card is always
     /// the selected checkout, and a removal changes the whole worktree list.
-    OverviewSelect(GitWorktreeOpenPayload),
-    OverviewChanges(GitWorktreeOpenPayload),
+    OverviewOpenSection(OverviewOpenSectionPayload),
+    AgentStartInCheckout(AgentStartInCheckoutPayload),
     CleanupReview,
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
@@ -858,8 +877,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "cleanup_review" => Ok(Event::CleanupReview),
         "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
         "cleanup_dismiss" => Ok(Event::CleanupDismiss),
-        "overview_changes" => decode!(GitWorktreeOpenPayload, OverviewChanges),
-        "overview_select" => decode!(GitWorktreeOpenPayload, OverviewSelect),
+        "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
+        "agent_start_in_checkout" => decode!(AgentStartInCheckoutPayload, AgentStartInCheckout),
         "card_refresh" => Ok(Event::CardRefresh),
         "card_measure_disk" => Ok(Event::CardMeasureDisk),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
@@ -2421,31 +2440,8 @@ impl Runtime {
                 self.refresh_worktree_projection();
                 true
             }
-            Event::OverviewChanges(payload) => {
-                if self
-                    .focused_local_checkout()
-                    .is_none_or(|(_, checkout)| checkout.path != payload.checkout_path)
-                {
-                    return false;
-                }
-                self.snapshot.ui_state.right_panel_visible = true;
-                self.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
-                self.persist_ui_state();
-                true
-            }
-            Event::OverviewSelect(payload) => {
-                let valid = self.focused_local_checkout().is_some_and(|(project, _)| {
-                    project
-                        .checkouts
-                        .iter()
-                        .any(|c| c.path == payload.checkout_path)
-                });
-                if !valid || self.overview_selection.as_deref() == Some(&payload.checkout_path) {
-                    return false;
-                }
-                self.overview_selection = Some(payload.checkout_path);
-                self.refresh_card()
-            }
+            Event::OverviewOpenSection(payload) => self.overview_open_section(payload),
+            Event::AgentStartInCheckout(payload) => self.agent_start_in_checkout(payload),
             Event::CardRefresh => {
                 // The card's one refresh button re-reads both the remote
                 // answer and the local counts, because the operator pressing

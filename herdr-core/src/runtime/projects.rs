@@ -74,13 +74,6 @@ impl Runtime {
             })
             .collect();
         crate::worktrees::WorktreeRequest {
-            overview_root: (self.snapshot.ui_state.right_panel_visible
-                && self.snapshot.ui_state.right_panel_section == RightPanelSection::Overview)
-                .then(|| {
-                    self.focused_local_checkout()
-                        .map(|(w, _)| PathBuf::from(&w.path))
-                })
-                .flatten(),
             projects,
             generation: self.worktree_generation,
         }
@@ -1196,12 +1189,6 @@ impl Runtime {
             .unwrap_or_default();
         let disk_measuring = checkout.is_worktree && disk.path.is_none();
         crate::model::CheckoutCardSnapshot {
-            inspected_checkout_path: self
-                .overview_selection
-                .as_ref()
-                .filter(|path| workspace.checkouts.iter().any(|c| &c.path == *path))
-                .cloned()
-                .or_else(|| Some(checkout.path.clone())),
             checkout_id: Some(checkout.id.clone()),
             panes: crate::project_context::checkout_panes(
                 checkout,
@@ -1276,6 +1263,152 @@ impl Runtime {
             return self.ingest_task_operation_result(id, Err(message));
         }
         true
+    }
+
+    /// The Overview's `Open in History` and its `N files` chip: focus the
+    /// checkout and switch the panel section together. The checkout has to be
+    /// a local one the navigator lists; the section has to be one the panel
+    /// has. Either failing is an error the operator did not cause and cannot
+    /// act on, so it goes to the log and nothing on screen moves.
+    pub(super) fn overview_open_section(&mut self, payload: OverviewOpenSectionPayload) -> bool {
+        let Some(section) = RightPanelSection::parse(&payload.section) else {
+            self.set_error(
+                "overview.unknown_section",
+                format!("Right panel has no section {}", payload.section),
+                false,
+            );
+            return true;
+        };
+        let Some((workspace_id, checkout_id)) = self.local_checkout_ids(&payload.checkout_path)
+        else {
+            self.set_error(
+                "overview.unknown_checkout",
+                format!("Checkout is not listed: {}", payload.checkout_path),
+                false,
+            );
+            return true;
+        };
+        if self.snapshot.navigator.focused_checkout_id.as_deref() != Some(checkout_id.as_str()) {
+            self.focus_checkout(&workspace_id, &checkout_id);
+        }
+        self.snapshot.ui_state.right_panel_visible = true;
+        self.snapshot.ui_state.right_panel_section = section;
+        self.persist_ui_state();
+        true
+    }
+
+    /// `New agent here ▸ Terminal only / Claude / Codex` and the empty
+    /// group's `Start agent…`: one tab with the checkout as its cwd, in the
+    /// checkout's own Herdr workspace, through the task operation slot the
+    /// worktree sheet already reports through. The shell starts the provider
+    /// in the pane the slot names, so `terminal` needs nothing more from it.
+    pub(super) fn agent_start_in_checkout(&mut self, payload: AgentStartInCheckoutPayload) -> bool {
+        let agent_kind = match payload.provider.as_str() {
+            "terminal" => None,
+            "claude" | "codex" => Some(payload.provider.clone()),
+            other => {
+                self.set_error(
+                    "agent_start.unknown_provider",
+                    format!("No agent provider named {other}"),
+                    false,
+                );
+                return true;
+            }
+        };
+        let Some((workspace_id, checkout_id)) = self.local_checkout_ids(&payload.checkout_path)
+        else {
+            self.set_error(
+                "overview.unknown_checkout",
+                format!("Checkout is not listed: {}", payload.checkout_path),
+                false,
+            );
+            return true;
+        };
+        let (workspace_path, label, session_workspace_id) = {
+            let workspace = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id)
+                .expect("local_checkout_ids named a listed workspace");
+            let checkout = workspace
+                .checkouts
+                .iter()
+                .find(|checkout| checkout.id == checkout_id)
+                .expect("local_checkout_ids named a listed checkout");
+            // The checkout's own workspace is the one its visible tab is in;
+            // a checkout with no pane has none and gets a workspace of its own.
+            let session_workspace_id = self
+                .visible_tab_ids
+                .get(&checkout_id)
+                .and_then(|tab_id| {
+                    self.snapshot
+                        .pane_layouts
+                        .iter()
+                        .find(|layout| &layout.tab_id == tab_id)
+                })
+                .map(|layout| layout.workspace_id.clone())
+                .or_else(|| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .find_map(|tab| tab.workspace_id.clone())
+                })
+                .filter(|id| workspace.session_workspace_ids.contains(id));
+            let label = if session_workspace_id.is_some() {
+                checkout.next_tab_label.clone()
+            } else {
+                format!("hide {}", checkout.label)
+            };
+            (workspace.path.clone(), label, session_workspace_id)
+        };
+        let id = match self.begin_task_operation(
+            "agent_start",
+            Some(workspace_path),
+            None,
+            None,
+            agent_kind,
+        ) {
+            Ok(id) => id,
+            Err(message) => {
+                self.set_error("task_operation.busy", message, true);
+                return true;
+            }
+        };
+        let request = live::CheckoutTabRequest {
+            id,
+            checkout_path: payload.checkout_path,
+            label,
+            session_workspace_id,
+        };
+        let Some(context) = self.live.as_ref().cloned() else {
+            return self.ingest_task_operation_result(
+                id,
+                Err("start an agent: a live Herdr connection is required".into()),
+            );
+        };
+        if let Err(message) = live::spawn_checkout_tab_create(context, request) {
+            return self.ingest_task_operation_result(id, Err(message));
+        }
+        true
+    }
+
+    /// The workspace and checkout ids a local checkout path names, or `None`
+    /// for a path the navigator does not list locally.
+    fn local_checkout_ids(&self, checkout_path: &str) -> Option<(String, String)> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.path == checkout_path)
+                    .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
+            })
     }
 
     pub(super) fn migrate_main_branch(&mut self, payload: MigrateMainBranchPayload) -> bool {

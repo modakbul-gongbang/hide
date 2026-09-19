@@ -330,7 +330,6 @@ fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
     git(&repo.0, &["commit", "-m", "tracked"]).unwrap();
     let mut reader = WorktreeReader::new();
     let mut request = WorktreeRequest {
-        overview_root: None,
         projects: vec![WorktreeProjectRequest {
             root_path: repo.0.clone(),
             bases: BTreeMap::new(),
@@ -362,145 +361,77 @@ fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
     assert!(wait(&mut reader, &request).projects[0].worktrees[0].dirty);
 }
 
+/// D-09, D-15. The base branch's `behind origin` comes from the same
+/// `rev-list` that counts unpushed commits: no upstream is no answer, a gone
+/// upstream is no answer, a fetched upstream ahead of the branch is the count
+/// of commits the branch is missing, and pushed level is zero, not absent.
 #[test]
-fn overview_history_preserves_real_merge_parents_and_reads_all_heads_once() {
+fn behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side() {
     let repo = Repository::new();
     let feature = repo.linked("feature");
-    git(
-        &feature,
-        &[
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "Feature",
-        ],
-    )
-    .unwrap();
-    let feature_head = git(&feature, &["rev-parse", "HEAD"])
-        .unwrap()
-        .trim()
-        .to_owned();
+    let row = |project: &ProjectWorktreesSnapshot| project.worktrees[1].clone();
+    assert_eq!(row(&repo.read(None)).behind_upstream, None);
     git(
         &repo.0,
-        &[
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "Main",
-        ],
+        &["remote", "add", "origin", "https://example.invalid/repo"],
     )
     .unwrap();
-    let first_parent = git(&repo.0, &["rev-parse", "HEAD"])
-        .unwrap()
-        .trim()
-        .to_owned();
     git(
         &repo.0,
-        &[
-            "-c",
-            "commit.gpgsign=false",
-            "merge",
-            "--no-ff",
-            "feature",
-            "-m",
-            "Merge",
-        ],
+        &["update-ref", "refs/remotes/origin/feature", "HEAD"],
     )
     .unwrap();
-    let merge = git(&repo.0, &["rev-parse", "HEAD"])
-        .unwrap()
-        .trim()
-        .to_owned();
-    let mut heads = vec![merge.clone(), feature_head.clone()];
-    for _ in 0..24 {
-        heads.push(first_parent.clone());
-    }
-    let before = git_call_count(&repo.0, "log");
-    let value = history::read(&repo.0, &heads, Some(&repo.0.join(".git")));
+    git(&feature, &["branch", "--set-upstream-to=origin/feature"]).unwrap();
+    assert_eq!(row(&repo.read(None)).behind_upstream, Some(0));
+    git(&repo.0, &["commit", "--allow-empty", "-m", "fetched one"]).unwrap();
+    git(&repo.0, &["commit", "--allow-empty", "-m", "fetched two"]).unwrap();
+    git(
+        &repo.0,
+        &["update-ref", "refs/remotes/origin/feature", "HEAD"],
+    )
+    .unwrap();
+    // git lists the worktree by its real path, which is where the reader runs.
+    let listed = std::fs::canonicalize(&feature).unwrap();
+    let rev_lists_before = git_call_count(&listed, "rev-list");
+    let result = repo.read(None);
+    assert_eq!(row(&result).behind_upstream, Some(2));
+    assert_eq!(row(&result).upstream_state, "pushed");
     assert_eq!(
-        git_call_count(&repo.0, "log") - before,
-        1,
-        "One project history read, independent of worktree count"
+        git_call_count(&listed, "rev-list") - rev_lists_before,
+        2,
+        "One rev-list against the base and one against the upstream; behind rides the second"
     );
-    assert!(value.unavailable_reason.is_none());
-    assert_eq!(
-        value
-            .commits
-            .iter()
-            .find(|c| c.sha == merge)
-            .unwrap()
-            .parents,
-        [first_parent, feature_head]
-    );
-    assert!(value.continuation.is_empty());
-    assert!(!value.truncated);
-    let invalid = history::read(
+    git(
         &repo.0,
-        &["refs/heads/no-such-branch".into()],
-        Some(&repo.0.join(".git")),
-    );
-    assert!(invalid.unavailable_reason.is_some());
-    assert!(invalid.commits.is_empty());
+        &["update-ref", "-d", "refs/remotes/origin/feature"],
+    )
+    .unwrap();
+    let result = repo.read(None);
+    assert_eq!(row(&result).upstream_state, "gone");
+    assert_eq!(row(&result).behind_upstream, None);
 }
 
+/// D-05. A linked worktree carries the time it was added and the main
+/// worktree carries none, so the Overview can keep the primary first and the
+/// rest in the order they were created.
 #[test]
-fn overview_close_and_idle_do_not_run_additional_git_commands() {
+fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
     let repo = Repository::new();
-    let root = std::fs::canonicalize(&repo.0).unwrap();
-    let mut reader = WorktreeReader::new();
-    let mut request = WorktreeRequest {
-        overview_root: Some(root.clone()),
-        projects: vec![WorktreeProjectRequest {
-            root_path: root.clone(),
-            bases: BTreeMap::new(),
-            base_override: None,
-        }],
-        generation: 0,
+    repo.linked("older");
+    std::thread::sleep(Duration::from_millis(20));
+    repo.linked("newer");
+    let project = repo.read(None);
+    let by_branch = |branch: &str| {
+        project
+            .worktrees
+            .iter()
+            .find(|row| row.branch.as_deref() == Some(branch))
+            .unwrap()
+            .clone()
     };
-    let settle = |reader: &mut WorktreeReader, request: &WorktreeRequest| {
-        for _ in 0..1000 {
-            if let Some(value) = reader.read_if_due(request.clone()) {
-                return value;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        panic!("Reader did not settle");
-    };
-    let settle_until_idle = |reader: &mut WorktreeReader, request: &WorktreeRequest| {
-        let mut idle_polls = 0;
-        for _ in 0..5000 {
-            let answered = reader.read_if_due(request.clone()).is_some();
-            if answered || !reader.is_idle() {
-                idle_polls = 0;
-            } else {
-                idle_polls += 1;
-                if idle_polls >= 3 {
-                    return;
-                }
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        panic!("Reader did not become idle");
-    };
-    let value = settle(&mut reader, &request);
-    assert!(
-        value.projects[0]
-            .history
-            .as_ref()
-            .is_some_and(|h| !h.commits.is_empty())
-    );
-    // Path discovery can schedule a follow-up read after the first answer.
-    // Wait for that work to finish before measuring the close behavior.
-    settle_until_idle(&mut reader, &request);
-    let before = git_call_count(&root, "log");
-    request.overview_root = None;
-    settle_until_idle(&mut reader, &request);
-    for _ in 0..100 {
-        reader.read_if_due(request.clone());
-    }
-    assert_eq!(git_call_count(&root, "log"), before);
+    assert!(by_branch("main").is_main);
+    assert_eq!(by_branch("main").created_at_unix_ms, None);
+    let older = by_branch("older").created_at_unix_ms.expect("older time");
+    let newer = by_branch("newer").created_at_unix_ms.expect("newer time");
+    assert!(older <= newer, "{older} should not be after {newer}");
 }
