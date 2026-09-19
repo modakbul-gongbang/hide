@@ -1305,6 +1305,7 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
     );
     let opened = snapshot(core);
     assert_eq!(opened["editor"]["document"]["language"], "swift");
+    assert_eq!(opened["editor"]["document"]["document_kind"], "text");
     assert_eq!(opened["editor"]["document"]["dirty"], false);
     let contents = opened["editor"]["document"]["contents_utf8"]
         .as_str()

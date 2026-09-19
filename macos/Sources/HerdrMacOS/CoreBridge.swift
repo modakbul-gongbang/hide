@@ -1076,7 +1076,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             guard case .connected = readiness else {
                 let message = readiness.message
                 bridgeError = message
-                localHerdrMutationRejectionHandler?(readiness)
+                if LocalHerdrMutationDispatchPolicy.presentsRejection(kind: kind) {
+                    localHerdrMutationRejectionHandler?(readiness)
+                }
                 HideLaunchTrace.mark(
                     "core.dispatch.blocked",
                     detail: "kind=\(kind) reason=local_herdr_not_ready"
