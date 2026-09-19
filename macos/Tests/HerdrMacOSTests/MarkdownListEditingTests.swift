@@ -34,6 +34,23 @@ struct MarkdownListEditingTests {
         #expect(MarkdownListEditing.item(in: "- [x] done") == nil)
     }
 
+    @Test func crlfLinesKeepTheirEndingsAndEveryCharacter() {
+        #expect(newline("- one|\r\n- two\r\n") == "- one\r\n- |\r\n- two\r\n")
+        #expect(newline("1. one|\r\n2. two\r\n") == "1. one\r\n2. |\r\n3. two\r\n")
+        #expect(newline("- one\r\n- |\r\n") == "- one\r\n|\r\n")
+        #expect(tab("- one\r\n- two|\r\n") == "- one\r\n  - two|\r\n")
+        #expect(backtab("- one\r\n  - two|\r\n") == "- one\r\n- two|\r\n")
+        #expect(backspace("- one\r\n- |\r\n") == "- one\r\n|\r\n")
+        #expect(newline("- one|") == "- one\n- |")
+    }
+
+    /// A line ending the "\n"-indexed lines cannot place is not rewritten;
+    /// the key falls through to the text view.
+    @Test func aLineWithAnotherTerminatorIsLeftToTheView() {
+        #expect(newline("- one\r- two|\n") == nil)
+        #expect(newline("- one\u{2028}- two|") == nil)
+    }
+
     @Test func enterContinuesAnItemWithTheSameMarkerOrTheNextNumber() {
         #expect(newline("- one|") == "- one\n- |")
         #expect(newline("  * one|") == "  * one\n  * |")

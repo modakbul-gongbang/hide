@@ -90,7 +90,7 @@ enum MarkdownListEditing {
             if case .ordered = item.marker, item.indent == 0, context.isSoleItem {
                 return nil
             }
-            lines[index] = ""
+            lines[index] = context.carriageReturn
             let changed = renumber(&lines, column: item.indent, around: index + 1)
             return context.edit(lines: lines, touching: index...index, changed, caret: context.line.location)
         }
@@ -101,10 +101,10 @@ enum MarkdownListEditing {
         case .ordered(let number, let delimiter): .ordered(number: number + 1, delimiter: delimiter)
         }
         let prefix = String(repeating: " ", count: item.indent) + nextMarker.text + " "
-        lines[index] = before
-        lines.insert(prefix + after, at: index + 1)
+        lines[index] = before + context.carriageReturn
+        lines.insert(prefix + after + context.carriageReturn, at: index + 1)
         let changed = renumber(&lines, column: item.indent, around: index + 1)
-        let caret = context.line.location + before.utf16.count + 1 + prefix.utf16.count
+        let caret = context.line.location + before.utf16.count + context.carriageReturn.utf16.count + 1 + prefix.utf16.count
         return context.edit(lines: lines, touching: index...(index + 1), changed, caret: caret)
     }
 
@@ -115,7 +115,7 @@ enum MarkdownListEditing {
         var lines = context.lines
         let index = context.lineIndex
         let item = context.item
-        lines[index] = String(repeating: " ", count: indentUnit) + context.lineText
+        lines[index] = String(repeating: " ", count: indentUnit) + context.lineText + context.carriageReturn
         let inner = renumber(&lines, column: item.indent + indentUnit, around: index)
         let outer = renumber(&lines, column: item.indent, around: index + 1)
         let caret = context.caretAfterPrefixChange(lines[index])
@@ -132,7 +132,7 @@ enum MarkdownListEditing {
         var lines = context.lines
         let index = context.lineIndex
         let removed = min(indentUnit, item.indent)
-        lines[index] = String(context.lineText.utf16.dropFirst(removed))!
+        lines[index] = String(context.lineText.utf16.dropFirst(removed))! + context.carriageReturn
         let outer = renumber(&lines, column: item.indent - removed, around: index)
         let inner = renumber(&lines, column: item.indent, around: index + 1)
         let caret = context.caretAfterPrefixChange(lines[index])
@@ -145,7 +145,7 @@ enum MarkdownListEditing {
               caret == NSMaxRange(context.line) else { return nil }
         var lines = context.lines
         let index = context.lineIndex
-        lines[index] = String(repeating: " ", count: context.item.indent)
+        lines[index] = String(repeating: " ", count: context.item.indent) + context.carriageReturn
         let changed = renumber(&lines, column: context.item.indent, around: index + 1)
         return context.edit(lines: lines, touching: index...index, changed, caret: context.line.location + context.item.indent)
     }
@@ -193,24 +193,39 @@ enum MarkdownListEditing {
         let text: NSString
         let lines: [String]
         let lineIndex: Int
-        /// The caret's line without its newline.
+        /// The caret's line without its line ending.
         let line: NSRange
         let lineText: String
+        /// "\r" when the caret's line ends in CRLF, so a rewritten line keeps
+        /// the file's line endings; `lines` split on "\n" and carry it as text.
+        let carriageReturn: String
         let item: Item
         let caret: Int
 
+        /// Nil when the caret's line is not a list item, or when its line
+        /// ending is neither LF nor CRLF: the lines are indexed by "\n", so any
+        /// other terminator would put the rewrite on the wrong text, and the
+        /// key falls through to the view's own command instead.
         init?(text: String, caret: Int) {
             let ns = text as NSString
             guard caret >= 0, caret <= ns.length else { return nil }
             let full = ns.lineRange(for: NSRange(location: caret, length: 0))
-            let content = ns.substring(with: full)
-            let trimmed = content.hasSuffix("\r\n") ? String(content.dropLast(2)) : (content.hasSuffix("\n") ? String(content.dropLast()) : content)
+            var contentsEnd = 0
+            ns.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: caret, length: 0))
+            let trimmed = ns.substring(with: NSRange(location: full.location, length: contentsEnd - full.location))
+            let terminator = ns.substring(with: NSRange(location: contentsEnd, length: NSMaxRange(full) - contentsEnd))
+            guard terminator.isEmpty || terminator == "\n" || terminator == "\r\n" else { return nil }
             guard let item = MarkdownListEditing.item(in: trimmed) else { return nil }
+            let carriageReturn = terminator == "\r\n" ? "\r" : ""
+            let lines = text.components(separatedBy: "\n")
+            let lineIndex = ns.substring(to: full.location).components(separatedBy: "\n").count - 1
+            guard lines.indices.contains(lineIndex), lines[lineIndex] == trimmed + carriageReturn else { return nil }
             self.text = ns
-            self.lines = text.components(separatedBy: "\n")
-            self.lineIndex = ns.substring(to: full.location).components(separatedBy: "\n").count - 1
+            self.lines = lines
+            self.lineIndex = lineIndex
             self.line = NSRange(location: full.location, length: trimmed.utf16.count)
             self.lineText = trimmed
+            self.carriageReturn = carriageReturn
             self.item = item
             self.caret = caret
         }
