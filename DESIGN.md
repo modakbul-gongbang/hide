@@ -1264,6 +1264,38 @@ Loading and failed tree states, empty sidebar and checkout, missing pane project
 Remote and browser idle, loading, ready, stale, unavailable, and failed phases preserve their existing labels and semantic status colors.
 Existing controls retain their accessibility contracts; Overview adds named section, inspection, graph, search, explicit focus and cleanup targets.
 
+#### Project Home
+
+Project Home is the project-scoped page a checkout draws when it has no tab, in place of the former `No terminal open` sentence, and the overlay the operator raises over a checkout that has tabs.
+It answers one question, where to go next, and the terminal stays where the operator acts: every action that opens a pane, a checkout or a new tab closes the overlay.
+The toggle is the `square.grid.2x2` icon button at the leading edge of the tab strip and `Project Home` in the Navigate menu (`⇧⌘H`); Escape closes the overlay unless a sheet is above it.
+The flag is session-local on `ShellModel`, like the Agents `My Work` scope; it is not core state and is never persisted.
+`ProjectHomeBoard` is a pure function of the focused project's checkouts, the core's canonical agents and the Overview worktree facts, memoized by the snapshot revision, so an unchanged section never rebuilds it and nothing here runs a timer.
+
+The page is a mission board: one full-width lane per checkout, agents as fixed-width cards inside the lane, and the checkout's progress as a track in the lane header.
+Lanes follow the Overview checkout rank, Needs You, then Done, Working, has agents, none, with stable path ties; the primary checkout is never pinned first.
+A lane header reads left to right as branch, checkout badges (`detached`, `missing`, `primary`), then the track; the whole name is the open control, disabled for a missing worktree.
+The track has five fixed stages, `Changes`, `Commits`, `PR`, `CI`, `Merged`, drawn as `Typography.caption` medium chips of `Home.trackHeight` joined by `Home.trackConnectorWidth` hairlines.
+A filled stage carries its semantic colour on a `selectedFill` wash: `warning` for uncommitted changes, `secondary` for a clean tree or zero commits ahead, `primary` for commits ahead, `HideTheme.PullRequest` for the PR state, the [status model's CI mapping](docs/status-model.md#github-status-in-the-workspace-row) for checks, and the merged purple for a merged PR or a branch merged by ancestry.
+A stage the data cannot fill is hollow, a dashed `divider` outline with a `muted` label, and its tooltip carries the reason: no pull request, a lookup still running, the lookup's failure, an unknown check result, a missing base branch, a folder that is not a Git repository.
+A hollow stage is never invented into a value; `Unknown` CI is hollow, `No checks` is filled gray, because one is absent data and the other is a reported empty list.
+
+Cards are `Home.cardWidth` wide and never move when a status changes; a lane reflows only when a card is added or removed.
+A card draws the shared status mark, the provider badge, the identity label on up to two lines, the core's second line exactly as `AgentRow` draws it (the status word in the mark's colour, or the sentence in the row's emphasis), and `elapsed` in `micro` monospaced.
+A delegated child is a `Home.childCardWidth` card stacked under its parent, indented one `lineageIndent` per level and hanging from a `divider` hairline at `Home.childRailInset`, so the parent and its work wrap as one slot.
+A child whose pane lives in another checkout is a root in that checkout's lane with a `micro` `↳ from <parent>` caption, matching the Overview forest.
+A stalled root carries the core's `stallNotice` in `warning` under its second line; the notice is the core's sentence and no view builds one from a level.
+Hovering a card raises its lineage, parent and descendants, and dims every other card in that lane to `Opacity.dimmed`.
+A click selects the card and opens the inspector column (`Home.inspectorWidth`, folded under the lanes below `Home.inspectorFoldWidth`) without moving terminal focus; a double click, the inspector's `Open`, or a second click on the same strip card opens the pane.
+The selected card takes the `elevated` fill and a `primary` hairline; the pane currently shown keeps a `secondary` hairline so the board says which card the terminal is already on.
+
+The Needs You strip sits first on the page: every Needs You and Done card across the lanes as `Home.attentionCardWidth` compact cards, in the core's order, so the glance answer is the first thing drawn.
+Clicking one scrolls its lane into view and selects it; clicking it again opens the pane.
+With nothing waiting the strip is one `muted` line, `Nothing needs you right now.`, not an empty box.
+The header carries the project name, the four group counts in the pet badge colours with a zero kept in place and muted so the row never shifts, the shared `HideSearchField` that narrows cards and lanes (a lane whose own name matches keeps every card; otherwise a matching card keeps its ancestors), `Start new terminal` as the prominent action, and in overlay mode the close control.
+
+States, each in its smallest form: loading is the shared empty state until the first snapshot; a remote context keeps its own remote empty state and never draws the board; no checkouts is one empty lane with `No checkouts in this project yet.`; a checkout with no agents keeps its header and track above `No agents`, beside the uninstrumented `questionmark.circle` mark when Hide cannot see into it; a disconnected server dims the lanes to `Opacity.dimmed` under the `bolt.slash` notice while every card takes the shared disconnected mark and the counts keep their last reading; a missing worktree is a dimmed lane with the `missing` badge, every stage hollow and its open control disabled; a filter with no match is the empty lane with `Clear filter`.
+
 ### Enforcement
 
 Add a named token before using a new visual value.
