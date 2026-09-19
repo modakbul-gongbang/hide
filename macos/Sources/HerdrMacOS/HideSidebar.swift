@@ -824,8 +824,10 @@ private struct InactiveFoldRow: View {
     }
 }
 
-/// A compact read-only summary; the surrounding Workspace row owns disclosure.
-private struct WorkspaceAgentSummary: View {
+/// A compact read-only summary; the surrounding Workspace row owns
+/// disclosure. Project Home's lane header draws the same chip from the same
+/// presentation, so a lane and its sidebar row never disagree.
+struct WorkspaceAgentSummary: View {
     let presentation: SidebarCheckoutPresentation
 
     var body: some View {
