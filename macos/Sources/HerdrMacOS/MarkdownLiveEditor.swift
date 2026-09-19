@@ -180,8 +180,12 @@ struct MarkdownLiveEditor: NSViewRepresentable {
             let source = textView.string
             let parse = parse
             Task { @MainActor [weak self] in
+                // Foundation's parser autoreleases tens of megabytes per run and
+                // a worker thread drains only when it idles; without the pool
+                // sixty keystrokes on a 10,000-line document grew the process
+                // by a gigabyte.
                 let outcome = await Task.detached(priority: .userInitiated) {
-                    Result { try parse(source) }
+                    autoreleasepool { Result { try parse(source) } }
                 }.value
                 self?.finishParse(outcome, version: version)
             }
@@ -222,12 +226,17 @@ struct MarkdownLiveEditor: NSViewRepresentable {
             plan = next
             let region = next.changedRegion(from: previous)
             if region.length > 0 {
-                storage.beginEditing()
-                storage.setAttributes(typography.attributes(for: .body), range: region)
-                for span in next.spans where NSMaxRange(span.range) > region.location && span.range.location < NSMaxRange(region) {
-                    storage.setAttributes(typography.attributes(for: span.style), range: NSIntersectionRange(span.range, region))
+                // The pool bounds what a whole-document apply leaves behind
+                // before the run loop turns: a 10,000-line open otherwise
+                // peaked at two gigabytes.
+                autoreleasepool {
+                    storage.beginEditing()
+                    storage.setAttributes(typography.attributes(for: .body), range: region)
+                    for span in next.spans where NSMaxRange(span.range) > region.location && span.range.location < NSMaxRange(region) {
+                        storage.setAttributes(typography.attributes(for: span.style), range: NSIntersectionRange(span.range, region))
+                    }
+                    storage.endEditing()
                 }
-                storage.endEditing()
             }
             textView.typingAttributes = typography.attributes(for: .body)
             refreshHidden()
@@ -443,11 +452,15 @@ extension NSAttributedString.Key {
 /// heading type is Inter at the document tokens; code is the editor's
 /// monospaced font, so the two editing modes agree on what code looks like.
 @MainActor
-struct MarkdownLiveTypography {
+final class MarkdownLiveTypography {
     let scale: CGFloat
     private let body: NSFont
     private let mono: NSFont
     private let paragraph: NSParagraphStyle
+    /// One attribute set per style seen: a document has tens of thousands of
+    /// spans and a handful of styles, and resolving a font by descriptor for
+    /// each span cost a gigabyte of transient allocations on a large open.
+    private var cache: [MarkdownLiveStyle: [NSAttributedString.Key: Any]] = [:]
 
     init(scale: CGFloat) {
         self.scale = scale
@@ -460,6 +473,13 @@ struct MarkdownLiveTypography {
     }
 
     func attributes(for style: MarkdownLiveStyle) -> [NSAttributedString.Key: Any] {
+        if let cached = cache[style] { return cached }
+        let attributes = build(style)
+        cache[style] = attributes
+        return attributes
+    }
+
+    private func build(_ style: MarkdownLiveStyle) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: HideTheme.Native.primary]
         let paragraph = self.paragraph.mutableCopy() as! NSMutableParagraphStyle
         var size = HideTheme.Editor.documentFontSize
