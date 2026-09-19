@@ -60,8 +60,11 @@ struct ProjectHomeLaneView: View {
         .accessibilityIdentifier("project-home-lane-\(lane.id)")
     }
 
+    /// Label first, track beside it while both fit and under it when the
+    /// lane is narrow; the branch name is what the operator scans for, so
+    /// it truncates last.
     private var header: some View {
-        HStack(spacing: HideTheme.spacingSM) {
+        ProjectHomeWrapLayout(horizontalSpacing: HideTheme.spacingSM, verticalSpacing: HideTheme.spacingXS) {
             Button(action: onOpenCheckout) {
                 HStack(spacing: HideTheme.spacingSM) {
                     Image(systemName: lane.kindIcon)
@@ -87,7 +90,6 @@ struct ProjectHomeLaneView: View {
             .accessibilityLabel("Open checkout \(lane.label)")
             .accessibilityIdentifier("project-home-open-checkout-\(lane.id)")
             ProjectHomeTrackView(stages: lane.track, pullRequest: lane.pullRequest, onOpenPullRequest: onOpenPullRequest)
-            Spacer(minLength: HideTheme.spacingXS)
         }
     }
 
@@ -367,8 +369,11 @@ struct ProjectHomeInspector: View {
                 if let lane {
                     section("Checkout") {
                         Text(lane.label).foregroundStyle(HideTheme.primary)
-                        Text(lane.path).foregroundStyle(HideTheme.muted).textSelection(.enabled)
+                        Text(lane.path)
+                            .foregroundStyle(HideTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
                     }
                 }
                 if lineage.count > 1 {

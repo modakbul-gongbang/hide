@@ -385,6 +385,8 @@ struct ProjectHomeWrapLayoutTests {
         let sizes = [CGSize(width: 300, height: 20), CGSize(width: 50, height: 20)]
         let narrow = ProjectHomeWrapLayout.arrange(sizes: sizes, width: 200, horizontalSpacing: 8, verticalSpacing: 8)
         #expect(narrow.frames.map(\.origin.y) == [0, 28])
+        #expect(narrow.frames[0].width == 200)
+        #expect(narrow.size.width == 200)
         let wide = ProjectHomeWrapLayout.arrange(sizes: sizes, width: .infinity, horizontalSpacing: 8, verticalSpacing: 8)
         #expect(wide.frames.map(\.origin) == [CGPoint(x: 0, y: 0), CGPoint(x: 308, y: 0)])
         #expect(ProjectHomeWrapLayout.arrange(sizes: [], width: 100, horizontalSpacing: 8, verticalSpacing: 8).size == .zero)

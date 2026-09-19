@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Lays a lane's card groups out left to right and wraps at the lane's width.
+/// Lays a lane's items (its header parts, its card groups) out left to right
+/// and wraps at the lane's width.
 ///
 /// Every group keeps its own ideal size and its place in the sequence, so a
 /// status change repaints a card without moving its neighbours; only a change
@@ -12,8 +13,9 @@ struct ProjectHomeWrapLayout: Layout {
     var verticalSpacing: CGFloat = HideTheme.spacingSM
 
     /// Where each size lands in a container `width` wide. A group wider than
-    /// the container takes a row of its own rather than being cut; an
-    /// unbounded width lays everything on one row.
+    /// the container takes a row of its own at the container's width, so a
+    /// truncating label truncates instead of overflowing; an unbounded width
+    /// lays everything on one row.
     static func arrange(
         sizes: [CGSize],
         width: CGFloat,
@@ -25,7 +27,8 @@ struct ProjectHomeWrapLayout: Layout {
         var y: CGFloat = 0
         var rowHeight: CGFloat = 0
         var widest: CGFloat = 0
-        for size in sizes {
+        for ideal in sizes {
+            let size = CGSize(width: min(ideal.width, width), height: ideal.height)
             if x > 0, x + size.width > width {
                 x = 0
                 y += rowHeight + verticalSpacing

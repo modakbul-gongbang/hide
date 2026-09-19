@@ -129,40 +129,45 @@ struct ProjectHome: View {
 
     // MARK: Header
 
+    /// Title row, then the counts, the filter and the start control, which
+    /// wrap under each other when the page is narrow rather than squeezing
+    /// the counts into broken words.
     private func header(_ board: ProjectHomeBoard) -> some View {
-        HStack(spacing: HideTheme.spacingMD) {
-            VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+        VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
+            HStack(spacing: HideTheme.spacingMD) {
                 Text(board.projectLabel)
                     .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                     .foregroundStyle(HideTheme.primary)
                     .lineLimit(1)
-                counts(board.counts)
+                Spacer(minLength: HideTheme.spacingSM)
+                if mode == .overlay {
+                    HideIconButton(
+                        systemImage: "xmark",
+                        help: "Close Project Home",
+                        variant: .toolbar,
+                        command: .menu(.projectHome),
+                        action: model.closeProjectHome
+                    )
+                    .accessibilityIdentifier("project-home-close")
+                }
             }
-            Spacer(minLength: HideTheme.spacingSM)
-            HideSearchField(
-                placeholder: "Filter agents and checkouts…",
-                text: $query,
-                selection: $searchSelection,
-                resultIDs: board.lanes.flatMap(\.cards).map(\.id),
-                activate: {
-                    if let id = searchSelection.selectedID, board.card(id) != nil { select(id, in: board) }
-                },
-                dismiss: { query = "" }
-            )
-            .frame(maxWidth: HideTheme.Home.inspectorWidth)
-            .accessibilityIdentifier("project-home-search")
-            Button("Start new terminal") { model.addTab() }
-                .buttonStyle(HideTextButtonStyle(appearance: .prominent, density: .regular))
-                .accessibilityIdentifier("project-home-start-terminal")
-            if mode == .overlay {
-                HideIconButton(
-                    systemImage: "xmark",
-                    help: "Close Project Home",
-                    variant: .toolbar,
-                    command: .menu(.projectHome),
-                    action: model.closeProjectHome
+            ProjectHomeWrapLayout(horizontalSpacing: HideTheme.spacingMD, verticalSpacing: HideTheme.spacingSM) {
+                counts(board.counts)
+                HideSearchField(
+                    placeholder: "Filter agents and checkouts…",
+                    text: $query,
+                    selection: $searchSelection,
+                    resultIDs: board.lanes.flatMap(\.cards).map(\.id),
+                    activate: {
+                        if let id = searchSelection.selectedID, board.card(id) != nil { select(id, in: board) }
+                    },
+                    dismiss: { query = "" }
                 )
-                .accessibilityIdentifier("project-home-close")
+                .frame(width: HideTheme.Home.inspectorWidth)
+                .accessibilityIdentifier("project-home-search")
+                Button("Start new terminal") { model.addTab() }
+                    .buttonStyle(HideTextButtonStyle(appearance: .prominent, density: .regular))
+                    .accessibilityIdentifier("project-home-start-terminal")
             }
         }
         .padding(.horizontal, HideTheme.spacingLG)
@@ -191,6 +196,7 @@ struct ProjectHome: View {
                 .hideFont(size: HideTheme.Typography.caption, weight: .medium)
         }
         .foregroundStyle(value > 0 ? color : HideTheme.muted)
+        .fixedSize()
     }
 
     // MARK: Lanes
@@ -244,31 +250,32 @@ struct ProjectHome: View {
                 .accessibilityIdentifier("project-home-attention-empty")
         } else {
             VStack(alignment: .leading, spacing: HideTheme.spacingSM) {
-                Text("Needs You")
+                Text("Needs You · \(board.attention.count)")
                     .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
                     .foregroundStyle(HideTheme.warning)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: HideTheme.spacingSM) {
-                        ForEach(board.attention) { card in
-                            ProjectHomeCardView(
-                                card: card,
-                                width: HideTheme.Home.attentionCardWidth,
-                                compact: true,
-                                selected: selectedPaneID == card.id,
-                                dimmed: false,
-                                shown: model.focusedPaneID == card.id,
-                                onHover: { _ in },
-                                onSelect: {
-                                    if selectedPaneID == card.id {
-                                        model.selectAgent(paneID: card.id)
-                                    } else {
-                                        select(card.id, in: board)
-                                        scrollTarget = card.laneID
-                                    }
-                                },
-                                onOpen: { model.selectAgent(paneID: card.id) }
-                            )
-                        }
+                // Wrapped, not scrolled sideways: at twelve lanes a
+                // horizontal strip hid two thirds of the answer with no
+                // sign that more was there.
+                ProjectHomeWrapLayout {
+                    ForEach(board.attention) { card in
+                        ProjectHomeCardView(
+                            card: card,
+                            width: HideTheme.Home.attentionCardWidth,
+                            compact: true,
+                            selected: selectedPaneID == card.id,
+                            dimmed: false,
+                            shown: model.focusedPaneID == card.id,
+                            onHover: { _ in },
+                            onSelect: {
+                                if selectedPaneID == card.id {
+                                    model.selectAgent(paneID: card.id)
+                                } else {
+                                    select(card.id, in: board)
+                                    scrollTarget = card.laneID
+                                }
+                            },
+                            onOpen: { model.selectAgent(paneID: card.id) }
+                        )
                     }
                 }
             }
