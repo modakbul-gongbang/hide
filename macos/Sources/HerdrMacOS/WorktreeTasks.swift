@@ -1,13 +1,17 @@
 import Foundation
 
 enum WorktreeMenuPolicy {
+    static let pinProject = "Pin"
+    static let unpinProject = "Unpin"
     static let newWorktree = "New worktree…"
-    static let removeRegistration = "Remove registration"
+    static let removeProject = "Remove project…"
     static let setBaseBranch = "Set as base branch"
     static let copyPath = "Copy Path"
     static let openIn = "Open in"
 
-    static let projectItems = [newWorktree, removeRegistration]
+    /// The registered project row's menu, the same in `⋯` and on right-click
+    /// (D-05). An unregistered folder row has no pin and no removal (D-06).
+    static let projectItems = [pinProject, newWorktree, removeProject]
     static let checkoutItems = [newWorktree, setBaseBranch, copyPath, openIn]
 }
 

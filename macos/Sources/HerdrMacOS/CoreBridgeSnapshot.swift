@@ -481,12 +481,23 @@ struct CoreWorkspaceRegistration: Decodable, Identifiable {
     let label: String
     let path: String
     let deviceID: String
+    let pinned: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
         case label
         case path
         case deviceID = "device_id"
+        case pinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        path = try container.decode(String.self, forKey: .path)
+        deviceID = try container.decode(String.self, forKey: .deviceID)
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
     }
 }
 

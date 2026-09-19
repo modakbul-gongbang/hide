@@ -49,7 +49,17 @@ struct HideSidebar: View {
             }
         }
 
-        HideSectionLabel(title: "Projects · Recent activity", count: model.workspaces.count)
+        // Pinned projects sit under their own header, drawn only while there
+        // is one; the activity list below counts the rest (D-02).
+        let sections = model.sidebarProjectSections
+        if !sections.pinned.isEmpty {
+            HideSectionLabel(title: "Pinned", count: sections.pinned.count)
+            ForEach(sections.pinned) { workspace in
+                WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: .root)
+            }
+        }
+
+        HideSectionLabel(title: "Projects · Recent activity", count: sections.recent.count)
         if model.workspaces.isEmpty {
             EmptySidebarRow(
                 systemImage: "square.stack.3d.up",
@@ -57,7 +67,7 @@ struct HideSidebar: View {
                 detail: "Add a folder to create your first project."
             )
         } else {
-            ForEach(model.sidebarProjectRows) { row in
+            ForEach(sections.rows) { row in
                 switch row {
                 case .workspace(let workspace, let hierarchyLevel):
                     WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
@@ -677,17 +687,7 @@ private struct WorkspaceNavigatorRow: View {
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Menu {
-                    if workspace.isGit && workspace.remoteTargetID == nil {
-                        Button("Refresh GitHub status") { model.requestGithubStatus(workspace, refresh: true) }
-                    }
-                    Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
-                        .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
-                    Divider()
-                    if workspace.registered {
-                        Button(WorktreeMenuPolicy.removeRegistration, role: .destructive) {
-                            model.requestRemoveWorkspace(workspace)
-                        }
-                    }
+                    projectMenuItems
                 } label: {
                     Image(systemName: "ellipsis")
                         .hideFont(size: HideTheme.Typography.body, weight: .bold)
@@ -702,6 +702,9 @@ private struct WorkspaceNavigatorRow: View {
             }
             .padding(.leading, hierarchyLevel.contentLeadingInset)
             .padding(.trailing, HideTheme.spacingSM)
+            // The same items as `⋯`, the way checkout rows already offer
+            // theirs on right-click (D-05).
+            .contextMenu { projectMenuItems }
 
             if workspace.expanded {
                 ForEach(model.activeCheckouts(in: workspace)) { checkout in
@@ -731,6 +734,29 @@ private struct WorkspaceNavigatorRow: View {
         }
         .padding(.bottom, HideTheme.spacingSM)
         .onAppear { model.requestGithubStatus(workspace) }
+    }
+
+    /// Pin and removal exist only for a registration: a temporary folder row
+    /// has nothing to store the pin in and nothing to unregister (D-06).
+    @ViewBuilder
+    private var projectMenuItems: some View {
+        if workspace.registered {
+            Button(workspace.pinned ? WorktreeMenuPolicy.unpinProject : WorktreeMenuPolicy.pinProject) {
+                model.setWorkspacePinned(workspace, pinned: !workspace.pinned)
+            }
+            Divider()
+        }
+        if workspace.isGit && workspace.remoteTargetID == nil {
+            Button("Refresh GitHub status") { model.requestGithubStatus(workspace, refresh: true) }
+        }
+        Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
+            .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
+        if workspace.registered {
+            Divider()
+            Button(WorktreeMenuPolicy.removeProject, role: .destructive) {
+                model.requestRemoveWorkspace(workspace)
+            }
+        }
     }
 
     private func checkoutGroup(

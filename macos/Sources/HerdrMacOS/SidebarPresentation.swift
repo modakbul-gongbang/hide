@@ -45,6 +45,50 @@ enum SidebarHierarchyLevel: Equatable {
     }
 }
 
+/// The Projects list as the sidebar draws it: the pinned rows under their own
+/// section, then the activity rows with the device folds. Both halves keep
+/// the core's order; the split only reads the flag the core set (D-02).
+struct SidebarProjectSections {
+    let pinned: [CoreWorkspaceSnapshot]
+    /// Every project the `Pinned` section does not show, folded or not: the
+    /// `Projects · Recent activity` count.
+    let recent: [CoreWorkspaceSnapshot]
+    let rows: [SidebarProjectRow]
+
+    init(_ workspaces: [CoreWorkspaceSnapshot], groups: [CoreInactiveProjectGroupSnapshot]) {
+        pinned = workspaces.filter(\.pinned)
+        recent = workspaces.filter { !$0.pinned }
+        rows = SidebarInactiveProjection.projectRows(recent, groups: groups)
+    }
+}
+
+/// The `Remove project…` confirmation (D-10). The counts are the core's; the
+/// copy names them so the button says what confirming does.
+struct WorkspaceRemovalPrompt: Equatable {
+    let title: String
+    let message: String
+    let confirmLabel: String
+
+    init(label: String, removal: CoreWorkspaceRemovalGateSnapshot) {
+        title = "Remove \(label) from Hide?"
+        if removal.paneCount == 0 {
+            message = "Hide will remove only its registration. The folder, repository, worktrees, and running processes stay untouched."
+            confirmLabel = "Remove registration"
+        } else {
+            let panes = Self.count(removal.paneCount, "pane")
+            let agents = removal.runningAgentCount > 0
+                ? " (\(Self.count(removal.runningAgentCount, "running agent")))"
+                : ""
+            message = "Closes \(panes)\(agents). The folder, repository, and worktrees stay on disk."
+            confirmLabel = "Close \(panes) and remove"
+        }
+    }
+
+    private static func count(_ value: Int, _ noun: String) -> String {
+        "\(value) \(noun)\(value == 1 ? "" : "s")"
+    }
+}
+
 /// Maps core-owned inactive group IDs back to the authoritative rows. This is
 /// presentation only: no merge, age, or exception rule is repeated here.
 enum SidebarInactiveProjection {

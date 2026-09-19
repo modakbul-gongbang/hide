@@ -200,6 +200,102 @@ private func presentationWorkspace(
     #expect(state.expandedInactiveProjectDeviceIDs.isEmpty)
 }
 
+/// B2, B3, B4, B6. The `Pinned` section shows the rows the core flagged, in
+/// the core's order, and the activity list counts and draws only the rest;
+/// a pinned project the core kept out of its device fold never appears
+/// there. With no pin the split is the whole list, so the header can go.
+@Test func projectSectionsSplitPinnedRowsFromTheActivityList() throws {
+    let pinnedRemote = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(
+            #"{"id":"remote-pinned","label":"remote","path":"/tmp/remote","device_id":"mini","pinned":true,"checkouts":[]}"#.utf8
+        )
+    )
+    let pinnedLocal = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(
+            #"{"id":"local-pinned","label":"pinned","path":"/tmp/pinned","pinned":true,"checkouts":[]}"#.utf8
+        )
+    )
+    let active = presentationWorkspace(id: "active", checkouts: [])
+    let folded = presentationWorkspace(id: "folded", checkouts: [])
+    let group = try JSONDecoder().decode(
+        CoreInactiveProjectGroupSnapshot.self,
+        from: Data(#"{"device_id":"local","expanded":false,"project_ids":["folded"]}"#.utf8)
+    )
+
+    let sections = SidebarProjectSections(
+        [pinnedLocal, active, folded, pinnedRemote],
+        groups: [group]
+    )
+
+    #expect(sections.pinned.map(\.id) == ["local-pinned", "remote-pinned"])
+    #expect(sections.recent.map(\.id) == ["active", "folded"])
+    #expect(sections.rows.map(\.id) == ["workspace:active", "inactive-projects:local"])
+
+    let unpinned = SidebarProjectSections([active, folded], groups: [group])
+    #expect(unpinned.pinned.isEmpty)
+    #expect(unpinned.recent.count == 2)
+    #expect(unpinned.rows.map(\.id) == ["workspace:active", "inactive-projects:local"])
+}
+
+/// B5, B9. A row from a wire without the pin or the removal counts, which is
+/// every remote navigation row, reads as unpinned with nothing to close.
+@Test func pinAndRemovalWireDefaultsAreUnpinnedAndEmpty() throws {
+    let workspace = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(#"{"id":"legacy","label":"legacy","path":"/tmp/legacy","checkouts":[]}"#.utf8)
+    )
+    let counted = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(
+            #"{"id":"busy","label":"busy","path":"/tmp/busy","checkouts":[],"removal":{"pane_count":3,"running_agent_count":2}}"#.utf8
+        )
+    )
+    let registration = try JSONDecoder().decode(
+        CoreWorkspaceRegistration.self,
+        from: Data(#"{"id":"workspace:a","label":"a","path":"/tmp/a","device_id":"local"}"#.utf8)
+    )
+
+    #expect(!workspace.pinned)
+    #expect(workspace.removal == .none)
+    #expect(counted.removal == CoreWorkspaceRemovalGateSnapshot(paneCount: 3, runningAgentCount: 2))
+    #expect(!registration.pinned)
+}
+
+/// B11, B13. The confirmation says what confirming closes, from the core's
+/// counts: nothing for a project without panes, the pane and agent counts
+/// otherwise, and the button names the same outcome.
+@Test func removalPromptNamesThePanesAndAgentsItCloses() {
+    let none = WorkspaceRemovalPrompt(label: "hide", removal: .none)
+    #expect(none.title == "Remove hide from Hide?")
+    #expect(none.message.hasPrefix("Hide will remove only its registration."))
+    #expect(none.confirmLabel == "Remove registration")
+
+    let busy = WorkspaceRemovalPrompt(
+        label: "hide",
+        removal: CoreWorkspaceRemovalGateSnapshot(paneCount: 3, runningAgentCount: 2)
+    )
+    #expect(
+        busy.message
+            == "Closes 3 panes (2 running agents). The folder, repository, and worktrees stay on disk."
+    )
+    #expect(busy.confirmLabel == "Close 3 panes and remove")
+
+    let quiet = WorkspaceRemovalPrompt(
+        label: "hide",
+        removal: CoreWorkspaceRemovalGateSnapshot(paneCount: 1, runningAgentCount: 0)
+    )
+    #expect(quiet.message == "Closes 1 pane. The folder, repository, and worktrees stay on disk.")
+    #expect(quiet.confirmLabel == "Close 1 pane and remove")
+
+    let one = WorkspaceRemovalPrompt(
+        label: "hide",
+        removal: CoreWorkspaceRemovalGateSnapshot(paneCount: 1, runningAgentCount: 1)
+    )
+    #expect(one.message.hasPrefix("Closes 1 pane (1 running agent)."))
+}
+
 private func presentationAgent(
     id: String,
     paneID: String,

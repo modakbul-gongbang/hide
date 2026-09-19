@@ -243,8 +243,14 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     /// agent activity, in Unix milliseconds. Absent when the project has
     /// neither, which is what lets the row leave its time blank.
     let lastActivityUnixMS: UInt64?
+    /// The registration's pin, carried onto the row by the core, which also
+    /// orders pinned rows first. Absent on a wire that predates pins or on
+    /// the remote navigation wire, which reads as unpinned.
+    let pinned: Bool
     let checkouts: [CoreCheckoutSnapshot]
     let inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot
+    /// What `Remove project…` closes, counted by the core.
+    let removal: CoreWorkspaceRemovalGateSnapshot
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -260,8 +266,10 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         case registered
         case temporary
         case lastActivityUnixMS = "last_activity_unix_ms"
+        case pinned
         case checkouts
         case inactiveCheckouts = "inactive_checkouts"
+        case removal
     }
 
     init(
@@ -278,8 +286,10 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         registered: Bool,
         temporary: Bool,
         lastActivityUnixMS: UInt64? = nil,
+        pinned: Bool = false,
         checkouts: [CoreCheckoutSnapshot],
-        inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot = .empty
+        inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot = .empty,
+        removal: CoreWorkspaceRemovalGateSnapshot = .none
     ) {
         self.id = id
         self.label = label
@@ -294,8 +304,10 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         self.registered = registered
         self.temporary = temporary
         self.lastActivityUnixMS = lastActivityUnixMS
+        self.pinned = pinned
         self.checkouts = checkouts
         self.inactiveCheckouts = inactiveCheckouts
+        self.removal = removal
     }
 
     init(from decoder: Decoder) throws {
@@ -313,11 +325,28 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         registered = try container.decodeIfPresent(Bool.self, forKey: .registered) ?? true
         temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
         lastActivityUnixMS = try container.decodeIfPresent(UInt64.self, forKey: .lastActivityUnixMS)
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         checkouts = try container.decodeIfPresent([CoreCheckoutSnapshot].self, forKey: .checkouts) ?? []
         inactiveCheckouts = try container.decodeIfPresent(
             CoreInactiveCheckoutGroupSnapshot.self,
             forKey: .inactiveCheckouts
         ) ?? .empty
+        removal = try container.decodeIfPresent(
+            CoreWorkspaceRemovalGateSnapshot.self,
+            forKey: .removal
+        ) ?? .none
+    }
+}
+
+struct CoreWorkspaceRemovalGateSnapshot: Decodable, Equatable {
+    let paneCount: Int
+    let runningAgentCount: Int
+
+    static let none = CoreWorkspaceRemovalGateSnapshot(paneCount: 0, runningAgentCount: 0)
+
+    enum CodingKeys: String, CodingKey {
+        case paneCount = "pane_count"
+        case runningAgentCount = "running_agent_count"
     }
 }
 

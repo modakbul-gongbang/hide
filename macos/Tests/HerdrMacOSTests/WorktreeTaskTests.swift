@@ -8,6 +8,14 @@ struct WorktreeMenuTests {
         #expect(WorktreeMenuPolicy.projectItems.contains("New worktree…"))
     }
 
+    /// B1, B7. A registered project row pins and removes from the same menu;
+    /// the registration-only wording is gone with the in-use refusal.
+    @Test func projectMenuPinsAndRemovesTheProject() {
+        #expect(WorktreeMenuPolicy.projectItems == ["Pin", "New worktree…", "Remove project…"])
+        #expect(WorktreeMenuPolicy.unpinProject == "Unpin")
+        #expect(!WorktreeMenuPolicy.projectItems.contains("Remove registration"))
+    }
+
     @Test func everyCheckoutCanSetItsBranchAsBase() {
         #expect(WorktreeMenuPolicy.checkoutItems.contains("Set as base branch"))
     }

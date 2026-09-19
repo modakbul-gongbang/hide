@@ -544,6 +544,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "remove_workspace", payload: ["workspace_id": workspaceID])
     }
 
+    func setWorkspacePinned(_ workspaceID: String, pinned: Bool) {
+        dispatch(kind: "workspace_pin_set", payload: ["workspace_id": workspaceID, "pinned": pinned])
+    }
+
     func registerDevice(id: String, label: String, sshAlias: String) {
         dispatch(kind: "register_device", payload: [
             "id": id,
