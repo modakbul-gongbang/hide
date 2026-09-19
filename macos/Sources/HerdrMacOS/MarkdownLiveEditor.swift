@@ -283,15 +283,22 @@ final class MarkdownLiveGlyphGenerator: NSObject, NSLayoutManagerDelegate {
     /// Sorted by location; replaced whole by the coordinator.
     var hidden: [MarkdownLiveMarker] = []
 
-    /// Binary search over the hidden markers for the one covering a character.
-    func marker(at characterIndex: Int) -> MarkdownLiveMarker? {
+    /// The first hidden marker ending after a character: a binary search, because
+    /// glyph generation asks once per run and a document has thousands of markers.
+    private func firstMarkerIndex(endingAfter characterIndex: Int) -> Int {
         var low = 0, high = hidden.count
         while low < high {
             let mid = (low + high) / 2
             if NSMaxRange(hidden[mid].range) <= characterIndex { low = mid + 1 } else { high = mid }
         }
-        guard low < hidden.count, NSLocationInRange(characterIndex, hidden[low].range) else { return nil }
-        return hidden[low]
+        return low
+    }
+
+    /// The hidden marker covering a character, if any.
+    func marker(at characterIndex: Int) -> MarkdownLiveMarker? {
+        let index = firstMarkerIndex(endingAfter: characterIndex)
+        guard index < hidden.count, NSLocationInRange(characterIndex, hidden[index].range) else { return nil }
+        return hidden[index]
     }
 
     func layoutManager(
@@ -302,8 +309,8 @@ final class MarkdownLiveGlyphGenerator: NSObject, NSLayoutManagerDelegate {
         guard !hidden.isEmpty, glyphRange.length > 0 else { return 0 }
         let first = characterIndexes[0]
         let last = characterIndexes[glyphRange.length - 1]
-        guard let firstHidden = hidden.firstIndex(where: { NSMaxRange($0.range) > first }),
-              hidden[firstHidden].range.location <= last else { return 0 }
+        let firstHidden = firstMarkerIndex(endingAfter: first)
+        guard firstHidden < hidden.count, hidden[firstHidden].range.location <= last else { return 0 }
         var replacementGlyphs = Array(UnsafeBufferPointer(start: glyphs, count: glyphRange.length))
         var replacementProperties = Array(UnsafeBufferPointer(start: properties, count: glyphRange.length))
         var changed = false
