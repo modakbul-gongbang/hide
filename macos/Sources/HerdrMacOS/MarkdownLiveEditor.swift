@@ -393,12 +393,23 @@ final class MarkdownLiveLayoutManager: NSLayoutManager {
                         width: HideTheme.Editor.quoteRuleWidth, height: fullWidth.height).fill()
                 }
             }
-            if attributes[.markdownLiveThematicBreak] != nil, self.propertyForGlyph(at: glyphRange.location) == .null {
+            if attributes[.markdownLiveThematicBreak] != nil, self.ruleIsHidden(at: characterIndex, in: storage) {
                 HideTheme.Native.divider.setFill()
                 NSRect(x: origin.x, y: fullWidth.midY - HideTheme.Layout.hairlineWidth / 2,
                     width: containerWidth, height: HideTheme.Layout.hairlineWidth).fill()
             }
         }
+    }
+}
+
+extension MarkdownLiveLayoutManager {
+    /// A `---` line draws its rule only while its dashes are hidden; with them
+    /// hidden the fragment holds only the newline, so the dashes are looked up
+    /// from the paragraph start.
+    fileprivate func ruleIsHidden(at characterIndex: Int, in storage: NSTextStorage) -> Bool {
+        let paragraph = (storage.string as NSString).paragraphRange(for: NSRange(location: characterIndex, length: 0))
+        guard paragraph.length > 1 else { return false }
+        return propertyForGlyph(at: glyphIndexForCharacter(at: paragraph.location)) == .null
     }
 }
 

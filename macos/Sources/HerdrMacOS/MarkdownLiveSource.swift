@@ -222,7 +222,10 @@ enum MarkdownLiveSource {
                 if block.kind == .thematicBreak {
                     let nextStart = runs[(index + 1)...].first { $0.range.location != NSNotFound }?.range.location ?? text.length
                     if let line = thematicBreakLine(after: previousBlockEnd, before: nextStart) {
-                        spans.append(MarkdownLiveSpan(range: line, style: MarkdownLiveStyle(block: .thematicBreak)))
+                        // The style reaches the newline too: with every other glyph
+                        // hidden, the newline is the line fragment's only character,
+                        // and it is where the layout manager reads what to draw.
+                        spans.append(MarkdownLiveSpan(range: lineRange(containing: line.location), style: MarkdownLiveStyle(block: .thematicBreak)))
                         markers.append(MarkdownLiveMarker(range: line, kind: .hidden, unit: line))
                         previousBlockEnd = NSMaxRange(line)
                     }
