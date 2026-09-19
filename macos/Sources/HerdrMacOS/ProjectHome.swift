@@ -10,9 +10,14 @@ import SwiftUI
 /// to the view and publish nothing (DESIGN.md, Project Home).
 struct ProjectHome: View {
     @EnvironmentObject private var model: ShellModel
-    /// The node whose neighbourhood is drawn at full strength; `nil` is the
-    /// whole project (PRD rule 2).
+    /// The selected node, drawn with a ring. On entry it is the focused
+    /// pane's agent and the map stays whole; only a click asks for the
+    /// local graph (PRD rule 2).
     @State private var focus: String?
+    /// The operator clicked a node or a rail row: the selection's
+    /// neighbourhood is drawn at full strength and the rest dimmed, until
+    /// `Whole project`.
+    @State private var isolated = false
     @State private var focusSeeded = false
     @State private var hover: String?
     @State private var hoverPoint: CGPoint?
@@ -32,7 +37,7 @@ struct ProjectHome: View {
             // the header keeps only what fits on one line.
             let compact = proxy.size.width < HideTheme.Home.railCollapseWidth
             VStack(spacing: HideTheme.spacingNone) {
-                ProjectHomeHeader(home: home, compact: compact, focus: $focus)
+                ProjectHomeHeader(home: home, compact: compact, cache: model.projectHomeLayout, isolated: $isolated)
                 Rectangle()
                     .fill(HideTheme.divider)
                     .frame(height: HideTheme.Layout.hairlineWidth)
@@ -41,16 +46,19 @@ struct ProjectHome: View {
                     ProjectHomeCanvas(
                         home: home,
                         positions: model.projectHomeLayout.positions(for: home.topology),
+                        cache: model.projectHomeLayout,
                         focus: $focus,
+                        isolated: $isolated,
                         hover: $hover,
                         hoverPoint: $hoverPoint,
-                        onActivate: activate
+                        onActivate: activate,
+                        onOpenPullRequest: { model.openPullRequest($0) }
                     )
                     if showsRail {
                         Rectangle()
                             .fill(HideTheme.divider)
                             .frame(width: HideTheme.Layout.hairlineWidth)
-                        ProjectHomeRail(rows: home.rail, focus: $focus, onActivate: activate)
+                        ProjectHomeRail(rows: home.rail, focus: $focus, isolated: $isolated)
                             .frame(width: HideTheme.Home.railWidth)
                     }
                 }
@@ -63,22 +71,30 @@ struct ProjectHome: View {
         .accessibilityIdentifier("project-home")
     }
 
-    /// The focused pane's agent, or the focused checkout, on entry only. A
-    /// later focus change while the page is open is the operator's own
-    /// selection to keep.
+    /// The focused pane's agent, or the focused checkout, ringed on entry
+    /// with the map whole. A later focus change while the page is open is
+    /// the operator's own selection to keep.
     private func seedFocus(_ home: ProjectHomeModel) {
         guard !focusSeeded, home.shape != .loading else { return }
         focusSeeded = true
         focus = ProjectHomePresentation.initialFocus(
             home, focusedPaneID: model.focusedPaneID, focusedCheckoutID: model.focusedCheckout?.id
         )
+        isolated = false
     }
 
-    /// A node is opened by activating it while it is already selected; the
-    /// first activation selects it and shows its neighbourhood.
+    /// A click selects the node and shows its neighbourhood; a click on the
+    /// node already shown that way opens it. The project node is the way
+    /// back to the whole map.
     private func activate(_ node: ProjectHomeNode) {
-        guard focus == node.id || !node.opensOnActivate else {
+        if node.kind == .project {
+            focus = nil
+            isolated = false
+            return
+        }
+        guard focus == node.id, isolated, node.opensOnActivate else {
             focus = node.id
+            isolated = true
             return
         }
         switch node.kind {
@@ -88,10 +104,8 @@ struct ProjectHome: View {
             if let checkout = model.focusedWorkspace?.checkouts.first(where: { $0.id == node.checkoutID }) {
                 model.selectCheckout(checkout)
             }
-        case .pullRequest:
-            if let pullRequest = node.pullRequest { model.openPullRequest(pullRequest) }
         case .project:
-            focus = nil
+            break
         }
     }
 }
@@ -99,13 +113,14 @@ struct ProjectHome: View {
 // MARK: - Header
 
 /// The glance row outside the canvas: project, counts, Start new terminal,
-/// and the way back to the whole project (PRD rule 6).
+/// the way back to the whole project (PRD rule 6) and to the fitted map.
 private struct ProjectHomeHeader: View {
     @EnvironmentObject private var model: ShellModel
     let home: ProjectHomeModel
     /// The page is narrower than the rail collapse width.
     let compact: Bool
-    @Binding var focus: String?
+    @ObservedObject var cache: ProjectHomeLayoutCache
+    @Binding var isolated: Bool
 
     /// Counts show their mark instead of their word where the row is short
     /// of room: a narrow page, or the stale notice taking the words' place.
@@ -150,8 +165,17 @@ private struct ProjectHomeHeader: View {
                     .accessibilityIdentifier("project-home-stale")
             }
             Spacer(minLength: HideTheme.spacingSM)
-            if focus != nil {
-                Button("Whole project") { focus = nil }
+            if cache.view != .identity {
+                HideIconButton(
+                    systemImage: "arrow.up.left.and.arrow.down.right",
+                    help: "Fit the map to the window",
+                    variant: .toolbar,
+                    action: { cache.view = .identity }
+                )
+                .accessibilityIdentifier("project-home-fit")
+            }
+            if isolated {
+                Button("Whole project") { isolated = false }
                     .buttonStyle(HideTextButtonStyle(appearance: .quiet))
                     .fixedSize()
                     .hideTooltip("Show every checkout and agent")
@@ -182,86 +206,107 @@ private struct ProjectHomeHeader: View {
 // MARK: - Canvas
 
 /// The map. One drawing pass over the presentation's nodes and edges, hit
-/// testing as a pure function of the positions, and a card beside the
-/// hovered node. Internal so a test can host it with a hover set, since a
-/// background window never receives the pointer.
+/// testing as a pure function of the positions, a card beside the hovered
+/// node, and the pointer answered by `ProjectHomeInput` above it. Internal
+/// so a test can host it with a hover and a view set.
 struct ProjectHomeCanvas: View {
     let home: ProjectHomeModel
     let positions: [String: CGPoint]
+    @ObservedObject var cache: ProjectHomeLayoutCache
     @Binding var focus: String?
+    @Binding var isolated: Bool
     @Binding var hover: String?
     @Binding var hoverPoint: CGPoint?
     let onActivate: (ProjectHomeNode) -> Void
+    let onOpenPullRequest: (CorePullRequest) -> Void
     @Environment(\.hideFontScale) private var fontScale
 
     var body: some View {
         GeometryReader { proxy in
             let fit = ProjectHomeFit(
                 bounds: ProjectHomeGraphLayout.bounds(positions, nodes: home.topology.nodes),
-                canvas: proxy.size
+                canvas: proxy.size,
+                view: cache.view
             )
-            let emphasized = ProjectHomePresentation.emphasized(home, focus: focus, hover: hover)
-            ScrollView([.horizontal, .vertical], showsIndicators: fit.scrolls) {
-                ZStack(alignment: .topLeading) {
-                    Canvas(rendersAsynchronously: false) { context, _ in
-                        draw(in: &context, fit: fit, emphasized: emphasized)
-                    }
-                    .frame(width: fit.content.width, height: fit.content.height)
-                    .opacity(home.stale ? HideTheme.Opacity.dimmed : 1)
-                    .accessibilityChildren {
-                        ForEach(home.nodes) { node in
-                            Text(node.accessibilityLabel)
-                        }
-                    }
-                    .accessibilityLabel("Project map")
-                    .onContinuousHover(coordinateSpace: .local) { phase in
-                        switch phase {
-                        case .active(let point):
-                            let hit = ProjectHomeGraphLayout.hit(
-                                fit.layoutPoint(point), positions: positions,
-                                nodes: home.topology.nodes, margin: HideTheme.Home.hitMargin
-                            )
-                            if hit != hover { hover = hit }
-                            hoverPoint = hit == nil ? nil : point
-                        case .ended:
-                            hover = nil
-                            hoverPoint = nil
-                        }
-                    }
-                    .onTapGesture(coordinateSpace: .local) { point in
-                        guard let hit = ProjectHomeGraphLayout.hit(
-                            fit.layoutPoint(point), positions: positions,
-                            nodes: home.topology.nodes, margin: HideTheme.Home.hitMargin
-                        ), let node = home.node(hit) else {
-                            focus = nil
-                            return
-                        }
-                        onActivate(node)
-                    }
-                    if let message = home.emptyMessage {
-                        Text(message)
-                            .hideFont(size: HideTheme.Typography.subhead)
-                            .foregroundStyle(HideTheme.secondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: HideTheme.Home.cardWidth + HideTheme.Home.cardWidth / 2)
-                            .position(x: fit.content.width / 2, y: fit.content.height - HideTheme.Home.canvasInset)
-                            .accessibilityIdentifier("project-home-empty")
-                    }
-                    if let hover, let hoverPoint, let node = home.node(hover), let card = node.card {
-                        ProjectHomeHoverCard(card: card)
-                            .frame(width: HideTheme.Home.cardWidth)
-                            .fixedSize()
-                            .position(fit.cardCentre(near: hoverPoint, radius: node.radius * fit.scale))
-                            .allowsHitTesting(false)
-                            .transition(.opacity)
+            let emphasized = ProjectHomePresentation.emphasized(home, focus: focus, isolated: isolated, hover: hover)
+            ZStack(alignment: .topLeading) {
+                Canvas(rendersAsynchronously: false) { context, _ in
+                    draw(in: &context, fit: fit, emphasized: emphasized)
+                }
+                .opacity(home.stale ? HideTheme.Opacity.dimmed : 1)
+                .accessibilityChildren {
+                    ForEach(home.nodes) { node in
+                        Text(node.accessibilityLabel)
                     }
                 }
+                .accessibilityLabel("Project map")
+                if let message = home.emptyMessage {
+                    Text(message)
+                        .hideFont(size: HideTheme.Typography.subhead)
+                        .foregroundStyle(HideTheme.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: HideTheme.Home.cardWidth + HideTheme.Home.cardWidth / 2)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height - HideTheme.Home.canvasInset)
+                        .accessibilityIdentifier("project-home-empty")
+                }
+                if let hover, let hoverPoint, let node = home.node(hover), let card = node.card {
+                    ProjectHomeHoverCard(card: card)
+                        .frame(width: HideTheme.Home.cardWidth)
+                        .fixedSize()
+                        .position(fit.cardCentre(near: hoverPoint, radius: node.radius * fit.scale))
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+                ProjectHomeInput(
+                    onHover: { point in
+                        let hit = point.flatMap { hitNode(at: $0, fit: fit) }
+                        if hit != hover { hover = hit }
+                        hoverPoint = hit == nil ? nil : point
+                    },
+                    onClick: { point, clicks in
+                        if clicks == 2 {
+                            cache.view = .identity
+                            return
+                        }
+                        if let id = hitNode(at: point, fit: fit), let node = home.node(id) {
+                            onActivate(node)
+                        } else if let pullRequest = hitPullRequest(at: point, fit: fit) {
+                            onOpenPullRequest(pullRequest)
+                        } else {
+                            isolated = false
+                        }
+                    },
+                    onPan: { delta in
+                        cache.view = cache.view.panned(by: delta, scale: fit.scale)
+                    },
+                    onZoom: { factor, point in
+                        let offset = CGPoint(x: point.x - proxy.size.width / 2, y: point.y - proxy.size.height / 2)
+                        cache.view = cache.view.zoomed(by: factor, fitScale: fit.fitScale, keeping: offset)
+                    }
+                )
             }
-            .scrollDisabled(!fit.scrolls)
-            .defaultScrollAnchor(.center)
         }
         .clipped()
         .accessibilityIdentifier("project-home-canvas")
+    }
+
+    private func hitNode(at point: CGPoint, fit: ProjectHomeFit) -> String? {
+        ProjectHomeGraphLayout.hit(
+            fit.layoutPoint(point), positions: positions,
+            nodes: home.topology.nodes, margin: HideTheme.Home.hitMargin / fit.scale
+        )
+    }
+
+    /// The pull request whose chip is under the point, if any.
+    private func hitPullRequest(at point: CGPoint, fit: ProjectHomeFit) -> CorePullRequest? {
+        let layoutPoint = fit.layoutPoint(point)
+        for node in home.nodes where node.pullRequest != nil {
+            guard let centre = positions[node.id],
+                  let index = node.chips.firstIndex(where: { $0.kind == .pullRequest }) else { continue }
+            let frames = ProjectHomeGraphLayout.chipFrames(for: node.layout, at: centre)
+            if index < frames.count, frames[index].contains(layoutPoint) { return node.pullRequest }
+        }
+        return nil
     }
 
     private func draw(in context: inout GraphicsContext, fit: ProjectHomeFit, emphasized: Set<String>?) {
@@ -269,6 +314,7 @@ struct ProjectHomeCanvas: View {
             guard let emphasized else { return 1 }
             return ids.allSatisfy { emphasized.contains($0) } ? 1 : HideTheme.Opacity.dimmed
         }
+        let lineWidth = max(HideTheme.Layout.hairlineWidth, HideTheme.Home.edgeWidth * fit.scale)
         for edge in home.edges {
             guard let a = positions[edge.from], let b = positions[edge.to] else { continue }
             var path = Path()
@@ -277,7 +323,7 @@ struct ProjectHomeCanvas: View {
             context.stroke(
                 path,
                 with: .color(edge.color.opacity(strength(edge.from, edge.to))),
-                style: StrokeStyle(lineWidth: edge.width, dash: edge.dashed ? [HideTheme.spacingXS, HideTheme.spacingXS] : [])
+                style: StrokeStyle(lineWidth: lineWidth, dash: edge.dashed ? [HideTheme.spacingXS * fit.scale, HideTheme.spacingXS * fit.scale] : [])
             )
         }
         for node in home.nodes {
@@ -289,7 +335,7 @@ struct ProjectHomeCanvas: View {
             switch node.kind {
             case .project:
                 context.fill(disc, with: .color(HideTheme.elevated.opacity(opacity)))
-                context.stroke(disc, with: .color(node.color.opacity(opacity)), lineWidth: HideTheme.Home.edgeWidth)
+                context.stroke(disc, with: .color(node.color.opacity(opacity)), lineWidth: lineWidth)
             case .checkout:
                 if node.missing {
                     context.stroke(disc, with: .color(node.color.opacity(opacity)),
@@ -303,41 +349,47 @@ struct ProjectHomeCanvas: View {
                 let side = radius
                 context.draw(icon, in: CGRect(x: centre.x - side / 2, y: centre.y - side / 2, width: side, height: side))
             case .agent:
+                if node.group == .needsYou {
+                    // A soft static halo: found before its label is read.
+                    let halo = radius * HideTheme.Home.attentionHaloScale
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: centre.x - halo, y: centre.y - halo, width: halo * 2, height: halo * 2)),
+                        with: .color(HideTheme.warning.opacity(HideTheme.Opacity.subtleFill * opacity))
+                    )
+                }
                 if node.stallLevel == "soft" || node.stallLevel == "hard" {
-                    let halo = radius + HideTheme.Home.haloWidth
+                    let halo = radius + HideTheme.Home.haloWidth * fit.scale
                     context.stroke(
                         Path(ellipseIn: CGRect(x: centre.x - halo, y: centre.y - halo, width: halo * 2, height: halo * 2)),
                         with: .color(HideTheme.warning.opacity(opacity * (node.stallLevel == "hard" ? 1 : HideTheme.Opacity.secondary))),
-                        lineWidth: HideTheme.Home.haloWidth / 2
+                        lineWidth: HideTheme.Home.haloWidth * fit.scale / 2
                     )
                 }
                 context.fill(disc, with: .color(node.color.opacity(HideTheme.Opacity.emphasisFill * opacity)))
-                context.stroke(disc, with: .color(node.color.opacity(opacity)), lineWidth: node.delegated ? HideTheme.Layout.hairlineWidth : HideTheme.Home.edgeWidth)
+                context.stroke(disc, with: .color(node.color.opacity(opacity)), lineWidth: node.delegated ? HideTheme.Layout.hairlineWidth : lineWidth)
                 if let symbol = node.symbol {
                     let mark = Text(symbol)
                         .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale * fit.labelFontScale, weight: .bold, design: .monospaced))
                         .foregroundColor(node.color.opacity(opacity))
                     context.draw(mark, at: centre, anchor: .center)
                 }
-            case .pullRequest:
-                context.fill(disc, with: .color(node.color.opacity(opacity)))
             }
             if node.id == focus {
-                let ring = radius + HideTheme.Home.selectionRingInset
+                let ring = radius + HideTheme.Home.selectionRingInset * fit.scale
                 context.stroke(
                     Path(ellipseIn: CGRect(x: centre.x - ring, y: centre.y - ring, width: ring * 2, height: ring * 2)),
                     with: .color(HideTheme.primary.opacity(opacity)),
                     lineWidth: HideTheme.Layout.hairlineWidth
                 )
             }
-            // Labels are always drawn (PRD rule 4); the frame is the one the
-            // layout separated, so what it cleared on paper is clear here.
+            guard ProjectHomePresentation.drawsLabel(node, scale: fit.scale, hovered: node.id == hover, selected: node.id == focus) else { continue }
+            // The frame is the one the layout separated, so what it cleared
+            // on paper is clear here (PRD rule 4).
             let frame = fit.canvasRect(ProjectHomeGraphLayout.labelFrame(for: node.layout, at: layoutPoint))
             let labelColor: Color = switch node.kind {
             case .project: HideTheme.primary
             case .checkout: node.missing ? HideTheme.muted : HideTheme.primary
             case .agent: node.delegated ? HideTheme.muted : HideTheme.secondary
-            case .pullRequest: node.color
             }
             let weight: Font.Weight = node.kind == .project || node.kind == .checkout ? .semibold : .regular
             let label = context.resolve(
@@ -346,15 +398,32 @@ struct ProjectHomeCanvas: View {
                     .foregroundColor(labelColor.opacity(opacity))
             )
             let size = label.measure(in: CGSize(width: HideTheme.Home.labelMaxWidth * fit.labelFontScale, height: HideTheme.Home.labelHeight * fit.labelFontScale))
-            context.draw(label, in: CGRect(x: frame.midX - size.width / 2, y: frame.minY, width: size.width, height: size.height))
-            if let detail = node.detail {
-                let line = context.resolve(
-                    Text(detail)
-                        .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale * fit.labelFontScale, weight: .regular, design: .monospaced))
-                        .foregroundColor(HideTheme.muted.opacity(opacity))
+            let labelRect = CGRect(x: frame.midX - size.width / 2, y: frame.minY, width: size.width, height: size.height)
+            if fit.scale < HideTheme.Home.labelClearScale {
+                // Zoomed out, a label is wider than the room the layout
+                // cleared for it, so it sits on a plate to stay legible over
+                // whatever it now crosses.
+                context.fill(
+                    Path(roundedRect: labelRect.insetBy(dx: -HideTheme.spacingXXS, dy: 0), cornerRadius: HideTheme.radiusExtraSmall),
+                    with: .color(HideTheme.background.opacity(HideTheme.Opacity.secondary * opacity))
                 )
-                let detailSize = line.measure(in: CGSize(width: HideTheme.Home.labelMaxWidth * fit.labelFontScale, height: HideTheme.Home.labelHeight * fit.labelFontScale))
-                context.draw(line, in: CGRect(x: frame.midX - detailSize.width / 2, y: frame.maxY, width: detailSize.width, height: detailSize.height))
+            }
+            context.draw(label, in: labelRect)
+            // Chips are detail: they go with the thinned labels.
+            let chipFrames = fit.scale < HideTheme.Home.labelThresholdScale ? [] : ProjectHomeGraphLayout.chipFrames(for: node.layout, at: layoutPoint)
+            for (chip, layoutFrame) in zip(node.chips, chipFrames) {
+                let chipFrame = fit.canvasRect(layoutFrame)
+                let shape = Path(roundedRect: chipFrame, cornerRadius: HideTheme.radiusExtraSmall * fit.scale)
+                if chip.filled {
+                    context.fill(shape, with: .color(chip.color.opacity(HideTheme.Opacity.emphasisFill * opacity)))
+                }
+                context.stroke(shape, with: .color(chip.color.opacity((chip.filled ? HideTheme.Opacity.secondary : HideTheme.Opacity.disabled) * opacity)), lineWidth: HideTheme.Layout.hairlineWidth)
+                let text = context.resolve(
+                    Text(chip.text)
+                        .font(HideTheme.font(size: HideTheme.Typography.micro * fontScale * fit.labelFontScale, weight: .medium, design: .monospaced))
+                        .foregroundColor((chip.filled ? chip.color : HideTheme.secondary).opacity(opacity))
+                )
+                context.draw(text, at: CGPoint(x: chipFrame.midX, y: chipFrame.midY), anchor: .center)
             }
             if node.missing {
                 let badge = context.resolve(
@@ -369,38 +438,41 @@ struct ProjectHomeCanvas: View {
     }
 }
 
-/// How the layout's points land on the canvas: grown to fill it up to the
-/// scale cap, centred when smaller, scrolled at scale 1 when larger.
+/// How the layout's points land on the canvas: the whole map fitted to the
+/// canvas up to the scale cap, then the operator's zoom and pan over that.
 struct ProjectHomeFit: Equatable {
     let bounds: CGRect
     let canvas: CGSize
+    /// The scale that fits the whole map, before any zoom.
+    let fitScale: CGFloat
     let scale: CGFloat
-    let content: CGSize
-    let origin: CGPoint
+    let view: ProjectHomeViewState
 
-    init(bounds: CGRect, canvas: CGSize) {
+    init(bounds: CGRect, canvas: CGSize, view: ProjectHomeViewState = .identity) {
         self.bounds = bounds
         self.canvas = canvas
+        self.view = view
         let inset = HideTheme.Home.canvasInset
         let available = CGSize(width: max(1, canvas.width - inset * 2), height: max(1, canvas.height - inset * 2))
         let fit = bounds.isEmpty ? 1 : min(available.width / bounds.width, available.height / bounds.height)
-        scale = min(HideTheme.Home.maxScale, max(HideTheme.Home.minScale, fit))
-        let mapSize = CGSize(width: bounds.width * scale + inset * 2, height: bounds.height * scale + inset * 2)
-        content = CGSize(width: max(canvas.width, mapSize.width), height: max(canvas.height, mapSize.height))
-        origin = CGPoint(
-            x: (content.width - bounds.width * scale) / 2 - bounds.minX * scale,
-            y: (content.height - bounds.height * scale) / 2 - bounds.minY * scale
-        )
+        fitScale = min(HideTheme.Home.maxScale, fit)
+        scale = fitScale * view.zoom
     }
-
-    var scrolls: Bool { content.width > canvas.width || content.height > canvas.height }
 
     /// The type size the labels are drawn at: the caption scaled with the
     /// map, never below the floor.
-    var labelFontScale: CGFloat { min(1, max(HideTheme.Home.labelMinFontScale, scale)) }
+    var labelFontScale: CGFloat { max(HideTheme.Home.labelMinFontScale, scale) }
+
+    /// The map is wider or taller than the canvas at this scale.
+    var overflows: Bool { bounds.width * scale > canvas.width || bounds.height * scale > canvas.height }
+
+    private var centre: CGPoint { CGPoint(x: bounds.midX, y: bounds.midY) }
 
     func canvasPoint(_ point: CGPoint) -> CGPoint {
-        CGPoint(x: origin.x + point.x * scale, y: origin.y + point.y * scale)
+        CGPoint(
+            x: canvas.width / 2 + (point.x - centre.x + view.pan.x) * scale,
+            y: canvas.height / 2 + (point.y - centre.y + view.pan.y) * scale
+        )
     }
 
     func canvasRect(_ rect: CGRect) -> CGRect {
@@ -409,17 +481,20 @@ struct ProjectHomeFit: Equatable {
     }
 
     func layoutPoint(_ point: CGPoint) -> CGPoint {
-        CGPoint(x: (point.x - origin.x) / scale, y: (point.y - origin.y) / scale)
+        CGPoint(
+            x: (point.x - canvas.width / 2) / scale + centre.x - view.pan.x,
+            y: (point.y - canvas.height / 2) / scale + centre.y - view.pan.y
+        )
     }
 
     /// Where the hover card sits: to the right of the node, flipped left
-    /// when that would leave the content, and kept inside vertically.
+    /// when that would leave the canvas, and kept inside vertically.
     func cardCentre(near point: CGPoint, radius: CGFloat) -> CGPoint {
         let width = HideTheme.Home.cardWidth
         let gap = radius + HideTheme.Home.cardOffset
         var x = point.x + gap + width / 2
-        if x + width / 2 > content.width { x = point.x - gap - width / 2 }
-        let y = min(max(point.y, HideTheme.Home.cardWidth / 4), content.height - HideTheme.Home.cardWidth / 4)
+        if x + width / 2 > canvas.width { x = point.x - gap - width / 2 }
+        let y = min(max(point.y, HideTheme.Home.cardWidth / 4), canvas.height - HideTheme.Home.cardWidth / 4)
         return CGPoint(x: x, y: y)
     }
 }
@@ -483,7 +558,7 @@ private struct ProjectHomeRail: View {
     @EnvironmentObject private var model: ShellModel
     let rows: [ProjectHomeRailRow]
     @Binding var focus: String?
-    let onActivate: (ProjectHomeNode) -> Void
+    @Binding var isolated: Bool
 
     var body: some View {
         ScrollView {
@@ -506,10 +581,11 @@ private struct ProjectHomeRail: View {
 
     private func railRow(_ row: ProjectHomeRailRow) -> some View {
         Button {
-            if focus == row.nodeID {
+            if focus == row.nodeID, isolated {
                 model.selectAgent(paneID: row.paneID)
             } else {
                 focus = row.nodeID
+                isolated = true
             }
         } label: {
             HStack(alignment: .top, spacing: HideTheme.spacingXS) {
@@ -539,11 +615,11 @@ private struct ProjectHomeRail: View {
             .padding(.horizontal, HideTheme.spacingMD)
             .padding(.vertical, HideTheme.compactAgentRowVerticalPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(focus == row.nodeID ? HideTheme.elevated : Color.clear)
+            .background(focus == row.nodeID && isolated ? HideTheme.elevated : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(HideInteractiveButtonStyle())
-        .hideTooltip(focus == row.nodeID ? "Open \(row.title)" : "Show \(row.title) on the map")
+        .hideTooltip(focus == row.nodeID && isolated ? "Open \(row.title)" : "Show \(row.title) on the map")
         .accessibilityLabel([row.title, row.agentKind, row.statusLabel, row.detail].compactMap { $0 }.joined(separator: ", "))
         .accessibilityIdentifier("project-home-rail-\(row.paneID)")
     }

@@ -12,7 +12,6 @@ struct ProjectHomeNode: Identifiable, Equatable {
         case project
         case checkout
         case agent
-        case pullRequest
     }
 
     let id: String
@@ -21,8 +20,9 @@ struct ProjectHomeNode: Identifiable, Equatable {
     /// the full text lives in `fullLabel` for the card and accessibility.
     let label: String
     let fullLabel: String
-    /// A checkout's second line - ahead, behind, changed files - or nothing.
-    let detail: String?
+    /// A checkout's second line: its derived state as chips in the track
+    /// order (changed, ahead and behind, pull request). Empty elsewhere.
+    let chips: [ProjectHomeChip]
     /// The status mark drawn inside an agent node.
     let symbol: String?
     let color: Color
@@ -37,13 +37,36 @@ struct ProjectHomeNode: Identifiable, Equatable {
     let checkoutID: String?
     let pullRequest: CorePullRequest?
     /// Whether opening this node does anything. A missing checkout and the
-    /// project itself have nowhere to go.
+    /// project itself have nowhere to go; any checkout that exists opens,
+    /// primary included.
     let opensOnActivate: Bool
     let accessibilityLabel: String
     let card: ProjectHomeCard?
     let layout: ProjectHomeGraphLayout.Node
 
     var group: AgentGroup? { card?.group }
+}
+
+/// One chip under a checkout hub. `filled` carries a signal (dirty, a pull
+/// request state); a hollow chip is a neutral known value. An unknown value
+/// has no chip at all.
+struct ProjectHomeChip: Equatable {
+    enum Kind: Equatable {
+        case changed
+        case aheadBehind
+        case pullRequest
+    }
+
+    let kind: Kind
+    let text: String
+    let color: Color
+    let filled: Bool
+
+    /// The room the chip claims in layout points, from the same glyph
+    /// estimate the labels use.
+    var width: CGFloat {
+        CGFloat(text.count) * HideTheme.Home.chipGlyphWidth + HideTheme.Home.chipPadding * 2
+    }
 }
 
 /// The hover card's lines: identity, status word, the core's second line,
@@ -68,8 +91,6 @@ struct ProjectHomeEdge: Identifiable, Equatable {
         case agent
         /// Child to the parent that spawned it: dashed.
         case delegation
-        /// Checkout to its pull request, in the pull request's state colour.
-        case pullRequest
     }
 
     let from: String
@@ -79,7 +100,6 @@ struct ProjectHomeEdge: Identifiable, Equatable {
 
     var id: String { "\(from)>\(to)" }
     var dashed: Bool { kind == .delegation }
-    var width: CGFloat { kind == .pullRequest ? HideTheme.Home.pullRequestEdgeWidth : HideTheme.Home.edgeWidth }
 }
 
 /// The header's glance counts in the pet badge colours; Seen has no badge
@@ -151,7 +171,6 @@ struct ProjectHomeModel: Equatable {
     static let projectNodeID = "project"
     static func checkoutNodeID(_ checkoutID: String) -> String { "checkout:\(checkoutID)" }
     static func agentNodeID(_ paneID: String) -> String { "agent:\(paneID)" }
-    static func pullRequestNodeID(_ checkoutID: String) -> String { "pr:\(checkoutID)" }
 
     static let loading = ProjectHomeModel(
         shape: .loading, projectName: "", nodes: [], edges: [],
@@ -209,7 +228,7 @@ enum ProjectHomePresentation {
         layoutNodes.append(projectLayout)
         nodes.append(ProjectHomeNode(
             id: ProjectHomeModel.projectNodeID, kind: .project,
-            label: truncated(workspace.repoName), fullLabel: workspace.repoName, detail: nil,
+            label: truncated(workspace.repoName), fullLabel: workspace.repoName, chips: [],
             symbol: nil, color: HideTheme.accent, radius: HideTheme.Home.projectNodeRadius,
             delegated: false, stallLevel: "", missing: false, paneID: nil, checkoutID: nil,
             pullRequest: nil, opensOnActivate: false,
@@ -226,10 +245,11 @@ enum ProjectHomePresentation {
                 HideTheme.Home.checkoutNodeRadiusMax,
                 HideTheme.Home.checkoutNodeRadius + CGFloat(checkoutAgents.count) * HideTheme.Home.checkoutNodeRadiusStep
             )
+            let chips = chips(for: checkout)
             let layout = ProjectHomeGraphLayout.Node(
                 id: nodeID, kind: .checkout, parentID: ProjectHomeModel.projectNodeID,
                 radius: checkoutRadius, labelWidth: labelWidth(checkout.label),
-                rank: rank, siblingCount: checkouts.count
+                chipWidths: chips.map(\.width), rank: rank, siblingCount: checkouts.count
             )
             layoutNodes.append(layout)
             layoutEdges.append(ProjectHomeGraphLayout.Edge(from: ProjectHomeModel.projectNodeID, to: nodeID))
@@ -238,41 +258,16 @@ enum ProjectHomePresentation {
             nodes.append(ProjectHomeNode(
                 id: nodeID, kind: .checkout,
                 label: truncated(checkout.label), fullLabel: checkout.label,
-                detail: checkoutDetail(checkout), symbol: nil,
+                chips: chips, symbol: nil,
                 color: missing ? HideTheme.muted : HideTheme.secondary, radius: checkoutRadius,
                 delegated: false, stallLevel: "", missing: missing,
-                paneID: nil, checkoutID: checkout.id, pullRequest: nil,
-                opensOnActivate: checkout.worktree != nil && checkout.exists,
+                paneID: nil, checkoutID: checkout.id, pullRequest: checkout.pullRequest,
+                opensOnActivate: checkout.exists,
                 accessibilityLabel: CheckoutCardPresentation.rowAccessibilityLabel(
                     repoName: workspace.repoName, checkout: checkout, agentCount: checkoutAgents.count
                 ),
                 card: nil, layout: layout
             ))
-
-            if let pullRequest = checkout.pullRequest {
-                let prID = ProjectHomeModel.pullRequestNodeID(checkout.id)
-                let color = CheckoutCardPresentation.pullRequestColor(pullRequest)
-                let label = "#\(pullRequest.number)"
-                let prLayout = ProjectHomeGraphLayout.Node(
-                    id: prID, kind: .pullRequest, parentID: nodeID,
-                    radius: HideTheme.Home.pullRequestNodeRadius, labelWidth: labelWidth(label),
-                    rank: 0, siblingCount: 1
-                )
-                layoutNodes.append(prLayout)
-                layoutEdges.append(ProjectHomeGraphLayout.Edge(from: nodeID, to: prID))
-                edges.append(ProjectHomeEdge(from: nodeID, to: prID, kind: .pullRequest, color: color))
-                let state = CheckoutCardPresentation.pullRequestState(pullRequest)
-                let checks = CheckoutCardPresentation.checksLabel(pullRequest.checks)
-                let full = "\(label) \(state) · \(checks)"
-                nodes.append(ProjectHomeNode(
-                    id: prID, kind: .pullRequest, label: label, fullLabel: full,
-                    detail: nil, symbol: nil, color: color, radius: HideTheme.Home.pullRequestNodeRadius,
-                    delegated: false, stallLevel: "", missing: false, paneID: nil, checkoutID: checkout.id,
-                    pullRequest: pullRequest, opensOnActivate: true,
-                    accessibilityLabel: "Pull request \(pullRequest.number), \(state), checks \(checks)",
-                    card: nil, layout: prLayout
-                ))
-            }
 
             // Roots orbit the checkout; each root's subtree orbits it in turn.
             var stack: [(agent: SidebarAgent, parentNodeID: String, rank: Int, siblings: Int, depth: Int)] =
@@ -306,7 +301,7 @@ enum ProjectHomePresentation {
                 nodes.append(ProjectHomeNode(
                     id: agentNodeID, kind: .agent,
                     label: truncated(agent.identityLabel), fullLabel: agent.identityLabel,
-                    detail: nil, symbol: status.symbol, color: status.color, radius: nodeRadius,
+                    chips: [], symbol: status.symbol, color: status.color, radius: nodeRadius,
                     delegated: agent.delegated, stallLevel: agent.stallLevel, missing: false,
                     paneID: agent.paneID, checkoutID: checkout.id, pullRequest: nil, opensOnActivate: true,
                     accessibilityLabel: [agent.identityLabel, agent.agentKind, status.label, agent.detail]
@@ -370,17 +365,31 @@ enum ProjectHomePresentation {
         return nil
     }
 
-    /// The ids drawn at full strength for a selection and a hover: the
-    /// selection's depth-2 neighbourhood, narrowed to the hovered node's own
-    /// neighbours while the pointer rests on one (PRD rules 2 and 5). `nil`
-    /// means everything.
-    static func emphasized(_ model: ProjectHomeModel, focus: String?, hover: String?) -> Set<String>? {
+    /// The ids drawn at full strength: the hovered node's own neighbours
+    /// while the pointer rests on one, else the selection's depth-2
+    /// neighbourhood once the operator has asked for the local graph by
+    /// clicking (PRD rules 2 and 5). `nil` means everything; the selection
+    /// ring alone never dims the map.
+    static func emphasized(_ model: ProjectHomeModel, focus: String?, isolated: Bool, hover: String?) -> Set<String>? {
         let edges = model.topology.edges
         if let hover, model.node(hover) != nil {
             return ProjectHomeGraphLayout.neighborhood(of: hover, depth: 1, edges: edges)
         }
-        guard let focus, model.node(focus) != nil else { return nil }
+        guard isolated, let focus, model.node(focus) != nil else { return nil }
         return ProjectHomeGraphLayout.neighborhood(of: focus, depth: 2, edges: edges)
+    }
+
+    /// Whether a node's label is drawn at this scale. Zoomed out past
+    /// `labelThresholdScale` the map keeps only what a glance needs: the
+    /// project, the hubs, and the agents that are waiting or finished; a
+    /// Working or Seen agent's label returns while it is hovered or
+    /// selected, and everywhere once zoomed back in.
+    static func drawsLabel(_ node: ProjectHomeNode, scale: CGFloat, hovered: Bool, selected: Bool) -> Bool {
+        if scale >= HideTheme.Home.labelThresholdScale || hovered || selected { return true }
+        switch node.kind {
+        case .project, .checkout: return true
+        case .agent: return node.group == .needsYou || node.group == .done
+        }
     }
 
     // MARK: Ordering and sizing
@@ -414,17 +423,33 @@ enum ProjectHomePresentation {
         return radii[0]
     }
 
-    /// The checkout's second line, only when there is something to say.
-    static func checkoutDetail(_ checkout: CoreCheckoutSnapshot) -> String? {
-        var parts: [String] = []
-        if checkout.ahead > 0 { parts.append("↑\(checkout.ahead)") }
-        if checkout.behind > 0 { parts.append("↓\(checkout.behind)") }
-        if checkout.changedFileCount > 0 {
-            parts.append(checkout.changedFileCount == 1 ? "1 change" : "\(checkout.changedFileCount) changes")
-        } else if checkout.dirty {
-            parts.append("dirty")
+    /// The checkout's derived state as chips, in the track order: changed
+    /// files (warning while dirty), ahead and behind its base, the pull
+    /// request in its state colour. A value the core does not know is
+    /// omitted, never shown as zero: ahead and behind need a base branch, and
+    /// a missing worktree has no working tree to count.
+    static func chips(for checkout: CoreCheckoutSnapshot) -> [ProjectHomeChip] {
+        var chips: [ProjectHomeChip] = []
+        if checkout.exists {
+            if checkout.changedFileCount > 0 {
+                chips.append(ProjectHomeChip(kind: .changed, text: "\(checkout.changedFileCount) changed", color: HideTheme.warning, filled: checkout.dirty))
+            } else if checkout.dirty {
+                chips.append(ProjectHomeChip(kind: .changed, text: "dirty", color: HideTheme.warning, filled: true))
+            }
         }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        if checkout.baseBranch != nil, checkout.ahead > 0 || checkout.behind > 0 {
+            var parts: [String] = []
+            if checkout.ahead > 0 { parts.append("↑\(checkout.ahead)") }
+            if checkout.behind > 0 { parts.append("↓\(checkout.behind)") }
+            chips.append(ProjectHomeChip(kind: .aheadBehind, text: parts.joined(separator: " "), color: HideTheme.secondary, filled: false))
+        }
+        if let pullRequest = checkout.pullRequest {
+            chips.append(ProjectHomeChip(
+                kind: .pullRequest, text: "PR #\(pullRequest.number)",
+                color: CheckoutCardPresentation.pullRequestColor(pullRequest), filled: true
+            ))
+        }
+        return chips
     }
 
     // MARK: Labels

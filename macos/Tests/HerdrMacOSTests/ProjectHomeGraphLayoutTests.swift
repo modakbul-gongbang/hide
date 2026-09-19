@@ -146,7 +146,6 @@ struct ProjectHomeGraphLayoutTests {
         let fromCheckout = ProjectHomeGraphLayout.neighborhood(of: ProjectHomeModel.checkoutNodeID("home"), depth: 2, edges: topology.edges)
         #expect(fromCheckout.contains(ProjectHomeModel.projectNodeID))
         #expect(fromCheckout.contains(ProjectHomeModel.checkoutNodeID("board")))
-        #expect(fromCheckout.contains(ProjectHomeModel.pullRequestNodeID("home")))
         #expect(fromCheckout.contains(child))
         #expect(!fromCheckout.contains(ProjectHomeModel.agentNodeID("p-board-1")))
     }
@@ -165,24 +164,68 @@ struct ProjectHomeGraphLayoutTests {
         #expect(ProjectHomeGraphLayout.hit(far, positions: result.positions, nodes: topology.nodes, margin: 100) == nil)
     }
 
-    @Test func theFitGrowsASmallMapAndScrollsALargeOne() {
+    @Test func theFitGrowsASmallMapToTheCapAndShrinksALargeOneWithoutAFloor() {
         let small = CGRect(x: -100, y: -100, width: 200, height: 200)
         let grown = ProjectHomeFit(bounds: small, canvas: CGSize(width: 800, height: 600))
         #expect(grown.scale == HideTheme.Home.maxScale)
-        #expect(grown.labelFontScale == 1)
-        #expect(!grown.scrolls)
+        #expect(grown.labelFontScale == HideTheme.Home.maxScale)
+        #expect(!grown.overflows)
         #expect(grown.canvasPoint(.zero) == CGPoint(x: 400, y: 300))
         let snug = CGRect(x: -400, y: -300, width: 800, height: 600)
         let shrunk = ProjectHomeFit(bounds: snug, canvas: CGSize(width: 700, height: 600))
-        #expect(shrunk.scale < 1 && shrunk.scale >= HideTheme.Home.minScale)
-        #expect(!shrunk.scrolls)
+        #expect(shrunk.scale < 1)
+        #expect(!shrunk.overflows)
         #expect(shrunk.labelFontScale == HideTheme.Home.labelMinFontScale)
-        let large = CGRect(x: -500, y: -400, width: 1000, height: 800)
-        let scrolled = ProjectHomeFit(bounds: large, canvas: CGSize(width: 400, height: 300))
-        #expect(scrolled.scale == HideTheme.Home.minScale)
-        #expect(scrolled.scrolls)
-        #expect(scrolled.content.width == 1000 * HideTheme.Home.minScale + HideTheme.Home.canvasInset * 2)
-        let back = scrolled.layoutPoint(scrolled.canvasPoint(CGPoint(x: 12, y: -34)))
+        // Everything fits, however large: no floor and no scrolling.
+        let large = CGRect(x: -1000, y: -800, width: 2000, height: 1600)
+        let tiny = ProjectHomeFit(bounds: large, canvas: CGSize(width: 400, height: 300))
+        #expect(tiny.scale < HideTheme.Home.labelThresholdScale)
+        #expect(!tiny.overflows)
+        let back = tiny.layoutPoint(tiny.canvasPoint(CGPoint(x: 12, y: -34)))
         #expect(abs(back.x - 12) < 0.001 && abs(back.y + 34) < 0.001)
+    }
+
+    @Test func zoomKeepsThePointUnderThePointerAndPanMovesTheMapInCanvasPoints() {
+        let bounds = CGRect(x: -400, y: -300, width: 800, height: 600)
+        let canvas = CGSize(width: 800, height: 600)
+        let fitted = ProjectHomeFit(bounds: bounds, canvas: canvas)
+        let pointer = CGPoint(x: 600, y: 150)
+        let under = fitted.layoutPoint(pointer)
+        let offset = CGPoint(x: pointer.x - canvas.width / 2, y: pointer.y - canvas.height / 2)
+        let zoomed = ProjectHomeFit(
+            bounds: bounds, canvas: canvas,
+            view: fitted.view.zoomed(by: 2, fitScale: fitted.fitScale, keeping: offset)
+        )
+        #expect(zoomed.scale == fitted.scale * 2)
+        let after = zoomed.layoutPoint(pointer)
+        #expect(abs(after.x - under.x) < 0.001 && abs(after.y - under.y) < 0.001)
+        #expect(zoomed.overflows)
+        // Zoom is clamped to the range.
+        let capped = fitted.view.zoomed(by: 100, fitScale: fitted.fitScale, keeping: .zero)
+        #expect(capped.zoom == HideTheme.Home.zoomMax)
+        let floored = fitted.view.zoomed(by: 0.01, fitScale: fitted.fitScale, keeping: .zero)
+        #expect(floored.zoom == HideTheme.Home.zoomMin)
+        // A pan of 40 canvas points moves the origin by 40 canvas points.
+        let panned = ProjectHomeFit(bounds: bounds, canvas: canvas, view: fitted.view.panned(by: CGSize(width: 40, height: -20), scale: fitted.scale))
+        let moved = panned.canvasPoint(.zero)
+        let was = fitted.canvasPoint(.zero)
+        #expect(abs(moved.x - was.x - 40) < 0.001 && abs(moved.y - was.y + 20) < 0.001)
+        #expect(ProjectHomeViewState.identity == ProjectHomeViewState(zoom: 1, pan: .zero))
+    }
+
+    @Test func chipsSitUnderTheLabelInATrackAndWidenTheLabelBlock() {
+        let (workspace, _) = ProjectHomeFixture.fourCheckouts()
+        let home = ProjectHomePresentation.build(workspace: workspace, agents: [], connected: true)
+        let hub = home.node(ProjectHomeModel.checkoutNodeID("home"))!.layout
+        let frames = ProjectHomeGraphLayout.chipFrames(for: hub, at: .zero)
+        #expect(frames.count == 3)
+        #expect(frames[1].minX >= frames[0].maxX + HideTheme.Home.chipGap - 0.001)
+        #expect(frames.allSatisfy { $0.height == HideTheme.Home.chipHeight })
+        let block = ProjectHomeGraphLayout.labelFrame(for: hub, at: .zero)
+        #expect(block.maxY >= frames[0].maxY - 0.001)
+        #expect(block.minX <= frames[0].minX + 0.001 && block.maxX >= frames[2].maxX - 0.001)
+        let plain = home.node(ProjectHomeModel.checkoutNodeID("main"))!.layout
+        #expect(ProjectHomeGraphLayout.chipFrames(for: plain, at: .zero).isEmpty)
+        #expect(ProjectHomeGraphLayout.labelFrame(for: plain, at: .zero).height == HideTheme.Home.labelHeight)
     }
 }

@@ -9,13 +9,13 @@ import Testing
 enum ProjectHomeFixture {
     static func checkout(
         _ id: String, branch: String, panes: [String], isWorktree: Bool = true,
-        exists: Bool = true, ahead: Int = 0, behind: Int = 0, changed: Int = 0, dirty: Bool = false,
+        exists: Bool = true, base: String? = "main", ahead: Int = 0, behind: Int = 0, changed: Int = 0, dirty: Bool = false,
         pullRequest: CorePullRequest? = nil
     ) -> CoreCheckoutSnapshot {
         CoreCheckoutSnapshot(
             id: id, workspaceID: "ws", label: branch, path: "/fixture/\(id)", branch: branch,
             isWorktree: isWorktree, exists: exists, temporary: false, hasPanes: !panes.isEmpty,
-            dirty: dirty, changedFileCount: changed, ahead: ahead, behind: behind, pullRequest: pullRequest,
+            dirty: dirty, changedFileCount: changed, baseBranch: isWorktree ? base : nil, ahead: ahead, behind: behind, pullRequest: pullRequest,
             tabs: panes.isEmpty ? [] : [CoreTabSnapshot(
                 id: "tab-\(id)", workspaceID: "ws", checkoutID: id, label: "Tab", empty: false,
                 panes: panes.map { CorePaneSnapshot(id: $0, cwd: "/fixture/\(id)", statusLabel: "Idle", activityAt: nil) }
@@ -167,7 +167,7 @@ struct ProjectHomePresentationTests {
         #expect(home.shape == .populated)
         #expect(home.nodes.filter { $0.kind == .agent }.count == 9)
         #expect(home.nodes.filter { $0.kind == .checkout }.count == 4)
-        #expect(home.nodes.filter { $0.kind == .pullRequest }.count == 2)
+        #expect(home.nodes.count == 14)
 
         let parent = ProjectHomeModel.agentNodeID("p-home-1")
         let child = ProjectHomeModel.agentNodeID("p-home-2")
@@ -239,44 +239,63 @@ struct ProjectHomePresentationTests {
         #expect(home.topology.key == live.topology.key)
     }
 
-    @Test func aMissingWorktreeIsHollowWithABadgeAndCannotBeOpened() {
+    @Test func aMissingWorktreeIsHollowWithABadgeAndCannotBeOpenedButAnyExistingCheckoutOpens() {
         let workspace = ProjectHomeFixture.workspace([
             ProjectHomeFixture.checkout("main", branch: "main", panes: [], isWorktree: false),
-            ProjectHomeFixture.checkout("gone", branch: "feature/gone", panes: [], exists: false),
+            ProjectHomeFixture.checkout("gone", branch: "feature/gone", panes: [], exists: false, changed: 3, dirty: true),
         ])
         let home = ProjectHomePresentation.build(workspace: workspace, agents: [], connected: true)
         let gone = home.node(ProjectHomeModel.checkoutNodeID("gone"))!
         #expect(gone.missing)
         #expect(!gone.opensOnActivate)
         #expect(gone.accessibilityLabel.contains("missing"))
-        // The fixture checkouts carry no worktree projection, so neither opens.
-        #expect(!home.node(ProjectHomeModel.checkoutNodeID("main"))!.opensOnActivate)
+        // No working tree, so no changed-file chip either.
+        #expect(gone.chips.isEmpty)
+        // The primary checkout has no worktree record and still opens.
+        #expect(home.node(ProjectHomeModel.checkoutNodeID("main"))!.opensOnActivate)
     }
 
-    @Test func thePullRequestIsTheCheckoutsOutwardEdgeInItsStateColour() {
-        let (workspace, agents) = ProjectHomeFixture.fourCheckouts()
-        let home = ProjectHomePresentation.build(workspace: workspace, agents: agents, connected: true)
-        let draft = home.node(ProjectHomeModel.pullRequestNodeID("home"))!
-        #expect(draft.label == "#110")
-        #expect(draft.color == HideTheme.PullRequest.draft)
-        #expect(draft.fullLabel == "#110 Draft · Running")
-        #expect(draft.layout.parentID == ProjectHomeModel.checkoutNodeID("home"))
-        let edge = home.edges.first { $0.to == draft.id }!
-        #expect(edge.kind == .pullRequest)
-        #expect(edge.color == HideTheme.PullRequest.draft)
-        let open = home.node(ProjectHomeModel.pullRequestNodeID("board"))!
-        #expect(open.color == HideTheme.PullRequest.open)
-        #expect(home.node(ProjectHomeModel.pullRequestNodeID("main")) == nil)
-    }
-
-    @Test func checkoutDetailSaysAheadBehindAndChangesOnlyWhenNonZero() {
+    @Test func checkoutChipsFollowTheTrackOrderAndOmitWhatTheCoreDoesNotKnow() {
         let (workspace, _) = ProjectHomeFixture.fourCheckouts()
         let home = ProjectHomePresentation.build(workspace: workspace, agents: [], connected: true)
-        #expect(home.node(ProjectHomeModel.checkoutNodeID("home"))?.detail == "↑4 · 2 changes")
-        #expect(home.node(ProjectHomeModel.checkoutNodeID("labels"))?.detail == "↓3")
-        #expect(home.node(ProjectHomeModel.checkoutNodeID("main"))?.detail == nil)
-        let dirty = ProjectHomeFixture.checkout("d", branch: "d", panes: [], changed: 1, dirty: true)
-        #expect(ProjectHomePresentation.checkoutDetail(dirty) == "1 change")
+        let homeChips = home.node(ProjectHomeModel.checkoutNodeID("home"))!.chips
+        #expect(homeChips.map(\.kind) == [.changed, .aheadBehind, .pullRequest])
+        #expect(homeChips.map(\.text) == ["2 changed", "↑4", "PR #110"])
+        #expect(homeChips[0].filled && homeChips[0].color == HideTheme.warning)
+        #expect(!homeChips[1].filled)
+        #expect(homeChips[2].filled && homeChips[2].color == HideTheme.PullRequest.draft)
+        #expect(home.node(ProjectHomeModel.checkoutNodeID("labels"))!.chips.map(\.text) == ["↓3"])
+        #expect(home.node(ProjectHomeModel.checkoutNodeID("board"))!.chips.map(\.text) == ["↑2", "PR #111"])
+        #expect(home.node(ProjectHomeModel.checkoutNodeID("board"))!.chips[1].color == HideTheme.PullRequest.open)
+        // The primary checkout has no base, so ahead and behind are unknown, not zero.
+        #expect(home.node(ProjectHomeModel.checkoutNodeID("main"))!.chips.isEmpty)
+        let changedNotDirty = ProjectHomeFixture.checkout("c", branch: "c", panes: [], changed: 1)
+        #expect(ProjectHomePresentation.chips(for: changedNotDirty).map { ($0.text, $0.filled) }.first! == ("1 changed", false))
+        let dirtyWithoutCount = ProjectHomeFixture.checkout("d", branch: "d", panes: [], dirty: true)
+        #expect(ProjectHomePresentation.chips(for: dirtyWithoutCount).map(\.text) == ["dirty"])
+        let noBase = ProjectHomeFixture.checkout("n", branch: "n", panes: [], base: nil, ahead: 5)
+        #expect(ProjectHomePresentation.chips(for: noBase).isEmpty)
+        // A chip's layout width rides on the node so the label block clears it.
+        #expect(home.node(ProjectHomeModel.checkoutNodeID("home"))!.layout.chipWidths == homeChips.map(\.width))
+    }
+
+    @Test func labelsThinOutBelowTheThresholdToHubsAndWaitingOrFinishedAgents() {
+        let (workspace, agents) = ProjectHomeFixture.fourCheckouts()
+        let home = ProjectHomePresentation.build(workspace: workspace, agents: agents, connected: true)
+        let below = HideTheme.Home.labelThresholdScale / 2
+        let hub = home.node(ProjectHomeModel.checkoutNodeID("home"))!
+        let waiting = home.node(ProjectHomeModel.agentNodeID("p-home-1"))!
+        let working = home.node(ProjectHomeModel.agentNodeID("p-home-2"))!
+        let seen = home.node(ProjectHomeModel.agentNodeID("p-board-2"))!
+        #expect(waiting.group == .needsYou && working.group == .working && seen.group == .seen)
+        #expect(ProjectHomePresentation.drawsLabel(hub, scale: below, hovered: false, selected: false))
+        #expect(ProjectHomePresentation.drawsLabel(home.node(ProjectHomeModel.projectNodeID)!, scale: below, hovered: false, selected: false))
+        #expect(ProjectHomePresentation.drawsLabel(waiting, scale: below, hovered: false, selected: false))
+        #expect(!ProjectHomePresentation.drawsLabel(working, scale: below, hovered: false, selected: false))
+        #expect(!ProjectHomePresentation.drawsLabel(seen, scale: below, hovered: false, selected: false))
+        #expect(ProjectHomePresentation.drawsLabel(working, scale: below, hovered: true, selected: false))
+        #expect(ProjectHomePresentation.drawsLabel(seen, scale: below, hovered: false, selected: true))
+        #expect(ProjectHomePresentation.drawsLabel(seen, scale: HideTheme.Home.labelThresholdScale, hovered: false, selected: false))
     }
 
     @Test func headerCountsAndTheAttentionRailFollowTheCoresGroups() {
@@ -345,23 +364,25 @@ struct ProjectHomePresentationTests {
         #expect(ProjectHomePresentation.initialFocus(home, focusedPaneID: nil, focusedCheckoutID: "unknown") == nil)
     }
 
-    @Test func theLocalGraphIsDepthTwoAndHoverNarrowsToNeighbours() {
+    @Test func theLocalGraphIsDepthTwoOnlyOnceAskedForAndHoverNarrowsToNeighbours() {
         let (workspace, agents) = ProjectHomeFixture.fourCheckouts()
         let home = ProjectHomePresentation.build(workspace: workspace, agents: agents, connected: true)
         let child = ProjectHomeModel.agentNodeID("p-home-2")
-        let local = ProjectHomePresentation.emphasized(home, focus: child, hover: nil)!
+        // The selection ring alone never dims the map.
+        #expect(ProjectHomePresentation.emphasized(home, focus: child, isolated: false, hover: nil) == nil)
+        let local = ProjectHomePresentation.emphasized(home, focus: child, isolated: true, hover: nil)!
         #expect(local.contains(child))
         #expect(local.contains(ProjectHomeModel.agentNodeID("p-home-1")))
         #expect(local.contains(ProjectHomeModel.checkoutNodeID("home")))
         #expect(local.contains(ProjectHomeModel.agentNodeID("p-home-3")))
         #expect(!local.contains(ProjectHomeModel.projectNodeID))
         #expect(!local.contains(ProjectHomeModel.checkoutNodeID("board")))
-        let hovered = ProjectHomePresentation.emphasized(home, focus: child, hover: ProjectHomeModel.checkoutNodeID("board"))!
+        let hovered = ProjectHomePresentation.emphasized(home, focus: child, isolated: true, hover: ProjectHomeModel.checkoutNodeID("board"))!
         #expect(hovered.contains(ProjectHomeModel.agentNodeID("p-board-1")))
         #expect(hovered.contains(ProjectHomeModel.projectNodeID))
         #expect(!hovered.contains(child))
-        #expect(ProjectHomePresentation.emphasized(home, focus: nil, hover: nil) == nil)
-        #expect(ProjectHomePresentation.emphasized(home, focus: "gone", hover: nil) == nil)
+        #expect(ProjectHomePresentation.emphasized(home, focus: nil, isolated: true, hover: nil) == nil)
+        #expect(ProjectHomePresentation.emphasized(home, focus: "gone", isolated: true, hover: nil) == nil)
     }
 
     @Test func homeTakesTheIdleEmptyStateAndTheOverlayNeverCoversARemoteContext() {

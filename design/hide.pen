@@ -32536,7 +32536,7 @@
     },
     "--ratio-home-max-scale": {
       "type": "number",
-      "value": 1.6
+      "value": 1.8
     },
     "--size-home-agent-node-live": {
       "type": "number",
@@ -32544,7 +32544,7 @@
     },
     "--size-home-agent-node-old": {
       "type": "number",
-      "value": 7
+      "value": 8
     },
     "--size-home-agent-node-recent": {
       "type": "number",
@@ -32552,7 +32552,7 @@
     },
     "--size-home-agent-orbit": {
       "type": "number",
-      "value": 48
+      "value": 52
     },
     "--size-home-canvas-inset": {
       "type": "number",
@@ -32568,11 +32568,11 @@
     },
     "--size-home-checkout-node": {
       "type": "number",
-      "value": 10
+      "value": 14
     },
     "--size-home-checkout-node-max": {
       "type": "number",
-      "value": 14
+      "value": 18
     },
     "--size-home-checkout-node-step": {
       "type": "number",
@@ -32644,7 +32644,7 @@
     },
     "--size-home-project-node": {
       "type": "number",
-      "value": 16
+      "value": 18
     },
     "--size-home-rail": {
       "type": "number",
@@ -32665,6 +32665,54 @@
     "--ratio-home-min-scale": {
       "type": "number",
       "value": 0.7
+    },
+    "--ratio-home-attention-halo": {
+      "type": "number",
+      "value": 3
+    },
+    "--ratio-home-label-threshold-scale": {
+      "type": "number",
+      "value": 0.55
+    },
+    "--ratio-home-zoom-max": {
+      "type": "number",
+      "value": 4
+    },
+    "--ratio-home-zoom-min": {
+      "type": "number",
+      "value": 0.5
+    },
+    "--ratio-home-zoom-per-scroll-unit": {
+      "type": "number",
+      "value": 0.01
+    },
+    "--size-home-chip-gap": {
+      "type": "number",
+      "value": 4
+    },
+    "--size-home-chip-glyph": {
+      "type": "number",
+      "value": 5.5
+    },
+    "--size-home-chip-height": {
+      "type": "number",
+      "value": 16
+    },
+    "--size-home-chip-padding": {
+      "type": "number",
+      "value": 6
+    },
+    "--size-home-drag-threshold": {
+      "type": "number",
+      "value": 3
+    },
+    "--size-home-wheel-line": {
+      "type": "number",
+      "value": 10
+    },
+    "--ratio-home-label-clear-scale": {
+      "type": "number",
+      "value": 0.75
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

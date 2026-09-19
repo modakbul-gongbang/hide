@@ -14,14 +14,17 @@ struct ProjectHomeCanvasRenderTests {
     private struct Host: View {
         let home: ProjectHomeModel
         let positions: [String: CGPoint]
+        var cache = ProjectHomeLayoutCache()
         @State var focus: String?
+        @State var isolated = false
         @State var hover: String?
         @State var hoverPoint: CGPoint?
 
         var body: some View {
             ProjectHomeCanvas(
-                home: home, positions: positions,
-                focus: $focus, hover: $hover, hoverPoint: $hoverPoint, onActivate: { _ in }
+                home: home, positions: positions, cache: cache,
+                focus: $focus, isolated: $isolated, hover: $hover, hoverPoint: $hoverPoint,
+                onActivate: { _ in }, onOpenPullRequest: { _ in }
             )
             .background(HideTheme.background)
         }
@@ -74,17 +77,24 @@ struct ProjectHomeCanvasRenderTests {
         #expect(changed > cardArea, "only \(changed) sampled pixels changed")
     }
 
-    @Test func aTwelveCheckoutMapScrollsInASmallCanvasAndFitsALargeOne() throws {
+    @Test func aTwelveCheckoutMapFitsASmallCanvasWithThinnedLabelsAndZoomsBackIn() throws {
         let (workspace, agents) = ProjectHomeFixture.twelveCheckouts()
         let home = ProjectHomePresentation.build(workspace: workspace, agents: agents, connected: true)
         let positions = ProjectHomeGraphLayout.solve(home.topology).positions
         let bounds = ProjectHomeGraphLayout.bounds(positions, nodes: home.topology.nodes)
-        let small = ProjectHomeFit(bounds: bounds, canvas: CGSize(width: 900, height: 640))
-        #expect(small.scale == HideTheme.Home.minScale)
-        #expect(small.scrolls)
-        let large = CGSize(width: 1100, height: 1000)
-        let fitted = ProjectHomeFit(bounds: bounds, canvas: large)
-        #expect(!fitted.scrolls)
-        _ = try render(Host(home: home, positions: positions), size: large, name: "canvas-twelve")
+        let size = CGSize(width: 700, height: 900)
+        let fitted = ProjectHomeFit(bounds: bounds, canvas: size)
+        #expect(fitted.scale < HideTheme.Home.labelThresholdScale)
+        #expect(!fitted.overflows)
+        let whole = try render(Host(home: home, positions: positions), size: size, name: "canvas-twelve")
+        // Zoomed into the third checkout, brought to the centre by the pan.
+        let zoomedCache = ProjectHomeLayoutCache()
+        let hub = positions[ProjectHomeModel.checkoutNodeID("c3")]!
+        zoomedCache.view = ProjectHomeViewState(zoom: 2.5, pan: CGPoint(x: bounds.midX - hub.x, y: bounds.midY - hub.y))
+        let zoomed = try render(Host(home: home, positions: positions, cache: zoomedCache), size: size, name: "canvas-twelve-zoomed")
+        // Zoomed in, the working agents' labels come back and the centre
+        // fills: at least a tenth of the sampled pixels change.
+        let sampled = Int(size.width * size.height) / 4
+        #expect(differingPixels(whole, zoomed) > sampled / 10)
     }
 }

@@ -1,3 +1,4 @@
+import Combine
 import CoreGraphics
 import Foundation
 
@@ -14,7 +15,6 @@ enum ProjectHomeGraphLayout {
         case checkout
         case agent
         case child
-        case pullRequest
     }
 
     /// What the layout knows about one node: what it is, what it hangs off,
@@ -26,6 +26,9 @@ enum ProjectHomeGraphLayout {
         let parentID: String?
         let radius: CGFloat
         let labelWidth: CGFloat
+        /// The widths of the chips drawn under a checkout's label, in the
+        /// track order; empty for every other node.
+        var chipWidths: [CGFloat] = []
         /// Rank among siblings in the stable order the presentation decided.
         /// Angles come from this, never from a hash or arrival order.
         let rank: Int
@@ -82,17 +85,16 @@ enum ProjectHomeGraphLayout {
         return max(base, needed / spread)
     }
 
-    static let agentSpread: CGFloat = .pi * 0.9
+    static let agentSpread: CGFloat = .pi
     static let childSpread: CGFloat = .pi * 0.7
 
     /// Where a node starts, and what pulls it once the simulation runs.
     ///
     /// The project is fixed at the origin. Checkouts sit on a ring at angles
     /// by rank; each agent sits on an arc facing away from the centre around
-    /// its checkout, each child on a smaller arc around its parent, and a
-    /// pull request just outside its checkout. Every angle is a function of
-    /// rank and sibling count, and every orbit of the labels it must hold,
-    /// so the seed is the same for the same topology.
+    /// its checkout, each child above its parent. Every angle is a function
+    /// of rank and sibling count, and every orbit of the labels it must
+    /// hold, so the seed is the same for the same topology.
     static func seeds(for topology: Topology) -> [String: CGPoint] {
         let byID = Dictionary(uniqueKeysWithValues: topology.nodes.map { ($0.id, $0) })
         let byParent = Dictionary(grouping: topology.nodes.filter { $0.kind == .agent || $0.kind == .child }, by: { $0.parentID ?? "" })
@@ -123,42 +125,23 @@ enum ProjectHomeGraphLayout {
             case .checkout:
                 let angle = -CGFloat.pi / 2 + CGFloat(node.rank) / CGFloat(max(1, node.siblingCount)) * 2 * .pi
                 point = CGPoint(x: ring * cos(angle), y: ring * sin(angle))
-            case .agent, .child, .pullRequest:
+            case .agent, .child:
                 guard let parentID = node.parentID, let parent = byID[parentID] else {
                     preconditionFailure("\(node.id) has no parent to orbit")
                 }
                 let centre = place(parent)
                 // A child hangs above its agent on screen, clear of the
-                // agent's own label below it; everything else faces away
-                // from the project.
+                // agent's own label below it; an agent faces away from the
+                // project.
                 let outward = node.kind == .child ? -CGFloat.pi / 2 : atan2(centre.y, centre.x)
-                let orbit: CGFloat
-                let spread: CGFloat
-                switch node.kind {
-                case .agent:
-                    spread = agentSpread
-                    orbit = Self.orbit(base: HideTheme.Home.agentOrbitRadius, spread: spread, siblings: byParent[parentID] ?? [])
-                case .child:
-                    spread = childSpread
-                    orbit = Self.orbit(base: HideTheme.Home.childOrbitRadius, spread: spread, siblings: byParent[parentID] ?? [])
-                default:
-                    orbit = HideTheme.Home.pullRequestOffset
-                    spread = 0
-                }
+                let spread = node.kind == .child ? childSpread : agentSpread
+                let base = node.kind == .child ? HideTheme.Home.childOrbitRadius : HideTheme.Home.agentOrbitRadius
+                let orbit = Self.orbit(base: base, spread: spread, siblings: byParent[parentID] ?? [])
                 let count = CGFloat(max(1, node.siblingCount))
-                let angle: CGFloat
-                if node.kind == .pullRequest {
-                    // The pull request is the checkout's outward edge: it sits
-                    // on the far side from the project and leaves the
-                    // agents the arc either side of it.
-                    angle = outward
-                } else {
-                    let step = count > 1 ? spread / (count - 1) : 0
-                    // Agents leave the outward point to the pull request and
-                    // fan around it; a lone agent sits just beside it.
-                    let start = outward - spread / 2
-                    angle = count > 1 ? start + step * CGFloat(node.rank) : outward + .pi / 6
-                }
+                // Siblings fan across the spread; a lone one sits on the
+                // outward point itself.
+                let step = count > 1 ? spread / (count - 1) : 0
+                let angle = count > 1 ? outward - spread / 2 + step * CGFloat(node.rank) : outward
                 point = CGPoint(x: centre.x + orbit * cos(angle), y: centre.y + orbit * sin(angle))
             }
             seeds[node.id] = point
@@ -255,21 +238,39 @@ enum ProjectHomeGraphLayout {
     // MARK: Labels
 
     /// How much wider a label can be than its layout width once drawn: the
-    /// fit shrinks the map to `minScale` but the type only to
-    /// `labelMinFontScale`, so at the smallest fit a label covers this much
-    /// more of the map than its points say.
-    static let labelSlack = HideTheme.Home.labelMinFontScale / HideTheme.Home.minScale
+    /// type stops shrinking at `labelMinFontScale` while the map shrinks on
+    /// to `labelClearScale`, so at that scale a label covers this much more
+    /// of the map than its points say.
+    static let labelSlack = HideTheme.Home.labelMinFontScale / HideTheme.Home.labelClearScale
 
-    /// The room a label claims below a node, in layout points: its width at
-    /// the worst fit, a gap either side, and the label height.
+    /// The room a node's text claims below it, in layout points: the label
+    /// at its worst-fit width with a gap either side, and under a checkout
+    /// the row of chips, whichever is wider.
     static func labelFrame(for node: Node, at point: CGPoint) -> CGRect {
-        let width = node.labelWidth * labelSlack + HideTheme.Home.labelGap * 2
+        let labelWidth = node.labelWidth * labelSlack + HideTheme.Home.labelGap * 2
+        let chipsWidth = node.chipWidths.isEmpty ? 0
+            : node.chipWidths.reduce(0, +) + HideTheme.Home.chipGap * CGFloat(node.chipWidths.count - 1)
+        let width = max(labelWidth, chipsWidth)
+        let height = HideTheme.Home.labelHeight + (node.chipWidths.isEmpty ? 0 : HideTheme.Home.chipGap + HideTheme.Home.chipHeight)
         return CGRect(
             x: point.x - width / 2,
             y: point.y + node.radius + HideTheme.Home.labelGap,
             width: width,
-            height: HideTheme.Home.labelHeight
+            height: height
         )
+    }
+
+    /// Where each chip sits under a node's label, in the track order,
+    /// centred as a row.
+    static func chipFrames(for node: Node, at point: CGPoint) -> [CGRect] {
+        guard !node.chipWidths.isEmpty else { return [] }
+        let total = node.chipWidths.reduce(0, +) + HideTheme.Home.chipGap * CGFloat(node.chipWidths.count - 1)
+        var x = point.x - total / 2
+        let y = point.y + node.radius + HideTheme.Home.labelGap + HideTheme.Home.labelHeight + HideTheme.Home.chipGap
+        return node.chipWidths.map { width in
+            defer { x += width + HideTheme.Home.chipGap }
+            return CGRect(x: x, y: y, width: width, height: HideTheme.Home.chipHeight)
+        }
     }
 
     /// The disc a node occupies, in layout points.
@@ -378,17 +379,45 @@ enum ProjectHomeGraphLayout {
     }
 }
 
+/// Where the operator left the map: a zoom over the fit and a pan in layout
+/// points. `identity` is the fit itself.
+struct ProjectHomeViewState: Equatable {
+    var zoom: CGFloat = 1
+    var pan: CGPoint = .zero
+
+    static let identity = ProjectHomeViewState()
+
+    /// Zoomed by `factor`, clamped to the zoom range; `keep` is the layout
+    /// point that stays under the pointer, given as its offset from the
+    /// canvas centre in canvas points at the old scale.
+    func zoomed(by factor: CGFloat, fitScale: CGFloat, keeping offset: CGPoint) -> ProjectHomeViewState {
+        let next = min(HideTheme.Home.zoomMax, max(HideTheme.Home.zoomMin, zoom * factor))
+        let before = fitScale * zoom, after = fitScale * next
+        return ProjectHomeViewState(
+            zoom: next,
+            pan: CGPoint(x: pan.x + offset.x / after - offset.x / before, y: pan.y + offset.y / after - offset.y / before)
+        )
+    }
+
+    /// Panned by a canvas-point delta at the given scale.
+    func panned(by delta: CGSize, scale: CGFloat) -> ProjectHomeViewState {
+        ProjectHomeViewState(zoom: zoom, pan: CGPoint(x: pan.x + delta.width / scale, y: pan.y + delta.height / scale))
+    }
+}
+
 /// The session's node positions, keyed by node id and kept across snapshots
-/// and across the overlay opening and closing.
+/// and across the overlay opening and closing, and the view the operator
+/// left the map in.
 ///
 /// The simulation runs only when the topology key changes; a snapshot that
 /// changes status alone reads the same positions back. A node that left
 /// drops out of the cache, one that stayed anchors where it was, and one
 /// that arrived is seeded beside its parent (PRD rule 1).
-final class ProjectHomeLayoutCache {
+final class ProjectHomeLayoutCache: ObservableObject {
     private(set) var key = ""
     private(set) var positions: [String: CGPoint] = [:]
     private(set) var lastTicks = 0
+    @Published var view = ProjectHomeViewState.identity
 
     func positions(for topology: ProjectHomeGraphLayout.Topology) -> [String: CGPoint] {
         let nextKey = topology.key

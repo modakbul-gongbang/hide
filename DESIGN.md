@@ -1249,25 +1249,26 @@ A checkout with no tab draws Project Home instead of the old "No terminal open" 
 The overlay flag is session-local on `ShellModel` like the Agents scope; the core owns nothing about it and nothing persists it.
 A remote context keeps its existing empty state and never draws the overlay.
 
-Home is a constellation: the project node fixed at the centre, checkouts on a ring, agents orbiting their checkout, delegated children on a smaller orbit around their parent, and a pull request as the checkout's outward edge.
-`ProjectHomePresentation` decides every node, edge, label and colour from the core's final values; `ProjectHomeGraphLayout` decides where they sit; `ProjectHome` draws them in one `Canvas` pass and dispatches the existing agent, checkout, pull request and new-tab intents.
+Home is a constellation: the project node fixed at the centre, checkouts on a ring, agents orbiting their checkout, and delegated children on a smaller orbit around their parent.
+`ProjectHomePresentation` decides every node, edge, label, chip and colour from the core's final values; `ProjectHomeGraphLayout` decides where they sit and which labels survive the current scale; `ProjectHome` draws them in one `Canvas` pass, takes the pointer through the `ProjectHomeInput` overlay, and dispatches the existing agent, checkout, pull request and new-tab intents.
 
 Encoding follows the rest of the shell.
 An agent node's fill and ring are its `AgentStatusPresentation` colour with the status mark drawn inside; a read demand keeps its hue at the read opacity, and a disconnected server draws `⊘` on every agent and dims the whole map under the `bolt.slash` notice.
+An agent waiting on the operator carries a soft static halo, warning-coloured at `Home.attentionHaloScale` and low opacity, so `Needs You` reads before any label.
 A delegated child is drawn at `Home.childNodeScale` with a dashed edge; a lineage root whose descendant has stalled carries a warning halo, solid for `hard` and at secondary opacity for `soft`, and nothing pulses.
-A checkout is an elevated disc with the branch icon, sized by its agent count from `Home.checkoutNodeRadius` in `checkoutNodeRadiusStep` steps to `checkoutNodeRadiusMax`; a missing worktree is a hollow dashed ring with a `missing` badge and cannot be opened.
-A pull request is a `Home.pullRequestNodeRadius` dot in `HideTheme.PullRequest` state colour on an edge of the same colour, labelled `#number`; its full label carries the state and the CI word.
+A checkout is an elevated disc with the branch icon, sized by its agent count from `Home.checkoutNodeRadius` in `checkoutNodeRadiusStep` steps to `checkoutNodeRadiusMax`.
+A checkout opens when it exists on disk (`canOpen = exists`), so the primary checkout, which has no worktree record, opens from the map like any other; a worktree the core lists but that is gone from disk is a hollow dashed ring with a `missing` badge and does not open.
 Agent size is one of `Home.agentNodeRadii`: within the hour, within the day, older; an activity the core could only express as a Herdr sequence takes the middle size.
 
-Labels are always drawn under every node at the caption size, cut by a glyph-width estimate (`labelGlyphWidth`, `labelWideGlyphWidth` for CJK) to `Home.labelMaxWidth`; the full text stays in the hover card and the accessibility label.
-A checkout carries a second micro monospaced line only when it has something to say: `↑ahead`, `↓behind`, `N changes`.
+A checkout carries the branch label and, below it, a second line of chips in a fixed track order: `N changed` (warning when the tree is dirty), `↑ahead ↓behind`, and a `PR #number` chip in its `HideTheme.PullRequest` state colour that replaces the old pull-request node and dot. A value the core does not know is hollow or omitted, never invented; clicking the PR chip opens the pull request.
+Labels are cut by a glyph-width estimate (`labelGlyphWidth`, `labelWideGlyphWidth` for CJK) to `Home.labelMaxWidth`, and the full text stays in the hover card and the accessibility label.
+Below `Home.labelThresholdScale` the map thins its labels to what a glance needs: every checkout hub, and only the agents that are waiting on the operator or done; a Working or Seen agent's label returns on hover and once the map is zoomed back in past the threshold. Chips draw only at or above the threshold, where they are legible.
 Layout runs only when the topology key changes, warm-starts every existing node from the session cache so a status change moves nothing, decays to rest inside the tick cap, and then nudges any two labels that still cross around their parent in a fixed order.
-The ring is sized so every checkout's agent orbit and widest label sit side by side; agents fan away from the project, a child hangs above its agent on screen, and a label claims its width at the smallest fit plus a gap either side, so what the layout cleared stays clear at every scale.
-The map is fitted to the canvas between `Home.minScale` and `Home.maxScale`, with the label face scaled alongside down to `Home.labelMinFontScale`, and scrolls from the centre once the floor is reached.
+The ring is sized so every checkout's agent orbit and widest label sit side by side; agents fan away from the project, a child hangs above its agent on screen, and a label claims its block, chip row included, at the smallest fit plus a gap either side, so what the layout cleared stays clear at every scale.
+The map is fitted to the canvas up to `Home.maxScale`, scaling a small map up as well as a large one down with no floor, and the label face scales with it from `Home.labelMinFontScale` up to the fit. The pointer pans (drag on empty canvas, or the scroll wheel) and zooms (pinch, or `⌘`-scroll about the pointer) between `Home.zoomMin` and `Home.zoomMax`; a double-click or the header `Fit` control resets to the fitted view, and the session view cache keeps the zoom and pan so reopening Home returns to the last view.
 
-Selection is local to the view.
-Clicking a node selects it and draws its depth-two neighbourhood at full strength with the rest at the dimmed opacity squared; clicking the selected node opens it; clicking empty canvas or the header's `Whole project` returns to the full map.
-On entry the selection is the focused pane's agent, else the focused checkout.
+Selection is local to the view and starts as a ring, not a dimming.
+On entry the focused pane's agent takes the selection ring alone and the whole map stays lit; the local graph dims only once the operator asks for it by clicking a node or an attention-rail row, which draws that node's depth-two neighbourhood at full strength with the rest at the dimmed opacity squared. Clicking the selected node opens it; clicking empty canvas or the header's `Whole project` clears the dimming and returns to the full map.
 Hovering narrows the emphasis to the node's own neighbours and shows a card beside it: identity, status word, elapsed, the core's second line, the stall notice, and the checkout.
 
 The header sits outside the canvas: the project name, the four group counts in the pet badge colours with Seen in secondary, the stale notice, `Whole project` while a selection is active, the close control while the page is an overlay, and `Start new terminal` as the prominent action.
@@ -1275,7 +1276,7 @@ The attention rail at `Home.railWidth` lists Needs You and Done in the core's or
 Below `Home.railCollapseWidth` the rail folds away and the header counts carry the glance as mark and number, the word moving to the tooltip; the counts take the same compact form while the stale notice needs the room.
 
 States: loading (no snapshot) draws nothing; no checkouts draws the project node and its sentence; checkouts without agents draw the hubs and their sentence; disconnected keeps the last projection dimmed under the `Herdr reconnecting` notice; the remote empty state is untouched.
-`ProjectHomePresentationTests` owns every state, label, colour and ordering decision; `ProjectHomeGraphLayoutTests` owns determinism, one-arrival stability, label separation on a twelve-checkout thirty-agent fixture with delegation, and the depth-two neighbourhood; `ProjectHomeCanvasRenderTests` hosts the canvas offscreen for the hover card and the fit at twelve checkouts.
+`ProjectHomePresentationTests` owns every state, label, chip, colour and ordering decision, the checkout open policy, and the label-visibility rule; `ProjectHomeGraphLayoutTests` owns determinism, one-arrival stability, label separation on a twelve-checkout thirty-agent fixture with delegation, the fit that grows a small map and shrinks a large one without a floor, the zoom-about-pointer and pan transform, and the chip track; `ProjectHomeCanvasRenderTests` hosts the canvas offscreen for the hover card and for a twelve-checkout map fitted with thinned labels and then zoomed back in.
 The design canvas board for Home is pending; the tokens are in the Foundations sheet.
 
 Remove Registration removes only Hide's registration and never deletes files, worktrees or Herdr workspaces.
