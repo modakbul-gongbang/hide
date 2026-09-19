@@ -372,6 +372,27 @@ final class MarkdownLiveTextView: NSTextView {
     /// attributes riding on a rich clipboard have nowhere to go.
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
 
+    // List keys (D-14): the rule answers first, the ordinary command otherwise.
+    override func insertNewline(_ sender: Any?) {
+        if MarkdownListKeys.handle(.newline, in: self) { return }
+        super.insertNewline(sender)
+    }
+
+    override func insertTab(_ sender: Any?) {
+        if MarkdownListKeys.handle(.tab, in: self) { return }
+        super.insertTab(sender)
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        if MarkdownListKeys.handle(.backtab, in: self) { return }
+        super.insertBacktab(sender)
+    }
+
+    override func deleteBackward(_ sender: Any?) {
+        if MarkdownListKeys.handle(.deleteBackward, in: self) { return }
+        super.deleteBackward(sender)
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         let horizontal = max(HideTheme.spacingLG, (newSize.width - HideTheme.Editor.documentWidth) / 2)
         textContainerInset = NSSize(width: horizontal, height: HideTheme.spacingLG)

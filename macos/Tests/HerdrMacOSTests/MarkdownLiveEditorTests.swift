@@ -141,6 +141,44 @@ struct MarkdownLiveEditorTests {
         #expect(font.pointSize == HideTheme.Editor.documentFontSize && font.fontName.contains("Inter"))
     }
 
+    @Test func enterAndBackspaceFollowTheListRulesExceptDuringAComposition() async throws {
+        let (host, view, _) = try await hosted("- one\n")
+        defer { withExtendedLifetime(host) {} }
+        view.setSelectedRange(NSRange(location: 5, length: 0))
+        view.insertNewline(nil)
+        #expect(view.string == "- one\n- \n")
+        #expect(view.selectedRange() == NSRange(location: 8, length: 0))
+        view.deleteBackward(nil)
+        #expect(view.string == "- one\n\n", "backspace on the empty item removes only its marker")
+        view.setSelectedRange(NSRange(location: 5, length: 0))
+        view.setMarkedText("ㅎ", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(view.hasMarkedText())
+        view.insertNewline(nil)
+        #expect(!view.string.hasPrefix("- one\n- "), "a composition's Enter is the composer's, not the list's")
+    }
+
+    @Test func theSourceEditorFollowsTheListRulesOnlyForMarkdown() throws {
+        func sourceView(markdown: Bool) throws -> (NSHostingView<HighlightedCodeEditor>, NSTextView) {
+            let editor = HighlightedCodeEditor(text: .constant("1. one\n"), language: markdown ? "markdown" : "swift",
+                isEditable: true, textScale: 1, markdownListEditing: markdown)
+            let host = NSHostingView(rootView: editor)
+            host.frame = NSRect(x: 0, y: 0, width: 600, height: 200)
+            host.layoutSubtreeIfNeeded()
+            let view = try #require(find(NSTextView.self, in: host))
+            return (host, view)
+        }
+        let (markdownHost, markdown) = try sourceView(markdown: true)
+        defer { withExtendedLifetime(markdownHost) {} }
+        markdown.setSelectedRange(NSRange(location: 6, length: 0))
+        markdown.insertNewline(nil)
+        #expect(markdown.string == "1. one\n2. \n")
+        let (swiftHost, swift) = try sourceView(markdown: false)
+        defer { withExtendedLifetime(swiftHost) {} }
+        swift.setSelectedRange(NSRange(location: 6, length: 0))
+        swift.insertNewline(nil)
+        #expect(swift.string == "1. one\n\n")
+    }
+
     @Test func breakingAParagraphKeepsTheHeadingAboveItAtItsOwnSize() async throws {
         let source = "# Release notes\n\nPlain text with **bold**, `code` and a [link](https://example.com) here.\n\n## Next\n"
         let (host, view, coordinator) = try await hosted(source)

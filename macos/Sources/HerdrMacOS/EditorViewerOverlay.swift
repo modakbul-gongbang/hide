@@ -111,7 +111,8 @@ struct EditorViewerOverlay: View {
                     isEditable: readonlyReason == nil,
                     textScale: model.editorTextScale,
                     wrapsLines: wrapsLines,
-                    findRequest: findRequest
+                    findRequest: findRequest,
+                    markdownListEditing: isMarkdown
                 )
                 .id(activeTab?.id)
             }

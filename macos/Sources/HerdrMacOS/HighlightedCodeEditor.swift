@@ -11,6 +11,9 @@ struct HighlightedCodeEditor: NSViewRepresentable {
     let textScale: CGFloat
     var wrapsLines = false
     var findRequest = 0
+    /// Markdown documents follow the list editing rules on Enter, Tab,
+    /// Shift-Tab and Backspace in Source too (D-14).
+    var markdownListEditing = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -31,7 +34,8 @@ struct HighlightedCodeEditor: NSViewRepresentable {
         container.widthTracksTextView = false
         layoutManager.addTextContainer(container)
 
-        let textView = NSTextView(frame: .zero, textContainer: container)
+        let textView = CodeEditorTextView(frame: .zero, textContainer: container)
+        textView.markdownListEditing = markdownListEditing
         // A text view inside a scroll view has to be told it may grow, and how
         // far. Without this AppKit keeps it at its frame height, the scroll
         // view sizes its document to that, and a long file stops scrolling
@@ -335,5 +339,31 @@ enum CodeLineNumbers {
         return text
             .substring(to: min(utf16Location, text.length))
             .reduce(1) { count, character in character == "\n" ? count + 1 : count }
+    }
+}
+
+/// The Source editor's text view: a plain text view that, for a Markdown
+/// document, answers the list keys with the same rules as the Live view.
+final class CodeEditorTextView: NSTextView {
+    var markdownListEditing = false
+
+    override func insertNewline(_ sender: Any?) {
+        if markdownListEditing, MarkdownListKeys.handle(.newline, in: self) { return }
+        super.insertNewline(sender)
+    }
+
+    override func insertTab(_ sender: Any?) {
+        if markdownListEditing, MarkdownListKeys.handle(.tab, in: self) { return }
+        super.insertTab(sender)
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        if markdownListEditing, MarkdownListKeys.handle(.backtab, in: self) { return }
+        super.insertBacktab(sender)
+    }
+
+    override func deleteBackward(_ sender: Any?) {
+        if markdownListEditing, MarkdownListKeys.handle(.deleteBackward, in: self) { return }
+        super.deleteBackward(sender)
     }
 }
