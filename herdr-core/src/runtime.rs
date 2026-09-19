@@ -986,6 +986,11 @@ pub struct Runtime {
     /// Identifies one delete handshake across core, Herdr and the shell.
     /// A repeated callback for an older request cannot authorize a newer one.
     next_worktree_removal_id: u64,
+    /// Registered projects whose panes a `Remove project…` is closing on a
+    /// worker thread. The registration is only removed once the worker
+    /// reports Herdr's confirmation, so a repeat for the same project while
+    /// that runs is a quiet no-op rather than a second round of closes.
+    workspace_removals_in_flight: HashSet<String>,
     next_task_operation_id: u64,
     next_explorer_operation_id: u64,
     delta: snapshot_delta::DeltaState,
@@ -1137,6 +1142,7 @@ impl Runtime {
             next_cleanup_id: 0,
             worktree_generation: 0,
             next_worktree_removal_id: 0,
+            workspace_removals_in_flight: HashSet::new(),
             next_task_operation_id: 0,
             next_explorer_operation_id: 0,
             delta: snapshot_delta::DeltaState::default(),

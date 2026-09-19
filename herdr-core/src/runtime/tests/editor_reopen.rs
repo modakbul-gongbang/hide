@@ -482,6 +482,7 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
         label: "Closed pane".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let previous_workspace = workspace(
         &workspace_id,
@@ -1358,6 +1359,7 @@ fn explorer_file_create_opens_the_created_file_as_a_tab_and_others_do_not() {
         label: "workspace 0".to_owned(),
         path: root.to_string_lossy().into_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id = workspace::checkout_id_for_path("workspace:0", &root);

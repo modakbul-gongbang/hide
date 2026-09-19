@@ -455,11 +455,33 @@ pub struct WorkspaceSnapshot {
     /// shell reads it when present and keeps its previous behavior when not.
     #[serde(default)]
     pub last_activity_unix_ms: Option<u64>,
+    /// Whether the operator pinned this project's registration. A pinned
+    /// project sorts before its device's unpinned ones and is exempt from the
+    /// device's inactive fold; the shell draws the pinned rows under their own
+    /// `Pinned` section. It is the registration's flag carried onto the row
+    /// (D-07), so an unregistered workspace is never pinned.
+    #[serde(default)]
+    pub pinned: bool,
     pub checkouts: Vec<CheckoutSnapshot>,
     /// Checkout rows grouped after the active rows in this project. The full
     /// rows stay in `checkouts`, which remains the authority for focus,
     /// search, tab state, and every non-sidebar consumer.
     pub inactive_checkouts: InactiveCheckoutGroupSnapshot,
+    /// What `Remove project…` would close, counted by the core so the
+    /// confirmation names the same panes the close will send to Herdr
+    /// (D-10). Both are zero for a project Herdr has no pane in, which is
+    /// the registration-only removal.
+    #[serde(default)]
+    pub removal: WorkspaceRemovalGateSnapshot,
+}
+
+/// The counts the project removal confirmation reads (D-10).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorkspaceRemovalGateSnapshot {
+    pub pane_count: usize,
+    /// Panes whose agent is currently working, the same definition
+    /// `WorktreeDeletionGateSnapshot` warns with.
+    pub running_agent_count: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -1259,6 +1281,11 @@ pub struct WorkspaceRegistration {
     pub path: String,
     #[serde(default = "default_local_device_id")]
     pub device_id: String,
+    /// Absent in a store written before projects could be pinned, which
+    /// loads as unpinned without a warning (D-07). Removing the registration
+    /// takes the pin with it; nothing else about the pin is stored.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

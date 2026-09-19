@@ -664,6 +664,192 @@ impl Runtime {
         true
     }
 
+    /// Pins or unpins a registered project (D-07, D-08). The row moves at
+    /// once and the registration is persisted on the existing off-lock save;
+    /// the same value again changes nothing and writes nothing.
+    pub(super) fn set_workspace_pinned(&mut self, payload: WorkspacePinSetPayload) -> bool {
+        let Some(registration) = self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter_mut()
+            .find(|registration| registration.id == payload.workspace_id)
+        else {
+            self.set_error(
+                "workspace.pin_unregistered",
+                format!(
+                    "Project {} is not registered, so it cannot be pinned",
+                    payload.workspace_id
+                ),
+                false,
+            );
+            return true;
+        };
+        if registration.pinned == payload.pinned {
+            return false;
+        }
+        registration.pinned = payload.pinned;
+        for workspace in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .chain(self.last_accepted_catalog.iter_mut().flatten())
+            .filter(|workspace| workspace.id == payload.workspace_id)
+        {
+            workspace.pinned = payload.pinned;
+        }
+        // Re-sort in place, the way an activity change does: the catalog
+        // carries the flag on its next rebuild, but the row moves now.
+        let agents = self.snapshot.navigator.agents.clone();
+        crate::project_context::sort_projects(&mut self.snapshot.navigator.workspaces, &agents);
+        self.refresh_inactive_groups();
+        self.persist_ui_state();
+        self.push_diagnostic(
+            if payload.pinned {
+                "workspace.pinned"
+            } else {
+                "workspace.unpinned"
+            },
+            format!("Project {}", payload.workspace_id),
+        );
+        true
+    }
+
+    /// `Remove project…` (D-09, D-11). A project with no pane loses its
+    /// registration at once, as before. One with panes has them closed on a
+    /// worker thread that waits for Herdr to confirm; only that confirmation
+    /// removes the registration, so a timeout leaves the project registered
+    /// with the reason in the error banner and a retry starts from whatever
+    /// panes remain.
+    pub(super) fn remove_workspace(&mut self, payload: RemoveWorkspacePayload) -> bool {
+        if !self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .any(|registration| registration.id == payload.workspace_id)
+        {
+            // Already gone: the target state is reached, and a repeat of a
+            // completed removal stays quiet (DESIGN.md, registration removal).
+            return false;
+        }
+        if self
+            .workspace_removals_in_flight
+            .contains(&payload.workspace_id)
+        {
+            return false;
+        }
+        let (checkout_paths, pane_ids) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.id == payload.workspace_id)
+            .flat_map(|workspace| &workspace.checkouts)
+            .fold(
+                (Vec::new(), Vec::new()),
+                |(mut paths, mut panes), checkout| {
+                    paths.push(checkout.path.clone());
+                    panes.extend(
+                        checkout
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| &tab.panes)
+                            .map(|pane| pane.id.clone()),
+                    );
+                    (paths, panes)
+                },
+            );
+        if pane_ids.is_empty() {
+            return self.retire_workspace_registration(&payload.workspace_id);
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "registration", "kind": "remove.close_requested",
+            "workspace_id": payload.workspace_id, "pane_ids": pane_ids,
+        }));
+        let Some(context) = self.live.as_ref().cloned() else {
+            self.set_error(
+                "workspace.remove_failed",
+                "Removing a project with open panes needs a live Herdr connection",
+                true,
+            );
+            return true;
+        };
+        self.workspace_removals_in_flight
+            .insert(payload.workspace_id.clone());
+        if let Err(message) = live::spawn_workspace_close(
+            context,
+            payload.workspace_id.clone(),
+            checkout_paths,
+            pane_ids,
+        ) {
+            self.ingest_workspace_close_result(&payload.workspace_id, Err(message));
+        }
+        true
+    }
+
+    /// The worker's answer to `remove_workspace`: Herdr confirmed every pane
+    /// gone, or it did not in time. Only the first removes the registration.
+    pub fn ingest_workspace_close_result(
+        &mut self,
+        workspace_id: &str,
+        result: Result<(), String>,
+    ) -> bool {
+        if !self.workspace_removals_in_flight.remove(workspace_id) {
+            return false;
+        }
+        match result {
+            Ok(()) => self.retire_workspace_registration(workspace_id),
+            Err(message) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "registration", "kind": "remove.close_failed",
+                    "workspace_id": workspace_id, "error": message,
+                }));
+                self.set_error(
+                    "workspace.remove_failed",
+                    format!("{message}. The project stays registered; remove it again to close the panes that remain."),
+                    true,
+                );
+                true
+            }
+        }
+    }
+
+    /// Drops the registration and its row. Files, worktrees and Herdr
+    /// workspaces are never touched here.
+    fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
+        let before = self.snapshot.ui_state.workspace_registrations.len();
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .retain(|registration| registration.id != workspace_id);
+        if before == self.snapshot.ui_state.workspace_registrations.len() {
+            return false;
+        }
+        // Retire the accepted projection directly. Rebuilding the
+        // filesystem catalog here ran git while holding the mutex.
+        self.snapshot
+            .navigator
+            .workspaces
+            .retain(|workspace| workspace.id != workspace_id);
+        if let Some(catalog) = &mut self.last_accepted_catalog {
+            catalog.retain(|workspace| workspace.id != workspace_id);
+        }
+        self.snapshot
+            .ui_state
+            .collapsed_workspace_ids
+            .retain(|id| id != workspace_id);
+        self.refresh_inactive_groups();
+        self.resync_navigator_focus();
+        self.persist_current_ui_state();
+        self.push_diagnostic(
+            "workspace.unregistered",
+            format!("Unregistered workspace {workspace_id} without touching its files"),
+        );
+        true
+    }
+
     pub fn ingest_worktree_close_result(&mut self, id: u64, result: Result<(), String>) -> bool {
         let Some(active) = self.snapshot.worktree_removal.as_ref() else {
             return false;

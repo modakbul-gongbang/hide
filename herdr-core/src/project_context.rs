@@ -85,9 +85,14 @@ pub(crate) fn sort_projects(
         project.last_activity_unix_ms = recent.unix_ms;
         project_activity.insert(project.id.clone(), recent);
     }
+    // A pinned project stays ahead of its device's unpinned ones whatever
+    // its activity, so the shell can split the list into the `Pinned`
+    // section and the activity list without repeating either key (D-02,
+    // D-03). The device is still the first key: pins never cross devices.
     projects.sort_by(|left, right| {
         left.device_id
             .cmp(&right.device_id)
+            .then_with(|| right.pinned.cmp(&left.pinned))
             .then_with(|| project_activity[&right.id].cmp(&project_activity[&left.id]))
             .then_with(|| left.id.cmp(&right.id))
     });
@@ -187,7 +192,11 @@ pub(crate) fn refresh_inactive_groups(
             checkout_ids: inactive_checkout_ids,
         };
 
-        let project_is_inactive = !workspace.checkouts.is_empty()
+        // A pinned project is exempt from the device fold: the operator asked
+        // to see it whatever its activity (D-04). Its own checkouts still
+        // fold above.
+        let project_is_inactive = !workspace.pinned
+            && !workspace.checkouts.is_empty()
             && workspace.checkouts.iter().all(|checkout| {
                 checkout_is_inactive(checkout, &by_pane, focused_checkout_id, now_unix_ms)
             });
@@ -293,7 +302,9 @@ mod tests {
             session_workspace_ids: Vec::new(),
             last_activity_unix_ms: None,
             checkouts: vec![checkout(id, last_commit_unix_seconds, pane_ids)],
+            pinned: false,
             inactive_checkouts: InactiveCheckoutGroupSnapshot::default(),
+            removal: Default::default(),
         }
     }
 
@@ -630,6 +641,67 @@ mod tests {
         assert_eq!(
             ids(&projects),
             ["local-new", "local-old", "remote-new", "remote-old"]
+        );
+    }
+
+    /// B2, B3. A pinned project leads its device whatever its activity, pins
+    /// keep the activity order among themselves, and a remote pin still sits
+    /// after every local row because the device is the first key.
+    #[test]
+    fn pinned_projects_lead_their_device_in_activity_order() {
+        let mut pinned_stale = project("pinned-stale", "local", Some(1_000), &[]);
+        pinned_stale.pinned = true;
+        let mut pinned_busy = project("pinned-busy", "local", Some(2_000), &[]);
+        pinned_busy.pinned = true;
+        let mut remote_pinned = project("remote-pinned", "mini", Some(9_000), &[]);
+        remote_pinned.pinned = true;
+        let mut projects = vec![
+            project("active", "local", Some(8_000), &[]),
+            pinned_stale,
+            remote_pinned,
+            project("remote", "mini", Some(9_500), &[]),
+            pinned_busy,
+        ];
+
+        assert!(sort_projects(&mut projects, &[]));
+
+        assert_eq!(
+            ids(&projects),
+            [
+                "pinned-busy",
+                "pinned-stale",
+                "active",
+                "remote-pinned",
+                "remote"
+            ]
+        );
+    }
+
+    /// B6. A pinned project whose every checkout is inactive stays out of the
+    /// device fold; its own inactive worktrees still fold inside it.
+    #[test]
+    fn pinned_projects_stay_out_of_the_device_fold() {
+        let now_ms = 20 * 24 * 60 * 60 * 1_000;
+        let old_seconds = (now_ms - 8 * 24 * 60 * 60 * 1_000) / 1_000;
+        let mut pinned = project("pinned", "local", Some(old_seconds), &[]);
+        pinned.pinned = true;
+        pinned.checkouts[0].path = pinned.path.clone();
+        pinned.checkouts.push(make_worktree_checkout(
+            "pinned",
+            "old-topic",
+            Some(old_seconds),
+        ));
+        let mut folded = project("folded", "local", Some(old_seconds), &[]);
+        folded.checkouts[0].path = folded.path.clone();
+        let mut navigator = navigator(vec![pinned, folded]);
+
+        refresh_inactive_groups(&mut navigator, &UiStateSnapshot::default(), now_ms);
+
+        assert_eq!(navigator.inactive_projects.len(), 1);
+        assert_eq!(navigator.inactive_projects[0].project_ids, ["folded"]);
+        assert_eq!(
+            navigator.workspaces[0].inactive_checkouts.checkout_ids,
+            ["old-topic"]
         );
     }
 

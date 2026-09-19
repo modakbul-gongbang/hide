@@ -137,6 +137,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
             label: "stale".to_owned(),
             path: cwd.clone(),
             device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+            pinned: false,
         }],
         workspaces: Vec::new(),
         roots: workspace::RootIndex::new(),
@@ -494,6 +495,7 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
         label: "Partial".to_owned(),
         path: partial_path.to_owned(),
         device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+        pinned: false,
     };
     runtime
         .workspace_creations_in_flight
@@ -534,33 +536,192 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
     assert!(error.message.contains("git init failed explicitly"));
 }
 
-#[test]
-fn removing_registration_in_use_preserves_it_and_explains_recovery() {
-    let mut runtime = runtime();
-    let path = std::env::temp_dir().join(format!("hide-registration-busy-{}", std::process::id()));
-    std::fs::create_dir_all(&path).unwrap();
+/// A registered project with panes, as `Remove project…` sees it: the
+/// session that `context_payload` describes, with its Alpha workspace
+/// registered so the row is a registration rather than a temporary folder.
+fn registered_context_runtime() -> (Runtime, WorkspaceRegistration) {
+    let mut runtime = live_runtime();
     let registration =
-        workspace::registration(path.to_str().unwrap(), "Busy project", "local").unwrap();
+        workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
     runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
-    runtime.last_session_spaces = vec![workspace::SessionSpace {
-        id: "w1".into(),
-        label: "Busy project".into(),
-        cwds: vec![registration.path.clone()],
-    }];
-    runtime.rebuild_catalog();
-    runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({
-        "schema_version": 2, "kind": "remove_workspace", "payload": {"workspace_id": registration.id}
-    })).unwrap());
+    runtime.ingest_session(Ok(context_payload()));
+    (runtime, registration)
+}
+
+fn remove_event(workspace_id: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "remove_workspace",
+        "payload": {"workspace_id": workspace_id}
+    }))
+    .unwrap()
+}
+
+/// B11, B12, B14. A project with panes is not refused: the confirmation
+/// counts come from the snapshot, the registration survives until Herdr
+/// confirms the closes, a timeout keeps it with the reason visible, and a
+/// repeat while the close runs starts nothing. Only the confirmation removes
+/// the row, and files are never touched.
+#[test]
+fn removing_a_registration_with_panes_closes_them_and_removes_only_on_confirmation() {
+    let (mut runtime, registration) = registered_context_runtime();
+    let alpha = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == registration.id)
+        .expect("the registered project row");
+    assert_eq!(alpha.removal.pane_count, 1);
+    assert_eq!(alpha.removal.running_agent_count, 1);
+
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration.clone()],
+        "the registration waits for Herdr's confirmation"
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+    assert!(
+        !runtime.dispatch_json(&remove_event(&registration.id)),
+        "a repeat while the close is in flight is a no-op"
+    );
+
+    assert!(runtime.ingest_workspace_close_result(
+        &registration.id,
+        Err("Timed out waiting for Herdr to confirm closed panes: w1:p1".to_owned())
+    ));
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration.clone()],
+        "a timeout leaves the project registered"
+    );
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_failed");
+    assert!(error.message.contains("Timed out"));
+    assert!(
+        !runtime.ingest_workspace_close_result(&registration.id, Ok(())),
+        "a late answer for a request that already failed authorizes nothing"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration.clone()]
+    );
+
+    // Retry: the same event starts over from the panes that remain.
+    runtime.snapshot.status.last_error = None;
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    assert!(runtime.ingest_workspace_close_result(&registration.id, Ok(())));
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+    assert!(
+        !runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == registration.id)
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+    assert!(
+        !runtime.dispatch_json(&remove_event(&registration.id)),
+        "the completed removal repeats quietly"
+    );
+}
+
+/// B14. Without a live Herdr connection the panes cannot be closed, so the
+/// registration stays and the banner says why instead of a half-removed row.
+#[test]
+fn removing_a_registration_with_panes_needs_a_live_connection() {
+    let mut runtime = runtime();
+    let registration =
+        workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
+    runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+    runtime.ingest_session(Ok(context_payload()));
+
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+
     assert_eq!(
         runtime.snapshot.ui_state.workspace_registrations,
         vec![registration]
     );
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_failed");
+    assert!(error.message.contains("live Herdr connection"));
+}
+
+/// B2, B4, B5, B10. Pinning moves the registered row ahead of its device's
+/// activity order, carries the flag on both the row and the registration
+/// that persists it, and unpinning puts it back. The same value again
+/// changes nothing; an id with no registration is refused, not ignored.
+#[test]
+fn pinning_a_registration_reorders_the_row_and_persists_the_flag() {
+    let mut runtime = runtime();
+    let alpha = workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
+    let zeta = workspace::registration("/tmp/hide-context-zeta", "Zeta", "local").unwrap();
+    runtime.snapshot.ui_state.workspace_registrations = vec![alpha.clone(), zeta.clone()];
+    runtime.ingest_session(Ok(context_payload()));
+    let ids = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&runtime), [zeta.id.clone(), alpha.id.clone()]);
+    let pin = |workspace_id: &str, pinned: bool| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "workspace_pin_set",
+            "payload": {"workspace_id": workspace_id, "pinned": pinned}
+        }))
+        .unwrap()
+    };
+
+    assert!(runtime.dispatch_json(&pin(&alpha.id, true)));
+    assert_eq!(ids(&runtime), [alpha.id.clone(), zeta.id.clone()]);
+    assert!(runtime.snapshot.navigator.workspaces[0].pinned);
+    assert!(!runtime.snapshot.navigator.workspaces[1].pinned);
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations[0],
+        WorkspaceRegistration {
+            pinned: true,
+            ..alpha.clone()
+        }
+    );
+    let saved = std::fs::read_to_string(&runtime.state_path).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(saved["workspace_registrations"][0]["pinned"], true);
+    assert_eq!(saved["workspace_registrations"][1]["pinned"], false);
+
+    assert!(
+        !runtime.dispatch_json(&pin(&alpha.id, true)),
+        "the same value is a no-op"
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+
+    // The next session publish carries the pin through the catalog too.
+    runtime.ingest_session(Ok(context_payload()));
+    assert_eq!(ids(&runtime), [alpha.id.clone(), zeta.id.clone()]);
+    assert!(runtime.snapshot.navigator.workspaces[0].pinned);
+
+    assert!(runtime.dispatch_json(&pin(&alpha.id, false)));
+    assert_eq!(ids(&runtime), [zeta.id.clone(), alpha.id.clone()]);
+    assert!(!runtime.snapshot.navigator.workspaces[1].pinned);
+    assert!(!runtime.snapshot.ui_state.workspace_registrations[0].pinned);
+
+    assert!(runtime.dispatch_json(&pin("workspace:missing", true)));
     assert_eq!(
         runtime.snapshot.status.last_error.as_ref().unwrap().kind,
-        "workspace.registration_in_use"
+        "workspace.pin_unregistered"
     );
-    assert!(path.is_dir(), "Registration removal must not delete files");
-    std::fs::remove_dir(path).unwrap();
+    assert!(
+        runtime
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .all(|registration| !registration.pinned)
+    );
 }
 
 #[test]
@@ -1026,6 +1187,7 @@ fn a_registration_herdr_already_has_a_workspace_for_is_listed_once() {
         label: "Duplicate".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
 
     let catalog = workspace::build_catalog(&registrations, &spaces, &no_worktrees());
@@ -1131,6 +1293,7 @@ fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
         label: "Last pane".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let previous_workspace = workspace(
         &workspace_id,
@@ -1208,6 +1371,7 @@ fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
         label: "Focused checkout".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let previous_workspace = workspace(
         &workspace_id,

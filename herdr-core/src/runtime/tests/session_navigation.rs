@@ -1928,6 +1928,7 @@ fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
         label: "registered".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id =
@@ -2049,6 +2050,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
         label: "Selected".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let selected_workspace = workspace(
         &workspace_id,
@@ -2198,6 +2200,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
         label: "Missing pane".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let selected_workspace = workspace(
         &workspace_id,

@@ -382,6 +382,33 @@ pub fn sync_checkout_agent_summaries(
             changed = true;
         }
     }
+    // The removal confirmation's counts ride the same pass, so the dialog
+    // names the panes the close will send and the agents still working in
+    // them as of the same projection (D-10). "Running" is the deletion
+    // gate's definition: the agent's activity axis says working.
+    let running = agents
+        .iter()
+        .filter(|agent| agent.activity == AgentActivity::Working.name())
+        .map(|agent| agent.pane_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for workspace in workspaces.iter_mut() {
+        let panes = workspace
+            .checkouts
+            .iter()
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes);
+        let mut removal = crate::model::WorkspaceRemovalGateSnapshot::default();
+        for pane in panes {
+            removal.pane_count += 1;
+            if running.contains(pane.id.as_str()) {
+                removal.running_agent_count += 1;
+            }
+        }
+        if workspace.removal != removal {
+            workspace.removal = removal;
+            changed = true;
+        }
+    }
     changed
 }
 
@@ -1307,7 +1334,9 @@ mod tests {
             temporary: false,
             session_workspace_ids: vec![],
             last_activity_unix_ms: None,
+            pinned: false,
             inactive_checkouts: Default::default(),
+            removal: Default::default(),
         }];
         let mut agents = project_agents(payload(json!([
             {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},
