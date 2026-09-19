@@ -627,6 +627,48 @@ fn removing_a_registration_with_panes_closes_them_and_removes_only_on_confirmati
     );
 }
 
+/// B12. Removing the project the operator is looking at takes its focus and
+/// pane selection with it: the next project comes forward and no sync tick
+/// reports the closed pane as "not available for the selected checkout".
+#[test]
+fn removing_the_focused_project_moves_focus_off_its_closed_panes() {
+    let (mut runtime, registration) = registered_context_runtime();
+    let alpha_checkout_id = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == registration.id)
+        .and_then(|workspace| workspace.checkouts.first())
+        .map(|checkout| checkout.id.clone())
+        .expect("alpha checkout");
+    runtime.snapshot.ui_state.focused_checkout_id = Some(alpha_checkout_id.clone());
+    runtime.snapshot.navigator.focused_checkout_id = Some(alpha_checkout_id.clone());
+    runtime.snapshot.ui_state.selected_pane_id = Some("w1:p1".to_owned());
+    runtime.snapshot.terminal.pane_id = Some("w1:p1".to_owned());
+    runtime.snapshot.focused.pane_id = Some("w1:p1".to_owned());
+
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    assert!(runtime.ingest_workspace_close_result(&registration.id, Ok(())));
+
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+    assert_ne!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(alpha_checkout_id.as_str()),
+        "focus does not stay on a checkout no catalog carries"
+    );
+    assert_ne!(
+        runtime.snapshot.ui_state.focused_checkout_id.as_deref(),
+        Some(alpha_checkout_id.as_str())
+    );
+    assert_ne!(runtime.snapshot.terminal.pane_id.as_deref(), Some("w1:p1"));
+    assert_ne!(
+        runtime.snapshot.ui_state.selected_pane_id.as_deref(),
+        Some("w1:p1")
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+}
+
 /// B14. Without a live Herdr connection the panes cannot be closed, so the
 /// registration stays and the banner says why instead of a half-removed row.
 #[test]

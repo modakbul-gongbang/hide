@@ -827,12 +827,44 @@ impl Runtime {
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
         }
+        // The focused checkout and the selected pane leave with the project;
+        // kept, they would name a checkout no catalog carries and the sync
+        // would report `pane.projection_unavailable` every tick instead of
+        // moving to the next project, exactly as after a Herdr restart
+        // (`consume_restore_hint`).
+        let focus_leaves_with_workspace = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.id == workspace_id)
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .any(|checkout| {
+                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
+            });
         // Retire the accepted projection directly. Rebuilding the
         // filesystem catalog here ran git while holding the mutex.
         self.snapshot
             .navigator
             .workspaces
             .retain(|workspace| workspace.id != workspace_id);
+        if focus_leaves_with_workspace {
+            self.snapshot.ui_state.focused_checkout_id = None;
+            self.snapshot.navigator.focused_checkout_id = None;
+            self.snapshot.ui_state.selected_pane_id = None;
+            self.snapshot.terminal.pane_id = None;
+            self.snapshot.focused.pane_id = None;
+            self.clear_terminal_projection();
+            if self
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .is_some_and(|error| error.kind == "pane.projection_unavailable")
+            {
+                self.snapshot.status.last_error = None;
+            }
+        }
         if let Some(catalog) = &mut self.last_accepted_catalog {
             catalog.retain(|workspace| workspace.id != workspace_id);
         }

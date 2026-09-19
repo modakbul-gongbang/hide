@@ -739,11 +739,13 @@ private struct WorkspaceNavigatorRow: View {
         .onAppear { model.requestGithubStatus(workspace) }
     }
 
-    /// Pin and removal exist only for a registration: a temporary folder row
-    /// has nothing to store the pin in and nothing to unregister (D-06).
+    /// Pin and removal exist only for a local registration: a temporary folder
+    /// row has nothing to store the pin in and nothing to unregister (D-06),
+    /// and a remote project is the device's own, projected from its session.
     @ViewBuilder
     private var projectMenuItems: some View {
-        if workspace.registered {
+        let isLocalRegistration = workspace.registered && workspace.remoteTargetID == nil
+        if isLocalRegistration {
             Button(workspace.pinned ? WorktreeMenuPolicy.unpinProject : WorktreeMenuPolicy.pinProject) {
                 model.setWorkspacePinned(workspace, pinned: !workspace.pinned)
             }
@@ -754,7 +756,7 @@ private struct WorkspaceNavigatorRow: View {
         }
         Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
             .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
-        if workspace.registered {
+        if isLocalRegistration {
             Divider()
             Button(WorktreeMenuPolicy.removeProject, role: .destructive) {
                 model.requestRemoveWorkspace(workspace)

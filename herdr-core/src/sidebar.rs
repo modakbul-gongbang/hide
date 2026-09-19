@@ -385,13 +385,19 @@ pub fn sync_checkout_agent_summaries(
     // The removal confirmation's counts ride the same pass, so the dialog
     // names the panes the close will send and the agents still working in
     // them as of the same projection (D-10). "Running" is the deletion
-    // gate's definition: the agent's activity axis says working.
+    // gate's definition: the agent's activity axis says working. Only a
+    // local registration offers `Remove project…`, so only one carries the
+    // gate: a remote tree arrives freshly projected on every sync, and a
+    // count written into it would read as a change on every tick.
     let running = agents
         .iter()
         .filter(|agent| agent.activity == AgentActivity::Working.name())
         .map(|agent| agent.pane_id.as_str())
         .collect::<std::collections::HashSet<_>>();
-    for workspace in workspaces.iter_mut() {
+    for workspace in workspaces
+        .iter_mut()
+        .filter(|workspace| workspace.registered && workspace.remote_target_id.is_none())
+    {
         let panes = workspace
             .checkouts
             .iter()
