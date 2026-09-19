@@ -191,12 +191,17 @@ open class CodeAttributedString : NSTextStorage
                 }
 
                 self.beginEditing()
+                // The backing storage is its own NSTextStorage: without this
+                // batch every run's setAttributes ran processEditing over the
+                // document, which took seconds on a few hundred KB.
+                self.stringStorage.beginEditing()
                 tmpStrg?.enumerateAttributes(in: NSMakeRange(0, (tmpStrg?.length)!), options: [], using: { (attrs, locRange, stop) in
                     var fixedRange = NSMakeRange(range.location+locRange.location, locRange.length)
                     fixedRange.length = (fixedRange.location + fixedRange.length < string.length) ? fixedRange.length : string.length-fixedRange.location
                     fixedRange.length = (fixedRange.length >= 0) ? fixedRange.length : 0
                     self.stringStorage.setAttributes(attrs, range: fixedRange)
                 })
+                self.stringStorage.endEditing()
                 self.endEditing()
                 self.edited(TextStorageEditActions.editedAttributes, range: range, changeInLength: 0)
                 self.highlightDelegate?.didHighlight?(range, success: true)

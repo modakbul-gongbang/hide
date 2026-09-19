@@ -114,7 +114,7 @@ fn tab_order_is_unchanged_by_a_tab_switch() {
 }
 
 #[test]
-fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
+fn file_view_mode_is_per_open_tab_and_reopen_starts_live() {
     let (mut runtime, checkout_id, directory) = strip_checkout("file-view-mode");
     let first = directory.join("notes.md");
     let second = directory.join("second.md");
@@ -124,7 +124,7 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
     let first_id = runtime.snapshot.editor.active_tab_id.clone().unwrap();
     let event = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION, "kind": "file_view",
-        "payload": {"tab_id": first_id, "markdown_preview": false, "wrap": true}
+        "payload": {"tab_id": first_id, "markdown_live": false, "wrap": true}
     }))
     .unwrap();
     assert!(runtime.dispatch_json(&event));
@@ -133,15 +133,7 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
         "repeated selection publishes no change"
     );
     open_file(&mut runtime, &checkout_id, &second);
-    assert!(
-        runtime
-            .snapshot
-            .editor
-            .tabs
-            .last()
-            .unwrap()
-            .markdown_preview
-    );
+    assert!(runtime.snapshot.editor.tabs.last().unwrap().markdown_live);
     open_file(&mut runtime, &checkout_id, &first);
     let tab = runtime
         .snapshot
@@ -150,7 +142,7 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
         .iter()
         .find(|tab| tab.id == first_id)
         .unwrap();
-    assert!(!tab.markdown_preview);
+    assert!(!tab.markdown_live);
     assert!(tab.wrap);
     let close = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION, "kind": "file_close", "payload": {"tab_id": first_id}
@@ -158,15 +150,7 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
     .unwrap();
     runtime.dispatch_json(&close);
     open_file(&mut runtime, &checkout_id, &first);
-    assert!(
-        runtime
-            .snapshot
-            .editor
-            .tabs
-            .last()
-            .unwrap()
-            .markdown_preview
-    );
+    assert!(runtime.snapshot.editor.tabs.last().unwrap().markdown_live);
 }
 
 #[test]
@@ -1005,7 +989,7 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         label: "lib.rs".to_owned(),
         kind: EditorTabKind::File,
         diff_committed: None,
-        markdown_preview: false,
+        markdown_live: false,
         wrap: false,
         dirty: false,
         preview: false,
@@ -1127,7 +1111,7 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
         label: file_name.clone(),
         kind: EditorTabKind::File,
         diff_committed: None,
-        markdown_preview: false,
+        markdown_live: false,
         wrap: false,
         dirty: false,
         preview: false,
@@ -1596,7 +1580,7 @@ fn recent_closed_tracks_file_tabs_but_not_diff_tabs() {
             label: format!("{id}.rs"),
             kind,
             diff_committed: (kind == EditorTabKind::Diff).then_some(false),
-            markdown_preview: false,
+            markdown_live: false,
             wrap: false,
             dirty: false,
             preview: false,

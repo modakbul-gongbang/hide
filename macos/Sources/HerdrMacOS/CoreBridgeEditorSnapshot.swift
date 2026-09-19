@@ -34,7 +34,7 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
     let label: String
     let kind: CoreEditorTabKind
     let diffCommitted: Bool?
-    var markdownPreview: Bool? = nil
+    var markdownLive: Bool? = nil
     var wrap: Bool? = nil
     let dirty: Bool
     /// The checkout's replaceable preview tab (PRD editor-preview-tab D-07).
@@ -47,7 +47,7 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
         case path
         case label
         case kind
-        case markdownPreview = "markdown_preview"
+        case markdownLive = "markdown_live"
         case wrap
         case diffCommitted = "diff_committed"
         case dirty
