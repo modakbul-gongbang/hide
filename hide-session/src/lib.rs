@@ -358,22 +358,21 @@ impl SessionLocator {
         cwd: Option<&str>,
     ) -> Result<PathBuf> {
         // A session Herdr reported for this pane is that pane's session, full
-        // stop. The newest file in the same cwd used to override it once the
-        // reported file went quiet for 30 s, and that made every idle pane
-        // borrow its busiest neighbour's transcript: two Claude panes in one
-        // checkout read the same session, and the quiet one was named,
-        // labelled and diagnosed after the other (2026-09-18). A pane that
-        // starts a new session in place (`/clear`, `--resume`) is reported
-        // again by the runtime hook, so a switch reaches here as a new id.
+        // stop, and a reported session whose file does not exist yet is a
+        // session that has not started, not a reason to read another one.
+        // Both fallbacks to the newest file in the cwd were tried and both
+        // handed a pane its neighbour's transcript: the first once the
+        // reported file went quiet for 30 s, the second in the seconds
+        // between Claude's launch and its first written turn, when the id is
+        // already reported and the file is not there yet (2026-09-18/19). A
+        // pane that starts a new session in place (`/clear`, `--resume`) is
+        // reported again by the runtime hook, so a switch reaches here as a
+        // new id. The cwd search below serves only a pane with no reported
+        // session at all.
         if let Some(identity) = identity {
-            match self.reported_path(agent, cwd, identity) {
-                Ok(path) => {
-                    self.resolved.insert(pane_id.to_owned(), path.clone());
-                    return Ok(path);
-                }
-                Err(SessionError::SessionFileMissing) if cwd.is_some() => {}
-                Err(error) => return Err(error),
-            }
+            let path = self.reported_path(agent, cwd, identity)?;
+            self.resolved.insert(pane_id.to_owned(), path.clone());
+            return Ok(path);
         }
 
         if let Some(path) = self.resolved.get(pane_id)
@@ -1170,6 +1169,43 @@ mod tests {
                 .locate("pane-unknown", Agent::Claude, None, Some("/Users/example"))
                 .unwrap(),
             busy
+        );
+    }
+
+    /// A reported session whose file is not written yet (Claude before its
+    /// first turn) is missing, never the neighbour's newest transcript.
+    #[test]
+    fn a_reported_session_without_a_file_yet_is_missing_not_the_neighbour() {
+        let home = tempdir().unwrap();
+        let claude_dir = home.path().join(".claude/projects/-Users-example");
+        fs::create_dir_all(&claude_dir).unwrap();
+        let busy = claude_dir.join("busy-id.jsonl");
+        fs::write(&busy, b"").unwrap();
+        let mut locator = SessionLocator::new(home.path());
+        let unborn = SessionIdentity::id("unborn-id");
+        assert!(matches!(
+            locator.locate(
+                "pane-new",
+                Agent::Claude,
+                Some(&unborn),
+                Some("/Users/example")
+            ),
+            Err(SessionError::SessionFileMissing)
+        ));
+        // Once the file exists the same pane resolves to it, not to what
+        // the cwd search would have cached.
+        let own = claude_dir.join("unborn-id.jsonl");
+        fs::write(&own, b"").unwrap();
+        assert_eq!(
+            locator
+                .locate(
+                    "pane-new",
+                    Agent::Claude,
+                    Some(&unborn),
+                    Some("/Users/example")
+                )
+                .unwrap(),
+            own
         );
     }
 }
