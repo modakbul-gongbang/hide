@@ -579,6 +579,7 @@ struct ShellCommands: Commands {
             Divider()
 
             menuButton(.closeTab) { model.performCloseShortcut() }
+            menuButton(.keepOpen) { model.keepActiveEditorTabOpen() }
         }
 
         CommandMenu("Navigate") {

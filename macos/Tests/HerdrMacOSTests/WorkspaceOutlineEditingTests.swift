@@ -101,7 +101,7 @@ import Testing
         #expect(FileManager.default.createFile(atPath: root.appendingPathComponent("src/lib.rs").path, contents: Data()))
         let calls = Calls()
         let coordinator = WorkspaceOutlineView.Coordinator(
-            openFile: { _ in },
+            openFile: { _, _ in },
             updateExpandedPaths: { _ in },
             fileOperations: WorkspaceFileOperations(
                 createFile: { calls.created.append(($0, $1)) },
@@ -345,7 +345,7 @@ import Testing
         let host = try await Self.makeHost()
         defer { host.tearDown() }
         let coordinator = WorkspaceOutlineView.Coordinator(
-            openFile: { _ in }, updateExpandedPaths: { _ in },
+            openFile: { _, _ in }, updateExpandedPaths: { _ in },
             fileOperations: WorkspaceFileOperations(
                 createFile: { _, _ in }, createDirectory: { _, _ in }, rename: { _, _ in }, move: { _, _ in },
                 requestTrash: { _ in }

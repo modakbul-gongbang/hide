@@ -510,6 +510,9 @@ struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
     /// Recent Panels switcher names the tab by it; a shell-only tab and a tab
     /// with several agents carry none and keep their label.
     let agentIdentity: CoreAgentChip?
+    /// Whether this editor entry is the checkout's preview tab, whose title
+    /// the strip draws in italic. The core decides it; a Herdr entry never is.
+    let preview: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -517,14 +520,16 @@ struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
         case sourceID = "source_id"
         case label
         case agentIdentity = "agent_identity"
+        case preview
     }
 
-    init(id: String, kind: Kind, sourceID: String, label: String, agentIdentity: CoreAgentChip? = nil) {
+    init(id: String, kind: Kind, sourceID: String, label: String, agentIdentity: CoreAgentChip? = nil, preview: Bool = false) {
         self.id = id
         self.kind = kind
         self.sourceID = sourceID
         self.label = label
         self.agentIdentity = agentIdentity
+        self.preview = preview
     }
 
     init(from decoder: any Decoder) throws {
@@ -534,6 +539,7 @@ struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
         sourceID = try container.decode(String.self, forKey: .sourceID)
         label = try container.decode(String.self, forKey: .label)
         agentIdentity = try container.decodeIfPresent(CoreAgentChip.self, forKey: .agentIdentity)
+        preview = try container.decodeIfPresent(Bool.self, forKey: .preview) ?? false
     }
 }
 
