@@ -906,8 +906,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "file_close", payload: payload)
     }
 
-    func setFileView(tabID: String, preview: Bool, wrap: Bool) {
-        dispatch(kind: "file_view", payload: ["tab_id": tabID, "markdown_preview": preview, "wrap": wrap])
+    func setFileView(tabID: String, live: Bool, wrap: Bool) {
+        dispatch(kind: "file_view", payload: ["tab_id": tabID, "markdown_live": live, "wrap": wrap])
     }
 
     func updateDraft(_ contents: String) {

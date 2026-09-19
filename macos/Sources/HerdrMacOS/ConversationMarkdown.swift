@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Foundation owns Markdown syntax. Native text rendering never executes HTML or fetches images.
-enum MarkdownDocument {
+/// Renders an assistant turn's Markdown for the conversation ledger. Foundation
+/// owns the syntax; the rendered text never executes HTML or fetches images.
+enum ConversationMarkdown {
     @MainActor static func render(
         _ source: String,
         scale: CGFloat,
@@ -71,69 +72,5 @@ enum MarkdownDocument {
             previousTableRow = tableRow
         }
         return output
-    }
-}
-
-struct MarkdownPreview: NSViewRepresentable {
-    let text: String
-    let textScale: CGFloat
-    let findRequest: Int
-    let openLink: (URL) -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(openLink: openLink) }
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let view = NSTextView()
-        view.isEditable = false
-        view.isSelectable = true
-        view.isVerticallyResizable = true
-        view.isHorizontallyResizable = false
-        view.autoresizingMask = [.width]
-        view.textContainer?.widthTracksTextView = true
-        view.textContainerInset = NSSize(width: HideTheme.spacingLG, height: HideTheme.spacingLG)
-        view.backgroundColor = HideTheme.Native.background
-        view.delegate = context.coordinator
-        HighlightedCodeEditor.enableFindBar(on: view)
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.backgroundColor = HideTheme.Native.background
-        scroll.documentView = view
-        return scroll
-    }
-
-    func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let view = scroll.documentView as? NSTextView else { return }
-        context.coordinator.openLink = openLink
-        if context.coordinator.source != text || context.coordinator.scale != textScale {
-            context.coordinator.source = text
-            context.coordinator.scale = textScale
-            do {
-                view.textStorage?.setAttributedString(try MarkdownDocument.render(text, scale: textScale))
-            } catch {
-                view.string = "Markdown preview failed: \(error.localizedDescription)\n\n\(text)"
-                view.font = HideTheme.nativeFont(size: HideTheme.Editor.documentFontSize * textScale)
-                view.textColor = HideTheme.Native.primary
-            }
-        }
-        if context.coordinator.findRequest != findRequest {
-            context.coordinator.findRequest = findRequest
-            view.window?.makeFirstResponder(view)
-            let item = NSMenuItem()
-            item.tag = NSTextFinder.Action.showFindInterface.rawValue
-            view.performFindPanelAction(item)
-        }
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var source: String?
-        var scale: CGFloat?
-        var findRequest = 0
-        var openLink: (URL) -> Void
-        init(openLink: @escaping (URL) -> Void) { self.openLink = openLink }
-        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-            if let url = link as? URL { openLink(url) }
-            return true
-        }
     }
 }

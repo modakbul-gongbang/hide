@@ -1340,28 +1340,34 @@ Controls use HideIconButton and the shared tooltip/accessibility renderer.
 Unsaved drafts and the existing read-only/conflict notices remain visible in either mode.
 Diff tabs retain their existing viewer.
 
-Markdown files alone show the centered Preview/Edit HideChoiceGroup.
-The core owns mode and source wrapping per open file tab; another tab has independent choices, returning to a tab restores them, and close/reopen or app restart starts Preview with source wrapping off.
+Markdown files alone show the centered Live/Source HideChoiceGroup, and Live is the default.
+Both are editors over the same draft: Live draws the formatting in place and hides the markup on every line the caret is not on, the way Obsidian's Live Preview does; Source is the monospaced editor with its line-number ruler and Wrap toggle.
+The core owns mode and source wrapping per open file tab; another tab has independent choices, returning to a tab restores them, and close/reopen or app restart starts Live with source wrapping off.
 These choices share the existing ephemeral editor-tab lifecycle and are not added to persisted UI state.
-The preview displays the current draft, including unsaved content; it never substitutes an older disk read.
 Autosave captures its file identity when scheduled so a subsequent tab selection cannot redirect the write.
 Closing a file tab carries that tab's matching pending save in the same close intent, and the tab remains open with a visible error if the exact path and contents cannot be saved.
 The native editor retains only its latest unacknowledged draft while older core snapshots arrive, preventing a snapshot echo from moving the caret or replacing newer input.
 The syntax highlighter and text view use the same scaled monospaced font; unchanged view updates do not restart highlighting or reset its typography.
 Core acknowledgement, switching file identity, and explicitly reloading a disk conflict settle that presentation buffer.
 
-Foundation's established Markdown parser supplies block and inline structure to a native selectable text view.
-The document adds theme tokens for a 720-point readable width, 15-point Inter body and 5-point line spacing; Korean uses the font's native fallback and word wrapping.
-Headers, paragraphs, emphasis, lists, quotes, code and links retain readable structure.
-Tables use visibly separated textual cells rather than a grid; native tab stops must not make adjacent values appear concatenated.
-Raw HTML is inert literal text, never a browser execution surface.
-Local and remote Markdown images both display their description with an explicit preview-disabled label; no image resource is read or fetched by preview.
-HTTP(S) links open only after activation through the existing external-browser owner; relative file links are restricted to existing files inside the current symlink-resolved checkout.
-Unsupported schemes, fragments, outside-checkout paths and missing links show a caller-visible notice.
-Extended Markdown has no execution or plugin mechanism; unsupported syntax remains readable source and can always be inspected in Edit.
-A parse failure displays the reason and original source; an empty document offers Edit.
+The Live view is one editable text view whose storage is the source, so draft, autosave, Find, selection and copy read the same text Source would (`MarkdownLiveEditor.swift`).
+Foundation's Markdown parser, asked for source positions, supplies block and inline structure as ranges over that source (`MarkdownLiveSource.swift`); the characters of a block no run covers are its markup.
+Formatting is attributes over those ranges, and markup is hidden by the layout manager generating no glyph for it rather than by removing it: the text never changes, only what is drawn.
+The line holding the caret, and every line a selection crosses, shows its source; a fenced code block is one unit, so a caret anywhere inside it shows both fences.
+Markup hides again the moment the caret leaves, with no animation.
+Headings 1 through 6 take `HideTheme.Editor.headingFontSizes` at semibold with their hashes hidden; bold, italic and strikethrough hide their delimiters, italic as a skew because the bundled Inter has no italic face; inline code and fenced blocks use the editor's monospaced font over the panel fill, a fenced block filling its full measure; unordered markers draw as a bullet and ordered markers keep their digits, both with a hanging indent; a quote indents behind a `quoteRuleWidth` bar and hides its `>`; a link shows its text in the accent color with the brackets and URL hidden; a `---` line draws as a rule.
+Tables, images, HTML, footnotes and task lists are not drawn: they stay monospaced source, editable in place, and a parse the view cannot use leaves the whole document monospaced with the reason in the notice bar while typing continues.
+An empty Markdown file is an empty Live editor with the caret in it.
+The body is Inter at `documentFontSize` with `documentLineSpacing`, wrapped in a `documentWidth` measure the text view keeps centred in the pane; Korean uses the font's native fallback and word wrapping, and the text-scale chords apply in both modes.
+Links open on Command-click only, through the existing owner: HTTP(S) in the external browser, a relative file inside the current symlink-resolved checkout as an Explorer reveal, and anything else as a caller-visible notice; a plain click places the caret.
+Raw HTML is inert literal text, never a browser execution surface, and no image resource is read or fetched.
+A document over 256 KB opens in Source with the Live option disabled and the notice `Live preview is off for files over 256 KB` under the toolbar, because Live re-parses the whole document after each edit.
+That re-parse runs off the main thread, one at a time, with a burst of keystrokes coalescing into at most one more; attributes are re-applied only over the region whose plan changed, and hidden markup is recomputed from the selection alone, so a caret move touches its old and new lines and nothing else.
+No re-parse lands while an IME composition is marked, so Korean input composes uninterrupted.
 
-MarkdownDocumentTests checks rendered text, inert HTML/images and actual Inter Korean/English layout at two widths.
+`MarkdownLiveSourceTests` asks the plan for values: which ranges each construct styles, which characters it hides, and which the caret reveals.
+`MarkdownLiveEditorTests` drives the real AppKit view: hidden glyphs off the caret line and revealed on it, a fenced block as one unit, typing into a formatted line landing at the caret, Korean and English wrapping in the measure, Command-click against plain click, the raw fallback with its notice, and the 256 KB Source fallback.
+`ConversationMarkdownTests` covers the conversation ledger's separate rendered Markdown, which keeps tables as textual cells and images as labelled descriptions.
 Native editor tests check complete typed and autosaved content, final lines without a newline, and the first glyph remaining outside the line-number ruler across wrap changes and window widths.
 They exercise real AppKit layout and the core file-save boundary, and reproduced missing/reordered characters, a nonterminating EOF draw, and covered leading glyphs before the fixes.
 These few user-outcome tests retain no mock call graph or exact view hierarchy contract.

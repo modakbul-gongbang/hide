@@ -301,7 +301,7 @@ impl Runtime {
                         .to_owned(),
                     kind: EditorTabKind::File,
                     diff_committed: None,
-                    markdown_preview: true,
+                    markdown_live: true,
                     wrap: false,
                     dirty: false,
                 });
@@ -405,7 +405,7 @@ impl Runtime {
                 label: format!("{name} ({scope})"),
                 kind: EditorTabKind::Diff,
                 diff_committed: Some(committed),
-                markdown_preview: true,
+                markdown_live: true,
                 wrap: false,
                 dirty: false,
             });

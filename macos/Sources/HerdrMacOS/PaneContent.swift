@@ -218,7 +218,7 @@ enum ConversationLedgerFormatting {
             case .assistant:
                 let rendered: NSMutableAttributedString
                 do {
-                    rendered = NSMutableAttributedString(attributedString: try MarkdownDocument.render(
+                    rendered = NSMutableAttributedString(attributedString: try ConversationMarkdown.render(
                         turn.text.isEmpty ? "\u{200B}" : turn.text,
                         scale: textScale,
                         baseFontSize: HideTheme.Conversation.bodyFontSize,

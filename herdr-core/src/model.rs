@@ -1017,7 +1017,9 @@ pub struct EditorTabSnapshot {
     pub kind: EditorTabKind,
     /// Which Changes group a diff tab represents. Present only for diff tabs.
     pub diff_committed: Option<bool>,
-    pub markdown_preview: bool,
+    /// Whether a Markdown file tab draws its formatting in place (Live) or
+    /// shows the source editor. Per tab; a reopened tab starts Live.
+    pub markdown_live: bool,
     pub wrap: bool,
     pub dirty: bool,
 }

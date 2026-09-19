@@ -10,7 +10,11 @@ struct EditorViewerOverlay: View {
     @State private var notice: String?
 
     private var isMarkdown: Bool { editor?.language == "markdown" || ["md", "markdown", "mdown"].contains(selectedURL?.pathExtension.lowercased() ?? "") }
-    private var preview: Bool { activeTab?.markdownPreview ?? true }
+    /// Live is the tab's choice unless the document is too large for the Live
+    /// view, which then reads Source and says so (D-07).
+    private var live: Bool { (activeTab?.markdownLive ?? true) && !liveUnavailable }
+    private var liveUnavailable: Bool { isMarkdown && currentDraft.utf8.count > MarkdownLiveSource.byteLimit }
+    static let liveUnavailableNotice = "Live preview is off for files over 256 KB"
     private var wrapsLines: Bool { activeTab?.wrap ?? false }
     private var currentDraft: String { draftTabID == editor?.activeTabID ? draft : (editor?.contentsUTF8 ?? "") }
     private var draftBinding: Binding<String> {
@@ -40,6 +44,10 @@ struct EditorViewerOverlay: View {
             } else if let selectedURL {
                 VStack(spacing: HideTheme.spacingNone) {
                     documentToolbar(selectedURL)
+                    if liveUnavailable {
+                        noticeBar(systemImage: "exclamationmark.circle", message: Self.liveUnavailableNotice, color: HideTheme.warning)
+                            .accessibilityIdentifier("markdown-live-unavailable")
+                    }
                     editorContent(for: selectedURL)
                     if let notice { noticeBar(systemImage: "exclamationmark.circle", message: notice, color: HideTheme.warning) }
                     if let conflict = editor?.conflict {
@@ -85,13 +93,17 @@ struct EditorViewerOverlay: View {
         if isImage(url) {
             imagePreview(url)
         } else if editor?.contentsUTF8 != nil {
-            if isMarkdown && preview && currentDraft.isEmpty {
-                unavailable(title: "Empty document", message: "Choose Edit to start writing Markdown.")
-            } else if isMarkdown && preview {
-                MarkdownPreview(text: currentDraft, textScale: model.editorTextScale, findRequest: findRequest, openLink: openDocumentLink)
-                    .frame(maxWidth: HideTheme.Editor.documentWidth)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityIdentifier("markdown-preview")
+            if isMarkdown && live {
+                MarkdownLiveEditor(
+                    text: draftBinding,
+                    isEditable: readonlyReason == nil,
+                    textScale: model.editorTextScale,
+                    findRequest: findRequest,
+                    openLink: openDocumentLink,
+                    reportParseFailure: { notice = $0.map { "Live formatting is off: \($0)" } }
+                )
+                .id(activeTab?.id)
+                .accessibilityIdentifier("markdown-live")
             } else {
                 HighlightedCodeEditor(
                     text: draftBinding,
@@ -122,10 +134,11 @@ struct EditorViewerOverlay: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             if isMarkdown {
                 HideChoiceGroup(label: "Markdown mode", values: [true, false],
-                    selection: Binding(get: { preview }, set: { setView(preview: $0, wrap: wrapsLines) }),
-                    title: { $0 ? "Preview" : "Edit" },
-                    identifier: { $0 ? "markdown-mode-preview" : "markdown-mode-edit" },
-                    optionHelp: { $0 ? "Read the current Markdown draft" : "Edit Markdown source" })
+                    selection: Binding(get: { live }, set: { setView(live: $0, wrap: wrapsLines) }),
+                    title: { $0 ? "Live" : "Source" },
+                    identifier: { $0 ? "markdown-mode-live" : "markdown-mode-source" },
+                    optionHelp: { $0 ? "Edit with formatting shown in place" : "Edit Markdown source" })
+                    .disabled(liveUnavailable)
             }
             HStack(spacing: HideTheme.spacingXXS) {
                 if editor?.dirty == true {
@@ -133,9 +146,9 @@ struct EditorViewerOverlay: View {
                 }
                 HideIconButton(systemImage: "magnifyingglass", help: "Find in document", variant: .toolbar, command: .menu(.findInPane)) { findRequest += 1 }
                     .disabled(editor?.contentsUTF8 == nil)
-                if !(isMarkdown && preview) && !isImage(url) {
+                if !(isMarkdown && live) && !isImage(url) {
                     HideIconButton(systemImage: "arrow.turn.down.left", help: "Wrap lines", variant: .toolbar, isSelected: wrapsLines) {
-                        setView(preview: preview, wrap: !wrapsLines)
+                        setView(live: live, wrap: !wrapsLines)
                     }
                     .disabled(editor?.contentsUTF8 == nil)
                 }
@@ -163,9 +176,9 @@ struct EditorViewerOverlay: View {
         return ([URL(fileURLWithPath: checkout.path).lastPathComponent] + relative.split(separator: "/").map(String.init)).joined(separator: " / ")
     }
 
-    private func setView(preview: Bool, wrap: Bool) {
+    private func setView(live: Bool, wrap: Bool) {
         guard let tab = activeTab else { return }
-        model.core.setFileView(tabID: tab.id, preview: preview, wrap: wrap)
+        model.core.setFileView(tabID: tab.id, live: live, wrap: wrap)
     }
 
     private func openDocumentLink(_ url: URL) {
@@ -175,7 +188,7 @@ struct EditorViewerOverlay: View {
         }
         guard url.scheme == nil || url.isFileURL, let selectedURL, let tab = activeTab,
               url.fragment == nil else {
-            notice = "This link type is unavailable in Markdown preview."
+            notice = "This link type cannot be opened from a Markdown document."
             return
         }
         let target = url.isFileURL ? url : URL(fileURLWithPath: url.path, relativeTo: selectedURL.deletingLastPathComponent())

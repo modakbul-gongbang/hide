@@ -395,7 +395,7 @@ pub(super) struct PathTrashPayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct FileViewPayload {
     pub(super) tab_id: String,
-    pub(super) markdown_preview: bool,
+    pub(super) markdown_live: bool,
     pub(super) wrap: bool,
 }
 
@@ -1961,10 +1961,10 @@ impl Runtime {
                     );
                     return true;
                 };
-                if tab.markdown_preview == payload.markdown_preview && tab.wrap == payload.wrap {
+                if tab.markdown_live == payload.markdown_live && tab.wrap == payload.wrap {
                     return false;
                 }
-                tab.markdown_preview = payload.markdown_preview;
+                tab.markdown_live = payload.markdown_live;
                 tab.wrap = payload.wrap;
                 true
             }

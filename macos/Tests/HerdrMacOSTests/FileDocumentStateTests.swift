@@ -89,7 +89,7 @@ struct FileDocumentStateTests {
         let firstID = try #require(bridge.snapshot?.editor.activeTabID)
         bridge.updateDraft("First changed")
         bridge.scheduleFileSave("First changed")
-        bridge.setFileView(tabID: firstID, preview: true, wrap: true)
+        bridge.setFileView(tabID: firstID, live: true, wrap: true)
         model.openFile(second)
         try await eventually { bridge.snapshot?.editor.path == second.path }
         // Let the first save complete after a different file is visibly active.
