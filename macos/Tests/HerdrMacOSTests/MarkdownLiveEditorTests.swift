@@ -337,7 +337,11 @@ struct MarkdownLiveEditorTests {
     }
 
     @Test func aDocumentOverTheByteLimitOpensInSourceWithLiveDisabled() async throws {
-        let big = String(repeating: "# Heading\n\nparagraph with **bold** text\n\n", count: 8000)
+        // Wide paragraphs rather than thousands of short lines: the Source
+        // editor lays the whole document out on open, and its cost grows with
+        // the line count, which would stall every other main-actor test.
+        let paragraph = String(repeating: "paragraph with **bold** text ", count: 200)
+        let big = String(repeating: "# Heading\n\n\(paragraph)\n\n", count: 60)
         #expect(big.utf8.count > MarkdownLiveSource.byteLimit)
         let (root, model, bridge) = try fixture("live-oversized", files: [("big.md", big)])
         defer { try? FileManager.default.removeItem(at: root) }
