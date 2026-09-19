@@ -45,22 +45,31 @@ private struct HideScaledFontModifier: ViewModifier {
     let size: CGFloat
     let weight: Font.Weight
     let design: Font.Design
+    let italic: Bool
     @Environment(\.hideFontScale) private var scale
     @Environment(\.hidePetAppearance) private var petAppearance
 
     func body(content: Content) -> some View {
         content.font(petAppearance
-            ? .system(size: size * scale, weight: weight, design: design)
-            : HideTheme.font(size: size * scale, weight: weight, design: design))
+            ? systemFont
+            : HideTheme.font(size: size * scale, weight: weight, design: design, italic: italic))
+    }
+
+    private var systemFont: Font {
+        let font = Font.system(size: size * scale, weight: weight, design: design)
+        return italic ? font.italic() : font
     }
 }
 
 extension View {
+    /// `italic` selects the theme's slanted variant (`HideTheme.Typography.previewSlant`);
+    /// the strip draws a preview tab's title with it and nothing else does.
     func hideFont(
         size: CGFloat,
         weight: Font.Weight = .regular,
-        design: Font.Design = .default
+        design: Font.Design = .default,
+        italic: Bool = false
     ) -> some View {
-        modifier(HideScaledFontModifier(size: size, weight: weight, design: design))
+        modifier(HideScaledFontModifier(size: size, weight: weight, design: design, italic: italic))
     }
 }

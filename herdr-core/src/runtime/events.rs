@@ -307,6 +307,10 @@ pub(super) struct FileOpenPayload {
     pub(super) path: String,
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
+    /// Whether the open wants the checkout's preview slot: an Explorer single
+    /// click does, a double-click, Cmd+P and every other entry point do not.
+    #[serde(default)]
+    pub(super) preview: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -458,6 +462,10 @@ pub(super) struct ChangesSelectPayload {
     pub(super) committed: bool,
     #[serde(default)]
     pub(super) path: Option<String>,
+    /// Whether the diff opens in the checkout's preview slot, which a single
+    /// click on a Changes row asks for.
+    #[serde(default)]
+    pub(super) preview: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -673,6 +681,8 @@ pub(super) enum Event {
     FileOpen(FileOpenPayload),
     RevealPath(RevealPathPayload),
     FileFocus(FileTabPayload),
+    /// Keep Open: the preview tab becomes an ordinary tab in the same slot.
+    FileKeepOpen(FileTabPayload),
     FileClose(FileClosePayload),
     FileDraft(FileDraftPayload),
     FileView(FileViewPayload),
@@ -804,6 +814,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "file_open" => decode!(FileOpenPayload, FileOpen),
         "reveal_path" => decode!(RevealPathPayload, RevealPath),
         "file_focus" => decode!(FileTabPayload, FileFocus),
+        "file_keep_open" => decode!(FileTabPayload, FileKeepOpen),
         "file_close" => decode!(FileClosePayload, FileClose),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_view" => decode!(FileViewPayload, FileView),
@@ -1876,10 +1887,16 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.open_file_tab(&payload.workspace_id, &payload.checkout_id, &payload.path);
+                self.open_file_tab(
+                    &payload.workspace_id,
+                    &payload.checkout_id,
+                    &payload.path,
+                    payload.preview,
+                );
                 self.persist_current_ui_state();
                 true
             }
+            Event::FileKeepOpen(payload) => self.promote_editor_tab(&payload.tab_id),
             Event::RevealPath(payload) => self.reveal_path(payload),
             Event::FileFocus(payload) => {
                 let Some(tab) = self
@@ -1983,8 +2000,14 @@ impl Runtime {
                 };
                 match files::update_draft(document, payload.contents_utf8) {
                     Ok(()) => {
+                        let edited = document.dirty;
                         self.sync_file_tab_dirty(&tab_id);
                         self.sync_active_editor_document();
+                        // The first edit keeps a preview tab (B5); an echo of
+                        // the same contents is not an edit.
+                        if edited {
+                            self.promote_editor_tab(&tab_id);
+                        }
                     }
                     Err(message) => self.set_error("file.draft_rejected", message, false),
                 }
@@ -2530,7 +2553,13 @@ impl Runtime {
                 if self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id.as_str()) {
                     return false;
                 }
-                self.show_diff_tab(&workspace_id, &checkout_id, &path, payload.committed);
+                self.show_diff_tab(
+                    &workspace_id,
+                    &checkout_id,
+                    &path,
+                    payload.committed,
+                    payload.preview,
+                );
                 self.persist_current_ui_state();
                 true
             }

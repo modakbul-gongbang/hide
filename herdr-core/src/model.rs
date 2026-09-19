@@ -542,6 +542,12 @@ pub struct StripTabSnapshot {
     /// The Herdr tab id or editor tab id this entry stands for.
     pub source_id: String,
     pub label: String,
+    /// Whether this editor entry is the checkout's replaceable preview tab,
+    /// which the strip titles in italic. A Herdr entry is never one. It rides
+    /// the strip rather than only the editor tab because promotion and
+    /// replacement change the slot itself, and both happen once per tab, not
+    /// per keystroke.
+    pub preview: bool,
     /// The one agent this tab holds, when it holds exactly one, drawn as the
     /// tab's identity where a tab is named: the Recent Panels switcher shows
     /// its name and mark instead of the Herdr label, which for an unnamed tab
@@ -567,29 +573,41 @@ impl StripTabSnapshot {
             kind: StripTabKind::Herdr,
             source_id,
             label: label.into(),
+            preview: false,
             agent_identity: None,
         }
     }
 
-    pub fn file(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn file(source_id: impl Into<String>, label: impl Into<String>, preview: bool) -> Self {
         let source_id = source_id.into();
         Self {
             id: format!("file:{source_id}"),
             kind: StripTabKind::File,
             source_id,
             label: label.into(),
+            preview,
             agent_identity: None,
         }
     }
 
-    pub fn diff(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn diff(source_id: impl Into<String>, label: impl Into<String>, preview: bool) -> Self {
         let source_id = source_id.into();
         Self {
             id: format!("diff:{source_id}"),
             kind: StripTabKind::Diff,
             source_id,
             label: label.into(),
+            preview,
             agent_identity: None,
+        }
+    }
+
+    /// The strip entry an editor tab stands behind, so a replaced preview tab
+    /// can hand its slot to the tab that took its place.
+    pub fn editor(tab: &EditorTabSnapshot) -> Self {
+        match tab.kind {
+            EditorTabKind::File => Self::file(tab.id.clone(), tab.label.clone(), tab.preview),
+            EditorTabKind::Diff => Self::diff(tab.id.clone(), tab.label.clone(), tab.preview),
         }
     }
 
@@ -1022,6 +1040,12 @@ pub struct EditorTabSnapshot {
     pub markdown_live: bool,
     pub wrap: bool,
     pub dirty: bool,
+    /// The checkout's one replaceable preview tab (VS Code's model): opened by
+    /// a single click, replaced in place by the next single click, and
+    /// promoted to an ordinary tab by a double-click, the first edit, Keep
+    /// Open, or a drag. A dirty tab is never replaced. Editor tabs are
+    /// ephemeral, so this is never persisted.
+    pub preview: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

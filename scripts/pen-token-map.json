@@ -76,6 +76,7 @@
     "--text-editor-heading-4": "Editor.headingFontSizes.3",
     "--text-editor-heading-5": "Editor.headingFontSizes.4",
     "--text-editor-heading-6": "Editor.headingFontSizes.5",
+    "--text-preview-slant": "Typography.previewSlant",
     "--proposed-conversation-measure": "Conversation.measureWidth",
     "--proposed-conversation-time-rail": "Conversation.timeRailWidth",
     "--proposed-conversation-body-line-spacing": "Conversation.bodyLineSpacing",

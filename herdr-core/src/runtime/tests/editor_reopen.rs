@@ -164,6 +164,7 @@ fn recent_navigation_restores_file_and_diff_across_projects_atomically() {
                 &checkout_id,
                 &file.to_string_lossy(),
                 false,
+                false,
             );
         } else {
             open_file(&mut runtime, &checkout_id, &file);
@@ -894,7 +895,12 @@ fn selecting_a_change_opens_one_diff_tab_and_keeps_its_reader_alive() {
     );
 
     std::fs::write(&path, "{}\n").expect("file fixture");
-    runtime.open_file_tab("workspace:0", &checkout_id, path.to_string_lossy().as_ref());
+    runtime.open_file_tab(
+        "workspace:0",
+        &checkout_id,
+        path.to_string_lossy().as_ref(),
+        false,
+    );
     assert_eq!(runtime.snapshot().editor.tabs.len(), 2);
     assert_eq!(
         runtime
@@ -986,6 +992,7 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         markdown_live: false,
         wrap: false,
         dirty: false,
+        preview: false,
     });
     runtime.editor_documents.insert(
         "file:w:c:lib".to_owned(),
@@ -1107,6 +1114,7 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
         markdown_live: false,
         wrap: false,
         dirty: false,
+        preview: false,
     });
 
     assert!(runtime.dispatch_json(&explorer_event(
@@ -1575,6 +1583,7 @@ fn recent_closed_tracks_file_tabs_but_not_diff_tabs() {
             markdown_live: false,
             wrap: false,
             dirty: false,
+            preview: false,
         });
     }
     assert!(runtime.dispatch_json(&explorer_event(
