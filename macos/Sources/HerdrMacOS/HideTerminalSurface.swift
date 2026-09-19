@@ -13,7 +13,14 @@ struct HideTerminalSurface: View {
             if let notice = model.paneProjectionNotice {
                 PaneProjectionUnavailableState(notice: notice)
             } else if panes.isEmpty {
-                HideEmptyCheckoutState()
+                // A checkout with no tab draws Project Home in place of the
+                // old "No terminal open" sentence; the start control moved
+                // onto the page's header (PRD home-board).
+                if model.projectHomeIsEmptyState {
+                    ProjectHome(mode: .emptyState)
+                } else {
+                    HideEmptyCheckoutState()
+                }
             } else if model.isRemoteContext {
                 HideTabCanvas(
                     items: model.remotePaneGridItems,
@@ -353,18 +360,13 @@ private struct HideEmptyCheckoutState: View {
                         }
                             .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                     case .idle:
-                        // This state used to promise a terminal Hide never
-                        // started: nothing calls `startTerminal` from here.
-                        // The empty state now carries the control that starts
-                        // one, and says only what pressing it does.
+                        // The surface routes an idle local checkout to
+                        // Project Home before this view is built, so this
+                        // arm only keeps the switch exhaustive; the start
+                        // control lives on Home's header now.
                         Text("No terminal open")
                             .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                             .foregroundStyle(HideTheme.primary)
-                        Text("This checkout has no terminal pane. Start one to fill the workspace at its path.")
-                            .hideFont(size: HideTheme.Typography.subhead)
-                            .foregroundStyle(HideTheme.secondary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 360)
                         Button("Start new terminal") { model.addTab() }
                             .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                             .accessibilityIdentifier("hide-empty-state-start-terminal")

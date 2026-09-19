@@ -271,6 +271,18 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                 }
                 return nil
             }
+            // The overlay covers the terminal but does not take its keyboard,
+            // so Escape is answered here rather than by a view that never
+            // holds focus. A sheet above the overlay keeps the key.
+            let homeTakesEscape = MainActor.assumeIsolated {
+                ProjectHomeShortcutPolicy.shouldClose(
+                    event, visible: self.model.projectHomeVisible, sheetPresented: self.model.hintSheetPresented
+                )
+            }
+            if homeTakesEscape {
+                MainActor.assumeIsolated { self.model.closeProjectHome() }
+                return nil
+            }
             return event
         }
         presentMainWindow(window, source: "launch")
@@ -629,6 +641,7 @@ struct ShellCommands: Commands {
             menuButton(.toggleLeftSidebar) { model.toggleLeftSidebar() }
             menuButton(.toggleSidebarView) { model.toggleSidebarContent() }
             menuButton(.toggleRightPanel) { model.toggleRightPanel() }
+            menuButton(.projectHome) { model.toggleProjectHome() }
 
             Divider()
 
