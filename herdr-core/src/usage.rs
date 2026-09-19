@@ -697,11 +697,16 @@ fn parse_retry_after_at(value: &str, now_unix_seconds: u64) -> Option<Duration> 
 /// ```
 ///
 /// `Current week (all models)` is the row; every other `Current week` line
-/// is a scoped bucket under it; `Current session` is read and dropped (the
-/// popover shows the weekly window only). A CLI that cannot read its login
-/// prints `/cost` text instead, still with exit 0 and `is_error: false`, so
-/// no `Current` line at all is the logged-out state. A `Current` line that
-/// does not parse is a format the reader does not know, never a zero.
+/// is a scoped bucket under it; `Current session` is dropped unread beyond
+/// its prefix (the popover shows the weekly window only). A CLI that cannot
+/// read its login prints `/cost` text instead, still with exit 0 and
+/// `is_error: false`, so no `Current` line at all is the logged-out state.
+///
+/// The CLI prints ` · resets …` only when the window has a reset, so a line
+/// without one is a real state: the row cannot be shown without its reset
+/// (`reset_missing`), a bucket becomes unavailable. The wall time carries a
+/// year only when it falls in another year (`Dec 31, 2027 at 11pm`). A line
+/// the reader cannot read is a format it does not know, never a zero.
 fn parse_claude_usage_text(
     text: &str,
     now_unix_seconds: u64,
@@ -715,30 +720,34 @@ fn parse_claude_usage_text(
             continue;
         }
         saw_line = true;
-        let parsed = parse_usage_line(line).ok_or_else(|| FetchFailure::schema("line_format"))?;
-        if parsed.window != "week" {
+        if !line.starts_with("Current week") {
             continue;
         }
-        let scope = parsed.scope.clone();
-        let resets_at = resolve_reset(&parsed, now_unix_seconds);
-        if scope == "all models" {
-            let resets_at_unix_seconds = resets_at?;
+        let parsed = parse_usage_line(line).ok_or_else(|| FetchFailure::schema("line_format"))?;
+        let resets_at = parsed
+            .reset
+            .as_deref()
+            .ok_or_else(|| FetchFailure::schema("reset_missing"))
+            .and_then(|reset| resolve_reset(reset, now_unix_seconds));
+        if parsed.scope == "all models" {
             main = Some(UsageValue {
                 label: "Claude Code".to_owned(),
                 used_percent: parsed.used_percent,
-                resets_at_unix_seconds,
+                resets_at_unix_seconds: resets_at?,
             });
             continue;
         }
         match resets_at {
             Ok(resets_at_unix_seconds) => buckets.push(UsageBucket::Available(UsageValue {
-                label: scope,
+                label: parsed.scope,
                 used_percent: parsed.used_percent,
                 resets_at_unix_seconds,
             })),
             Err(failure) => {
                 log_scoped_failure(&failure.kind);
-                buckets.push(UsageBucket::Unavailable { label: scope });
+                buckets.push(UsageBucket::Unavailable {
+                    label: parsed.scope,
+                });
             }
         }
     }
@@ -753,13 +762,22 @@ fn parse_claude_usage_text(
     })
 }
 
-/// One `Current …` line, as printed.
+/// One `Current week …` line, as printed: `Current week (<scope>): <n>%
+/// (used|left)[ · resets <wall time>]`.
 #[derive(Clone, Debug, PartialEq)]
 struct UsageLine {
-    window: String,
-    /// `all models`, a model name, or empty for the session line.
+    /// `all models` or a model name.
     scope: String,
     used_percent: f64,
+    /// The wall time after ` · resets `, unparsed; absent when the CLI
+    /// printed no reset.
+    reset: Option<String>,
+}
+
+/// A printed wall time: `<Mon> <D>[, <YYYY>] at <h>[:mm](am|pm) (<zone>)`.
+#[derive(Clone, Debug, PartialEq)]
+struct WallTime {
+    year: Option<i64>,
     month: i64,
     day: i64,
     hour: i64,
@@ -771,64 +789,87 @@ fn parse_usage_line(line: &str) -> Option<UsageLine> {
     static LINE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let pattern = LINE.get_or_init(|| {
         regex::Regex::new(
-            r"^Current (session|week)(?: \(([^)]+)\))?: (\d+(?:\.\d+)?)% (used|left) · resets ([A-Z][a-z]{2}) (\d{1,2}) at (\d{1,2})(?::(\d{2}))?(am|pm) \(([^)]+)\)$",
+            r"^Current week \(([^)]+)\): (\d+(?:\.\d+)?)% (used|left)(?: · resets (.+))?$",
         )
         .expect("the usage line pattern compiles")
     });
     let captures = pattern.captures(line)?;
-    let percent = captures[3].parse::<f64>().ok()?;
+    let percent = captures[2].parse::<f64>().ok()?;
     if !percent.is_finite() || !(0.0..=100.0).contains(&percent) {
         return None;
     }
-    let used_percent = if &captures[4] == "used" {
+    let used_percent = if &captures[3] == "used" {
         percent
     } else {
         100.0 - percent
     };
-    let month = parse_http_month(&captures[5])?;
-    let day = captures[6].parse::<i64>().ok()?;
-    let clock_hour = captures[7].parse::<i64>().ok()?;
+    Some(UsageLine {
+        scope: captures[1].to_owned(),
+        used_percent,
+        reset: captures.get(4).map(|reset| reset.as_str().to_owned()),
+    })
+}
+
+fn parse_wall_time(text: &str) -> Option<WallTime> {
+    static WALL_TIME: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let pattern = WALL_TIME.get_or_init(|| {
+        regex::Regex::new(
+            r"^([A-Z][a-z]{2}) (\d{1,2})(?:, (\d{4}))? at (\d{1,2})(?::(\d{2}))?(am|pm) \(([^)]+)\)$",
+        )
+        .expect("the wall time pattern compiles")
+    });
+    let captures = pattern.captures(text)?;
+    let month = parse_http_month(&captures[1])?;
+    let day = captures[2].parse::<i64>().ok()?;
+    let year = captures
+        .get(3)
+        .map(|year| year.as_str().parse::<i64>())
+        .transpose()
+        .ok()?;
+    let clock_hour = captures[4].parse::<i64>().ok()?;
     if !(1..=12).contains(&clock_hour) {
         return None;
     }
     let minute = captures
-        .get(8)
+        .get(5)
         .map_or(Some(0), |minute| minute.as_str().parse::<i64>().ok())?;
     if !(0..=59).contains(&minute) {
         return None;
     }
-    let hour = match (&captures[9], clock_hour) {
+    let hour = match (&captures[6], clock_hour) {
         ("am", 12) => 0,
         ("am", hour) => hour,
         ("pm", 12) => 12,
         (_, hour) => hour + 12,
     };
-    Some(UsageLine {
-        window: captures[1].to_owned(),
-        scope: captures
-            .get(2)
-            .map_or_else(String::new, |scope| scope.as_str().to_owned()),
-        used_percent,
+    Some(WallTime {
+        year,
         month,
         day,
         hour,
         minute,
-        zone: captures[10].to_owned(),
+        zone: captures[7].to_owned(),
     })
 }
 
-/// The instant a printed wall time names. The CLI prints no year, so the
-/// answer is the first instant at or after `now` whose wall clock in that
-/// zone matches - unless the wall time matched within the last window, in
-/// which case it has just passed and the reset that passed is meant.
-fn resolve_reset(line: &UsageLine, now_unix_seconds: u64) -> Result<u64, FetchFailure> {
+/// The instant a printed wall time names. With a year printed it is that
+/// wall clock in that zone. Without one, it is the first instant at or
+/// after `now` whose wall clock in that zone matches - unless the wall time
+/// matched within the last window, in which case it has just passed and
+/// the reset that passed is meant.
+fn resolve_reset(text: &str, now_unix_seconds: u64) -> Result<u64, FetchFailure> {
+    let line = parse_wall_time(text).ok_or_else(|| FetchFailure::schema("reset_format"))?;
     let now = i64::try_from(now_unix_seconds).map_err(|_| FetchFailure::schema("reset_time"))?;
     let zone = Zone::load(&line.zone).map_err(FetchFailure::schema)?;
     let (year_now, _, _) = civil_from_days(
         (now + i64::from(zone.offset_at(now).map_err(FetchFailure::schema)?)).div_euclid(86_400),
     );
+    let years = match line.year {
+        Some(year) => vec![year],
+        None => vec![year_now - 1, year_now, year_now + 1],
+    };
     let mut candidates = Vec::new();
-    for year in [year_now - 1, year_now, year_now + 1] {
+    for year in years {
         if !(1..=days_in_month(year, line.month)).contains(&line.day) {
             continue;
         }
@@ -1245,11 +1286,66 @@ mod tests {
         let text = "Current week (all models): 1% used · resets in 6 days\n";
         let failure = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap_err();
         assert_eq!(failure.disposition, FailureDisposition::Schema);
+        assert_eq!(failure.kind, "reset_format");
+
+        let text = "Current week (all models): 1% used, resets Sep 24 at 1pm (Asia/Seoul)\n";
+        let failure = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap_err();
         assert_eq!(failure.kind, "line_format");
 
         let session_only = "Current session: 4% used · resets Sep 17 at 9pm (Asia/Seoul)\n";
         let failure = parse_claude_usage_text(session_only, CAPTURED_AT, 1_000).unwrap_err();
         assert_eq!(failure.kind, "weekly_missing");
+    }
+
+    /// The CLI prints ` · resets …` only when the window has a reset, and
+    /// the session window has none until a session starts: the first read
+    /// after an idle morning must not fail on the line it drops anyway.
+    #[test]
+    fn a_session_line_without_a_reset_is_dropped_like_any_other() {
+        let text = "Current session: 0% used\n\
+                    Current week (all models): 24% used · resets Sep 24 at 1pm (Asia/Seoul)\n\
+                    Current week (Fable): 21% used · resets Sep 24 at 1pm (Asia/Seoul)\n";
+        let success = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap();
+        assert_eq!(success.main.used_percent, 24.0);
+        assert_eq!(success.main.resets_at_unix_seconds, 1_790_222_400);
+        assert_eq!(success.buckets.len(), 1);
+
+        let session_garbage = "Current session: something new the CLI prints\n\
+                    Current week (all models): 24% used · resets Sep 24 at 1pm (Asia/Seoul)\n";
+        let success = parse_claude_usage_text(session_garbage, CAPTURED_AT, 1_000).unwrap();
+        assert_eq!(success.main.used_percent, 24.0);
+    }
+
+    #[test]
+    fn a_weekly_line_without_a_reset_is_named_on_the_row_and_unavailable_as_a_bucket() {
+        let text = "Current week (all models): 0% used\n";
+        let failure = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap_err();
+        assert_eq!(failure.disposition, FailureDisposition::Schema);
+        assert_eq!(failure.kind, "reset_missing");
+
+        let text = "Current week (all models): 1% used · resets Sep 24 at 1pm (Asia/Seoul)\n\
+                    Current week (Fable): 0% used\n";
+        let success = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap();
+        assert_eq!(success.main.resets_at_unix_seconds, 1_790_222_400);
+        assert!(
+            matches!(&success.buckets[0], UsageBucket::Unavailable { label } if label == "Fable")
+        );
+    }
+
+    /// The CLI prints the year only when the reset falls in another year.
+    #[test]
+    fn a_reset_with_a_year_is_that_year() {
+        let text =
+            "Current week (all models): 1% used · resets Dec 31, 2027 at 11pm (Asia/Seoul)\n";
+        let success = parse_claude_usage_text(text, CAPTURED_AT, 1_000).unwrap();
+        // Dec 31 2027 23:00 Seoul.
+        assert_eq!(success.main.resets_at_unix_seconds, 1_830_261_600);
+        assert_eq!(
+            resolve_reset("Feb 30, 2027 at 1pm (Asia/Seoul)", CAPTURED_AT)
+                .unwrap_err()
+                .kind,
+            "reset_time"
+        );
     }
 
     #[test]
@@ -1279,21 +1375,23 @@ mod tests {
     /// not the same date a year out.
     #[test]
     fn a_reset_without_a_year_is_the_next_match_unless_it_just_passed() {
-        let line = |text: &str| parse_usage_line(text).unwrap();
-        let dec_31 =
-            line("Current week (all models): 1% used · resets Dec 31 at 11pm (Asia/Seoul)");
-        assert_eq!(resolve_reset(&dec_31, CAPTURED_AT).unwrap(), 1_798_725_600);
-        let jan_1 = line("Current week (all models): 1% used · resets Jan 1 at 1am (Asia/Seoul)");
-        assert_eq!(resolve_reset(&jan_1, CAPTURED_AT).unwrap(), 1_798_732_800);
-        // Sep 24 at 1pm Seoul is 1790222400; asked ten minutes later.
-        let sep_24 = line("Current week (all models): 1% used · resets Sep 24 at 1pm (Asia/Seoul)");
         assert_eq!(
-            resolve_reset(&sep_24, 1_790_222_400 + 600).unwrap(),
+            resolve_reset("Dec 31 at 11pm (Asia/Seoul)", CAPTURED_AT).unwrap(),
+            1_798_725_600
+        );
+        assert_eq!(
+            resolve_reset("Jan 1 at 1am (Asia/Seoul)", CAPTURED_AT).unwrap(),
+            1_798_732_800
+        );
+        // Sep 24 at 1pm Seoul is 1790222400; asked ten minutes later.
+        assert_eq!(
+            resolve_reset("Sep 24 at 1pm (Asia/Seoul)", 1_790_222_400 + 600).unwrap(),
             1_790_222_400
         );
-        let feb_30 = line("Current week (all models): 1% used · resets Feb 30 at 1pm (Asia/Seoul)");
         assert_eq!(
-            resolve_reset(&feb_30, CAPTURED_AT).unwrap_err().kind,
+            resolve_reset("Feb 30 at 1pm (Asia/Seoul)", CAPTURED_AT)
+                .unwrap_err()
+                .kind,
             "reset_time"
         );
     }
