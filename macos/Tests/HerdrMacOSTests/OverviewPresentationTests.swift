@@ -139,11 +139,13 @@ struct OverviewPresentationTests {
         ]))
         #expect(cleanup.value == "2" && cleanup.label == "merged to clean up")
 
-        let strip = OverviewPresentation.statStrip(isGit: true, project: nil, github: ready, diskMeasuring: true)
+        let strip = OverviewPresentation.statStrip(isGit: true, project: nil, folderDisk: .empty, github: ready, diskMeasuring: true)
         #expect(strip.first.map(\.id) == ["disk", "pull-requests"])
         #expect(strip.second.isEmpty)
-        let folder = OverviewPresentation.statStrip(isGit: false, project: nil, github: ready, diskMeasuring: false)
-        #expect(folder.first.map(\.id) == ["disk"] && folder.second.isEmpty)
+        let folderDisk = CoreDiskUsage(path: "/d", totalBytes: 432_013_312, largestChildName: nil, largestChildBytes: nil, unavailableReason: nil)
+        let folder = OverviewPresentation.statStrip(isGit: false, project: nil, folderDisk: folderDisk, github: ready, diskMeasuring: false)
+        #expect(folder.first.map(\.value) == ["412 MB"] && folder.second.isEmpty)
+        #expect(OverviewPresentation.statStrip(isGit: false, project: nil, folderDisk: .empty, github: ready, diskMeasuring: false).first.first?.value == "… GB")
     }
 
     @Test func theHeaderLineOmitsWhatDoesNotApply() throws {
@@ -173,8 +175,10 @@ struct OverviewPresentationTests {
         let reading = checkout("r", path: "/r")
         #expect(OverviewPresentation.headerChips(checkout: reading, isGit: true).map(\.text) == ["… files"])
 
-        let folder = checkout("folder", path: "/d", isWorktree: false, worktree: try worktree(path: "/d", diskBytes: 432_013_312))
-        #expect(OverviewPresentation.headerChips(checkout: folder, isGit: false).map(\.text) == ["412 MB"])
+        let folder = checkout("folder", path: "/d", isWorktree: false)
+        let folderDisk = CoreDiskUsage(path: "/d", totalBytes: 432_013_312, largestChildName: nil, largestChildBytes: nil, unavailableReason: nil)
+        #expect(OverviewPresentation.headerChips(checkout: folder, isGit: false, folderDisk: folderDisk).map(\.text) == ["412 MB"])
+        #expect(OverviewPresentation.headerChips(checkout: folder, isGit: false, folderDisk: .empty).map(\.text) == ["…"])
     }
 
     @Test func theOrderIsPrimaryThenLinkedByCreationTimeThenInactive() throws {

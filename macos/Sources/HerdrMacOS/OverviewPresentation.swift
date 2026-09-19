@@ -42,16 +42,25 @@ enum OverviewPresentation {
         return inactiveCount > 0 ? "Project · \(workspaces) · \(inactiveCount) inactive" : "Project · \(workspaces)"
     }
 
+    /// `folderDisk` is the focused checkout's own measurement, which is the
+    /// whole of a plain folder project's size; a Git project sums its
+    /// worktrees and shared Git data from `project` instead (PRD B16).
     static func statStrip(
         isGit: Bool,
         project: CoreProjectWorktrees?,
+        folderDisk: CoreDiskUsage,
         github: CoreGithubStatus,
         diskMeasuring: Bool,
         now: Date = Date()
     ) -> StatStrip {
+        guard isGit else {
+            let disk = diskCell(total: folderDisk.totalBytes.map { UInt64($0) }, confirmed: nil,
+                                failure: folderDisk.unavailableReason,
+                                measuring: folderDisk.totalBytes == nil && folderDisk.unavailableReason == nil)
+            return StatStrip(first: [disk], second: [])
+        }
         let disk = diskCell(total: project?.diskTotalBytes, confirmed: project?.diskConfirmedBytes,
                             failure: project?.diskUnavailableReason, measuring: diskMeasuring)
-        guard isGit else { return StatStrip(first: [disk], second: []) }
         let first = [disk, pullRequestsCell(status: github, requests: project?.pullRequests, now: now)]
         let second = [
             behindCell(base: project?.baseBranch, worktrees: project?.worktrees ?? [], now: now),
@@ -167,7 +176,12 @@ enum OverviewPresentation {
     /// folder has only its size, and a worktree with no pull request has no
     /// chip. Size follows the glyph language: `…` while measuring, `? GB`
     /// when unreadable (PRD B7, D-04, D-08).
-    static func headerChips(checkout: CoreCheckoutSnapshot, isGit: Bool, now: Date = Date()) -> [HeaderChip] {
+    static func headerChips(
+        checkout: CoreCheckoutSnapshot,
+        isGit: Bool,
+        folderDisk: CoreDiskUsage? = nil,
+        now: Date = Date()
+    ) -> [HeaderChip] {
         var chips: [HeaderChip] = []
         let worktree = checkout.worktree
         if isGit {
@@ -202,11 +216,12 @@ enum OverviewPresentation {
                 ))
             }
         }
-        if let worktree {
-            if let bytes = worktree.disk.totalBytes {
+        if let disk = worktree?.disk ?? (isGit ? nil : folderDisk) {
+            if let bytes = disk.totalBytes {
                 chips.append(HeaderChip(kind: .disk, text: CheckoutCardPresentation.formattedBytes(bytes), tone: .normal,
-                                        tooltip: "Allocated on disk for this worktree, shared Git data excluded"))
-            } else if let reason = worktree.disk.unavailableReason {
+                                        tooltip: worktree == nil ? "Allocated on disk for this folder"
+                                            : "Allocated on disk for this worktree, shared Git data excluded"))
+            } else if let reason = disk.unavailableReason {
                 chips.append(HeaderChip(kind: .disk, text: "? GB", tone: .warning, tooltip: "Disk unavailable: \(reason)"))
             } else {
                 chips.append(HeaderChip(kind: .disk, text: "…", tone: .muted, tooltip: "Measuring allocated disk…"))

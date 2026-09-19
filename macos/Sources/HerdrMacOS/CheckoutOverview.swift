@@ -58,10 +58,17 @@ struct CheckoutOverview: View {
                 OverviewPresentation.filter(entries: [], checkout: checkout, query: query)
                     .map { _ in WorktreeGroup(checkout: checkout, entries: [], inactive: true) }
             }
-        } else if workspace?.inactiveCheckouts.expanded == true {
-            groups += inactive.map { WorktreeGroup(checkout: $0, entries: [], inactive: true) }
         }
         return groups
+    }
+
+    /// The inactive checkouts under the `Inactive N` fold, when it is open
+    /// and no search is narrowing the list; a search lists a matching
+    /// inactive checkout among the groups instead (PRD D-06, B15).
+    private var unfoldedInactive: [CoreCheckoutSnapshot] {
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              workspace?.inactiveCheckouts.expanded == true else { return [] }
+        return ordered.inactive
     }
 
     private var searchResultIDs: [String] {
@@ -118,6 +125,7 @@ struct CheckoutOverview: View {
         let strip = OverviewPresentation.statStrip(
             isGit: workspace.isGit,
             project: workspace.isGit ? project : nil,
+            folderDisk: model.card.disk,
             github: model.card.github,
             diskMeasuring: model.card.diskMeasuring
         )
@@ -244,6 +252,7 @@ struct CheckoutOverview: View {
         }.hideFont(size: HideTheme.Typography.title).padding(HideTheme.spacingLG)
             .frame(width: HideTheme.Layout.pullRequestPopoverWidth) }
             .frame(maxHeight: HideTheme.searchSheetSize.height)
+            .buttonStyle(HideTextButtonStyle(density: .regular))
             .foregroundStyle(HideTheme.primary).background(HideTheme.panel)
             .hideOverlayHost().preferredColorScheme(.dark)
     }
@@ -278,6 +287,7 @@ struct CheckoutOverview: View {
         }.hideFont(size: HideTheme.Typography.title).padding(HideTheme.spacingLG)
             .frame(width: HideTheme.Layout.pullRequestPopoverWidth) }
             .frame(maxHeight: HideTheme.searchSheetSize.height)
+            .buttonStyle(HideTextButtonStyle(density: .regular))
             .foregroundStyle(HideTheme.primary).background(HideTheme.panel)
             .hideOverlayHost().preferredColorScheme(.dark)
     }
@@ -328,6 +338,9 @@ struct CheckoutOverview: View {
                     }
                     if !searching, !inactive.isEmpty {
                         inactiveFold(workspace, count: inactive.count)
+                        ForEach(unfoldedInactive) { checkout in
+                            groupHeader(WorktreeGroup(checkout: checkout, entries: [], inactive: true), workspace: workspace)
+                        }
                     }
                 }.scrollTargetLayout()
             }
@@ -342,7 +355,10 @@ struct CheckoutOverview: View {
     /// shares the sidebar's collapsed set; an inactive checkout is one line.
     private func groupHeader(_ group: WorktreeGroup, workspace: CoreWorkspaceSnapshot) -> some View {
         let checkout = group.checkout
-        let chips = OverviewPresentation.headerChips(checkout: checkout, isGit: workspace.isGit)
+        let chips = OverviewPresentation.headerChips(
+            checkout: checkout, isGit: workspace.isGit,
+            folderDisk: model.focusedCheckout?.id == checkout.id ? model.card.disk : nil
+        )
         let expanded = !group.inactive && model.isCheckoutExpanded(checkout)
         let focused = model.focusedCheckout?.id == checkout.id
         return HStack(spacing: HideTheme.spacingXS) {
