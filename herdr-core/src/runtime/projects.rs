@@ -826,8 +826,6 @@ impl Runtime {
         }
     }
 
-    /// Drops the registration and its row. Files, worktrees and Herdr
-    /// workspaces are never touched here.
     /// The registration id a removal is still closing panes for, when
     /// `path` names that same folder. Ids are path-keyed, so the folder and
     /// the registration cannot be told apart by id alone. The registration is
@@ -865,6 +863,8 @@ impl Runtime {
             })
     }
 
+    /// Drops the registration and its row. Files, worktrees and Herdr
+    /// workspaces are never touched here.
     fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
         let before = self.snapshot.ui_state.workspace_registrations.len();
         self.snapshot
