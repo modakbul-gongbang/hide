@@ -98,7 +98,11 @@ private struct HideTabStrip: View {
                                                     .hideFont(size: HideTheme.Typography.caption, weight: .medium)
                                             }
                                             Text(tab.label + model.tabActivity(for: tab))
-                                                .hideFont(size: HideTheme.Typography.body, weight: tab.active ? .semibold : .medium)
+                                                .hideFont(
+                                                    size: HideTheme.Typography.body,
+                                                    weight: tab.active ? .semibold : .medium,
+                                                    italic: EditorTabTitlePresentation.italic(preview: tab.preview)
+                                                )
                                                 .lineLimit(1)
                                                 .frame(maxWidth: HideTheme.tabTitleMaxWidth, alignment: .leading)
                                             if let notice = model.tabNotice(for: tab) {
@@ -129,7 +133,12 @@ private struct HideTabStrip: View {
                                         .contentShape(Rectangle())
                                     }
                                     .buttonStyle(HideInteractiveButtonStyle())
-                                    .hideTooltip([tab.contextLabel ?? tab.label, tab.focusedAgent.map { AgentStatusPresentation(agent: $0, connected: model.agentsConnected).label }].compactMap { $0 }.joined(separator: " · "), command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
+                                    // A double-click on the title keeps a
+                                    // preview tab; the button's own click
+                                    // still focuses it on the first click.
+                                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.keepUnifiedTabOpen(tab) })
+                                    .accessibilityLabel(EditorTabTitlePresentation.spoken(label: tab.label, preview: tab.preview))
+                                    .hideTooltip([tab.contextLabel ?? EditorTabTitlePresentation.spoken(label: tab.label, preview: tab.preview), tab.focusedAgent.map { AgentStatusPresentation(agent: $0, connected: model.agentsConnected).label }].compactMap { $0 }.joined(separator: " · "), command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
 
                                     HideIconButton(
                                         systemImage: "xmark",

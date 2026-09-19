@@ -1376,6 +1376,21 @@ These few user-outcome tests retain no mock call graph or exact view hierarchy c
 The core's file-view lifecycle test checks independent tabs, repeated-intent convergence and reopen defaults.
 Native screenshots remain necessary to approve toolbar spacing, font fallback and narrow-window behavior.
 
+## Editor preview tab
+
+A single click on an Explorer file or a Changes row opens it in the checkout's one preview tab, VS Code's model: the strip draws the title in the theme's italic variant, and the next single click replaces the tab in the same slot instead of adding one.
+The core owns the flag (`EditorTabSnapshot.preview`, and the strip entry beside it), decides replacement and promotion, and the shell only says what the click meant: `file_open` and `changes_select` carry `preview`, and one `file_keep_open` event promotes.
+Promotion happens in the same slot, on four triggers: a double-click on the Explorer row, a double-click on the tab title, the first edit, and File > Keep Open (`⇧⌘K`, declared in `ShellMenuCommand`); a drag to a new slot promotes as well.
+A dirty tab is never replaced: the core promotes it where it sits and opens the new preview beside it.
+Every other entry point - Cmd+P, Reopen Closed Tab, a Markdown or terminal link, a file the Explorer just created - opens an ordinary tab, and a single click on a file that already has a tab focuses it without touching the slot.
+A replaced preview tab is not a close: its document, Markdown mode and wrap state are dropped and nothing enters Recent Closed; closing the tab yourself records it as any file tab.
+Editor tabs stay ephemeral, so the flag is never persisted.
+
+The italic variant is `HideTheme.Typography.previewSlant`, an oblique of the bundled Inter face applied through the font matrix, because that face carries no italic axis; it is reached only through `hideFont(italic:)`.
+The tooltip and the accessibility label read `name · Preview` while the tab is one and drop the suffix on promotion (`EditorTabTitlePresentation`); the tab's colours, close button, keycap and its Recent Panels row are the ordinary tab's.
+The `Screen / Workbench / Preview tab` board draws the preview, promoted and dirty-kept states; pen substitutes the family's own italic, so the angle is not reviewed there, only size and spacing.
+The core's rules are fixed by `runtime/tests/editor_preview.rs`, the shell's by `EditorPreviewTabPresentationTests`.
+
 ## Explorer file management
 
 The local tree's context menu is the native `NSMenu`, in VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App, Open in Browser Pane and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
