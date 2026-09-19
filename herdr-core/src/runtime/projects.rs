@@ -1050,8 +1050,13 @@ impl Runtime {
                 RightPanelSection::Overview
             ) {
             self.focused_local_checkout()
-                .and_then(|(workspace, _)| self.worktree_catalog.project(&workspace.path))
-                .map(|project| {
+                .and_then(|(workspace, _)| {
+                    // A folder project has no worktree list, and it still has
+                    // a size the Overview states (PRD B16): the folder itself.
+                    if !workspace.is_git {
+                        return Some(vec![PathBuf::from(&workspace.path)]);
+                    }
+                    let project = self.worktree_catalog.project(&workspace.path)?;
                     let mut paths: Vec<_> = project
                         .worktrees
                         .iter()
@@ -1060,7 +1065,7 @@ impl Runtime {
                     if let Some(shared) = &project.shared_git_path {
                         paths.push(PathBuf::from(shared));
                     }
-                    paths
+                    Some(paths)
                 })
                 .unwrap_or_default()
         } else {
