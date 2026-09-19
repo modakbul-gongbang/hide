@@ -11487,7 +11487,7 @@
       "x": 0,
       "y": -100,
       "name": "Band / Screen",
-      "width": 30257,
+      "width": 31177,
       "layout": "vertical",
       "gap": "$--spacing-sm",
       "children": [
@@ -15499,8 +15499,824 @@
     },
     {
       "type": "frame",
-      "id": "pvt-board",
+      "id": "screen-editor-markdown-live",
+      "name": "Screen / Editor / Markdown live",
+      "width": 840,
+      "fill": "$--color-background",
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xxl",
+      "children": [
+        {
+          "type": "text",
+          "id": "mdlive-title",
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "Markdown Live states",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-title",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "mdlive-spec",
+          "name": "Spec",
+          "fill": "$--color-muted",
+          "content": "One editable text view over the source · markup hidden on every line without the caret · fenced block reveals as one unit · Inter 15/5 in the 720pt measure · code in the editor monospace · Live is the default, Source keeps the ruler and Wrap",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "text",
+          "id": "mdlive-formatted-label",
+          "name": "State label",
+          "fill": "$--color-secondary",
+          "content": "Formatted lines · caret elsewhere",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "mdlive-formatted",
+          "name": "Formatted lines",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "id": "mdlive-formatted-toolbar",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "Document toolbar · Live",
+              "width": "fill_container",
+              "descendants": {
+                "PzQD9": {
+                  "content": "docs / notes.md"
+                },
+                "ohhBb": {
+                  "enabled": true
+                },
+                "Z7dRWF": {
+                  "enabled": false
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "mdlive-formatted-page",
+              "name": "Live page",
+              "width": "fill_container",
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--size-editor-document-line-spacing",
+              "padding": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mdlive-h1",
+                  "name": "Heading 1",
+                  "fill": "$--color-primary",
+                  "content": "Release notes",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-heading-1",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "mdlive-p1",
+                  "name": "Paragraph",
+                  "width": "fill_container",
+                  "layout": "horizontal",
+                  "gap": "$--spacing-none",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mdlive-p1-a",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": "Plain text with ",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-p1-b",
+                      "name": "Bold",
+                      "fill": "$--color-primary",
+                      "content": "bold",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "700"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-p1-c",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": ", ",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-p1-d",
+                      "name": "Italic",
+                      "fill": "$--color-primary",
+                      "content": "italic",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal",
+                      "fontStyle": "italic"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-p1-e",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": ", ",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mdlive-p1-code",
+                      "name": "Inline code",
+                      "fill": "$--color-panel",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-xxs"
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mdlive-p1-f",
+                          "name": "Code",
+                          "fill": "$--color-primary",
+                          "content": "code",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-editor-base",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-p1-g",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": " and a ",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-p1-h",
+                      "name": "Link",
+                      "fill": "$--color-accent",
+                      "content": "link",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-p1-i",
+                      "name": "Text",
+                      "fill": "$--color-primary",
+                      "content": " · 한국어 문장도 같은 줄에서 감싸집니다.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-h2",
+                  "name": "Heading 2",
+                  "fill": "$--color-primary",
+                  "content": "두번째 제목",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-heading-2",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-li1",
+                  "name": "Unordered item",
+                  "fill": "$--color-primary",
+                  "content": "•  first item",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal",
+                  "x": 0
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-li2",
+                  "name": "Unordered item",
+                  "fill": "$--color-primary",
+                  "content": "•  second item with more words than fit in one line of the measure, so it wraps under its text",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-ol1",
+                  "name": "Ordered item",
+                  "fill": "$--color-primary",
+                  "content": "1.  ordered item",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "mdlive-q1",
+                  "name": "Quote",
+                  "width": "fill_container",
+                  "layout": "horizontal",
+                  "gap": "$--spacing-md",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "mdlive-q1-rule",
+                      "name": "Quote rule",
+                      "width": 2,
+                      "height": 22,
+                      "fill": "$--color-divider"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-q1-t",
+                      "name": "Quote text",
+                      "fill": "$--color-primary",
+                      "content": "quoted line behind the rule",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal",
+                      "x": 0
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "mdlive-hr",
+                  "name": "Thematic break",
+                  "width": "fill_container",
+                  "height": 1,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-p2",
+                  "name": "Paragraph",
+                  "fill": "$--color-primary",
+                  "content": "After the rule.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "mdlive-caret-label",
+          "name": "State label",
+          "fill": "$--color-secondary",
+          "content": "Caret line shows its source · other lines stay formatted",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "mdlive-caret",
+          "name": "Caret line",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "id": "mdlive-caret-toolbar",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "Document toolbar · Live",
+              "width": "fill_container",
+              "descendants": {
+                "PzQD9": {
+                  "content": "docs / notes.md"
+                },
+                "ohhBb": {
+                  "enabled": true
+                },
+                "Z7dRWF": {
+                  "enabled": false
+                },
+                "SSTQP": {
+                  "enabled": true
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "mdlive-caret-page",
+              "name": "Live page",
+              "width": "fill_container",
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--size-editor-document-line-spacing",
+              "padding": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mdlive-c-h1",
+                  "name": "Heading 1",
+                  "fill": "$--color-primary",
+                  "content": "Release notes",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-heading-1",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "mdlive-c-p1",
+                  "name": "Caret paragraph",
+                  "width": "fill_container",
+                  "layout": "horizontal",
+                  "gap": "$--spacing-none",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mdlive-c-p1-a",
+                      "name": "Source",
+                      "fill": "$--color-primary",
+                      "content": "Plain text with **bold**, *italic*, `code` and a [link](https://example.com) · 한국어 문",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "mdlive-c-caret",
+                      "name": "Caret",
+                      "width": 1,
+                      "height": 18,
+                      "fill": "$--color-primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-c-p1-b",
+                      "name": "Source",
+                      "fill": "$--color-primary",
+                      "content": "장도 같은 줄에서 감싸집니다.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-c-h2",
+                  "name": "Heading 2",
+                  "fill": "$--color-primary",
+                  "content": "두번째 제목",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-heading-2",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-c-li1",
+                  "name": "Unordered item",
+                  "fill": "$--color-primary",
+                  "content": "•  first item",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "mdlive-c-q1",
+                  "name": "Quote",
+                  "width": "fill_container",
+                  "layout": "horizontal",
+                  "gap": "$--spacing-md",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "mdlive-c-q1-rule",
+                      "name": "Quote rule",
+                      "width": 2,
+                      "height": 22,
+                      "fill": "$--color-divider"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-c-q1-t",
+                      "name": "Quote text",
+                      "fill": "$--color-primary",
+                      "content": "quoted line behind the rule",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-editor-document",
+                      "fontWeight": "normal",
+                      "x": 0
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "mdlive-code-label",
+          "name": "State label",
+          "fill": "$--color-secondary",
+          "content": "Fenced code block · caret outside, then inside",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "mdlive-code",
+          "name": "Code block states",
+          "width": "fill_container",
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "start",
+          "children": [
+            {
+              "type": "frame",
+              "id": "mdlive-code-out",
+              "name": "Caret outside",
+              "width": "fill_container",
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--size-editor-document-line-spacing",
+              "padding": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mdlive-code-out-p",
+                  "name": "Paragraph",
+                  "fill": "$--color-primary",
+                  "content": "Install with:",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "mdlive-code-out-block",
+                  "name": "Fenced block",
+                  "width": "fill_container",
+                  "fill": "$--color-panel",
+                  "layout": "vertical",
+                  "gap": "$--size-editor-document-line-spacing",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mdlive-code-out-block-l0",
+                      "name": "Code line",
+                      "fill": "$--color-primary",
+                      "content": "brew install hide",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-editor-base",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-code-out-block-l1",
+                      "name": "Code line",
+                      "fill": "$--color-primary",
+                      "content": "hide --version",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-editor-base",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-code-out-after",
+                  "name": "Paragraph",
+                  "fill": "$--color-primary",
+                  "content": "Then open a project.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "mdlive-code-in",
+              "name": "Caret inside",
+              "width": "fill_container",
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--size-editor-document-line-spacing",
+              "padding": "$--spacing-lg",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mdlive-code-in-p",
+                  "name": "Paragraph",
+                  "fill": "$--color-primary",
+                  "content": "Install with:",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "mdlive-code-in-block",
+                  "name": "Fenced block, caret inside",
+                  "width": "fill_container",
+                  "fill": "$--color-panel",
+                  "layout": "vertical",
+                  "gap": "$--size-editor-document-line-spacing",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mdlive-code-in-block-l0",
+                      "name": "Code line",
+                      "fill": "$--color-primary",
+                      "content": "```sh",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-editor-base",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-code-in-block-l1",
+                      "name": "Code line",
+                      "fill": "$--color-primary",
+                      "content": "brew install hide",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-editor-base",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-code-in-block-l2",
+                      "name": "Code line",
+                      "fill": "$--color-primary",
+                      "content": "hide --version",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-editor-base",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "mdlive-code-in-block-l3",
+                      "name": "Code line",
+                      "fill": "$--color-primary",
+                      "content": "```",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-editor-base",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-code-in-after",
+                  "name": "Paragraph",
+                  "fill": "$--color-primary",
+                  "content": "Then open a project.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-editor-document",
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "mdlive-empty-label",
+          "name": "State label",
+          "fill": "$--color-secondary",
+          "content": "Empty document · Live, caret ready",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "mdlive-empty",
+          "name": "Empty document",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "id": "mdlive-empty-toolbar",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "Document toolbar · Live",
+              "width": "fill_container",
+              "descendants": {
+                "PzQD9": {
+                  "content": "docs / new.md"
+                },
+                "ohhBb": {
+                  "enabled": true
+                },
+                "Z7dRWF": {
+                  "enabled": false
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "mdlive-empty-page",
+              "name": "Live page",
+              "width": "fill_container",
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--size-editor-document-line-spacing",
+              "padding": "$--spacing-lg",
+              "height": 120,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mdlive-empty-row",
+                  "name": "Empty line",
+                  "width": "fill_container",
+                  "layout": "horizontal",
+                  "gap": "$--spacing-none",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "mdlive-empty-caret",
+                      "name": "Caret",
+                      "width": 1,
+                      "height": 18,
+                      "fill": "$--color-primary"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "mdlive-large-label",
+          "name": "State label",
+          "fill": "$--color-secondary",
+          "content": "Over 256 KB · opens in Source, Live disabled, notice under the toolbar",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "mdlive-large",
+          "name": "Over 256 KB",
+          "width": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "id": "mdlive-large-toolbar",
+              "type": "ref",
+              "ref": "hxdu7",
+              "name": "Document toolbar · Source",
+              "width": "fill_container",
+              "descendants": {
+                "PzQD9": {
+                  "content": "docs / CHANGELOG.md"
+                },
+                "ohhBb": {
+                  "enabled": true,
+                  "fill": "$--color-muted"
+                },
+                "Z7dRWF": {
+                  "enabled": true
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "mdlive-large-notice",
+              "name": "Notice",
+              "width": "fill_container",
+              "fill": "$--color-wash-warning",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mdlive-large-notice-text",
+                  "name": "Notice text",
+                  "fill": "$--color-warning",
+                  "content": "⚠  Live preview is off for files over 256 KB",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "mdlive-large-page",
+              "name": "Source page",
+              "width": "fill_container",
+              "fill": "$--color-background",
+              "layout": "horizontal",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-md",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "mdlive-large-gutter",
+                  "name": "Line numbers",
+                  "fill": "$--color-muted",
+                  "content": "1\n2\n3\n4",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-editor-base",
+                  "fontWeight": "normal",
+                  "textAlign": "right",
+                  "width": 28,
+                  "textGrowth": "fixed-width"
+                },
+                {
+                  "type": "text",
+                  "id": "mdlive-large-source",
+                  "name": "Source",
+                  "fill": "$--color-primary",
+                  "content": "# Changelog\n\n## 0.9.1\n- Live preview is off above 256 KB, so the source editor shows the file as it is",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-editor-base",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                }
+              ]
+            }
+          ]
+        }
+      ],
       "x": 4168,
+      "y": 0
+    },
+    {
+      "type": "frame",
+      "id": "pvt-board",
+      "x": 5088,
       "y": 0,
       "name": "Screen / Workbench / Preview tab",
       "width": 1488,
@@ -16123,7 +16939,7 @@
     {
       "type": "frame",
       "id": "fm-board",
-      "x": 5736,
+      "x": 6656,
       "y": 0,
       "name": "Screen / Panel / Explorer file menu",
       "width": 1488,
@@ -17372,7 +18188,7 @@
     {
       "type": "frame",
       "id": "arb009",
-      "x": 7304,
+      "x": 8224,
       "y": 0,
       "name": "Screen / Sidebar / Agent row states",
       "clip": false,
@@ -17814,7 +18630,7 @@
     {
       "type": "frame",
       "id": "arb00l",
-      "x": 8624,
+      "x": 9544,
       "y": 0,
       "name": "Screen / Pane / Header states",
       "clip": false,
@@ -18568,7 +19384,7 @@
     {
       "type": "frame",
       "id": "acv-main",
-      "x": 9944,
+      "x": 10864,
       "y": 0,
       "name": "Screen / Pane / Conversation - Main Claude working",
       "width": 760,
@@ -18961,7 +19777,7 @@
     {
       "type": "frame",
       "id": "acv-codex",
-      "x": 10784,
+      "x": 11704,
       "y": 0,
       "name": "Screen / Pane / Conversation - Codex idle",
       "width": 760,
@@ -19277,7 +20093,7 @@
     {
       "type": "frame",
       "id": "acv-terminal",
-      "x": 11624,
+      "x": 12544,
       "y": 0,
       "name": "Screen / Pane / Conversation - Terminal baseline",
       "width": 760,
@@ -19469,7 +20285,7 @@
     {
       "type": "frame",
       "id": "acv-needs-you",
-      "x": 12464,
+      "x": 13384,
       "y": 0,
       "name": "Screen / Pane / Conversation - Needs You fallback",
       "width": 760,
@@ -19686,7 +20502,7 @@
     {
       "type": "frame",
       "id": "acv-empty",
-      "x": 13304,
+      "x": 14224,
       "y": 0,
       "name": "Screen / Pane / Conversation - Empty",
       "width": 760,
@@ -19862,7 +20678,7 @@
     {
       "type": "frame",
       "id": "acv-failed",
-      "x": 14144,
+      "x": 15064,
       "y": 0,
       "name": "Screen / Pane / Conversation - Failed",
       "width": 760,
@@ -20451,7 +21267,7 @@
           "padding": "$--spacing-lg"
         }
       ],
-      "x": 14984,
+      "x": 15904,
       "y": 0
     },
     {
@@ -20869,13 +21685,13 @@
           ]
         }
       ],
-      "x": 16904,
+      "x": 17824,
       "y": 0
     },
     {
       "type": "frame",
       "id": "Snwg0",
-      "x": 18080,
+      "x": 19000,
       "y": 0,
       "name": "Screen / Agents / My Work status groups",
       "width": 1488,
@@ -21243,7 +22059,7 @@
     {
       "type": "frame",
       "id": "Vmhg4",
-      "x": 19648,
+      "x": 20568,
       "y": 0,
       "name": "Screen / Sidebar / Agents",
       "clip": true,
@@ -23007,7 +23823,7 @@
     {
       "type": "frame",
       "id": "i0UQT9",
-      "x": 20020,
+      "x": 20940,
       "y": 0,
       "name": "Screen / Panel / Overview",
       "clip": true,
@@ -24485,7 +25301,7 @@
     {
       "type": "frame",
       "id": "YfDhQ",
-      "x": 20455,
+      "x": 21375,
       "y": 0,
       "name": "Screen / Panel / Explorer",
       "clip": true,
@@ -27844,7 +28660,7 @@
     {
       "type": "frame",
       "id": "eXxKb",
-      "x": 20890,
+      "x": 21810,
       "y": 0,
       "name": "Screen / Pane / Relationship modal",
       "width": 1488,
@@ -28060,7 +28876,7 @@
     {
       "type": "frame",
       "id": "h4P2jZ",
-      "x": 22458,
+      "x": 23378,
       "y": 0,
       "name": "Screen / Panel / Changes",
       "clip": true,
@@ -29684,7 +30500,7 @@
     {
       "type": "frame",
       "id": "c3Lf5",
-      "x": 22893,
+      "x": 23813,
       "y": 0,
       "name": "Screen / Overview / Project task forest",
       "width": 520,
@@ -30502,7 +31318,7 @@
     {
       "type": "frame",
       "id": "AZvEA",
-      "x": 23493,
+      "x": 24413,
       "y": 0,
       "name": "Screen / Overview / Inspect without moving",
       "width": 900,
@@ -30599,7 +31415,7 @@
     {
       "type": "frame",
       "id": "wzrRI",
-      "x": 24473,
+      "x": 25393,
       "y": 0,
       "name": "Screen / Workbench / Parent",
       "width": 1488,
@@ -31932,7 +32748,7 @@
     {
       "type": "frame",
       "id": "IhnIO",
-      "x": 26041,
+      "x": 26961,
       "y": 0,
       "name": "Screen / Workbench / Delegated child tab",
       "width": 1488,
@@ -32079,7 +32895,7 @@
     {
       "type": "frame",
       "id": "m5T3n1",
-      "x": 27609,
+      "x": 28529,
       "y": 0,
       "name": "Screen / Overview / Availability states",
       "width": 1080,
@@ -32527,7 +33343,7 @@
     {
       "type": "frame",
       "id": "n2oTPf",
-      "x": 28769,
+      "x": 29689,
       "y": 0,
       "name": "Screen / Explorer / Git in workbench",
       "width": 1488,
@@ -33564,6 +34380,38 @@
     "--text-preview-slant": {
       "type": "number",
       "value": 12
+    },
+    "--ratio-editor-italic-skew": {
+      "type": "number",
+      "value": 0.2
+    },
+    "--size-editor-quote-rule": {
+      "type": "number",
+      "value": 2
+    },
+    "--text-editor-heading-1": {
+      "type": "number",
+      "value": 28
+    },
+    "--text-editor-heading-2": {
+      "type": "number",
+      "value": 24
+    },
+    "--text-editor-heading-3": {
+      "type": "number",
+      "value": 20
+    },
+    "--text-editor-heading-4": {
+      "type": "number",
+      "value": 17
+    },
+    "--text-editor-heading-5": {
+      "type": "number",
+      "value": 15
+    },
+    "--text-editor-heading-6": {
+      "type": "number",
+      "value": 15
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"
