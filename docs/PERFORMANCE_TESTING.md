@@ -410,13 +410,12 @@ Regression owners are `projects_follow_authoritative_activity_and_identical_snap
 Native acceptance uses many private projects, Search and disclosure, live pane retirement/movement, pin and unpin, and registration removal with and without open panes.
 Measure baseline and candidate idle/driven work separately with the same project/pane count; tests alone do not prove native responsiveness.
 
-### Project history, disk and cleanup
+### Project worktrees, disk and cleanup
 
-Only the selected open Overview project requests a bounded history read through WorktreeReader.
-One `git log` includes all real worktree HEADs and known main/base refs, retaining ordered parents, decorations, shallow boundaries and a continuation frontier outside the 512-commit window.
-Overview-only request changes reuse the worker's catalog cache; closing Overview and unchanged ticks perform no extra Git commands.
-Graph geometry rebuilds when history or checkout HEAD identities change; agent status updates do not recompute ancestry.
-Linear chains fold around worktree/ref boundaries; rendering is bounded by the history window and retained worktree count.
+The Overview reads nothing of its own: every group header and stat cell is derived from the worktree catalog the sidebar already reads, and opening or closing the Overview adds no Git command.
+`behind_upstream` rides the same `rev-list --left-right --count @{u}...HEAD` call that already counted unpushed commits, so a fetched-side count costs no extra process, and `created_at_unix_ms` is one `stat` of the worktree's gitdir in the same background pass off the mutex.
+The catalog pass is bounded by the worktree count; a project with many worktrees pays one status, one rev-list and one stat per worktree per change, never per tick or per agent update.
+Group ordering, chips and search are pure functions of the snapshot in `OverviewPresentation`; agent status updates redraw rows and never recompute the catalog.
 List rows use the existing lazy native scrolling and search keyboard patterns.
 
 Disk reuses DiskReader, triggered by opening Git/Overview or explicit refresh, with one inflight read and coalesced pending input.
@@ -434,8 +433,8 @@ The UI therefore describes a fresh eligibility check rather than a permanent unu
 A stale, missing or failed check is caller-visible and never becomes permission to delete.
 Completed intents are retained until dismissal; duplicate confirmation does no work, and retry through a fresh review excludes already removed targets.
 
-Regression owners include `overview_inspection_does_not_focus_or_repeat_publish`, `overview_history_preserves_real_merge_parents_and_reads_all_heads_once`, `overview_close_and_idle_do_not_run_additional_git_commands`, disk filesystem fixtures, cleanup filesystem fixtures and `OverviewPresentationTests`.
-Native acceptance additionally covers Tree/List inspection versus explicit focus, narrow Korean/English wrapping, unknown/partial summaries, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
+Regression owners include `overview_open_section_focuses_the_checkout_and_switches_the_panel_in_one_event`, `agent_start_in_checkout_reports_through_the_task_operation_slot`, `behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side`, `linked_worktrees_carry_their_creation_time_and_the_main_worktree_none`, disk filesystem fixtures, cleanup filesystem fixtures and `OverviewPresentationTests`.
+Native acceptance additionally covers row click versus header click versus the `N files` chip, narrow Korean/English wrapping of branch names and tasks, `…`/`?` cells, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
 
 ### Background candidate launch
 
