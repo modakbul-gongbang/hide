@@ -92,6 +92,63 @@ struct ProjectHomeGraphLayoutTests {
         #expect(result.ticks < ProjectHomeGraphLayout.Tuning.maxTicks)
     }
 
+    /// The scale-1 separation clears labels on paper, but the fitted map draws
+    /// them larger than the space it cleared, so some cross again once fitted.
+    /// The screen-space drop pass keeps the higher-priority label and drops the
+    /// other; no two drawn labels may cross at the fit scale, and no hub is
+    /// dropped.
+    @Test func noTwoDrawnLabelsCrossOnceTheTwelveCheckoutMapIsFitted() {
+        let fixture = ProjectHomeFixture.twelveCheckouts()
+        let home = ProjectHomePresentation.build(workspace: fixture.0, agents: fixture.1, connected: true)
+        let positions = ProjectHomeGraphLayout.solve(home.topology).positions
+        let bounds = ProjectHomeGraphLayout.bounds(positions, nodes: home.topology.nodes)
+        // The default two-panel window: the canvas is small enough that the
+        // fitted labels collide, which is the case this pass exists for.
+        let fit = ProjectHomeFit(bounds: bounds, canvas: CGSize(width: 528, height: 795))
+
+        func boxes(forced: Set<String>) -> [ProjectHomeGraphLayout.LabelBox] {
+            home.nodes.compactMap { node in
+                guard let point = positions[node.id] else { return nil }
+                guard ProjectHomePresentation.drawsLabel(node, scale: fit.scale, hovered: false, selected: false)
+                    || forced.contains(node.id) else { return nil }
+                return ProjectHomeGraphLayout.LabelBox(
+                    id: node.id,
+                    priority: ProjectHomePresentation.labelPriority(node),
+                    neverDrops: node.kind != .agent,
+                    rect: ProjectHomeGraphLayout.screenLabelRect(
+                        for: node.layout, at: fit.canvasPoint(point),
+                        scale: fit.scale, fontScale: fit.labelFontScale
+                    )
+                )
+            }
+        }
+
+        let candidates = boxes(forced: [])
+        // Guard the guard: without the drop pass, at least two of these cross,
+        // so the assertion below is testing a real resolution.
+        let crossesBeforeDrop = candidates.indices.contains { i in
+            candidates.indices.contains { j in j > i && candidates[i].rect.intersects(candidates[j].rect) }
+        }
+        #expect(crossesBeforeDrop)
+
+        let visible = ProjectHomeGraphLayout.visibleLabels(candidates, forced: [])
+        let drawn = candidates.filter { visible.contains($0.id) }
+        for i in drawn.indices {
+            for j in drawn.indices where j > i {
+                #expect(!drawn[i].rect.intersects(drawn[j].rect), "\(drawn[i].id) still crosses \(drawn[j].id)")
+            }
+        }
+        // Every hub keeps its label.
+        let hubs = Set(home.nodes.filter { $0.kind != .agent }.map(\.id))
+        #expect(hubs.isSubset(of: visible))
+        // A dropped label returns when it is hovered.
+        let dropped = candidates.first { !visible.contains($0.id) }
+        let hovered = dropped.map { $0.id }
+        if let hovered {
+            #expect(ProjectHomeGraphLayout.visibleLabels(boxes(forced: [hovered]), forced: [hovered]).contains(hovered))
+        }
+    }
+
     @Test func labelsDoNotCrossOnTheFourCheckoutFixtureEither() {
         let topology = topology(ProjectHomeFixture.fourCheckouts())
         let result = ProjectHomeGraphLayout.solve(topology)

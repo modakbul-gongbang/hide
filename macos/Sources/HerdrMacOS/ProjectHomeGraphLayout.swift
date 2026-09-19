@@ -278,6 +278,57 @@ enum ProjectHomeGraphLayout {
         CGRect(x: point.x - node.radius, y: point.y - node.radius, width: node.radius * 2, height: node.radius * 2)
     }
 
+    /// The rectangle a node's label draws in, in canvas points at the fitted
+    /// scale. The map scales by `scale`, but type stops shrinking at
+    /// `labelMinFontScale`, so a label stays `fontScale`-sized even where the
+    /// map is smaller than that. That gap is exactly why the scale-1
+    /// separation still leaves labels crossing once fitted, and why the drop
+    /// pass measures here rather than in layout points.
+    static func screenLabelRect(for node: Node, at centre: CGPoint, scale: CGFloat, fontScale: CGFloat) -> CGRect {
+        let width = node.labelWidth * fontScale
+        let height = HideTheme.Home.labelHeight * fontScale
+        return CGRect(
+            x: centre.x - width / 2,
+            y: centre.y + (node.radius + HideTheme.Home.labelGap) * scale,
+            width: width,
+            height: height
+        )
+    }
+
+    /// One label the fitted-scale collision pass may keep or drop.
+    struct LabelBox: Equatable {
+        let id: String
+        /// Higher wins a collision; `ProjectHomePresentation.labelPriority`
+        /// sets it.
+        let priority: Int
+        /// A hub is never dropped, so it is kept even where it crosses.
+        let neverDrops: Bool
+        let rect: CGRect
+    }
+
+    /// Keep the higher-priority label of any two that still cross once fitted,
+    /// and drop the other; the dropped one returns on hover or zoom. A hub and
+    /// a forced label (hovered or selected) are always kept. Boxes arrive in
+    /// the stable draw order, so ties resolve the same way every frame.
+    static func visibleLabels(_ boxes: [LabelBox], forced: Set<String>) -> Set<String> {
+        let ordered = boxes.enumerated().sorted { lhs, rhs in
+            let leftPinned = lhs.element.neverDrops || forced.contains(lhs.element.id)
+            let rightPinned = rhs.element.neverDrops || forced.contains(rhs.element.id)
+            if leftPinned != rightPinned { return leftPinned }
+            if lhs.element.priority != rhs.element.priority { return lhs.element.priority > rhs.element.priority }
+            return lhs.offset < rhs.offset
+        }
+        var keptRects: [CGRect] = []
+        var kept: Set<String> = []
+        for (_, box) in ordered {
+            let pinned = box.neverDrops || forced.contains(box.id)
+            guard pinned || !keptRects.contains(where: { $0.intersects(box.rect) }) else { continue }
+            keptRects.append(box.rect)
+            kept.insert(box.id)
+        }
+        return kept
+    }
+
     /// After rest, a label may still cross another label or another node's
     /// disc. The later node in the stable order is turned a step around its
     /// parent, away from whatever it crossed, until it clears every earlier

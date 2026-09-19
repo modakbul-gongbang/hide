@@ -326,6 +326,27 @@ struct ProjectHomeCanvas: View {
                 style: StrokeStyle(lineWidth: lineWidth, dash: edge.dashed ? [HideTheme.spacingXS * fit.scale, HideTheme.spacingXS * fit.scale] : [])
             )
         }
+        // The scale-1 separation cannot see that fitted labels are drawn
+        // larger than the space it cleared, so resolve the remaining crossings
+        // in screen space: keep the higher-priority label and drop the other,
+        // which returns on hover or zoom.
+        let forcedLabels = Set([hover, focus].compactMap { $0 })
+        var labelBoxes: [ProjectHomeGraphLayout.LabelBox] = []
+        for node in home.nodes {
+            guard let point = positions[node.id] else { continue }
+            let base = ProjectHomePresentation.drawsLabel(node, scale: fit.scale, hovered: false, selected: false)
+            guard base || forcedLabels.contains(node.id) else { continue }
+            labelBoxes.append(ProjectHomeGraphLayout.LabelBox(
+                id: node.id,
+                priority: ProjectHomePresentation.labelPriority(node),
+                neverDrops: node.kind != .agent,
+                rect: ProjectHomeGraphLayout.screenLabelRect(
+                    for: node.layout, at: fit.canvasPoint(point),
+                    scale: fit.scale, fontScale: fit.labelFontScale
+                )
+            ))
+        }
+        let visibleLabelIDs = ProjectHomeGraphLayout.visibleLabels(labelBoxes, forced: forcedLabels)
         for node in home.nodes {
             guard let layoutPoint = positions[node.id] else { continue }
             let centre = fit.canvasPoint(layoutPoint)
@@ -382,7 +403,7 @@ struct ProjectHomeCanvas: View {
                     lineWidth: HideTheme.Layout.hairlineWidth
                 )
             }
-            guard ProjectHomePresentation.drawsLabel(node, scale: fit.scale, hovered: node.id == hover, selected: node.id == focus) else { continue }
+            guard visibleLabelIDs.contains(node.id) else { continue }
             // The frame is the one the layout separated, so what it cleared
             // on paper is clear here (PRD rule 4).
             let frame = fit.canvasRect(ProjectHomeGraphLayout.labelFrame(for: node.layout, at: layoutPoint))

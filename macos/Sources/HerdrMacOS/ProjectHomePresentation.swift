@@ -392,6 +392,22 @@ enum ProjectHomePresentation {
         }
     }
 
+    /// Which label wins a fitted-scale collision when the drop pass has to
+    /// choose: a hub outranks a waiting agent, which outranks a finished one,
+    /// which outranks one that is working or seen. The loser is dropped and
+    /// returns on hover or zoom; hubs are never dropped.
+    static func labelPriority(_ node: ProjectHomeNode) -> Int {
+        switch node.kind {
+        case .project, .checkout: return 3
+        case .agent:
+            switch node.group {
+            case .needsYou: return 2
+            case .done: return 1
+            default: return 0
+            }
+        }
+    }
+
     // MARK: Ordering and sizing
 
     /// Primary checkout first, then by branch name, then by id so two
