@@ -841,7 +841,6 @@ fn parse_codex_line(item: &Value) -> LineResult {
 pub const INJECTED_PREFIXES: &[&str] = &[
     "<task-notification>",
     "<system-reminder>",
-    "<hide-memory-context>",
     "Another Claude session",
     "# AGENTS.md instructions",
     "<environment_context>",
@@ -850,9 +849,14 @@ pub const INJECTED_PREFIXES: &[&str] = &[
 
 fn has_injected_prefix(text: &str) -> bool {
     let text = text.trim_start();
-    INJECTED_PREFIXES
-        .iter()
-        .any(|prefix| text.starts_with(prefix))
+    let memory_context = text
+        .strip_prefix("<hide-memory-context")
+        .and_then(|suffix| suffix.chars().next())
+        .is_some_and(|boundary| boundary == '>' || boundary.is_ascii_whitespace());
+    memory_context
+        || INJECTED_PREFIXES
+            .iter()
+            .any(|prefix| text.starts_with(prefix))
 }
 
 fn is_interruption(text: &str) -> bool {
@@ -1208,6 +1212,56 @@ mod tests {
         );
         assert_eq!(parsed.events[3].text, "실제 요청");
         assert_eq!(parsed.events[4].at_unix_ms, 1_789_516_805_000);
+    }
+
+    #[test]
+    fn hook_memory_context_with_a_trust_attribute_is_injected_for_both_providers() {
+        let context = concat!(
+            "<hide-memory-context trust=\"untrusted-reference-data\">\n",
+            "reference data\n",
+            "</hide-memory-context>"
+        );
+        let codex = serde_json::json!({
+            "type": "response_item",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": context}],
+            },
+        })
+        .to_string();
+        let claude = serde_json::json!({
+            "type": "user",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "origin": {"kind": "human"},
+            "message": {"role": "user", "content": context},
+        })
+        .to_string();
+
+        assert_eq!(
+            parse_codex_events(&codex).events[0].kind,
+            EventKind::Injected
+        );
+        assert_eq!(
+            parse_claude_events(&claude).events[0].kind,
+            EventKind::Injected
+        );
+
+        let malformed = serde_json::json!({
+            "type": "response_item",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "<hide-memory-context-malformed>"}],
+            },
+        })
+        .to_string();
+        assert_eq!(
+            parse_codex_events(&malformed).events[0].kind,
+            EventKind::Human
+        );
     }
 
     #[test]
