@@ -62,9 +62,19 @@ impl Repository {
             .map_err(|error| format!("repository config could not be read: {error}"))?;
         Ok(parse_branch_description(&text, branch))
     }
+
+    pub fn branch_issue(&self, branch: &str) -> Result<Option<String>, String> {
+        let text = fs::read_to_string(self.common_dir.join("config"))
+            .map_err(|error| format!("repository config could not be read: {error}"))?;
+        Ok(parse_branch_value(&text, branch, "issue"))
+    }
 }
 
 fn parse_branch_description(config: &str, wanted_branch: &str) -> Option<String> {
+    parse_branch_value(config, wanted_branch, "description")
+}
+
+fn parse_branch_value(config: &str, wanted_branch: &str, wanted_key: &str) -> Option<String> {
     let mut selected = false;
     for raw_line in config.lines() {
         let line = raw_line.trim();
@@ -80,7 +90,7 @@ fn parse_branch_description(config: &str, wanted_branch: &str) -> Option<String>
             // description in the same section unreadable.
             continue;
         };
-        if !key.trim().eq_ignore_ascii_case("description") {
+        if !key.trim().eq_ignore_ascii_case(wanted_key) {
             continue;
         }
         let value = parse_config_value(value.trim());

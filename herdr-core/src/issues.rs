@@ -224,3 +224,9 @@ mod tests {
         assert!(parse_issues("not json").is_err());
     }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IssueCandidate {
+    pub reference: IssueReference,
+    pub source: String,
+}

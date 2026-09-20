@@ -180,6 +180,11 @@ struct PurposeMirrorRequest {
 
 enum PurposeMirrorMessage {
     Write(PurposeMirrorRequest),
+    RemoveIssue {
+        repository_root: String,
+        branch: String,
+        workspace_ids: Vec<String>,
+    },
     Stop,
 }
 
@@ -191,20 +196,34 @@ pub struct PurposeMirror {
     sender: SyncSender<PurposeMirrorMessage>,
     worker: Option<thread::JoinHandle<()>>,
     observed: BTreeMap<(String, String, String), Option<String>>,
+    issue_worktrees: BTreeSet<(String, String, String)>,
 }
 
 impl PurposeMirror {
     const QUEUE_CAPACITY: usize = 64;
 
-    pub fn new() -> Result<Self, String> {
+    pub fn new(connector: Arc<dyn ApiConnector>) -> Result<Self, String> {
         let (sender, receiver) = sync_channel(Self::QUEUE_CAPACITY);
         let worker = thread::Builder::new()
             .name("herdr-core-purpose-mirror".to_owned())
             .spawn(move || {
                 let git = SystemGit;
                 while let Ok(message) = receiver.recv() {
-                    let PurposeMirrorMessage::Write(request) = message else {
-                        break;
+                    let request = match message {
+                        PurposeMirrorMessage::Write(request) => request,
+                        PurposeMirrorMessage::Stop => break,
+                        PurposeMirrorMessage::RemoveIssue { repository_root, branch, workspace_ids } => {
+                            for id in workspace_ids {
+                                let result = wire::workspace_issue_params(&id, None).and_then(|params| control_request(connector.as_ref(), "workspace.report_metadata", params));
+                                if let Err(error) = result {
+                                    crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"removed_worktree.token_cleanup_failed","workspace_id":id,"message":error}));
+                                }
+                            }
+                            if let Err(error) = git.unset(&repository_root, &format!("branch.{branch}.issue")) {
+                                crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"removed_worktree.cleanup_failed","message":error}));
+                            }
+                            continue;
+                        }
                     };
                     let key = format!("branch.{}.description", request.branch);
                     let result = match request.purpose.as_deref() {
@@ -235,6 +254,7 @@ impl PurposeMirror {
             sender,
             worker: Some(worker),
             observed: BTreeMap::new(),
+            issue_worktrees: BTreeSet::new(),
         })
     }
 
@@ -246,6 +266,7 @@ impl PurposeMirror {
                 sender,
                 worker: None,
                 observed: BTreeMap::new(),
+                issue_worktrees: BTreeSet::new(),
             },
             receiver,
         )
@@ -257,6 +278,48 @@ impl PurposeMirror {
         workspaces: &[WorkspaceSnapshot],
         unconfirmed_created_purposes: &HashMap<String, String>,
     ) {
+        let current_issues: BTreeSet<_> = workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .flat_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .filter(|checkout| checkout.is_worktree)
+                    .filter_map(|checkout| {
+                        checkout.branch.as_ref().map(|branch| {
+                            (
+                                workspace.path.clone(),
+                                checkout.path.clone(),
+                                branch.clone(),
+                            )
+                        })
+                    })
+            })
+            .collect();
+        for (root, path, branch) in self.issue_worktrees.difference(&current_issues) {
+            if workspaces.iter().any(|workspace| &workspace.path == root)
+                && let Err(error) = self.sender.try_send(PurposeMirrorMessage::RemoveIssue {
+                    repository_root: root.clone(),
+                    branch: branch.clone(),
+                    workspace_ids: spaces
+                        .iter()
+                        .filter(|space| {
+                            space
+                                .cwds
+                                .iter()
+                                .any(|cwd| Path::new(cwd).starts_with(path))
+                        })
+                        .map(|space| space.id.clone())
+                        .collect(),
+                })
+            {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"checkout_issue","kind":"cleanup.queue_unavailable","message":error.to_string()})
+                );
+            }
+        }
+        self.issue_worktrees = current_issues;
         let mut current = BTreeSet::new();
         for workspace in workspaces {
             for checkout in &workspace.checkouts {
@@ -386,6 +449,62 @@ pub fn spawn_purpose_write(
         })
         .map(|_| ())
         .map_err(|error| format!("purpose worker could not be started: {error}"))
+}
+
+pub fn spawn_issue_write(
+    context: LiveContext,
+    request: PurposeTaskRequest,
+    previous: Option<String>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-issue-write".into())
+        .spawn(move || {
+            let result = (|| {
+                let issue = if request.purpose.is_empty() {
+                    None
+                } else {
+                    let reference = crate::issues::IssueReference::parse(&request.purpose, None)?;
+                    Some(crate::github::read_linked_issue(
+                        Path::new(&request.repository_root),
+                        &reference,
+                    )?)
+                };
+                match write_workspace_metadata(
+                    context.api_connector.as_ref(),
+                    &SystemGit,
+                    &request,
+                    "issue",
+                    "issue",
+                )? {
+                    PurposeTaskOutcome::Saved { .. } => Ok(issue),
+                    PurposeTaskOutcome::GitFailed {
+                        detail,
+                        token_written,
+                        ..
+                    } => {
+                        if token_written
+                            && let Some(workspace_id) = request.session_workspace_id.as_deref()
+                        {
+                            control_request(
+                                context.api_connector.as_ref(),
+                                "workspace.report_metadata",
+                                wire::workspace_issue_params(workspace_id, previous.as_deref())?,
+                            )
+                            .map_err(|error| format!("{detail}; issue rollback failed: {error}"))?;
+                        }
+                        Err(detail)
+                    }
+                }
+            })();
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_issue_operation_result(&request, result);
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("issue worker could not be started: {error}"))
 }
 
 pub fn spawn_remote_purpose_write(
@@ -719,6 +838,16 @@ fn write_purpose(
     git: &dyn GitCommands,
     request: &PurposeTaskRequest,
 ) -> Result<PurposeTaskOutcome, String> {
+    write_workspace_metadata(connector, git, request, "purpose", "description")
+}
+
+fn write_workspace_metadata(
+    connector: &dyn ApiConnector,
+    git: &dyn GitCommands,
+    request: &PurposeTaskRequest,
+    token: &str,
+    config_key: &str,
+) -> Result<PurposeTaskOutcome, String> {
     let purpose = request.purpose.trim().to_owned();
     if purpose.chars().count() > 80 {
         return Err("Purpose must be 80 characters or fewer".to_owned());
@@ -731,10 +860,17 @@ fn write_purpose(
         control_request(
             connector,
             "workspace.report_metadata",
-            wire::workspace_purpose_params(
-                workspace_id,
-                (!purpose.is_empty()).then_some(purpose.as_str()),
-            )?,
+            if token == "issue" {
+                wire::workspace_issue_params(
+                    workspace_id,
+                    (!purpose.is_empty()).then_some(purpose.as_str()),
+                )?
+            } else {
+                wire::workspace_purpose_params(
+                    workspace_id,
+                    (!purpose.is_empty()).then_some(purpose.as_str()),
+                )?
+            },
         )
         .map_err(|error| format!("workspace purpose: {error}"))?;
     }
@@ -744,7 +880,7 @@ fn write_purpose(
             token_written,
         });
     };
-    let key = format!("branch.{branch}.description");
+    let key = format!("branch.{branch}.{config_key}");
     let git_result = if purpose.is_empty() {
         git.unset(&request.repository_root, &key)
     } else {
@@ -1128,6 +1264,33 @@ mod tests {
             session_workspace_id: Some("w7".into()),
             purpose: purpose.into(),
         }
+    }
+
+    #[test]
+    fn issue_writer_uses_the_same_token_first_boundary_and_clears_both_values() {
+        let server = server(vec![
+            json!({"result":{"type":"ok"}}),
+            json!({"result":{"type":"ok"}}),
+        ]);
+        let git = ScriptedGit::new(vec![Ok(""), Ok("")]);
+        write_workspace_metadata(
+            &server,
+            &git,
+            &purpose_request("acme/project#42"),
+            "issue",
+            "issue",
+        )
+        .unwrap();
+        write_workspace_metadata(&server, &git, &purpose_request(""), "issue", "issue").unwrap();
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests[0]["params"]["tokens"]["issue"], "acme/project#42");
+        assert!(requests[1]["params"]["tokens"]["issue"].is_null());
+        let calls = git.calls.lock().unwrap();
+        assert_eq!(
+            calls[0],
+            ["config", "branch.feature.issue", "acme/project#42"]
+        );
+        assert_eq!(calls[1], ["config", "--unset-all", "branch.feature.issue"]);
     }
 
     #[test]

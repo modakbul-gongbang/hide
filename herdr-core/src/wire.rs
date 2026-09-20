@@ -618,11 +618,68 @@ pub(crate) fn workspace_target_params(id: &str) -> Result<Value, String> {
     })
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct IssueTokens {
+    pub panes: std::collections::BTreeMap<String, String>,
+    pub workspaces: std::collections::BTreeMap<String, String>,
+}
+
+pub(crate) fn issue_tokens(payload: &crate::sidebar::SessionSnapshotPayload) -> IssueTokens {
+    fn issue(tokens: &std::collections::BTreeMap<String, Value>) -> Option<String> {
+        tokens
+            .get("issue")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    }
+    let mut panes: std::collections::BTreeMap<_, _> = payload
+        .agents
+        .iter()
+        .filter_map(|agent| {
+            Some((
+                agent.pane_id.as_ref().or(agent.id.as_ref())?.clone(),
+                issue(&agent.tokens)?,
+            ))
+        })
+        .collect();
+    for pane in &payload.panes {
+        if let Some(value) = issue(&pane.tokens) {
+            panes.insert(pane.pane_id.clone(), value);
+        }
+    }
+    IssueTokens {
+        panes,
+        workspaces: payload
+            .workspaces
+            .iter()
+            .filter_map(|workspace| {
+                Some((workspace.workspace_id.clone(), issue(&workspace.tokens)?))
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn workspace_issue_params(
+    workspace_id: &str,
+    issue: Option<&str>,
+) -> Result<Value, String> {
+    workspace_metadata_params(workspace_id, "issue", issue)
+}
+
 pub(crate) fn workspace_purpose_params(
     workspace_id: &str,
     purpose: Option<&str>,
 ) -> Result<Value, String> {
-    let key = "purpose"
+    workspace_metadata_params(workspace_id, "purpose", purpose)
+}
+
+fn workspace_metadata_params(
+    workspace_id: &str,
+    name: &str,
+    purpose: Option<&str>,
+) -> Result<Value, String> {
+    let key = name
         .try_into()
         .map_err(|error| format!("invalid workspace purpose token key: {error}"))?;
     params(req::WorkspaceReportMetadataParams {

@@ -36,6 +36,7 @@ pub(crate) const PULL_REQUEST_LIMIT: &str = "200";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GithubProjectRequest {
+    pub links: Vec<crate::issues::IssueReference>,
     /// A path inside the repository.
     pub root: PathBuf,
     /// Bumped on Git section opening and explicit header refresh.
@@ -145,7 +146,12 @@ fn read(cache: &Mutex<HashMap<PathBuf, CachedProject>>, request: &GithubRequest)
         // half of an unauthenticated machine's cost.
         let authentication = authentication();
         for (project, _) in due {
-            let answer = read_root(&authentication, &project.root, project.generation);
+            let answer = read_root(
+                &authentication,
+                &project.root,
+                project.generation,
+                &project.links,
+            );
             cache.insert(
                 project.root.clone(),
                 CachedProject {
@@ -179,6 +185,7 @@ fn read_root(
     authentication: &Result<(), GhFailure>,
     root: &Path,
     generation: u64,
+    links: &[crate::issues::IssueReference],
 ) -> GithubProjectSnapshot {
     let Some(main) = main_worktree(root) else {
         return GithubProjectSnapshot::default();
@@ -195,7 +202,7 @@ fn read_root(
             },
             ..GithubProjectSnapshot::default()
         },
-        Ok(()) => read_project(&main, root_path),
+        Ok(()) => read_project(&main, root_path, links),
     };
     // A failure and an empty answer are both stated, separately: an empty
     // list with no reason is a repository with no pull requests.
@@ -222,7 +229,11 @@ fn authentication() -> Result<(), GhFailure> {
     gh(None, &["auth", "status"]).map(|_| ())
 }
 
-fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
+fn read_project(
+    root: &Path,
+    root_path: String,
+    links: &[crate::issues::IssueReference],
+) -> GithubProjectSnapshot {
     let listed = match gh(
         Some(root),
         &[
@@ -246,7 +257,7 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
         }
     };
 
-    let issues = match read_issues(root) {
+    let issues = match read_issues(root, links) {
         Ok(issues) => issues,
         Err(reason) => {
             return GithubProjectSnapshot {
@@ -281,9 +292,21 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
     }
 }
 
-fn read_issues(root: &Path) -> Result<crate::issues::ProjectIssuesSnapshot, GhFailure> {
-    // Read one sentinel beyond the display cap. Search sorting is required:
-    // gh's ordinary list orders by creation, not last update.
+fn read_issues(
+    root: &Path,
+    links: &[crate::issues::IssueReference],
+) -> Result<crate::issues::ProjectIssuesSnapshot, GhFailure> {
+    let repository_json = gh(Some(root), &["repo", "view", "--json", "nameWithOwner"])?;
+    let repository: serde_json::Value = serde_json::from_str(&repository_json)
+        .map_err(|error| GhFailure::network(format!("GitHub repository response: {error}")))?;
+    let repository = repository
+        .get("nameWithOwner")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| GhFailure::network("GitHub repository identity is missing".into()))?
+        .to_owned();
+    crate::issues::IssueReference::parse(&format!("{repository}#1"), None)
+        .map_err(GhFailure::network)?;
+    // One sentinel proves overflow; ordinary gh list sorts by creation.
     let output = gh(
         Some(root),
         &[
@@ -299,17 +322,126 @@ fn read_issues(root: &Path) -> Result<crate::issues::ProjectIssuesSnapshot, GhFa
             "number,title,url,state,projectItems,updatedAt",
         ],
     )?;
-    let mut issues = crate::issues::parse_issues(&output).map_err(GhFailure::network)?;
-    let overflow = issues.len() > crate::issues::ISSUE_LIMIT;
-    issues.truncate(crate::issues::ISSUE_LIMIT);
-    let repository = issues
-        .first()
-        .map(|issue| issue.reference.repository.clone());
+    let listed = crate::issues::parse_issues(&output).map_err(GhFailure::network)?;
+    let mut overflow = listed.len() > crate::issues::ISSUE_LIMIT;
+    let mut issues = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let links: Vec<_> = links
+        .iter()
+        .filter(|reference| seen.insert((*reference).clone()))
+        .take(crate::issues::ISSUE_LIMIT)
+        .collect();
+    let missing: Vec<_> = links
+        .iter()
+        .copied()
+        .filter(|reference| !listed.iter().any(|issue| &issue.reference == *reference))
+        .collect();
+    // Closed and cross-repository links are read together in one bounded
+    // GraphQL query, rather than spawning one subprocess per card.
+    let linked = if missing.is_empty() {
+        Vec::new()
+    } else {
+        let query = issue_query(&missing)?;
+        let output = gh(
+            Some(root),
+            &["api", "graphql", "-f", &format!("query={query}")],
+        )?;
+        parse_linked_issues(&output)?
+    };
+    for reference in links {
+        if let Some(issue) = listed
+            .iter()
+            .chain(linked.iter())
+            .find(|issue| &issue.reference == reference)
+        {
+            issues.push(issue.clone());
+        }
+    }
+    for issue in listed {
+        if issues
+            .iter()
+            .any(|known| known.reference == issue.reference)
+        {
+            continue;
+        }
+        if issues.len() == crate::issues::ISSUE_LIMIT {
+            overflow = true;
+            break;
+        }
+        issues.push(issue);
+    }
     Ok(crate::issues::ProjectIssuesSnapshot {
-        repository,
+        repository: Some(repository),
         issues,
         overflow,
     })
+}
+
+pub(crate) fn read_linked_issue(
+    root: &Path,
+    reference: &crate::issues::IssueReference,
+) -> Result<crate::issues::IssueSnapshot, String> {
+    let query = issue_query(&[reference]).map_err(|error| error.reason)?;
+    let output = gh(
+        Some(root),
+        &["api", "graphql", "-f", &format!("query={query}")],
+    )
+    .map_err(|error| error.reason)?;
+    parse_linked_issues(&output)
+        .map_err(|error| error.reason)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "GitHub issue was not found".to_owned())
+}
+
+fn issue_query(links: &[&crate::issues::IssueReference]) -> Result<String, GhFailure> {
+    let mut query = String::from("query HideLinkedIssues {");
+    for (index, reference) in links.iter().enumerate() {
+        let valid = crate::issues::IssueReference::parse(&reference.token(), None)
+            .map_err(GhFailure::network)?;
+        let (owner, name) = valid
+            .repository
+            .split_once('/')
+            .expect("validated repository");
+        query.push_str(&format!("r{index}:repository(owner:\"{owner}\",name:\"{name}\"){{issue(number:{}){{number title url state updatedAt projectItems(first:100){{nodes{{status:fieldValueByName(name:\"Status\"){{... on ProjectV2ItemFieldSingleSelectValue{{name}}}}}}}}}}}}", valid.number));
+    }
+    query.push('}');
+    Ok(query)
+}
+
+fn parse_linked_issues(output: &str) -> Result<Vec<crate::issues::IssueSnapshot>, GhFailure> {
+    let answer: serde_json::Value =
+        serde_json::from_str(output).map_err(|error| GhFailure::network(error.to_string()))?;
+    if answer.get("errors").is_some() {
+        return Err(GhFailure::network(
+            "GitHub could not resolve the linked issues".into(),
+        ));
+    }
+    let data = answer
+        .get("data")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| GhFailure::network("GitHub linked issue response has no data".into()))?;
+    let mut issues = Vec::new();
+    for repository in data.values() {
+        let Some(mut issue) = repository
+            .get("issue")
+            .filter(|issue| !issue.is_null())
+            .cloned()
+        else {
+            crate::diagnostic!(
+                serde_json::json!({"component":"github","kind":"linked_issue.unavailable"})
+            );
+            continue;
+        };
+        let items = issue
+            .pointer("/projectItems/nodes")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        issue["projectItems"] = items;
+        issues.push(issue);
+    }
+    crate::issues::parse_issues(&serde_json::Value::Array(issues).to_string())
+        .map_err(GhFailure::network)
 }
 
 fn failed(reason: GhFailure) -> GithubStatusSnapshot {
@@ -673,7 +805,11 @@ fn run_gh(
 ) -> Result<String, GhFailure> {
     if !(arguments.starts_with(&["auth", "status"])
         || arguments.starts_with(&["pr", "list"])
-        || arguments.starts_with(&["issue", "list"]))
+        || arguments.starts_with(&["issue", "list"])
+        || arguments == ["repo", "view", "--json", "nameWithOwner"]
+        || (arguments.len() == 4
+            && arguments[..3] == ["api", "graphql", "-f"]
+            && arguments[3].starts_with("query=query HideLinkedIssues {")))
     {
         return Err(GhFailure::network(
             "Unsupported read-only gh command".to_owned(),

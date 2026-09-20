@@ -11,6 +11,8 @@ mod devices;
 mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
 mod editor_reopen;
+#[path = "tests/issues.rs"]
+mod issues;
 #[path = "tests/lineage.rs"]
 mod lineage;
 #[path = "tests/projects.rs"]

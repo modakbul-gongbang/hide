@@ -347,3 +347,25 @@ The ⌘K sheet's agent row is titled by the identity and subtitled by the second
 The pane id is no longer printed on the row but still matches the query and is read by accessibility.
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
 Neither the core nor the plugin renames the Herdr tab for this; the Recent Panels label is projection only.
+
+### Project Home
+
+Project Home is the empty local checkout surface and the Shift-Command-H overlay.
+Its session-local choice defaults to Tasks; Agents groups the same card by the canonical root request's group.
+Tasks derives delivery in priority order: merged worktree or merged PR, open PR, changed files or ahead commits, then ready.
+Needs You changes the halo and stable sort priority, never this delivery stage.
+Main and non-Git checkouts appear only in the ad hoc row when they have agents.
+Completed columns start collapsed and disappear only with their underlying pane or worktree.
+
+`runtime/issues.rs` resolves workspace manual overrides, pane-family issue tokens, branch configuration, PR closing references, then the two supported branch prefixes.
+`wire.rs` extracts metadata and `git_dir.rs` reads the branch setting with the catalog off the runtime lock.
+The existing generation-driven GitHub reader fetches PRs, repository identity and open issues together; a 201st sentinel proves overflow and `sort:updated-desc` determines backlog order.
+Missing closed or cross-repository linked issues use one bounded read-only GraphQL query, not one process per card.
+Linked issues take priority within the combined 200-identity project limit.
+A failed generation preserves its last successful payload, including a successful empty payload.
+The board keeps stale facts and puts their age in the shared issue tooltip; Overview owns the actionable GitHub availability explanation.
+
+Manual issue writes reuse the purpose operation slot and token-first, Git-second writer.
+Validation resolves an issue before writing, a failed Git mirror attempts to restore the previous token, and the runtime suppresses an unconfirmed token.
+No GitHub mutation is allowed by this path.
+The existing purpose mirror worker clears a branch issue setting when an observed worktree is removed; an unregistered project is not treated as a removed worktree.

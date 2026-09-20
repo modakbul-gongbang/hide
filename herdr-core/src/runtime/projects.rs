@@ -445,6 +445,13 @@ impl Runtime {
                         || self.sidebar_github_projects.contains(&workspace.path)
                 })
                 .map(|workspace| crate::github::GithubProjectRequest {
+                    links: workspace
+                        .checkouts
+                        .iter()
+                        .filter_map(|checkout| self.issue_candidates.get(&checkout.id))
+                        .map(|candidate| candidate.reference.clone())
+                        .take(crate::issues::ISSUE_LIMIT)
+                        .collect(),
                     root: PathBuf::from(&workspace.path),
                     generation: self
                         .github_generations
@@ -1181,6 +1188,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        changed |= self.sync_issues();
         changed
     }
 
