@@ -2,7 +2,13 @@
   "repository": "https://github.com/mem0ai/mem0",
   "tag": "v2.1.0",
   "commit": "19f713408273fb1d657daa38d7b82ccf496d36d5",
-  "adapter": "native-hide-provider-and-store",
+  "runtime_dependency": {
+    "crate": "mem0-oss-native",
+    "version": "2.1.0",
+    "path": "vendor/mem0-oss-native",
+    "license": "Apache-2.0",
+    "adapter": "native-hide-provider-and-store"
+  },
   "vendored_prompt_assets": {
     "mem0/configs/prompts.py:ADDITIVE_EXTRACTION_PROMPT": "b9b3e71d9f73b8d9aefbfd6dfd3e6f1d425ce8cd100fbc969ba15e8ae013ad48",
     "mem0/configs/prompts.py:DEFAULT_UPDATE_MEMORY_PROMPT": "18af574579716b35181914dcdeeed6840cea8c4b50342ebe378e1b3452668a4d"

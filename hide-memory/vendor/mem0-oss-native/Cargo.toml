@@ -1,0 +1,10 @@
+[package]
+name = "mem0-oss-native"
+version = "2.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+description = "Audited native boundary for the Mem0 OSS v2.1.0 semantics used by Hide"
+
+[lib]
+path = "src/lib.rs"

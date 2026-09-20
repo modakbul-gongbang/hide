@@ -1,3 +1,6 @@
+use mem0_oss_native::{
+    DEFAULT_SEMANTIC_THRESHOLD, SearchSignals, bm25_params, hybrid_score, normalize_bm25,
+};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1208,14 +1211,25 @@ impl MemoryStore {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        let (midpoint, steepness) = mem0_bm25_params(terms.len());
+        let (midpoint, steepness) = bm25_params(terms.len());
         for candidate in &mut candidates {
-            candidate.lexical_score =
-                mem0_normalize_bm25(candidate.lexical_score.max(0.0), midpoint, steepness);
+            candidate.lexical_score = if candidate.lexical_score > 0.0 {
+                normalize_bm25(candidate.lexical_score, midpoint, steepness)
+            } else {
+                0.0
+            };
         }
+        let has_bm25 = candidates
+            .iter()
+            .any(|candidate| candidate.lexical_score > 0.0);
+        let has_entity = candidates
+            .iter()
+            .any(|candidate| candidate.path_overlap > 0.0);
+        candidates.retain(|candidate| mem0_hybrid_score(candidate, has_bm25, has_entity).is_some());
         candidates.sort_by(|left, right| {
-            mem0_hybrid_score(right)
-                .total_cmp(&mem0_hybrid_score(left))
+            mem0_hybrid_score(right, has_bm25, has_entity)
+                .unwrap_or_default()
+                .total_cmp(&mem0_hybrid_score(left, has_bm25, has_entity).unwrap_or_default())
                 .then_with(|| right.salience.total_cmp(&left.salience))
                 .then_with(|| right.confidence.total_cmp(&left.confidence))
                 .then_with(|| right.updated_at_unix_ms.cmp(&left.updated_at_unix_ms))
@@ -1582,27 +1596,21 @@ fn term_overlap(query_terms: &[String], path_terms: &[String]) -> f64 {
         .count();
     (matches as f64 / query_terms.len() as f64).clamp(0.0, 1.0)
 }
-fn mem0_hybrid_score(candidate: &RetrievalCandidate) -> f64 {
-    // Exact native port of Mem0 v2.1's `score_and_rank` additive formula.
-    // The background extraction confidence is the materialized semantic
-    // signal, FTS supplies normalized BM25, and checkout overlap is the
-    // bounded entity boost. Hook retrieval performs no model or embedding.
-    let semantic = candidate.confidence.clamp(0.0, 1.0);
-    let lexical = candidate.lexical_score.clamp(0.0, 1.0);
-    let path_boost = candidate.path_overlap.clamp(0.0, 1.0) * 0.5;
-    ((semantic + lexical + path_boost) / 2.5).min(1.0)
-}
-fn mem0_bm25_params(term_count: usize) -> (f64, f64) {
-    match term_count.max(1) {
-        1..=3 => (5.0, 0.7),
-        4..=6 => (7.0, 0.6),
-        7..=9 => (9.0, 0.5),
-        10..=15 => (10.0, 0.5),
-        _ => (12.0, 0.5),
-    }
-}
-fn mem0_normalize_bm25(raw_score: f64, midpoint: f64, steepness: f64) -> f64 {
-    1.0 / (1.0 + (-steepness * (raw_score - midpoint)).exp())
+fn mem0_hybrid_score(
+    candidate: &RetrievalCandidate,
+    has_bm25: bool,
+    has_entity: bool,
+) -> Option<f64> {
+    hybrid_score(
+        SearchSignals {
+            semantic_score: candidate.confidence,
+            bm25_score: candidate.lexical_score,
+            entity_overlap: candidate.path_overlap,
+        },
+        has_bm25,
+        has_entity,
+        DEFAULT_SEMANTIC_THRESHOLD,
+    )
 }
 fn token_count(value: &str) -> usize {
     value
@@ -1635,9 +1643,9 @@ mod tests {
 
     #[test]
     fn mem0_v2_1_search_scoring_matches_upstream_golden_values() {
-        assert_eq!(mem0_bm25_params(2), (5.0, 0.7));
-        assert_eq!(mem0_bm25_params(5), (7.0, 0.6));
-        assert!((mem0_normalize_bm25(5.0, 5.0, 0.7) - 0.5).abs() < f64::EPSILON);
+        assert_eq!(bm25_params(2), (5.0, 0.7));
+        assert_eq!(bm25_params(5), (7.0, 0.6));
+        assert!((normalize_bm25(5.0, 5.0, 0.7) - 0.5).abs() < f64::EPSILON);
         let candidate = RetrievalCandidate {
             id: "m1".to_owned(),
             revision: 1,
@@ -1650,7 +1658,8 @@ mod tests {
             path_overlap: 0.4,
         };
         // (semantic 0.8 + BM25 0.5 + entity boost 0.2) / 2.5
-        assert!((mem0_hybrid_score(&candidate) - 0.6).abs() < f64::EPSILON);
+        assert_eq!(mem0_hybrid_score(&candidate, true, true), Some(0.6));
+        assert_eq!(mem0_hybrid_score(&candidate, true, false), Some(0.65));
     }
 
     fn store() -> (tempfile::TempDir, MemoryStore, String) {

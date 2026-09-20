@@ -5,6 +5,7 @@ members = [
     "hide-agent-hooks",
     "hide-ai",
     "hide-memory",
+    "hide-memory/vendor/mem0-oss-native",
     "hide-project",
     "hide-session",
     "plugins/agent-context-labels",
