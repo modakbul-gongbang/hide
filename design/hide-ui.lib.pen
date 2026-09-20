@@ -8691,7 +8691,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "One identity everywhere: the core's identity_label (chat title → name token → Herdr agent name → task → workspace). Search subtitles the state sentence (else task, else the status word); Recent titles a one-agent tab by its agent and keeps the Herdr label otherwise.",
+          "content": "One title everywhere: the core's identity_label (task → workspace; Herdr agent names are control ids only). Search subtitles the state sentence (else the status word); Recent titles a one-agent tab by its agent and keeps the Herdr label otherwise.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"

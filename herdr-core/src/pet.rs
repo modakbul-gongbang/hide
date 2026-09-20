@@ -274,8 +274,6 @@ mod tests {
             status_label: "Idle".to_owned(),
             requires_close_confirmation: false,
             requires_close_status_check: false,
-            name: None,
-            task: None,
             progress: None,
             expected_reply: None,
             detail: None,

@@ -79,11 +79,16 @@ private func checkout(
     return checkout
 }
 
-private func agent(_ id: String, name: String, task: String? = nil, delegated: Bool = false) -> SidebarAgent {
+private func agent(
+    _ id: String,
+    title: String,
+    detail: String? = nil,
+    delegated: Bool = false
+) -> SidebarAgent {
     var agent = SidebarAgent(
         id: id, paneID: id, workspaceLabel: "hide", agentKind: "claude", demand: "none", activity: "working",
-        unread: false, group: "working", symbol: "\u{25cf}", identityLabel: name, task: task,
-        elapsed: "1m", lastActivity: "0000000000001"
+        unread: false, group: "working", symbol: "\u{25cf}", identityLabel: title,
+        detail: detail, elapsed: "1m", lastActivity: "0000000000001"
     )
     agent.delegated = delegated
     return agent
@@ -93,6 +98,17 @@ private let ready = CoreGithubStatus(available: true, loading: false, stale: fal
 
 @Suite("Project Overview")
 struct OverviewPresentationTests {
+    @Test func aTitleIsNotRepeatedAndProgressRemainsTheRowDetail() {
+        let titleOnly = agent("p1", title: "훅 보고 경로 수정")
+        #expect(OverviewPresentation.rowDetail(titleOnly) == nil)
+        let progressing = agent(
+            "p3",
+            title: "훅 보고 경로 수정",
+            detail: "회귀 테스트 추가 중"
+        )
+        #expect(OverviewPresentation.rowDetail(progressing) == "회귀 테스트 추가 중")
+    }
+
     @Test func theSubtitleCountsWorkspacesAndNamesInactiveOnesOnlyWhenThereAreSome() {
         #expect(OverviewPresentation.subtitle(workspaceCount: 1, inactiveCount: 0) == "Project · 1 workspace")
         #expect(OverviewPresentation.subtitle(workspaceCount: 6, inactiveCount: 2) == "Project · 6 workspaces · 2 inactive")
@@ -195,12 +211,12 @@ struct OverviewPresentationTests {
     }
 
     @Test func rowsNestChildrenUnderParentsInTheSameGroupAndCaptionOnesFromElsewhere() {
-        var parent = agent("pane-parent", name: "sasu", task: "PRD")
+        var parent = agent("pane-parent", title: "PRD orchestration")
         parent.lineageChildPaneIDs = ["pane-child", "pane-far"]
-        var child = agent("pane-child", name: "child", delegated: true)
+        var child = agent("pane-child", title: "Implement PRD", delegated: true)
         child.lineageDepth = 1
         child.spawnOriginPaneID = "pane-parent"
-        var far = agent("pane-far", name: "far", delegated: true)
+        var far = agent("pane-far", title: "Review PRD", delegated: true)
         far.lineageDepth = 1
         far.spawnOriginPaneID = "pane-parent"
         let main = checkout("main", path: "/p", isWorktree: false, paneIDs: ["pane-parent", "pane-child"])
@@ -215,13 +231,13 @@ struct OverviewPresentationTests {
         let otherRows = OverviewPresentation.rows(agents: agents, in: other, checkouts: [main, other])
         #expect(otherRows.map(\.id) == ["pane-far"])
         #expect(otherRows.map(\.depth) == [0])
-        #expect(otherRows.first?.origin == "from sasu · main")
+        #expect(otherRows.first?.origin == "from PRD orchestration · main")
     }
 
     @Test func searchKeepsMatchingRowsWithTheirGroupAndMatchesBranches() {
-        var parent = agent("pane-parent", name: "sasu", task: "PRD review")
+        var parent = agent("pane-parent", title: "PRD review")
         parent.lineageChildPaneIDs = ["pane-child"]
-        var child = agent("pane-child", name: "구성 검토", delegated: true)
+        var child = agent("pane-child", title: "구성 검토", delegated: true)
         child.lineageDepth = 1
         let feature = checkout("prd/hide-orchestrator", path: "/f", paneIDs: ["pane-parent", "pane-child"])
         let rows = OverviewPresentation.rows(agents: [parent, child], in: feature, checkouts: [feature])

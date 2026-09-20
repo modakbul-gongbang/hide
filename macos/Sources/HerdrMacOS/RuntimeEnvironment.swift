@@ -143,7 +143,8 @@ enum HideRuntimeEnvironment {
     }
 
     /// Routing values a child tool needs and the shell can only pass on if it
-    /// has one itself. Every key here is a path or a socket, never a secret.
+    /// has one itself. Every key here is a non-secret session identifier, path,
+    /// or socket.
     ///
     /// This list, not a chain of hand-written `if let` blocks, is what decides
     /// the forwarded set. The socket is not on it because it is never merely
@@ -158,6 +159,9 @@ enum HideRuntimeEnvironment {
     static let forwardedRoutingKeys = [
         "SSH_AUTH_SOCK",
         "HERDR_CONFIG_PATH",
+        "HERDR_SESSION",
+        "XDG_CONFIG_HOME",
+        "XDG_STATE_HOME",
     ]
 
     /// Values every child needs, with what the shell substitutes when the
@@ -272,14 +276,25 @@ enum HerdrRuntimeResolver {
     static func startServerIfNeeded(
         selection: HerdrRuntimeSelection?,
         socketPath: String,
-        environment: [String: String]? = nil
+        environment: [String: String]? = nil,
+        probe: HerdrServerProbe = probeServer
     ) -> HerdrServerStartResult {
-        guard !FileManager.default.fileExists(atPath: socketPath) else { return .notNeeded }
         guard let selection else { return .failed(HideStartupDiagnostic.runtimeUnavailable) }
+        let resolvedEnvironment = environment ?? HideRuntimeEnvironment.childEnvironment()
+        switch probe(selection, socketPath, resolvedEnvironment) {
+        case .running:
+            return .notNeeded
+        case .notRunning:
+            break
+        case .failed(let message):
+            return .failed(message)
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: selection.path)
         process.arguments = ["server"]
-        process.environment = environment ?? HideRuntimeEnvironment.childEnvironment()
+        process.environment = resolvedEnvironment.merging([
+            "HERDR_SOCKET_PATH": socketPath,
+        ]) { _, requiredValue in requiredValue }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {
@@ -288,6 +303,50 @@ enum HerdrRuntimeResolver {
         } catch {
             return .failed(HideStartupDiagnostic.serverStartFailed(error.localizedDescription))
         }
+    }
+
+    /// A path is not a server. A crashed Unix listener leaves its socket node
+    /// behind, so only the bundled CLI's live status answer can suppress a
+    /// start. The probe stays outside the core lock and the main actor.
+    static func probeServer(
+        selection: HerdrRuntimeSelection,
+        socketPath: String,
+        environment: [String: String]
+    ) -> HerdrServerProbeResult {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: selection.path)
+        process.arguments = ["status", "server", "--json"]
+        process.environment = environment.merging([
+            "HERDR_SOCKET_PATH": socketPath,
+        ]) { _, requiredValue in requiredValue }
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            guard waitForExit(process, operation: "herdr_server_probe") else {
+                return .failed(
+                    HideStartupDiagnostic.serverStartFailed("server status timed out")
+                )
+            }
+        } catch {
+            return .failed(HideStartupDiagnostic.serverStartFailed(error.localizedDescription))
+        }
+        guard process.terminationStatus == 0 else {
+            return .failed(
+                HideStartupDiagnostic.serverStartFailed(
+                    "server status exited with \(process.terminationStatus)"
+                )
+            )
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        guard let status = try? JSONDecoder().decode(HerdrServerStatus.self, from: data) else {
+            return .failed(
+                HideStartupDiagnostic.serverStartFailed("server status returned invalid JSON")
+            )
+        }
+        return status.running ? .running : .notRunning
     }
 
     private static func sha256(of path: String) -> String? {
@@ -333,7 +392,23 @@ enum HerdrRuntimeResolver {
 
 }
 
-enum HerdrServerStartResult {
+private struct HerdrServerStatus: Decodable {
+    let running: Bool
+}
+
+typealias HerdrServerProbe = @Sendable (
+    _ selection: HerdrRuntimeSelection,
+    _ socketPath: String,
+    _ environment: [String: String]
+) -> HerdrServerProbeResult
+
+enum HerdrServerProbeResult: Sendable {
+    case running
+    case notRunning
+    case failed(String)
+}
+
+enum HerdrServerStartResult: @unchecked Sendable {
     case notNeeded
     case started(Process)
     case failed(String)

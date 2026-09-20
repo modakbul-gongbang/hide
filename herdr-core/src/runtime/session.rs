@@ -1714,7 +1714,11 @@ impl Runtime {
         }
         if let Some(mut agents) = agents {
             self.place_agents_in_navigator(&mut agents);
-            changed |= self.apply_pane_read_state(&mut agents, ReadRecordScope::Local);
+            changed |= self.apply_pane_read_state(
+                &mut agents,
+                ReadRecordScope::Local,
+                live_pane_ids.as_ref(),
+            );
             if crate::sidebar::prune_lineage_collapse(
                 &mut self.snapshot.ui_state.collapsed_agent_pane_ids,
                 &agents,

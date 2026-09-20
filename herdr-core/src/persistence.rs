@@ -263,6 +263,7 @@ mod tests {
             "w1:p1".to_owned(),
             PaneReadRecord {
                 state_change_seq: Some(7),
+                session_id: Some("session-7".to_owned()),
                 demand: "question".to_owned(),
                 activity: "stopped".to_owned(),
             },
@@ -273,6 +274,21 @@ mod tests {
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(reloaded.pane_read_records, state.pane_read_records);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn read_records_written_before_session_identity_still_load() {
+        let mut persisted = serde_json::to_value(UiStateSnapshot::default()).unwrap();
+        persisted["pane_read_records"] = serde_json::json!({
+            "w1:p1": {
+                "state_change_seq": 41,
+                "demand": "none",
+                "activity": "stopped"
+            }
+        });
+
+        let state: UiStateSnapshot = serde_json::from_value(persisted).unwrap();
+        assert_eq!(state.pane_read_records["w1:p1"].session_id, None);
     }
 
     /// AC4. A store written before Hide owned the read axis still loads. Its

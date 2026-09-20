@@ -11,9 +11,10 @@ The repository `AGENTS.md` owns the working rules, the harness namespace, the ev
 - `pane.agent_status_changed` is a pane-scoped contract filter, so the watcher expands it for the pane ids in its bootstrap list and rebuilds the subscription when panes are created or closed.
 - Hooks and refresh write their existing marker files before sending one line to `watcher.sock`; a missing watcher leaves the marker for the next bootstrap.
 - Build output is the workspace's `target/`; the scripts under `scripts/` resolve the binary two levels above the plugin directory.
-- The published label is the session-level `$task` token, backed by `PersistedDisplayState.task`. A second `pane.report_metadata` under the same source carries `name`, `progress` and `expected_reply`, each cleared with `null` when absent, so the two reports stay under the 16-token limit and the pane under 32.
-- The session name comes from the session record (`hide-session` parses Claude's `ai-title`; Codex takes the first human turn) and is written once per name: `agent.rename` when Herdr's `[a-z][a-z0-9_-]{0,31}` rule accepts it, the `name` token otherwise, and `tab.rename` when the tab holds one agent and its label is Herdr's or ours. Ownership lives in `PersistedDisplayState.plugin_name`, `plugin_name_as_agent` and `plugin_tab_label`; an operator's name or label is never overwritten (`name_owned`, `tab_label_owned`).
-- A refused rename is one `agent_rename_failed`/`tab_rename_failed` log line and no retry; `session_title_missing` is logged once per Claude pane without an `ai-title`.
+- The published title is the session-level `$task` token, backed by `PersistedDisplayState.task`.
+- A second `pane.report_metadata` under the same source carries `progress`, `expected_reply`, and an explicit `null` tombstone for the retired `name` token, so the two reports stay under the 16-token limit and the pane under 32.
+- The plugin never renames agents or tabs.
+- A legacy `plugin_name` is read only as transition ownership evidence: the watcher clears that exact Herdr agent name, never an operator replacement, then removes the legacy fields from persisted state.
 - The v3 provider contract returns `task`, `task_changed`, `progress`, `expected_reply`, and `attention` in that order, and a false `task_changed` keeps the persisted task byte-for-byte; `expected_reply` is asked for as a 40-character imperative sentence and cut at `MAX_EXPECTED_REPLY_CHARS`.
 - A missing task state uses the first three and last eight Human turns with an omission marker, while later turn-start requests use only the new Human-turn delta and the prior task.
 - `refresh-active-pane-task` discards the rolling task for the focused pane and re-derives it from the initial session view.

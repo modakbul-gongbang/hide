@@ -526,13 +526,13 @@ struct CheckoutOverview: View {
         .accessibilityIdentifier("overview-empty-\(checkout.id)")
     }
 
-    /// One agent row: mark, badge, name, task, and the trailing `↗` that
+    /// One agent row: mark, badge, title, optional detail, and the trailing `↗` that
     /// says what a click does. The whole row is the button (PRD B9).
     private func agentRow(_ entry: OverviewPresentation.AgentEntry) -> some View {
         let agent = entry.agent
         let state = AgentStatusPresentation(agent: agent, connected: model.agentsConnected)
         let shown = model.focusedPaneID == agent.paneID
-        let task = OverviewPresentation.rowTask(agent)
+        let detail = OverviewPresentation.rowDetail(agent)
         return Button { model.selectAgent(paneID: agent.paneID) } label: {
             HStack(spacing: HideTheme.spacingXS) {
                 Group {
@@ -550,8 +550,8 @@ struct CheckoutOverview: View {
                     .foregroundStyle(agent.delegated ? HideTheme.secondary : HideTheme.primary)
                     .lineLimit(1)
                     .layoutPriority(1)
-                if let task {
-                    Text(task)
+                if let detail {
+                    Text(detail)
                         .hideFont(size: HideTheme.Typography.caption)
                         .foregroundStyle(HideTheme.secondary)
                         .lineLimit(1)
@@ -571,7 +571,7 @@ struct CheckoutOverview: View {
         .buttonStyle(HideInteractiveButtonStyle())
         .padding(.horizontal, HideTheme.spacingXS)
         .background(shown ? HideTheme.elevated : Color.clear, in: RoundedRectangle(cornerRadius: HideTheme.radiusExtraSmall))
-        .hideTooltip([agent.identityLabel, state.label, task].compactMap { $0 }.joined(separator: " · "))
+        .hideTooltip([agent.identityLabel, state.label, detail].compactMap { $0 }.joined(separator: " · "))
         .accessibilityLabel([agent.identityLabel, state.label, agent.checkoutLabel].compactMap { $0 }.joined(separator: ", "))
         .accessibilityValue(shown ? "Shown" : "")
         .accessibilityIdentifier("overview-agent-\(agent.paneID)")

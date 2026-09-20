@@ -313,7 +313,7 @@ fn browser_host_identity_follows_pane_updates_and_rejects_remote_attachment() {
 }
 
 #[test]
-fn agent_projection_keeps_the_herdr_name_for_lineage_hints() {
+fn agent_projection_keeps_the_herdr_name_as_its_control_identifier() {
     let mut value = snapshot();
     value["agents"] = json!([{
         "pane_id": "w1:p1",

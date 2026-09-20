@@ -26,8 +26,8 @@ Each supported pane gets a short task label, lifecycle status, agent kind, and t
 
 ## What it does
 
-- Names each recognized Codex and Claude Code session once, from the session's own record, and writes that name where Herdr and Hide already look: the agent name, the tab label, or a `name` token. See [Session names](#session-names).
 - Adds an 8-to-30-character Korean task label to recognized Codex and Claude Code panes.
+- Uses that rolling task as Hide's agent title, with the workspace label as the fallback; Herdr agent names remain control identifiers.
 - Publishes the one-line `progress` and the 40-character `expected_reply` as tokens, so Hide's sidebar can say what the agent is doing or what it is waiting for you to do.
 - Shows question, approval, error, working, unseen completion, idle, and unknown states as compact symbols.
 - Holds one steady symbol per state; working is told apart from an unseen completion by color, not by a blink.
@@ -281,32 +281,20 @@ description = "refresh active pane task"
 
 The refresh action discards the rolling task for the focused pane and asks again using the initial session view: the first three and last eight Human turns with an omission marker.
 
-## Session names
+## Task titles
 
-A session's name is derived at no provider cost and settles once, so the row that shows it does not move while the agent works.
+The plugin publishes no session `name` and never renames a Herdr agent or tab.
+Hide titles an agent by the rolling `task`, then by the workspace label.
+Names assigned by Sasu or another orchestrator remain available for CLI targeting but never become display titles.
+Claude's `ai-title` and Codex's first human turn have no separate title role.
 
-- Claude Code writes an `ai-title` record into its session JSONL; the last one is the name, cut to 80 characters. Until one exists the first human turn stands in, and the watcher logs `session_title_missing` once for the pane.
-- Codex has no title record, so the first human turn, whitespace-collapsed and cut to 30 characters, is the name.
-- A session with neither yields no name, and nothing is written.
-- A pane whose session Herdr has not recorded yet is not named at all, and neither is a pane whose recorded session has no transcript file yet (Claude Code writes it on the first turn): the watcher would otherwise read the newest transcript in the directory, which belongs to another pane when two agents share it, and the pane would carry its neighbour's name until its own first turn.
-  Until the file appears the watcher logs `raw_session_unavailable` with `session_file_missing` for the pane and publishes nothing.
-
-The name goes where the reader already looks, under one ownership rule: the plugin writes only what nobody else has written, or what it wrote itself last time.
-
-| Target | Condition | Route |
-| --- | --- | --- |
-| Herdr agent name | the agent has no name, or its name is the one this plugin gave it (`plugin_name` in the state file) | `agent.rename`, when the name fits Herdr's rule `[a-z][a-z0-9_-]{0,31}` |
-| `name` token | same ownership, but Herdr would refuse the name (Korean, spaces, capitals) or did refuse it | second `pane.report_metadata`; Hide reads it above the Herdr name |
-| Tab label | the tab holds exactly one agent pane and its label is Herdr's own (`3`, `Tab 3`) or the one this plugin wrote (`plugin_tab_label`) | `tab.rename`, any text |
-
-An agent the operator named with `herdr agent new impl-x` stays `impl-x`, and its `name` token is cleared so the sidebar shows the operator's name.
-A tab the operator renamed, or one shared by two agents, keeps its label.
-A refused rename or an unreadable tab is one `agent_rename_failed` or `tab_rename_failed` log line and no retry; the missing name is the visible failure, and the next different name is tried again.
-When Claude's `ai-title` changes, the plugin follows it under the same conditions.
-
-The second report carries three tokens and clears each with `null` when absent: `name` (as above), `progress`, and `expected_reply`.
+The second report carries `progress` and `expected_reply`, plus an explicit `null` for the retired `name` token so an older value cannot linger after an upgrade.
 Both sentences are read back from the state file, so a watcher restart republishes them without a provider call.
 `expected_reply` is cleared as soon as the agent works again, since the reply it asked for is no longer wanted.
+
+An older plugin version may have renamed a Herdr agent.
+On upgrade, the watcher clears that name only when the live value still equals the plugin-owned value recorded in `display-state.json`; an operator replacement is preserved.
+Old tab labels are no longer changed, because the pinned Herdr API has no operation that restores an automatic tab label; an existing plugin-written label remains until the operator renames it.
 
 ## Rolling task generation
 
@@ -433,7 +421,7 @@ cat ~/.claude/projects/<cwd-slug>/<session>.jsonl \
   | ../../target/release/hide-agent-context-labels analyze-stdin --agent claude
 ```
 
-Common event codes include `ai_provider_availability`, `raw_session_unavailable`, `session_rescanned`, `session_lines_skipped`, `session_title_missing`, `agent_rename_failed`, `tab_rename_failed`, `analysis_provider_unavailable`, `analysis_abandoned`, and the provider layer's `ai.attempt`, `ai.request.finished`, `ai.fallback`, and `ai.daily_rollup`.
+Common event codes include `ai_provider_availability`, `raw_session_unavailable`, `session_rescanned`, `session_lines_skipped`, `legacy_agent_name_clear_failed`, `analysis_provider_unavailable`, `analysis_abandoned`, and the provider layer's `ai.attempt`, `ai.request.finished`, `ai.fallback`, and `ai.daily_rollup`.
 
 | Symptom | Cause and fix |
 | --- | --- |

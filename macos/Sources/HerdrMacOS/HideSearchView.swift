@@ -213,13 +213,12 @@ enum HideSearchPresentation {
         return HideSearchEntry.filtered(entries, query: query)
     }
 
-    /// The line under an agent's name: the sentence the core chose for its
-    /// state, else the rolling task when it is not already the title, else
-    /// the status word. The pane id left this line for the match field and
-    /// the accessibility label (PRD D-15).
+    /// The line under an agent's title: the sentence the core chose for its
+    /// state, else the status word. The rolling task is already the title.
+    /// The pane id left this line for the match field and the accessibility
+    /// label (PRD D-15).
     static func agentSubtitle(_ agent: SidebarAgent) -> String {
         if let detail = agent.detail { return detail }
-        if let task = agent.task, task != agent.identityLabel { return task }
         return agent.statusLabel
     }
 

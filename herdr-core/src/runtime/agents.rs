@@ -752,6 +752,24 @@ impl Runtime {
         self.snapshot.pet.shortcut = self.snapshot.ui_state.pet_shortcut.clone();
     }
 
+    /// Arms the records that need one sequence reconciliation after a fresh
+    /// connection. The set is bounded by the persisted read ledger.
+    pub(crate) fn begin_local_read_record_reconciliation(&mut self) {
+        self.pending_read_record_reconciliation = self
+            .snapshot
+            .ui_state
+            .pane_read_records
+            .keys()
+            .filter(|pane_id| ReadRecordScope::Local.owns(pane_id))
+            .cloned()
+            .collect();
+        crate::diagnostic!(serde_json::json!({
+            "component": "read_state",
+            "kind": "reconciliation.started",
+            "record_count": self.pending_read_record_reconciliation.len(),
+        }));
+    }
+
     /// Raises the operator-focused pane's read record and sets the read axis
     /// on every row, then persists the record when it actually moved.
     ///
@@ -768,14 +786,34 @@ impl Runtime {
         &mut self,
         agents: &mut [SidebarAgentSnapshot],
         scope: ReadRecordScope<'_>,
+        live_pane_ids: Option<&HashSet<String>>,
     ) -> bool {
         let focused = self.operator_focused_pane_id.clone();
-        let changes = crate::sidebar::apply_read_state(
+        let mut changes = if scope == ReadRecordScope::Local {
+            crate::sidebar::reconcile_read_records(
+                agents,
+                &mut self.snapshot.ui_state.pane_read_records,
+                &mut self.pending_read_record_reconciliation,
+            )
+        } else {
+            Vec::new()
+        };
+        if let Some(live_pane_ids) = live_pane_ids {
+            changes.extend(crate::sidebar::prune_read_records(
+                &mut self.snapshot.ui_state.pane_read_records,
+                live_pane_ids,
+                scope,
+            ));
+            if scope == ReadRecordScope::Local {
+                self.pending_read_record_reconciliation
+                    .retain(|pane_id| live_pane_ids.contains(pane_id));
+            }
+        }
+        changes.extend(crate::sidebar::apply_read_state(
             agents,
             &mut self.snapshot.ui_state.pane_read_records,
             focused.as_deref(),
-            scope,
-        );
+        ));
         let synced = self.sync_pane_status_from_agents(agents);
         let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
@@ -795,7 +833,7 @@ impl Runtime {
     pub(super) fn refresh_pane_read_state(&mut self) -> bool {
         let before = self.snapshot.navigator.agents.clone();
         let mut agents = std::mem::take(&mut self.snapshot.navigator.agents);
-        self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain);
+        self.apply_pane_read_state(&mut agents, ReadRecordScope::Retain, None);
         let changed = before != agents;
         self.snapshot.navigator.agents = agents;
         changed | self.refresh_inactive_groups()
@@ -818,12 +856,24 @@ impl Runtime {
     ) -> bool {
         let focused = session.focused_pane_id.clone();
         let prefix = remote_pane_id_prefix(target_id);
-        let changes = crate::sidebar::apply_read_state(
+        let live_pane_ids = session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .map(|pane| pane.id.clone())
+            .collect::<HashSet<_>>();
+        let mut changes = crate::sidebar::prune_read_records(
+            &mut self.snapshot.ui_state.pane_read_records,
+            &live_pane_ids,
+            ReadRecordScope::Remote(&prefix),
+        );
+        changes.extend(crate::sidebar::apply_read_state(
             &mut session.agents,
             &mut self.snapshot.ui_state.pane_read_records,
             focused.as_deref(),
-            ReadRecordScope::Remote(&prefix),
-        );
+        ));
         let lineage_pruned = crate::sidebar::prune_lineage_collapse(
             &mut self.snapshot.ui_state.collapsed_agent_pane_ids,
             &session.agents,
@@ -989,7 +1039,7 @@ impl Runtime {
                     label: agents
                         .iter()
                         .find(|agent| agent.pane_id == pane.id)
-                        .map(|agent| agent.id.clone())
+                        .map(|agent| agent.identity_label.clone())
                         .unwrap_or_else(|| pane.id.clone()),
                     message: children.uninstrumented_reason.clone().unwrap_or_default(),
                 });
@@ -1141,7 +1191,7 @@ impl Runtime {
                 .first()
                 .cloned()
                 .unwrap_or_else(|| agent.pane_id.clone());
-            let name = agent.id.clone();
+            let name = agent.identity_label.clone();
             let notice = format!(
                 "{name} has been waiting {} minutes on {}",
                 elapsed / 60_000,

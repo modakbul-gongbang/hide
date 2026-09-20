@@ -692,7 +692,7 @@ private func presentationAgent(
     #expect(!seenRow.statusWordVisible)
 }
 
-/// PRD D-08, B9: the header line reads `name · sentence`, with the word only
+/// PRD D-08, B9: the header line reads `title · sentence`, with the word only
 /// when the core chose no sentence, and a shell operation on the pane takes
 /// the slot while it runs. The accessibility label carries the word either way.
 @Test func paneHeaderSentenceFollowsTheRowAndYieldsToAShellOperation() {

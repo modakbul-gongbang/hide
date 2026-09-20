@@ -24,11 +24,16 @@ Its own documentation is explicit: focusing a tab, or targeting it with pane foc
 Three finished agents side by side in one tab therefore cleared together on a single click, which is the bug this model exists to fix.
 
 So Hide keeps its own record instead.
-A pane is read when it has held Hide's keyboard focus since its last state change, and a state change is Herdr's `state_change_seq` rising **or** the derived demand and activity pair changing.
+A pane is read when it has held Hide's keyboard focus since its last state change, and within one answering Herdr connection a state change is Herdr's `state_change_seq` moving **or** the derived demand and activity pair changing.
 The pair matters because Herdr's sequence does not always rise when only plugin tokens change: with a pane's lifecycle held at `idle`, clearing its idle token so only a question token remained left the sequence where it was.
+`state_change_seq` is process-local, so the first projection after a connection bootstrap reconciles a saved record only when the sequence moved backwards and the agent session id, demand and activity still match before adopting the new sequence.
+A sequence that moved forward is new work completed while Hide was disconnected and remains unread.
+A different known agent session or a different demand or activity also remains unread; a matching restored agent remains read when a restarted server reset the sequence.
+An older saved record with no session identity is migrated on that same backwards-sequence and matching-state proof, then persists the detected identity for later restarts.
+The reconciliation stays pending for a saved pane until agent detection catches up, because restored pane topology can arrive before the restored agent list.
 
 The record is `pane_read_records` in the persisted UI state, keyed by pane id, so it survives a restart.
-A record whose pane the server stops reporting is dropped on the same pass, scoped to the namespace that pass owns, so a local sync never drops a remote pane's record.
+A record is dropped only when the authoritative pane layout stops reporting that pane, scoped to the namespace that pass owns, so a temporarily incomplete agent list and a local sync can never drop a restored or remote pane's record.
 A corrupt store loads as an empty record, which reads as everything unread, and says so in a diagnostic; it is never silently treated as read.
 
 Nothing reads Herdr's `done` versus `idle` split, or a token's `_new` suffix, to decide the read axis.
@@ -297,9 +302,10 @@ The workspace inspector uses the canonical representative agent and disconnected
 ## Task identity
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, and the Overview agent line.
-`sidebar.rs` owns the ladder: the `name` token the label plugin publishes when Herdr refused the session name as an agent name, then the Herdr agent name, then the plugin's rolling `task`, then the workspace label.
-The session name is the plugin's to derive (Claude's `ai-title`, Codex's first human turn) and is written once per session, so the title does not move while the agent works; `task` is a fallback for an agent that has no name yet, not a name.
-There is no `summary` token and no missing-summary notice: an agent without a plugin label is titled by its Herdr name or its workspace, and the row says nothing else.
+`sidebar.rs` owns the ladder: the plugin's rolling `task`, then the workspace label.
+The Herdr agent name remains the unique control identifier that Sasu and other orchestrators assign at start, so it never enters the display ladder.
+The plugin publishes no session `name`, does not read Claude's `ai-title` or Codex's first human turn as a separate title, and never renames an agent or tab.
+There is no `summary` token and no missing-summary notice: an agent without a task is titled by its workspace, and the row says nothing else.
 Truncation belongs to each view and does not shorten tooltip or accessibility text.
 Projection adds bounded-by-metadata strings per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.
 
@@ -318,12 +324,12 @@ The sentences come from the plugin's tokens: `expected_reply` is the one action 
 `status_word_visible` is true only when the group wanted a sentence and the tokens carried none: the status word stands in for it, so an emphasized or working row never has an empty second line and a plugin that is absent or has not labelled the pane yet reads as before, title and status word.
 Beside a sentence the word is never drawn; the mark and the group heading already say it.
 A delegated row follows the same table for its own group, which for a child is Working or Seen, so a delegated child that has stopped shows only its title.
-The pane header is one line: `name · sentence`, or `name · word` for a row with no sentence, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
-The accessibility label of a row and of a header always carries the status word, in the order name, agent kind, status word, sentence, so a row whose word left the screen is still read out with it.
+The pane header is one line: `title · sentence`, or `title · word` for a row with no sentence, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
+The accessibility label of a row and of a header always carries the status word, in the order title, agent kind, status word, sentence, so a row whose word left the screen is still read out with it.
 
 ### Search and Recent Panels
 
-The ⌘K sheet's agent row is titled by the identity and subtitled by the second line above; when the state chose no sentence it falls to the rolling `task`, unless that is already the title, and then to the status word.
+The ⌘K sheet's agent row is titled by the identity and subtitled by the second line above; when the state chose no sentence it falls to the status word because the rolling `task` is already the title.
 The pane id is no longer printed on the row but still matches the query and is read by accessibility.
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
-The core never renames the Herdr tab for this; the plugin does, under its own ownership rule.
+Neither the core nor the plugin renames the Herdr tab for this; the Recent Panels label is projection only.

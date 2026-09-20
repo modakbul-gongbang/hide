@@ -793,8 +793,8 @@ final class ShellModel: ObservableObject {
     }
 
     /// The canonical pane name already used by the focused header. Lineage
-    /// payloads can carry a stale agent spawn name, while this snapshot carries
-    /// the live user-facing pane label. Relationship surfaces resolve through
+    /// payloads can carry a stale agent spawn name, while the projected agent
+    /// carries the current rolling task. Relationship surfaces resolve through
     /// this one ladder so Return always names the pane it will actually select.
     func paneIdentity(for paneID: String) -> String? {
         guard let pane = paneMetadata(for: paneID) else { return nil }

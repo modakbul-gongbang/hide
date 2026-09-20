@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -615,7 +615,7 @@ pub fn apply_lineage(
         let spawn_parent = spawned_from
             .as_ref()
             .and_then(|pane| by_pane.get(pane))
-            .map(|parent| agent_identity_label(&agents[*parent]));
+            .map(|parent| agents[*parent].identity_label.clone());
         let hint = spawned_from.as_ref().map(|_| match &spawn_parent {
             Some(name) => format!("↳ from {name}"),
             None => "↳ from an agent Hide can't see".to_owned(),
@@ -683,25 +683,6 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
         status_label: agent.status_label.clone(),
         delegated: agent.delegated,
     }
-}
-
-/// The stable, user-facing identity shared by lineage surfaces.
-///
-/// The ladder is `name token → Herdr agent name → task → workspace label`
-/// (PRD D-01, D-03). The `name` token is the session name the label plugin
-/// read off the agent's own session file when Herdr refused it as an agent
-/// name; the Herdr agent name is the one the operator or the plugin gave. `task` is the
-/// plugin's rolling title, which moves between turns, so it stands in only
-/// when no name exists at all. A pane id is a transport handle, never a
-/// name: a report-only pane whose `id` is its pane id falls through to the
-/// workspace label.
-fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
-    agent
-        .name
-        .clone()
-        .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
-        .or_else(|| agent.task.clone())
-        .unwrap_or_else(|| agent.workspace_label.clone())
 }
 
 /// What a row's second line says, decided by the row's group (PRD D-06).
@@ -962,10 +943,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         })
         .unwrap_or("workspace")
         .to_owned();
-    // The three label-plugin sentences, each one line. The plugin already
+    // The label-plugin title and sentences, each one line. The plugin already
     // bounds them; the cut here is the same bound applied once more so a
     // value that outran it cannot reach a row.
-    let name = token_text(&agent.tokens, "name", MAX_TOKEN_TEXT_CHARS);
     let task = token_text(&agent.tokens, "task", MAX_TOKEN_TEXT_CHARS);
     let progress = token_text(&agent.tokens, "progress", MAX_TOKEN_TEXT_CHARS);
     let expected_reply = token_text(&agent.tokens, "expected_reply", MAX_EXPECTED_REPLY_CHARS);
@@ -973,7 +953,8 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
 
-    let mut projected = SidebarAgentSnapshot {
+    let identity_label = task.unwrap_or_else(|| workspace_label.clone());
+    let projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         pane_id,
         workspace_label,
@@ -994,9 +975,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         status_label: String::new(),
         requires_close_confirmation: false,
         requires_close_status_check: false,
-        identity_label: String::new(),
-        name,
-        task,
+        identity_label,
         progress,
         expected_reply,
         detail: None,
@@ -1027,7 +1006,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         spawn_origin_pane_id: None,
         lineage_collapsed: false,
     };
-    projected.identity_label = agent_identity_label(&projected);
     Ok(projected)
 }
 
@@ -1037,21 +1015,20 @@ const REMOTE_PANE_ID_PREFIX: &str = "remote:";
 
 /// Which slice of the read record ledger a pass is allowed to prune.
 ///
-/// A pass carries the agent list of exactly one Herdr server, and the ledger
-/// holds records for all of them. A pass that pruned every key its own list
-/// did not claim would drop a remote pane's record on the next local sync and
-/// the reverse, so a stopped remote pane the operator had already read came
-/// back as `Done` and demanded a close confirmation.
+/// The ledger holds records for several Herdr servers. A pass that pruned
+/// every key its own authoritative topology did not claim would drop a remote
+/// pane's record on the next local sync and the reverse, so a stopped remote
+/// pane the operator had already read came back as `Done` and demanded a close
+/// confirmation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadRecordScope<'a> {
-    /// Prune nothing. The caller's agent list may be stale or from before the
-    /// first sync, and an empty list would otherwise wipe the whole ledger.
+    /// Prune nothing. The caller has no authoritative pane topology.
     Retain,
-    /// The caller holds the local server's full agent list, so local records
-    /// no agent claims are dropped. Remote records are left alone.
+    /// The caller holds the local server's full pane topology. Remote records
+    /// are left alone.
     Local,
-    /// The caller holds one remote target's full agent list. The argument is
-    /// that target's pane id prefix, and only records under it are dropped.
+    /// The caller holds one remote target's full pane topology. The argument
+    /// is that target's pane id prefix, and only records under it are dropped.
     Remote(&'a str),
 }
 
@@ -1082,13 +1059,86 @@ pub struct ReadRecordChange {
 fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
     PaneReadRecord {
         state_change_seq: agent.state_change_seq,
+        session_id: agent.session_id.clone(),
         demand: agent.demand.clone(),
         activity: agent.activity.clone(),
     }
 }
 
-/// Raises the operator-focused pane's read record, drops records for panes
-/// that are gone, and sets every row's read axis and derived values.
+/// Rebases process-local sequence values after a Herdr connection bootstrap.
+/// A restored agent keeps its read mark only when its process-local sequence
+/// moved backwards, its stable session identity (when one was recorded), and
+/// its operator-visible state still match. A sequence that moved forward is
+/// new work completed while Hide was disconnected and must remain unread. The
+/// pending set lets an agent that appears after the first restored topology be
+/// reconciled when detection catches up.
+pub fn reconcile_read_records(
+    agents: &[SidebarAgentSnapshot],
+    records: &mut BTreeMap<String, PaneReadRecord>,
+    pending: &mut HashSet<String>,
+) -> Vec<ReadRecordChange> {
+    let mut changes = Vec::new();
+    for agent in agents {
+        if !pending.remove(&agent.pane_id) {
+            continue;
+        }
+        let Some(record) = records.get(&agent.pane_id) else {
+            continue;
+        };
+        let session_matches =
+            record.session_id.is_none() || record.session_id.as_ref() == agent.session_id.as_ref();
+        let sequence_reset = matches!(
+            (record.state_change_seq, agent.state_change_seq),
+            (Some(previous), Some(current)) if current < previous
+        );
+        if !sequence_reset
+            || !session_matches
+            || record.demand != agent.demand
+            || record.activity != agent.activity
+        {
+            continue;
+        }
+        let current = read_fingerprint(agent);
+        if record != &current {
+            records.insert(agent.pane_id.clone(), current.clone());
+            changes.push(ReadRecordChange {
+                pane_id: agent.pane_id.clone(),
+                record: current,
+                evicted: false,
+            });
+        }
+    }
+    changes
+}
+
+/// Drops records only when an authoritative pane topology says the pane is
+/// gone. Agent detection may legitimately be empty or incomplete while a
+/// restored server rebuilds its agent list, so it is never an eviction source.
+pub fn prune_read_records(
+    records: &mut BTreeMap<String, PaneReadRecord>,
+    live_pane_ids: &HashSet<String>,
+    scope: ReadRecordScope<'_>,
+) -> Vec<ReadRecordChange> {
+    let evicted = records
+        .keys()
+        .filter(|pane_id| scope.owns(pane_id) && !live_pane_ids.contains(*pane_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut changes = Vec::with_capacity(evicted.len());
+    for pane_id in evicted {
+        records.remove(&pane_id);
+        changes.push(ReadRecordChange {
+            pane_id,
+            record: PaneReadRecord::default(),
+            evicted: true,
+        });
+    }
+    changes
+}
+
+/// Raises the operator-focused pane's read record and sets every row's read
+/// axis and derived values. Authoritative topology pruning is separate because
+/// an agent list is not a pane list during server restoration.
 ///
 /// This is the whole read authority. `operator_pane_id` is the pane the
 /// operator chose to look at, never the pane Herdr happens to report focused:
@@ -1100,35 +1150,8 @@ pub fn apply_read_state(
     agents: &mut [SidebarAgentSnapshot],
     records: &mut BTreeMap<String, PaneReadRecord>,
     operator_pane_id: Option<&str>,
-    scope: ReadRecordScope<'_>,
 ) -> Vec<ReadRecordChange> {
     let mut changes = Vec::new();
-    // A pane the server no longer reports can never be unread again, so its
-    // record is dropped rather than growing the store forever. Only the pass
-    // that owns the key's namespace may do this, and only when it holds a
-    // fresh agent list: an empty list from before the first sync, or a local
-    // list that has never heard of a remote pane, would otherwise wipe records
-    // the operator restarted with.
-    {
-        let live = agents
-            .iter()
-            .map(|agent| agent.pane_id.clone())
-            .collect::<std::collections::BTreeSet<_>>();
-        let evicted = records
-            .keys()
-            .filter(|pane_id| scope.owns(pane_id) && !live.contains(*pane_id))
-            .cloned()
-            .collect::<Vec<_>>();
-        for pane_id in evicted {
-            records.remove(&pane_id);
-            changes.push(ReadRecordChange {
-                pane_id,
-                record: PaneReadRecord::default(),
-                evicted: true,
-            });
-        }
-    }
-
     for agent in agents.iter_mut() {
         if operator_pane_id != Some(agent.pane_id.as_str()) {
             continue;
@@ -1735,11 +1758,12 @@ mod tests {
             "read-idle".to_owned(),
             PaneReadRecord {
                 state_change_seq: Some(1),
+                session_id: None,
                 demand: "none".to_owned(),
                 activity: "stopped".to_owned(),
             },
         );
-        apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
+        apply_read_state(&mut agents, &mut records, None);
 
         assert_eq!(
             agents
@@ -1767,7 +1791,7 @@ mod tests {
         };
         let mut agents = projected(json!([same("first"), same("second"), same("third")]));
         let mut records = BTreeMap::new();
-        apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
+        apply_read_state(&mut agents, &mut records, None);
         assert_eq!(
             agents
                 .iter()
@@ -1777,14 +1801,15 @@ mod tests {
         );
     }
 
-    /// PRD D-01, D-03: the name ladder, one rung at a time, top to bottom.
+    /// PRD D-01: the rolling task is the title and the workspace is the final
+    /// fallback. Herdr's agent name and the retired `name` token are control
+    /// identifiers, not display titles.
     #[test]
-    fn identity_ladder_prefers_name_then_herdr_name_then_task() {
+    fn identity_ladder_uses_task_then_workspace_and_ignores_names() {
         let projected = projected(json!([
             {"pane_id":"p2","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p3","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p5","id":"p5","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000005"}}
+            {"pane_id":"p3","id":"sasu-implementor","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","name":"첫 프롬프트"}},
+            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}}
         ]));
         let labels = projected
             .iter()
@@ -1792,7 +1817,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             labels,
-            ["Hook 버그 확인", "impl-x", "hook 보고 경로 수정", "hide"]
+            ["hook 보고 경로 수정", "hide", "hook 보고 경로 수정"]
         );
     }
 
@@ -1870,7 +1895,7 @@ mod tests {
     #[test]
     fn projected_rows_carry_the_second_line_and_the_chip_repeats_it() {
         let projected = projected(json!([
-            {"pane_id":"p1","id":"p1","workspace_label":"hide","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000001","name":"Hook 버그 확인","progress":"hook 보고 경로를 소켓 호출로 교체 중","expected_reply":"무시됨"}},
+            {"pane_id":"p1","id":"p1","workspace_label":"hide","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000001","task":"Hook 버그 확인","progress":"hook 보고 경로를 소켓 호출로 교체 중","expected_reply":"무시됨"}},
             {"pane_id":"p2","id":"p2","workspace_label":"hide","tokens":{"status_question_new":"?","activity":"0000000000002","progress":"푸시 완료","expected_reply":"A/B 선택"}},
             {"pane_id":"p3","id":"p3","workspace_label":"hide","tokens":{"status_idle":"○","activity":"0000000000003"}}
         ]));
@@ -1970,7 +1995,7 @@ mod tests {
         ]));
         let mut records = BTreeMap::new();
 
-        apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
+        apply_read_state(&mut agents, &mut records, None);
         assert!(
             agents
                 .iter()
@@ -1978,7 +2003,7 @@ mod tests {
             "nothing is read before the operator focuses anything"
         );
 
-        apply_read_state(&mut agents, &mut records, Some("b"), ReadRecordScope::Local);
+        apply_read_state(&mut agents, &mut records, Some("b"));
         let groups = agents
             .iter()
             .map(|agent| (agent.pane_id.as_str(), (agent.unread, agent.group.as_str())))
@@ -1995,7 +2020,7 @@ mod tests {
     fn read_record_ignores_herdr_marking_the_tab_seen() {
         let mut agents = projected(json!([finished("a", 1), finished("b", 2)]));
         let mut records = BTreeMap::new();
-        apply_read_state(&mut agents, &mut records, Some("b"), ReadRecordScope::Local);
+        apply_read_state(&mut agents, &mut records, Some("b"));
 
         let seen_by_herdr = json!([
             {"pane_id":"a","agent_status":"idle","state_change_seq":9,
@@ -2004,7 +2029,7 @@ mod tests {
              "tokens":{"status_done":"\u{25cf}","activity":"0000000000001"}}
         ]);
         let mut agents = projected(seen_by_herdr);
-        apply_read_state(&mut agents, &mut records, None, ReadRecordScope::Local);
+        apply_read_state(&mut agents, &mut records, None);
         assert!(
             agents.iter().all(|agent| agent.unread),
             "Herdr's tab-scoped seen never decides Hide's read axis"
@@ -2023,12 +2048,7 @@ mod tests {
         let mut records = BTreeMap::new();
 
         let mut watched = projected(asking.clone());
-        apply_read_state(
-            &mut watched,
-            &mut records,
-            Some("a"),
-            ReadRecordScope::Local,
-        );
+        apply_read_state(&mut watched, &mut records, Some("a"));
         assert!(!watched[0].unread, "a question on the focused pane is read");
         assert_eq!(watched[0].group, "seen");
 
@@ -2037,12 +2057,7 @@ mod tests {
             "tokens":{"status_question_new":"?","activity":"0000000000003"}
         }]);
         let mut later = projected(moved_on);
-        apply_read_state(
-            &mut later,
-            &mut records,
-            Some("elsewhere"),
-            ReadRecordScope::Local,
-        );
+        apply_read_state(&mut later, &mut records, Some("elsewhere"));
         assert!(later[0].unread, "a new question raised elsewhere is unread");
         assert_eq!(later[0].group, "needs_you");
     }
@@ -2056,51 +2071,109 @@ mod tests {
             "pane_id":"a","agent_status":"working","state_change_seq":7,
             "tokens":{"status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
-        apply_read_state(
-            &mut working,
-            &mut records,
-            Some("a"),
-            ReadRecordScope::Local,
-        );
+        apply_read_state(&mut working, &mut records, Some("a"));
         assert!(!working[0].unread);
 
         let mut asking = projected(json!([{
             "pane_id":"a","agent_status":"working","state_change_seq":7,
             "tokens":{"status_question_new":"?","status_working":"\u{25cf}","activity":"0000000000001"}
         }]));
-        apply_read_state(&mut asking, &mut records, None, ReadRecordScope::Local);
+        apply_read_state(&mut asking, &mut records, None);
         assert!(
             asking[0].unread,
             "a new demand is unread even at the same sequence"
         );
     }
 
-    /// AC4. Records for panes Herdr no longer reports are dropped, but only
-    /// when the caller holds a fresh agent list. Applying the same list twice
-    /// converges (engineering rule 11).
+    /// AC4. Agent detection can be empty while the pane still exists. Only an
+    /// authoritative pane topology may evict its read record, and applying the
+    /// same topology twice converges (engineering rule 11).
     #[test]
-    fn read_records_are_evicted_only_against_a_fresh_agent_list() {
+    fn read_records_are_evicted_only_against_authoritative_pane_topology() {
         let mut agents = projected(json!([finished("a", 1)]));
         let mut records = BTreeMap::new();
-        apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local);
+        apply_read_state(&mut agents, &mut records, Some("a"));
         let after_first = records.clone();
-        assert!(
-            apply_read_state(&mut agents, &mut records, Some("a"), ReadRecordScope::Local)
-                .is_empty()
-        );
+        assert!(apply_read_state(&mut agents, &mut records, Some("a")).is_empty());
         assert_eq!(records, after_first, "a repeated apply changes nothing");
 
         let mut none: Vec<SidebarAgentSnapshot> = Vec::new();
-        apply_read_state(&mut none, &mut records, None, ReadRecordScope::Retain);
+        apply_read_state(&mut none, &mut records, None);
         assert!(
             records.contains_key("a"),
-            "an empty list from before the first sync must not wipe the record"
+            "an empty agent list must not wipe a pane record"
         );
-        apply_read_state(&mut none, &mut records, None, ReadRecordScope::Local);
+        let live = HashSet::from(["a".to_owned()]);
+        assert!(prune_read_records(&mut records, &live, ReadRecordScope::Local).is_empty());
+        let gone = HashSet::new();
+        assert_eq!(
+            prune_read_records(&mut records, &gone, ReadRecordScope::Local).len(),
+            1
+        );
         assert!(
             records.is_empty(),
-            "a pane Herdr stopped reporting is dropped"
+            "a pane the authoritative topology dropped leaves no record"
         );
+    }
+
+    #[test]
+    fn reconnect_rebases_the_same_agent_but_not_a_replacement() {
+        let same_session = |seq: u64| {
+            json!([{
+                "pane_id":"a",
+                "agent_status":"done",
+                "state_change_seq":seq,
+                "agent_session":{"kind":"id","value":"session-a"},
+                "tokens":{"status_done_new":"\u{25cf}","activity":"0000000000001"}
+            }])
+        };
+        let mut records = BTreeMap::new();
+        let mut original = projected(same_session(40));
+        apply_read_state(&mut original, &mut records, Some("a"));
+
+        let mut restored = projected(same_session(3));
+        let mut pending = HashSet::from(["a".to_owned()]);
+        assert_eq!(
+            reconcile_read_records(&restored, &mut records, &mut pending).len(),
+            1
+        );
+        apply_read_state(&mut restored, &mut records, None);
+        assert!(!restored[0].unread, "the restored session stays read");
+
+        let mut progressed = projected(same_session(4));
+        let mut pending = HashSet::from(["a".to_owned()]);
+        assert!(reconcile_read_records(&progressed, &mut records, &mut pending).is_empty());
+        apply_read_state(&mut progressed, &mut records, None);
+        assert!(
+            progressed[0].unread,
+            "a forward sequence is new work, not a server restart"
+        );
+
+        let mut legacy_records = records.clone();
+        legacy_records.get_mut("a").unwrap().session_id = None;
+        let legacy_restored = projected(same_session(1));
+        let mut pending = HashSet::from(["a".to_owned()]);
+        assert_eq!(
+            reconcile_read_records(&legacy_restored, &mut legacy_records, &mut pending).len(),
+            1
+        );
+        assert_eq!(
+            legacy_records["a"].session_id.as_deref(),
+            Some("session-a"),
+            "the first reset migrates a record written before session identity"
+        );
+
+        let mut replacement = projected(json!([{
+            "pane_id":"a",
+            "agent_status":"done",
+            "state_change_seq":1,
+            "agent_session":{"kind":"id","value":"session-b"},
+            "tokens":{"status_done_new":"\u{25cf}","activity":"0000000000001"}
+        }]));
+        let mut pending = HashSet::from(["a".to_owned()]);
+        assert!(reconcile_read_records(&replacement, &mut records, &mut pending).is_empty());
+        apply_read_state(&mut replacement, &mut records, None);
+        assert!(replacement[0].unread, "a replacement agent is new work");
     }
 
     /// The ordering key falls back to Herdr's own sequence, zero padded to the

@@ -825,7 +825,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     let requiresCloseConfirmation: Bool
     /// Whether activity must be refreshed before the core permits a close.
     let requiresCloseStatusCheck: Bool
-    /// The agent's stable name, from the same ladder the sidebar row shows.
+    /// The agent's title, from the same ladder the sidebar row shows.
     let identityLabel: String?
     let activityAt: UInt64?
     let fork: CorePaneFork
@@ -1147,11 +1147,8 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let requiresCloseConfirmation: Bool
     /// Whether the activity status must be refreshed before closing this pane.
     let requiresCloseStatusCheck: Bool
-    /// The stable name every surface calls this agent by (PRD D-01).
+    /// The title every surface calls this agent by (PRD D-01).
     let identityLabel: String
-    /// The label plugin's rolling task title; the search sheet's subtitle
-    /// when the state chose no sentence (PRD D-15).
-    let task: String?
     /// The second line the core chose for this row's state, or nothing.
     let detail: String?
     /// Whether the status word is drawn on the second line.
@@ -1196,7 +1193,6 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         requiresCloseConfirmation: Bool = false,
         requiresCloseStatusCheck: Bool = false,
         identityLabel: String,
-        task: String? = nil,
         detail: String? = nil,
         statusWordVisible: Bool = true,
         elapsed: String,
@@ -1218,7 +1214,6 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.requiresCloseConfirmation = requiresCloseConfirmation
         self.requiresCloseStatusCheck = requiresCloseStatusCheck
         self.identityLabel = identityLabel
-        self.task = task
         self.detail = detail
         self.statusWordVisible = statusWordVisible
         self.elapsed = elapsed
@@ -1243,7 +1238,6 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
         requiresCloseStatusCheck = try container.decodeIfPresent(Bool.self, forKey: .requiresCloseStatusCheck) ?? false
         identityLabel = try container.decode(String.self, forKey: .identityLabel)
-        task = try container.decodeIfPresent(String.self, forKey: .task)
         detail = try container.decodeIfPresent(String.self, forKey: .detail)
         statusWordVisible = try container.decodeIfPresent(Bool.self, forKey: .statusWordVisible) ?? true
         elapsed = try container.decode(String.self, forKey: .elapsed)
@@ -1279,7 +1273,6 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case requiresCloseConfirmation = "requires_close_confirmation"
         case requiresCloseStatusCheck = "requires_close_status_check"
         case identityLabel = "identity_label"
-        case task
         case detail
         case statusWordVisible = "status_word_visible"
         case elapsed
@@ -1298,4 +1291,3 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case stallNotice = "stall_notice"
     }
 }
-

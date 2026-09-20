@@ -43,6 +43,8 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
     "CoreBridgeDispatchPolicy.swift": (
         ("struct", "HerdrProtocolMismatchDetails", "internal"),
         ("enum", "LocalHerdrMutationReadiness", "internal"),
+        ("enum", "PersistedPaneRestoreDecision", "internal"),
+        ("struct", "PersistedPaneRestorePolicy", "internal"),
         ("enum", "LocalHerdrMutationPolicy", "internal"),
         ("struct", "CoreDispatchRoutingPolicy", "internal"),
         ("struct", "LocalHerdrMutationDispatchPolicy", "internal"),

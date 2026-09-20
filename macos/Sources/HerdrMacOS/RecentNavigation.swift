@@ -43,7 +43,7 @@ struct RecentNavigationOverlay: View {
 }
 /// What a Recent Panels row is called.
 enum RecentSurfacePresentation {
-    /// A tab holding exactly one agent is called by that agent's name, as the
+    /// A tab holding exactly one agent is called by that agent's title, as the
     /// core decided (PRD D-16); every other tab keeps its label, so a shell
     /// tab and a two-agent tab read as they always did.
     static func title(_ surface: RecentSurface) -> String {
