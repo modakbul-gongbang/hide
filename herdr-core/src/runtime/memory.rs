@@ -248,8 +248,10 @@ impl Runtime {
                 true
             }
             Ok(load) => {
-                let should_resume = load.state.as_ref().is_some_and(|state| state.enabled)
-                    && self.snapshot.sessions.analysis.state.is_empty();
+                let should_request_due_poll = should_request_memory_due_poll_after_load(
+                    load.state.as_ref().is_some_and(|state| state.enabled),
+                    &self.snapshot.sessions.analysis,
+                );
                 let mode = self
                     .snapshot
                     .ui_state
@@ -279,15 +281,11 @@ impl Runtime {
                     self.snapshot.sessions.memory_capacity_reached = false;
                 }
                 self.apply_session_filters();
-                if should_resume {
-                    self.apply_memory_action(events::MemoryActionPayload {
-                        action: "retry".to_owned(),
-                        item_id: None,
-                        candidate_id: None,
-                        body: None,
-                        batch_id: None,
-                        conflict_choice: None,
-                    });
+                if should_request_due_poll {
+                    // Session refreshes do not own analysis scheduling. Make
+                    // the coordinator poll immediately; its pending-content
+                    // check is the single authority for starting provider work.
+                    self.memory_next_poll_unix_ms = 0;
                 }
                 true
             }
@@ -697,7 +695,10 @@ impl Runtime {
 
 #[cfg(test)]
 mod scope_tests {
-    use super::{sessions_load_matches_scope, settled_analysis_snapshot};
+    use super::{
+        sessions_load_matches_scope, settled_analysis_snapshot,
+        should_request_memory_due_poll_after_load,
+    };
     use crate::model::MemoryAnalysisSnapshot;
 
     #[test]
@@ -755,6 +756,25 @@ mod scope_tests {
             paused
         );
     }
+
+    #[test]
+    fn enabled_memory_load_requests_a_due_check_without_restarting_active_work() {
+        assert!(should_request_memory_due_poll_after_load(
+            true,
+            &MemoryAnalysisSnapshot::default(),
+        ));
+        assert!(!should_request_memory_due_poll_after_load(
+            true,
+            &MemoryAnalysisSnapshot {
+                state: "analyzing".to_owned(),
+                ..MemoryAnalysisSnapshot::default()
+            },
+        ));
+        assert!(!should_request_memory_due_poll_after_load(
+            false,
+            &MemoryAnalysisSnapshot::default(),
+        ));
+    }
 }
 
 struct MemoryMutationOutcome {
@@ -781,6 +801,13 @@ fn settled_analysis_snapshot(
         (true, None) => MemoryAnalysisSnapshot::default(),
         (false, None) => current,
     }
+}
+
+fn should_request_memory_due_poll_after_load(
+    memory_enabled: bool,
+    analysis: &MemoryAnalysisSnapshot,
+) -> bool {
+    memory_enabled && analysis.state.is_empty()
 }
 
 fn report_analysis(
