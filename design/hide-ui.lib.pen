@@ -3585,7 +3585,7 @@
               "fill": "$--color-secondary",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "tall (--size-badge-height), caption label, --spacing-xs inset, hairline border, --radius-sm.",
+              "content": "--size-badge-height, caption label, optional leading image, --spacing-xxs gap, --spacing-xs inset, hairline border, --radius-sm.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -3620,6 +3620,7 @@
               "stroke": "$--color-divider",
               "strokeWidth": "$--size-hairline",
               "strokeAlignment": "inner",
+              "gap": "$--spacing-xxs",
               "padding": [
                 0,
                 "$--spacing-xs"
@@ -3627,6 +3628,19 @@
               "justifyContent": "center",
               "alignItems": "center",
               "children": [
+                {
+                  "type": "icon",
+                  "id": "xXuNa",
+                  "x": 0,
+                  "y": 0,
+                  "name": "Leading image",
+                  "enabled": false,
+                  "width": 9,
+                  "height": 9,
+                  "icon": "git-pull-request",
+                  "library": "lucide",
+                  "fill": "$--color-secondary"
+                },
                 {
                   "type": "text",
                   "id": "n8L5dm",
@@ -3638,6 +3652,42 @@
                   "fontWeight": "normal"
                 }
               ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "vNyLF",
+          "name": "State / Leading image",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "Uccha",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Leading image",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "zZRHj",
+              "type": "ref",
+              "ref": "eHAjc",
+              "name": "Instance / Leading image",
+              "descendants": {
+                "xXuNa": {
+                  "enabled": true,
+                  "fill": "$--color-pr-open"
+                },
+                "n8L5dm": {
+                  "content": "#118 Open",
+                  "fill": "$--color-pr-open"
+                }
+              }
             }
           ]
         }
@@ -11802,6 +11852,787 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "iJAL9",
+      "x": 0,
+      "y": 8281,
+      "name": "Component / Checkout row",
+      "width": 480,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "WjR2w",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "X9wB0",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "Checkout row",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "CwbIz",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "36pt one-line row; 44pt only while collapsed with agent summary or purpose. Kind, title, commit age, and the reserved chevron slot never move.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "qJUpW",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "fDxUW",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Master - every state below is a ref of this",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "DLP27",
+              "name": "Component / Checkout row (36 or 44)",
+              "reusable": true,
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": "$--spacing-xxs",
+              "padding": [
+                0,
+                "$--spacing-sm"
+              ],
+              "justifyContent": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "QetL0",
+                  "name": "Line 1",
+                  "width": "fill_container",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "cDPUC",
+                      "name": "Agent mark slot",
+                      "width": 12,
+                      "height": 12
+                    },
+                    {
+                      "type": "icon",
+                      "id": "VtSRn",
+                      "name": "Kind glyph",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "git-pull-request",
+                      "library": "lucide",
+                      "fill": "$--color-pr-open"
+                    },
+                    {
+                      "type": "text",
+                      "id": "q91d7",
+                      "name": "Checkout name",
+                      "fill": "$--color-primary",
+                      "content": "prd/browser-like-panes",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "id": "TS5x9",
+                      "type": "ref",
+                      "ref": "eHAjc",
+                      "name": "Missing badge",
+                      "enabled": false,
+                      "descendants": {
+                        "n8L5dm": {
+                          "content": "missing",
+                          "fill": "$--color-danger"
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "y89J4",
+                      "name": "Flexible spacer",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "TuosT",
+                      "name": "Last commit age",
+                      "fill": "$--color-muted",
+                      "content": "4h",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "IXwZI",
+                      "name": "Chevron slot",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "CgZj3",
+                          "name": "Chevron",
+                          "width": 9,
+                          "height": 9,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$--color-secondary"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "o6XLUj",
+                  "name": "Line 2",
+                  "width": "fill_container",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "yfur4",
+                      "name": "Agent mark alignment",
+                      "width": 12,
+                      "height": 12
+                    },
+                    {
+                      "type": "frame",
+                      "id": "umRR8",
+                      "name": "Kind alignment",
+                      "width": 14,
+                      "height": 14
+                    },
+                    {
+                      "type": "frame",
+                      "id": "FtZyp",
+                      "name": "Agent summary",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "J5xdha",
+                          "name": "Status mark",
+                          "fill": "$--color-agent-working",
+                          "width": 6,
+                          "height": 6
+                        },
+                        {
+                          "type": "frame",
+                          "id": "N7YbJ",
+                          "name": "Provider badge",
+                          "width": 16,
+                          "height": 16,
+                          "fill": "$--color-accent",
+                          "cornerRadius": "$--radius-xs",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "fklVZ",
+                              "name": "Provider mark",
+                              "fill": "$--color-background",
+                              "content": "*",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "ExMsH",
+                          "name": "Additional agent count",
+                          "fill": "$--color-secondary",
+                          "content": "+1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "D37Vr",
+                      "name": "Purpose",
+                      "fill": "$--color-muted",
+                      "content": "Browser as a first-class work tab",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "TtsGa",
+          "name": "State / Collapsed with purpose",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "tkMNZ",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Collapsed with agents and purpose",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "bYI4I",
+              "type": "ref",
+              "ref": "DLP27",
+              "name": "Row / Collapsed with purpose",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "diL2i",
+          "name": "State / One line",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "rQTtq",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Expanded or nothing for line 2",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "B60vOy",
+              "type": "ref",
+              "ref": "DLP27",
+              "name": "Row / One line",
+              "width": "fill_container",
+              "descendants": {
+                "CgZj3": {
+                  "icon": "chevron-down"
+                },
+                "o6XLUj": {
+                  "enabled": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "vrH44",
+          "name": "State / Purpose only",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "COD2c",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Collapsed with purpose and no agent",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "c8mBx",
+              "type": "ref",
+              "ref": "DLP27",
+              "name": "Row / Purpose only",
+              "width": "fill_container",
+              "descendants": {
+                "q91d7": {
+                  "content": "chore/pr-template"
+                },
+                "TuosT": {
+                  "content": "2d"
+                },
+                "FtZyp": {
+                  "enabled": false
+                },
+                "D37Vr": {
+                  "content": "Add the pull request template"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "f6zLLp",
+          "name": "State / Missing",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "W9if3k",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Missing folder",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "eeyiZ",
+              "type": "ref",
+              "ref": "DLP27",
+              "name": "Row / Missing",
+              "width": "fill_container",
+              "descendants": {
+                "VtSRn": {
+                  "icon": "git-branch",
+                  "fill": "$--color-danger"
+                },
+                "q91d7": {
+                  "content": "legacy-shell"
+                },
+                "TS5x9": {
+                  "enabled": true
+                },
+                "TuosT": {
+                  "enabled": false
+                },
+                "CgZj3": {
+                  "enabled": false
+                },
+                "o6XLUj": {
+                  "enabled": false
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "xaPFW",
+      "x": 560,
+      "y": 8281,
+      "name": "Component / Overview group header",
+      "width": 560,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "C3eQc",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "Q4Ykez",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "Overview group header",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "c8g9aV",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "52pt two-line comparison header. Line 1 carries checkout identity and purpose; line 2 keeps PR, checks, files, behind, ahead, and disk in that order.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "DcLup",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "M2arCG",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Master - every state below is a ref of this",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "nhxX1",
+              "name": "Component / Overview group header (52)",
+              "reusable": true,
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "padding": [
+                0,
+                "$--spacing-md"
+              ],
+              "justifyContent": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "vNs2G",
+                  "name": "Line 1",
+                  "width": "fill_container",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "lbr7Z",
+                      "name": "Fold chevron",
+                      "width": 9,
+                      "height": 9,
+                      "icon": "chevron-down",
+                      "library": "lucide",
+                      "fill": "$--color-muted"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "MTqVf",
+                      "name": "Kind glyph",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "git-pull-request",
+                      "library": "lucide",
+                      "fill": "$--color-pr-open"
+                    },
+                    {
+                      "type": "text",
+                      "id": "IS8XT",
+                      "name": "Branch",
+                      "fill": "$--color-primary",
+                      "content": "prd/home-board",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "E5O7G",
+                      "name": "Purpose",
+                      "fill": "$--color-muted",
+                      "content": "Lane board for Project Home",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Ao3lB",
+                      "name": "Flexible spacer",
+                      "width": "fill_container",
+                      "height": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "N7vo1q",
+                  "name": "Badge strip",
+                  "width": "fill_container",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "hW5gk",
+                      "name": "Header alignment",
+                      "width": 36,
+                      "height": 1
+                    },
+                    {
+                      "id": "NGQuN",
+                      "type": "ref",
+                      "ref": "eHAjc",
+                      "name": "PR badge",
+                      "descendants": {
+                        "xXuNa": {
+                          "enabled": true,
+                          "fill": "$--color-warning"
+                        },
+                        "n8L5dm": {
+                          "content": "#112 Changes requested",
+                          "fill": "$--color-warning"
+                        }
+                      }
+                    },
+                    {
+                      "id": "H7R1Z",
+                      "type": "ref",
+                      "ref": "eHAjc",
+                      "name": "Checks badge",
+                      "descendants": {
+                        "n8L5dm": {
+                          "content": "✗ Checks",
+                          "fill": "$--color-danger"
+                        }
+                      }
+                    },
+                    {
+                      "id": "v8Ee81",
+                      "type": "ref",
+                      "ref": "eHAjc",
+                      "name": "Files badge",
+                      "descendants": {
+                        "n8L5dm": {
+                          "content": "3 files",
+                          "fill": "$--color-warning"
+                        }
+                      }
+                    },
+                    {
+                      "id": "JUlsU",
+                      "type": "ref",
+                      "ref": "eHAjc",
+                      "name": "Behind badge",
+                      "descendants": {
+                        "n8L5dm": {
+                          "content": "↓64 behind main",
+                          "fill": "$--color-warning"
+                        }
+                      }
+                    },
+                    {
+                      "id": "bMfEn",
+                      "type": "ref",
+                      "ref": "eHAjc",
+                      "name": "Ahead badge",
+                      "enabled": false,
+                      "descendants": {
+                        "n8L5dm": {
+                          "content": "↑1 ahead",
+                          "fill": "$--color-secondary"
+                        }
+                      }
+                    },
+                    {
+                      "id": "Bj6B7",
+                      "type": "ref",
+                      "ref": "eHAjc",
+                      "name": "Disk badge",
+                      "descendants": {
+                        "n8L5dm": {
+                          "content": "2.2 GB",
+                          "fill": "$--color-secondary"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "eTJa5",
+          "name": "State / Review",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "jT3En",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Changes requested and checks failed",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "RFLA9",
+              "type": "ref",
+              "ref": "nhxX1",
+              "name": "Header / Review",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "ptQWE",
+          "name": "State / Ahead without PR",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "qESg5",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "No PR and ahead",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "CLbUp",
+              "type": "ref",
+              "ref": "nhxX1",
+              "name": "Header / Ahead without PR",
+              "width": "fill_container",
+              "descendants": {
+                "MTqVf": {
+                  "icon": "git-branch",
+                  "fill": "$--color-secondary"
+                },
+                "IS8XT": {
+                  "content": "fix/registered-projects-only"
+                },
+                "E5O7G": {
+                  "enabled": false
+                },
+                "NGQuN": {
+                  "enabled": false
+                },
+                "H7R1Z": {
+                  "enabled": false
+                },
+                "v8Ee81/n8L5dm": {
+                  "content": "Clean",
+                  "fill": "$--color-secondary"
+                },
+                "JUlsU/n8L5dm": {
+                  "content": "↓4 behind main"
+                },
+                "bMfEn": {
+                  "enabled": true
+                },
+                "Bj6B7/n8L5dm": {
+                  "content": "5.2 GB"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Jaj0m",
+          "name": "State / Loading",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "dJmt6",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Git status reading",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "ozK83",
+              "type": "ref",
+              "ref": "nhxX1",
+              "name": "Header / Loading",
+              "width": "fill_container",
+              "descendants": {
+                "MTqVf": {
+                  "icon": "git-branch",
+                  "fill": "$--color-secondary"
+                },
+                "IS8XT": {
+                  "content": "wip/new-worktree"
+                },
+                "E5O7G": {
+                  "enabled": false
+                },
+                "NGQuN": {
+                  "enabled": false
+                },
+                "H7R1Z": {
+                  "enabled": false
+                },
+                "v8Ee81/n8L5dm": {
+                  "content": "… files",
+                  "fill": "$--color-muted"
+                },
+                "JUlsU": {
+                  "enabled": false
+                },
+                "bMfEn": {
+                  "enabled": false
+                },
+                "Bj6B7": {
+                  "enabled": false
+                }
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {
@@ -12396,6 +13227,18 @@
     "--text-editor-heading-6": {
       "type": "number",
       "value": 15
+    },
+    "--size-checkout-row-detailed": {
+      "type": "number",
+      "value": 44
+    },
+    "--size-overview-group-header": {
+      "type": "number",
+      "value": 52
+    },
+    "--size-checkout-metadata-inset": {
+      "type": "number",
+      "value": 46
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"
