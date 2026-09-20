@@ -948,10 +948,12 @@ fn multi_pane_terminal_session_destroy_releases_and_reaps_children() {
             concat!(
                 "#!/bin/sh\n",
                 "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
-                "  /usr/bin/printf '%s' \"$$\" > '{}/'$4.pid\n",
-                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":80,\"height\":24,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
+                // Keep capture in the owned shell: a forked writer can outlive
+                // the terminal child and race its release/reaping assertion.
+                "  printf '%s' \"$$\" > '{}/'$4.pid\n",
+                "  printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":80,\"height\":24,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
                 "  while IFS= read -r line; do\n",
-                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "    printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
                 "    case \"$line\" in *'\"type\":\"terminal.release\"'*) exit 0 ;; esac\n",
                 "  done\n",
                 "  exit 0\n",
@@ -1699,10 +1701,10 @@ fn one_launch_attaches_each_pane_once_at_the_size_its_view_reported() {
             concat!(
                 "#!/bin/sh\n",
                 "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
-                "  /usr/bin/printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
-                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":100,\"height\":30,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
+                "  printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
+                "  printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":100,\"height\":30,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
                 "  while IFS= read -r line; do\n",
-                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "    printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
                 "  done\n",
                 "  exit 0\n",
                 "fi\n",
@@ -1838,10 +1840,10 @@ fn one_launch_attaches_at_the_last_known_size_without_waiting_for_a_view() {
             concat!(
                 "#!/bin/sh\n",
                 "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
-                "  /usr/bin/printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
-                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":152,\"height\":44,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
+                "  printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
+                "  printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":152,\"height\":44,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
                 "  while IFS= read -r line; do\n",
-                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "    printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
                 "  done\n",
                 "  exit 0\n",
                 "fi\n",
