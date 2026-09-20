@@ -11806,8 +11806,6 @@
     {
       "type": "frame",
       "id": "adaptive-work-tab-sheet",
-      "x": 0,
-      "y": 0,
       "name": "Component / Adaptive Work Tab",
       "width": 420,
       "layout": "vertical",
@@ -11818,8 +11816,8 @@
           "type": "text",
           "id": "adaptive-work-tab-title",
           "name": "Title",
-          "fill": "$--color-primary",
           "content": "Adaptive work tab",
+          "fill": "$--color-primary",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-headline",
           "fontWeight": "600"
@@ -11828,13 +11826,12 @@
           "type": "text",
           "id": "adaptive-work-tab-spec",
           "name": "Spec",
-          "fill": "$--color-secondary",
+          "content": "HideTabStrip: 180 preferred, equal title compression through 104, then a leading 40 identity. Only the active tab adds the 24 toolbar close for 64 total. Compact marks retain notice, dirty and preview meaning; overflow keeps a contiguous active range.",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "HideTabStrip: 180 preferred, equal title compression through 104, then a leading 40 identity. Only the active tab adds the 24 toolbar close for 64 total. Compact marks retain notice, dirty and preview meaning; overflow keeps a contiguous active range.",
+          "fill": "$--color-secondary",
           "fontFamily": "$--font-ui",
-          "fontSize": "$--text-subhead",
-          "fontWeight": "normal"
+          "fontSize": "$--text-subhead"
         },
         {
           "type": "frame",
@@ -11844,6 +11841,7 @@
           "width": 180,
           "height": 32,
           "fill": "$--color-panel",
+          "layout": "horizontal",
           "alignItems": "center",
           "children": [
             {
@@ -11852,6 +11850,7 @@
               "name": "Title identity",
               "width": 36,
               "height": 24,
+              "layout": "horizontal",
               "gap": "$--spacing-xxs",
               "padding": [
                 0,
@@ -11865,8 +11864,8 @@
                   "type": "text",
                   "id": "awt-status-mark",
                   "name": "Status mark",
-                  "fill": "$--color-agent-working",
                   "content": "●",
+                  "fill": "$--color-agent-working",
                   "fontFamily": "$--font-mono",
                   "fontSize": "$--text-body",
                   "fontWeight": "600"
@@ -11877,7 +11876,7 @@
                   "name": "Agent badge",
                   "width": 16,
                   "height": 16,
-                  "fill": "#000000",
+                  "fill": "$--color-selected-fill",
                   "cornerRadius": "$--radius-sm",
                   "justifyContent": "center",
                   "alignItems": "center",
@@ -11886,8 +11885,8 @@
                       "type": "text",
                       "id": "awt-agent-letter",
                       "name": "Agent",
-                      "fill": "$--color-agent-working",
                       "content": "C",
+                      "fill": "$--color-agent-working",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
                       "fontWeight": "700"
@@ -11899,8 +11898,6 @@
             {
               "type": "frame",
               "id": "awt-icon-identity",
-              "x": 0,
-              "y": 0,
               "name": "Leading compact identity",
               "enabled": false,
               "width": 40,
@@ -11910,8 +11907,10 @@
                   "type": "text",
                   "id": "awt-icon-status",
                   "name": "Status mark",
-                  "fill": "$--color-agent-working",
+                  "x": 4,
+                  "y": 6,
                   "content": "●",
+                  "fill": "$--color-agent-working",
                   "fontFamily": "$--font-mono",
                   "fontSize": "$--text-body",
                   "fontWeight": "600"
@@ -11920,6 +11919,8 @@
                   "type": "icon",
                   "id": "awt-icon-preview",
                   "name": "Preview identity",
+                  "x": 17,
+                  "y": 5,
                   "width": 14,
                   "height": 14,
                   "icon": "file-text",
@@ -11930,14 +11931,18 @@
                   "type": "ellipse",
                   "id": "awt-icon-dirty",
                   "name": "Dirty",
-                  "fill": "$--color-secondary",
+                  "x": 30,
+                  "y": 17,
                   "width": 5,
-                  "height": 5
+                  "height": 5,
+                  "fill": "$--color-secondary"
                 },
                 {
                   "type": "icon",
                   "id": "awt-icon-notice",
                   "name": "Notice",
+                  "x": 29,
+                  "y": 1,
                   "width": 7,
                   "height": 7,
                   "icon": "triangle-alert",
@@ -11950,19 +11955,19 @@
               "type": "text",
               "id": "awt-tab-label",
               "name": "Title",
-              "fill": "$--color-primary",
+              "content": "browser-like-tab-sizing",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "browser-like-tab-sizing",
+              "fill": "$--color-primary",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-body",
               "fontWeight": "600"
             },
             {
-              "id": "awt-keycap",
               "type": "ref",
-              "ref": "Ec2W1",
+              "id": "awt-keycap",
               "name": "Shortcut keycap",
+              "ref": "Ec2W1",
               "descendants": {
                 "HqL2p": {
                   "content": "⌘3"
@@ -11993,17 +11998,17 @@
           ]
         },
         {
-          "id": "adaptive-work-tab-preferred-active",
           "type": "ref",
-          "ref": "adaptive-work-tab-master",
+          "id": "adaptive-work-tab-preferred-active",
           "name": "State / Preferred active 180",
+          "ref": "adaptive-work-tab-master",
           "width": 180
         },
         {
-          "id": "adaptive-work-tab-title-minimum",
           "type": "ref",
-          "ref": "adaptive-work-tab-master",
+          "id": "adaptive-work-tab-title-minimum",
           "name": "State / Title minimum active 104",
+          "ref": "adaptive-work-tab-master",
           "width": 104,
           "descendants": {
             "awt-tab-label": {
@@ -12012,10 +12017,10 @@
           }
         },
         {
-          "id": "adaptive-work-tab-icon-active",
           "type": "ref",
-          "ref": "adaptive-work-tab-master",
+          "id": "adaptive-work-tab-icon-active",
           "name": "State / Icon active 64",
+          "ref": "adaptive-work-tab-master",
           "width": 64,
           "descendants": {
             "awt-standard-identity": {
@@ -12033,10 +12038,10 @@
           }
         },
         {
-          "id": "adaptive-work-tab-icon-inactive",
           "type": "ref",
-          "ref": "adaptive-work-tab-master",
+          "id": "adaptive-work-tab-icon-inactive",
           "name": "State / Icon inactive 40",
+          "ref": "adaptive-work-tab-master",
           "width": 40,
           "descendants": {
             "awt-standard-identity": {
