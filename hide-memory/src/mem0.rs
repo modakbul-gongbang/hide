@@ -4,7 +4,10 @@ use serde_json::{Value, json};
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
-use crate::{ANALYSIS_INPUT_LIMIT_BYTES, Candidate, CandidateKind, CandidateRelation, redact};
+use crate::{
+    ANALYSIS_INPUT_LIMIT_BYTES, Candidate, CandidateKind, CandidateRelation,
+    MEMORY_BODY_LIMIT_CHARS, redact,
+};
 
 /// Pinned Mem0 runtime dependency wrapped by this Hide-owned adapter.
 pub use mem0_oss_native::{
@@ -104,7 +107,7 @@ impl Mem0Adapter {
             .into_iter()
             .map(|candidate| {
                 if candidate.text.is_empty()
-                    || candidate.text.chars().count() > 4_000
+                    || candidate.text.chars().count() > MEMORY_BODY_LIMIT_CHARS
                     || candidate.source_offsets.is_empty()
                     || candidate.source_offsets.len() > 64
                     || candidate.text.chars().any(|character| {

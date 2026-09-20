@@ -791,10 +791,11 @@ impl Runtime {
 mod scope_tests {
     use super::{
         archive_load_matches_scope, sessions_load_matches_scope, settled_analysis_snapshot,
-        should_request_memory_due_poll_after_load, validate_candidates,
+        should_request_memory_due_poll_after_load, trusted_memory_receipt, validate_candidates,
     };
     use crate::model::MemoryAnalysisSnapshot;
     use hide_memory::{Candidate, CandidateKind, CandidateRelation};
+    use hide_session::EventKind;
     use serde_json::json;
 
     #[test]
@@ -922,6 +923,16 @@ mod scope_tests {
             }
         );
         assert!(candidates[0].direct_human_source);
+    }
+
+    #[test]
+    fn only_provider_injected_events_can_assert_memory_receipts() {
+        let marker = "<hide-memory-receipt event=\"UserPromptSubmit\" count=\"1\" items=\"m1@2\">";
+        assert!(trusted_memory_receipt(EventKind::Human, marker).is_none());
+        assert!(trusted_memory_receipt(EventKind::Assistant, marker).is_none());
+        let receipt = trusted_memory_receipt(EventKind::Injected, marker).unwrap();
+        assert_eq!(receipt.count, 1);
+        assert_eq!(receipt.items, vec![("m1".to_owned(), 2)]);
     }
 }
 
@@ -1255,7 +1266,7 @@ fn update_hook_projection(
         .map_err(|error| error.to_string())?;
     let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
     for (event, stable_offset) in parsed.events.into_iter().zip(parsed.event_offsets) {
-        if let Some(receipt) = memory_receipt(&event.text) {
+        if let Some(receipt) = trusted_memory_receipt(event.kind, &event.text) {
             let turn_id = (receipt.event != HookEvent::SessionStart.name())
                 .then(|| format!("event:{stable_offset}"));
             store
@@ -1281,7 +1292,7 @@ fn update_hook_projection(
                 .map_err(|error| error.to_string())?;
         }
         if event.kind == EventKind::Human {
-            let topic = normalized_topic_terms(&strip_memory_receipt(&event.text));
+            let topic = normalized_topic_terms(&event.text);
             store
                 .record_session_topic(project_id, provider, &session.id, stable_offset, &topic)
                 .map_err(|error| error.to_string())?;
@@ -1387,7 +1398,7 @@ fn analyze_session(
     let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
     let mut events = Vec::with_capacity(parsed.events.len());
     for (event, stable_offset) in parsed.events.into_iter().zip(parsed.event_offsets) {
-        if let Some(receipt) = memory_receipt(&event.text) {
+        if let Some(receipt) = trusted_memory_receipt(event.kind, &event.text) {
             let turn_id = (receipt.event != HookEvent::SessionStart.name())
                 .then(|| format!("event:{stable_offset}"));
             let injection = Injection {
@@ -1421,7 +1432,7 @@ fn analyze_session(
         "role": event.role,
         "kind": event.kind.as_str(),
         "at_unix_ms": event.at_unix_ms,
-        "text": strip_memory_receipt(&event.text),
+        "text": event.text,
         }));
     }
     let groups = event_groups(&events).map_err(AnalysisFailure::Local)?;
@@ -1832,7 +1843,7 @@ fn load_session_detail(row: SessionRowSnapshot) -> Result<ArchiveDetailSnapshot,
         .events
         .into_iter()
         .map(|event| {
-            let receipt = memory_receipt(&event.text);
+            let receipt = trusted_memory_receipt(event.kind, &event.text);
             let attached = receipt.as_ref().map(|receipt| receipt.count);
             let item_ids = receipt
                 .map(|receipt| receipt.items.into_iter().map(|(id, _)| id).collect())
@@ -1869,6 +1880,12 @@ struct MemoryReceipt {
     event: String,
     count: usize,
     items: Vec<(String, u64)>,
+}
+
+fn trusted_memory_receipt(kind: EventKind, text: &str) -> Option<MemoryReceipt> {
+    (kind == EventKind::Injected)
+        .then(|| memory_receipt(text))
+        .flatten()
 }
 
 fn memory_receipt(text: &str) -> Option<MemoryReceipt> {

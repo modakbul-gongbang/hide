@@ -23,6 +23,7 @@ pub use store::{
 };
 
 pub const ACTIVE_MEMORY_LIMIT: usize = 10_000;
+pub const MEMORY_BODY_LIMIT_CHARS: usize = 4_000;
 pub const ANALYSIS_INPUT_LIMIT_BYTES: usize = 64 * 1024;
 pub const HOOK_INPUT_LIMIT_BYTES: usize = 256 * 1024;
 pub const HOOK_CANDIDATE_LIMIT: usize = 60;

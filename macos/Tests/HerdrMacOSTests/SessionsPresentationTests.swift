@@ -108,6 +108,29 @@ struct SessionsPresentationTests {
         #expect(SessionsPresentation.readyLabel(3) == "Project Memory ready · 3")
     }
 
+    @Test func disclosureNamesTheSelectedProviderFallbackAndRedactionBoundary() {
+        let backgroundAI = CoreBackgroundAI(
+            provider: "codex",
+            chosen: true,
+            providers: [
+                .init(
+                    id: "codex", label: "Codex", state: "ready", headline: "Ready",
+                    message: nil, model: "gpt-5.6-luna", models: [],
+                    modelsUnavailableReason: nil
+                ),
+                .init(
+                    id: "claude", label: "Claude Code", state: "ready", headline: "Ready",
+                    message: nil, model: "haiku", models: [], modelsUnavailableReason: nil
+                ),
+            ]
+        )
+        let statements = SessionsPresentation.memoryDisclosure(backgroundAI)
+
+        #expect(statements[0] == "Hide sends session content to Codex first and may fall back to Claude Code. Either request may use your subscription.")
+        #expect(statements[1].contains("Each provider's retention"))
+        #expect(statements[3].contains("redacted before provider transmission"))
+    }
+
     @Test func analysisCopyDistinguishesRunningFromPausedAndCompleted() {
         #expect(SessionsPresentation.analysisLabel(.init(
             state: "analyzing", discovered: 4, analyzed: 2, failed: 0,
@@ -157,5 +180,29 @@ struct SessionsPresentationTests {
         #expect(decoded.thisTurnMemoryIDs == ["m1"])
         #expect(decoded.memories.first?.lifecycle == "conflicting")
         #expect(decoded.analysis.action == "retry")
+    }
+
+    @Test func combinedProviderAndQueryResultsKeepTheCoreOrder() throws {
+        let data = Data("""
+        {
+          "project_id":"project-1","checkout_path":"/fixture/project","mode":"sessions",
+          "provider_filter":"codex","query":"memory","loading":false,"unavailable_reason":null,
+          "rows":[
+            {"id":"new","provider":"codex","provider_label":"Codex","locator":"/new","checkout_path":"/fixture/project","first_human_request":"Memory new","started_at_unix_ms":2,"updated_at_unix_ms":3,"title":null,"unavailable_reason":null},
+            {"id":"old","provider":"codex","provider_label":"Codex","locator":"/old","checkout_path":"/fixture/project","first_human_request":"Memory old","started_at_unix_ms":1,"updated_at_unix_ms":2,"title":null,"unavailable_reason":null}
+          ],
+          "total_session_count":3,"memories":[],"memory_enabled":false,
+          "memory_disclosure_accepted":false,"memory_active_count":0,
+          "memory_conflict_count":0,"memory_capacity_reached":false,
+          "analysis":{"state":"idle","discovered":0,"analyzed":0,"failed":0,"message":null,"action":null},
+          "notice":null,"this_turn_memory_ids":[]
+        }
+        """.utf8)
+        let decoded = try JSONDecoder().decode(CoreSessionsSnapshot.self, from: data)
+
+        #expect(decoded.providerFilter == .codex)
+        #expect(decoded.query == "memory")
+        #expect(decoded.rows.map(\.id) == ["new", "old"])
+        #expect(SessionsPresentation.sessions(decoded, remote: false) == .rows)
     }
 }

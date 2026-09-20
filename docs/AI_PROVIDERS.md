@@ -111,6 +111,9 @@ Asking costs child processes, so the probe is a capability reader like the proje
 A background feature asks a resident process for an answer, so `hide-ai` owns that process the way `oh-my-principle`'s resident-process practice requires: one spawn helper, one shutdown path, a child that dies with its owner, and caps that turn a leak into a reported failure rather than a larger number.
 This exists because on 2026-09-17 a single label watcher held 1,699 `codex app-server` descendants and 11.6 GB for two idle days with no signal at all.
 
+The macOS shell converts SIGTERM into AppKit's ordinary termination path and explicitly destroys herdr-core before exit.
+That path cancels the analysis coordinator and reaches each backend's existing child shutdown rather than relying on Swift object deinitialization to happen before process exit.
+
 Every child the crate starts goes through one spawn helper (`hide-ai/src/process.rs`).
 The codex app-server is owned through the stdin pipe it inherits: when the owner dies, the pipe closes and the whole tree ends, which is what makes a `kill -9` of the owner leave no survivors.
 The claude backend starts one child per request and kills it on every path.

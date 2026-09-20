@@ -13,7 +13,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::{
     ACTIVE_MEMORY_LIMIT, HOOK_CANDIDATE_LIMIT, HOOK_DEADLINE_MS, INJECTION_TOKEN_LIMIT,
-    PROMPT_ITEM_LIMIT, SESSION_START_ITEM_LIMIT, redact,
+    MEMORY_BODY_LIMIT_CHARS, PROMPT_ITEM_LIMIT, SESSION_START_ITEM_LIMIT, redact,
 };
 
 const SCHEMA_VERSION: i64 = 3;
@@ -344,19 +344,14 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     pub fn open(path: &Path) -> Result<Self, MemoryError> {
+        prepare_database_file(path)?;
         let connection = Connection::open(path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(
-                |error| MemoryError::InvalidState(format!("database_permissions:{}", error.kind())),
-            )?;
-        }
         connection.busy_timeout(Duration::from_secs(2))?;
         connection.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL; PRAGMA secure_delete=ON;",
         )?;
         migrate(&connection)?;
+        enforce_database_permissions(path)?;
         let store = Self {
             connection,
             mode: StoreMode::Writer,
@@ -839,7 +834,10 @@ impl MemoryStore {
     ) -> Result<u64, MemoryError> {
         self.require_writer()?;
         let redacted = redact(body.trim());
-        if redacted.contains_secret_candidate || redacted.text.is_empty() {
+        if redacted.contains_secret_candidate
+            || redacted.text.is_empty()
+            || redacted.text.chars().count() > MEMORY_BODY_LIMIT_CHARS
+        {
             return Err(MemoryError::Integrity("edited_body_rejected".to_owned()));
         }
         let transaction = self.connection.transaction()?;
@@ -1636,6 +1634,65 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+#[cfg(unix)]
+fn prepare_database_file(path: &Path) -> Result<(), MemoryError> {
+    use std::fs::OpenOptions;
+    use std::io::ErrorKind;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(MemoryError::InvalidState(format!(
+                "database_create:{}",
+                error.kind()
+            )));
+        }
+    }
+    enforce_database_permissions(path)
+}
+
+#[cfg(not(unix))]
+fn prepare_database_file(_path: &Path) -> Result<(), MemoryError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn enforce_database_permissions(path: &Path) -> Result<(), MemoryError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    for candidate in [
+        path.to_path_buf(),
+        PathBuf::from(format!("{}-wal", path.display())),
+        PathBuf::from(format!("{}-shm", path.display())),
+    ] {
+        if !candidate.exists() {
+            continue;
+        }
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o600)).map_err(
+            |error| {
+                MemoryError::InvalidState(format!(
+                    "database_permissions:{}:{}",
+                    candidate.display(),
+                    error.kind()
+                ))
+            },
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn enforce_database_permissions(_path: &Path) -> Result<(), MemoryError> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2004,9 +2061,38 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("memory.sqlite3");
         let _store = MemoryStore::open(&path).unwrap();
+        for candidate in [
+            path.clone(),
+            PathBuf::from(format!("{}-wal", path.display())),
+            PathBuf::from(format!("{}-shm", path.display())),
+        ] {
+            if candidate.exists() {
+                assert_eq!(
+                    std::fs::metadata(candidate).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn manual_edit_rejects_the_same_body_cap_as_provider_candidates() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "edit-cap", "edit-cap-hash"),
+                &[candidate("bounded body", CandidateRelation::New)],
+            )
+            .unwrap();
+        let id = store.list_memories(&project, "").unwrap()[0].id.clone();
+
+        assert!(matches!(
+            store.edit(&project, &id, &"x".repeat(MEMORY_BODY_LIMIT_CHARS + 1)),
+            Err(MemoryError::Integrity(reason)) if reason == "edited_body_rejected"
+        ));
         assert_eq!(
-            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
-            0o600
+            store.item(&project, &id).unwrap().unwrap().body,
+            "bounded body"
         );
     }
 

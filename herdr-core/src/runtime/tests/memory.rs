@@ -113,6 +113,51 @@ fn reopening_an_archive_tab_replaces_its_cached_memory_detail() {
 }
 
 #[test]
+fn session_and_memory_tabs_share_the_preview_slot_and_promote_in_place() {
+    let mut runtime = runtime();
+    let archive = |kind: &str, id: &str, title: &str| ArchiveDetailSnapshot {
+        id: id.to_owned(),
+        kind: kind.to_owned(),
+        title: title.to_owned(),
+        provider: None,
+        unavailable_reason: None,
+        events: Vec::new(),
+        memory: None,
+    };
+
+    runtime.show_diff_tab("workspace", "checkout", "/fixture/notes.md", false, true);
+    assert_eq!(runtime.snapshot.editor.tabs[0].kind, EditorTabKind::Diff);
+    runtime.show_archive_tab(
+        "workspace",
+        "checkout",
+        archive("session", "s1", "Codex · Project Memory"),
+        true,
+    );
+    assert_eq!(runtime.snapshot.editor.tabs.len(), 1);
+    assert_eq!(runtime.snapshot.editor.tabs[0].kind, EditorTabKind::Session);
+    assert!(runtime.snapshot.editor.tabs[0].preview);
+
+    runtime.show_archive_tab(
+        "workspace",
+        "checkout",
+        archive("session", "s1", "Codex · Project Memory"),
+        false,
+    );
+    assert!(!runtime.snapshot.editor.tabs[0].preview);
+    runtime.show_archive_tab(
+        "workspace",
+        "checkout",
+        archive("memory", "m1", "Memory"),
+        true,
+    );
+    assert_eq!(runtime.snapshot.editor.tabs.len(), 2);
+    assert_eq!(runtime.snapshot.editor.tabs[0].kind, EditorTabKind::Session);
+    assert!(!runtime.snapshot.editor.tabs[0].preview);
+    assert_eq!(runtime.snapshot.editor.tabs[1].kind, EditorTabKind::Memory);
+    assert!(runtime.snapshot.editor.tabs[1].preview);
+}
+
+#[test]
 fn session_filter_and_query_keep_the_catalogs_existing_order() {
     let mut runtime = runtime();
     runtime.session_catalog_rows = vec![

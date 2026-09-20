@@ -404,6 +404,24 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Ends every core-owned worker while the application is still alive.
+    /// AppKit termination does not guarantee that the object graph is released
+    /// before the process exits, so provider children cannot rely on `deinit`.
+    func shutdown() {
+        clipboardPreparation?.cancel()
+        clipboardPreparation = nil
+        herdrServerRecoveryTask?.cancel()
+        herdrServerRecoveryTask = nil
+        #if DEBUG
+        verificationSnapshotWatcher?.cancel()
+        verificationSnapshotWatcher = nil
+        #endif
+        guard let ownedCore = core else { return }
+        core = nil
+        herdr_core_on_change(ownedCore, nil, nil)
+        herdr_core_destroy(ownedCore)
+    }
+
     nonisolated func receiveCoreChange() {
         DispatchQueue.main.async { [weak self] in
             self?.refreshSnapshot()

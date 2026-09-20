@@ -60,6 +60,24 @@ enum SessionsPresentation {
     static func memoryAccessibility(_ row: CoreMemoryRowSnapshot) -> String {
         "\(row.body), \(row.sourceCount) sources, \(row.lifecycle)"
     }
+
+    static func memoryDisclosure(_ backgroundAI: CoreBackgroundAI) -> [String] {
+        let selected = backgroundAI.selected?.label
+            ?? backgroundAI.provider.replacingOccurrences(of: "codex", with: "Codex")
+                .replacingOccurrences(of: "claude", with: "Claude Code")
+        let fallbacks = backgroundAI.providers
+            .filter { $0.id != backgroundAI.provider }
+            .map(\.label)
+        let route = fallbacks.isEmpty
+            ? "Hide sends session content to \(selected) and may use your subscription."
+            : "Hide sends session content to \(selected) first and may fall back to \(fallbacks.joined(separator: " or ")). Either request may use your subscription."
+        return [
+            route,
+            "Each provider's retention and deletion terms apply. Hide cannot guarantee deletion after content is sent.",
+            "Derived memories stay on this Mac until you Forget them or delete this Project's Memory data.",
+            "Known credential patterns are redacted before provider transmission and excluded from stored memories and search data.",
+        ]
+    }
 }
 
 struct SessionsPanel: View {
@@ -226,6 +244,7 @@ struct SessionsPanel: View {
         if SessionsPresentation.memory(state) == .off {
             MemoryDisclosure(
                 keptCount: state.memoryActiveCount,
+                statements: SessionsPresentation.memoryDisclosure(model.backgroundAI),
                 turnOn: { model.applyMemoryAction("enable") },
                 updateHooks: { showHookConfirmation = true },
                 analysis: state.analysis
@@ -340,6 +359,7 @@ struct SessionsPanel: View {
 
 private struct MemoryDisclosure: View {
     let keptCount: Int
+    let statements: [String]
     let turnOn: () -> Void
     let updateHooks: () -> Void
     let analysis: CoreMemoryAnalysisSnapshot
@@ -350,10 +370,7 @@ private struct MemoryDisclosure: View {
                 Label(keptCount > 0 ? "Memory off · \(keptCount) memories kept" : "Project Memory is off", systemImage: "brain.head.profile")
                     .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
                 Text("Hide can carry durable decisions and rules into later work in this Project.")
-                disclosure("Session content is sent to your selected Background AI provider and may use your subscription.")
-                disclosure("That provider's retention and deletion terms apply. Hide cannot guarantee deletion after content is sent.")
-                disclosure("Derived memories stay on this Mac until you Forget them or delete this Project's Memory data.")
-                disclosure("Known credential patterns are excluded from stored memories and search data.")
+                ForEach(statements, id: \.self, content: disclosure)
                 if analysis.state == "hooks_need_update" {
                     Button("Update agent hooks", action: updateHooks).buttonStyle(HideTextButtonStyle(appearance: .prominent, density: .regular))
                 } else {
