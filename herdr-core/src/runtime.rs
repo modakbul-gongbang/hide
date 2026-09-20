@@ -980,7 +980,6 @@ pub struct Runtime {
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
     disk_generation: u64,
-    overview_selection: Option<String>,
     cleanup: Option<live::cleanup::CleanupSnapshot>,
     next_cleanup_id: u64,
     /// Bumped when the worktree list itself is known to have changed through a
@@ -1141,7 +1140,6 @@ impl Runtime {
             github_generations: HashMap::new(),
             sidebar_github_projects: HashSet::new(),
             disk_generation: 0,
-            overview_selection: None,
             cleanup: None,
             next_cleanup_id: 0,
             worktree_generation: 0,

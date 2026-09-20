@@ -16,7 +16,7 @@ function fixture(t, git = false) {
   for (const file of ['check-design-contract.mjs', 'check-design-controls.mjs', 'check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-pen.mjs', 'swift-source-tokens.mjs', 'pen-tokens.mjs', 'pen-bands.mjs', 'pen-foundations.mjs', 'pen-canvas.mjs']) fs.copyFileSync(path.join(repository, 'scripts', file), path.join(root, 'scripts', file));
   // Minimal source fixtures exercise checker CLI behavior without depending on
   // whichever product UI happens to be present or being edited in the repo.
-  for (const owner of ['HideTheme', 'HideKeycap', 'HideBalloon', 'HideIconButton', 'HideBadge', 'HideFormPicker', 'HideTextButtonStyle', 'HideChoiceGroup', 'HideSearchField', 'HideInputSurface', 'HideCheckboxStyle', 'HideDisclosureStyle', 'HideInteractiveButtonStyle', 'HideEmptyState', 'HideMenuChipLabel']) {
+  for (const owner of ['HideTheme', 'HideKeycap', 'HideBalloon', 'HideIconButton', 'HideBadge', 'HideFormPicker', 'HideTextButtonStyle', 'HideChoiceGroup', 'HideSearchField', 'HideInputSurface', 'HideCheckboxStyle', 'HideInteractiveButtonStyle', 'HideEmptyState', 'HideMenuChipLabel']) {
     write(root, owner + '.swift', `struct ${owner} {}`);
   }
   for (const name of ['HideUI', 'HideSettings']) {

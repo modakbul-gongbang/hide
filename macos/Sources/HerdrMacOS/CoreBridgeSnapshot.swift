@@ -537,7 +537,9 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         switch self {
         case .overview: "Overview"
         case .explorer: "Explorer"
-        case .changes: "Changes"
+        // The section keeps its `changes` identity for the saved state; the
+        // panel calls it History (right-panel-overview D-16, PR 2 fills it).
+        case .changes: "History"
         }
     }
 

@@ -64,8 +64,9 @@ Ownership is the fourth derived status axis and it is read off the lineage, neve
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; a per-child stall clock is what brings work back when it stops being anybody's problem.
 `docs/status-model.md` owns both rules.
 The Agents `My Work` view filters only the core-final Delegated answer and leaves hard escalations and visible orphans in operator-owned groups; `All` changes only the shell's session-local visibility projection.
-Overview builds the current Project's task forest from the same canonical agents and authoritative child IDs.
-Missing parents and cycles remain visible roots, and selecting a task is shell-local inspection until an explicit Open dispatches the existing pane-selection event.
+Overview groups the same canonical agents by the checkout their pane is in and nests a child under its parent only from authoritative child IDs; a parent in another worktree is named in a caption, never inferred.
+The Overview has no selection of its own: a row click dispatches the existing pane-selection event, a header click the checkout-focus event, and the `N files` chip one `overview_open_section` event that focuses the checkout and switches the panel to History together, so a refusal cannot leave the screen half moved.
+`agent_start_in_checkout` creates a tab in the checkout's workspace through the task-operation slot that `create_worktree` already uses, and the shell starts the chosen provider in the created pane on the same path.
 
 What an agent has spawned in-process is not on Herdr's wire at all.
 The hook helper reports it through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.

@@ -95,7 +95,6 @@ struct CoreProjectWorktrees: Decodable {
     var github: CoreGithubStatus? = nil
     var pullRequests: [CorePullRequest]? = nil
     var pullRequestWindow: String? = nil
-    var history: CoreGitHistory? = nil
     var sharedGitDisk: CoreDiskUsage? = nil
     var diskTotalBytes: UInt64? = nil
     var diskConfirmedBytes: UInt64? = nil
@@ -111,7 +110,7 @@ struct CoreProjectWorktrees: Decodable {
     enum CodingKeys: String, CodingKey {
         case cleanup, github
         case pullRequests = "pull_requests", pullRequestWindow = "pull_request_window"
-        case history, sharedGitDisk = "shared_git_disk", diskTotalBytes = "disk_total_bytes"
+        case sharedGitDisk = "shared_git_disk", diskTotalBytes = "disk_total_bytes"
         case diskConfirmedBytes = "disk_confirmed_bytes"
         case linkedDiskBytes = "linked_disk_bytes", diskUnavailableReason = "disk_unavailable_reason"
         case rootPath = "root_path", defaultBranch = "default_branch", baseBranch = "base_branch"
@@ -136,6 +135,12 @@ struct CoreGitWorktree: Decodable, Identifiable {
     let merged: Bool?
     let upstreamState: String
     let unpushed: CoreUnpushed?
+    /// Commits the upstream has that this branch does not, as of the last
+    /// fetch. Absent when there is no upstream, it is gone, or the count
+    /// could not be read; `upstreamState` says which.
+    let behindUpstream: Int?
+    /// When a linked worktree was added; the main worktree has none.
+    let createdAtUnixMS: Double?
     let unavailableReason: String?
     let lastFetchAtUnixMS: Double?
     let measuredAtUnixMS: Double?
@@ -160,6 +165,7 @@ struct CoreGitWorktree: Decodable, Identifiable {
         case headSHA = "head_sha", isMain = "is_main", changedFileCount = "changed_file_count", baseBranch = "base_branch"
         case lastCommitSubject = "last_commit_subject"
         case upstreamState = "upstream_state", unavailableReason = "unavailable_reason", lastFetchAtUnixMS = "last_fetch_at_unix_ms"
+        case behindUpstream = "behind_upstream", createdAtUnixMS = "created_at_unix_ms"
         case measuredAtUnixMS = "measured_at_unix_ms", lastCommitUnixSeconds = "last_commit_unix_seconds"
         case paneCount = "pane_count", runningAgentCount = "running_agent_count", pullRequest = "pull_request"
         case deletionGate = "deletion_gate", openError = "open_error"
@@ -193,23 +199,6 @@ struct CoreGitWorktree: Decodable, Identifiable {
             : "The local branch is kept.")
         return sentences.joined(separator: " ")
     }
-}
-
-struct CoreGitHistory: Decodable, Equatable {
-    var continuation: [String]? = nil
-    var shallowBoundaries: [String]? = nil
-    let commits: [CoreGitCommit]
-    let truncated: Bool
-    let unavailableReason: String?
-    enum CodingKeys: String, CodingKey { case commits, truncated, continuation
-        case shallowBoundaries = "shallow_boundaries", unavailableReason = "unavailable_reason" }
-}
-struct CoreGitCommit: Decodable, Equatable, Identifiable {
-    var id: String { sha }
-    let sha: String
-    let parents: [String]
-    let subject: String
-    var decorations: String? = nil
 }
 
 struct CoreCleanup: Decodable {

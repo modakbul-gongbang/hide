@@ -8,13 +8,6 @@
         "control:TextField": 1
       }
     },
-    "CheckoutOverview.swift": {
-      "kind": "legacy",
-      "reason": "The disclosure invocation retains native expansion semantics; its appearance is owned by HideDisclosureStyle.",
-      "rules": {
-        "control:DisclosureGroup": 1
-      }
-    },
     "HideCheckboxStyle.swift": {
       "kind": "owner",
       "reason": "Owns checkbox appearance and preserves Toggle semantics.",
@@ -27,13 +20,6 @@
       "reason": "Owns mode choices and section tabs with their selected-state appearance.",
       "rules": {
         "implementation:ButtonStyle": 1
-      }
-    },
-    "HideDisclosureStyle.swift": {
-      "kind": "owner",
-      "reason": "Owns shared disclosure appearance and expansion feedback.",
-      "rules": {
-        "implementation:DisclosureGroupStyle": 1
       }
     },
     "HideEmptyState.swift": {
