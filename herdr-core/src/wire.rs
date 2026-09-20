@@ -206,6 +206,11 @@ macro_rules! record_conversions {
                     workspace_id: v.workspace_id,
                     label: v.label,
                     active_tab_id: v.active_tab_id,
+                    tokens: v
+                        .tokens
+                        .into_iter()
+                        .map(|(key, value)| (String::from(key), Value::String(value)))
+                        .collect(),
                     worktree: v.worktree.map(Into::into),
                 }
             }
@@ -610,6 +615,22 @@ pub(crate) fn workspace_create_with_env_params(
 pub(crate) fn workspace_target_params(id: &str) -> Result<Value, String> {
     params(req::WorkspaceTarget {
         workspace_id: id.into(),
+    })
+}
+
+pub(crate) fn workspace_purpose_params(
+    workspace_id: &str,
+    purpose: Option<&str>,
+) -> Result<Value, String> {
+    let key = "purpose"
+        .try_into()
+        .map_err(|error| format!("invalid workspace purpose token key: {error}"))?;
+    params(req::WorkspaceReportMetadataParams {
+        workspace_id: workspace_id.to_owned(),
+        source: HIDE_METADATA_SOURCE.to_owned(),
+        tokens: std::collections::HashMap::from([(key, purpose.map(str::to_owned))]),
+        seq: None,
+        ttl_ms: None,
     })
 }
 pub(crate) fn tab_target_params(id: &str) -> Result<Value, String> {

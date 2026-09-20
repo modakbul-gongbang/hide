@@ -14,8 +14,8 @@ use std::process::Command;
 
 use crate::git_dir::{self, Repository};
 use crate::model::{
-    CheckoutSnapshot, DeviceRegistration, DeviceSnapshot, TabSnapshot, WorkspaceRegistration,
-    WorkspaceSnapshot, WorktreeCatalogSnapshot,
+    CheckoutPurposeOrigin, CheckoutPurposeSnapshot, CheckoutSnapshot, DeviceRegistration,
+    DeviceSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot, WorktreeCatalogSnapshot,
 };
 
 pub const LOCAL_DEVICE_ID: &str = "local";
@@ -142,6 +142,7 @@ pub struct SessionSpace {
     pub id: String,
     pub label: String,
     pub cwds: Vec<String>,
+    pub purpose: Option<String>,
 }
 
 /// Each pane directory's repository root in comparison form, keyed by the raw
@@ -259,11 +260,19 @@ fn merge_space(existing: &mut WorkspaceSnapshot, incoming: WorkspaceSnapshot) {
     }
     for checkout in incoming.checkouts {
         let comparison = normalized_for_comparison(Path::new(&checkout.path));
-        if !existing
+        if let Some(known) = existing
             .checkouts
-            .iter()
-            .any(|known| normalized_for_comparison(Path::new(&known.path)) == comparison)
+            .iter_mut()
+            .find(|known| normalized_for_comparison(Path::new(&known.path)) == comparison)
         {
+            if checkout
+                .purpose
+                .as_ref()
+                .is_some_and(|purpose| purpose.origin == CheckoutPurposeOrigin::Token)
+            {
+                known.purpose = checkout.purpose;
+            }
+        } else {
             existing.checkouts.push(checkout);
         }
     }
@@ -361,14 +370,15 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
         if !is_worktree {
             projects[index].default_branch = branch.clone();
         }
-        projects[index].checkouts.push(checkout(
-            &workspace_id,
-            &root,
-            &label,
-            branch,
-            is_worktree,
-            false,
-        ));
+        let mut projected_checkout =
+            checkout(&workspace_id, &root, &label, branch, is_worktree, false);
+        if let Some(purpose) = space.purpose.as_deref() {
+            projected_checkout.purpose = Some(CheckoutPurposeSnapshot {
+                text: purpose.to_owned(),
+                origin: CheckoutPurposeOrigin::Token,
+            });
+        }
+        projects[index].checkouts.push(projected_checkout);
     }
     // The main worktree leads, so the primary badge and the project path
     // agree even when a worktree's pane was reported first.
@@ -405,6 +415,7 @@ pub(crate) fn apply_worktrees(
     project.default_branch = listed.default_branch.clone();
     project.branches = listed.branches.clone();
 
+    let repository = git_dir::discover(Path::new(&project.path));
     for worktree in &listed.worktrees {
         let comparison = normalized_for_comparison(Path::new(&worktree.path));
         let existing = project
@@ -441,6 +452,16 @@ pub(crate) fn apply_worktrees(
         row.unpushed = worktree.unpushed.clone();
         row.worktree = Some(worktree.clone());
         row.branch = worktree.branch.clone();
+        if !row
+            .purpose
+            .as_ref()
+            .is_some_and(|purpose| purpose.origin == CheckoutPurposeOrigin::Token)
+        {
+            row.purpose = worktree
+                .branch
+                .as_deref()
+                .and_then(|branch| branch_description(repository.as_ref(), branch));
+        }
     }
 
     // The main worktree leads, so the primary badge and the project path
@@ -589,6 +610,10 @@ fn checkout(
     is_worktree: bool,
     temporary: bool,
 ) -> CheckoutSnapshot {
+    let repository = git_dir::discover(path);
+    let purpose = branch
+        .as_deref()
+        .and_then(|branch| branch_description(repository.as_ref(), branch));
     CheckoutSnapshot {
         // A checkout with no Herdr tabs yet: the first one the operator makes
         // here is Tab 1. Reconcile overwrites this the moment Herdr reports any.
@@ -598,6 +623,7 @@ fn checkout(
         label: label.to_owned(),
         path: path.to_string_lossy().into_owned(),
         branch,
+        purpose,
         is_worktree,
         exists: path.exists(),
         temporary,
@@ -607,6 +633,28 @@ fn checkout(
         // The git facts arrive from the worktree reader; the catalog only
         // decides which rows exist.
         ..CheckoutSnapshot::default()
+    }
+}
+
+fn branch_description(
+    repository: Option<&Repository>,
+    branch: &str,
+) -> Option<CheckoutPurposeSnapshot> {
+    let repository = repository?;
+    match repository.branch_description(branch) {
+        Ok(Some(text)) => Some(CheckoutPurposeSnapshot {
+            text,
+            origin: CheckoutPurposeOrigin::BranchDescription,
+        }),
+        Ok(None) => None,
+        Err(error) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "workspace_catalog",
+                "kind": "branch_description.read_failed",
+                "message": error,
+            }));
+            None
+        }
     }
 }
 
@@ -739,6 +787,7 @@ mod tests {
             SessionSpace {
                 id: "w1".to_owned(),
                 label: "one".to_owned(),
+                purpose: None,
                 cwds: vec![
                     root.to_string_lossy().into_owned(),
                     nested.to_string_lossy().into_owned(),
@@ -747,6 +796,7 @@ mod tests {
             SessionSpace {
                 id: "w2".to_owned(),
                 label: "two".to_owned(),
+                purpose: None,
                 cwds: vec![folder.to_string_lossy().into_owned()],
             },
         ];
@@ -855,6 +905,7 @@ mod tests {
             &[SessionSpace {
                 id: "w1".to_owned(),
                 label: "Demo".to_owned(),
+                purpose: None,
                 cwds: vec![
                     root.to_string_lossy().into_owned(),
                     checkout_path.to_string_lossy().into_owned(),
@@ -901,6 +952,7 @@ mod tests {
         let spaces = [SessionSpace {
             id: "w1".to_owned(),
             label: "Registered".to_owned(),
+            purpose: None,
             cwds: vec![root.to_string_lossy().into_owned()],
         }];
 
@@ -930,6 +982,7 @@ mod tests {
         let space = SessionSpace {
             id: "w7".to_owned(),
             label: "hide main".to_owned(),
+            purpose: None,
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
@@ -957,6 +1010,7 @@ mod tests {
         let space = SessionSpace {
             id: "w9".to_owned(),
             label: "hide main".to_owned(),
+            purpose: None,
             cwds: vec![
                 first.to_string_lossy().into_owned(),
                 second.to_string_lossy().into_owned(),
@@ -994,6 +1048,7 @@ mod tests {
         let space = SessionSpace {
             id: "w8".to_owned(),
             label: "scratch".to_owned(),
+            purpose: None,
             cwds: vec![root.to_string_lossy().into_owned()],
         };
 
@@ -1015,11 +1070,13 @@ mod tests {
             SessionSpace {
                 id: "w1".to_owned(),
                 label: "first".to_owned(),
+                purpose: None,
                 cwds: vec![cwd.clone()],
             },
             SessionSpace {
                 id: "w2".to_owned(),
                 label: "second".to_owned(),
+                purpose: None,
                 cwds: vec![cwd],
             },
         ];
@@ -1095,6 +1152,7 @@ mod tests {
             &[SessionSpace {
                 id: "w1".to_owned(),
                 label: "Project".to_owned(),
+                purpose: None,
                 cwds: vec![root.to_string_lossy().into_owned()],
             }],
             &worktrees,

@@ -1,7 +1,9 @@
 //! Worktree actions cross the socket boundary before publishing removal readiness.
 use super::*;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const CONFIRM_POLL: Duration = Duration::from_millis(100);
@@ -128,12 +130,170 @@ pub struct WorktreeTaskRequest {
     pub base_branch: Option<String>,
     pub agent_kind: Option<String>,
     pub focus: bool,
+    pub purpose: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorktreeTaskOutcome {
     pub path: String,
     pub pane_id: String,
+    /// Worktree creation succeeded even when its optional purpose did not.
+    /// The runtime records this as a diagnostic without turning the finished
+    /// creation into a failed operation.
+    pub purpose_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PurposeTaskRequest {
+    pub id: u64,
+    pub checkout_id: String,
+    pub repository_root: String,
+    pub branch: Option<String>,
+    pub session_workspace_id: Option<String>,
+    pub purpose: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PurposeTaskOutcome {
+    Saved {
+        purpose: String,
+        token_written: bool,
+    },
+    GitFailed {
+        purpose: String,
+        detail: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PurposeMirrorRequest {
+    workspace_id: String,
+    repository_root: String,
+    branch: String,
+    purpose: Option<String>,
+}
+
+enum PurposeMirrorMessage {
+    Write(PurposeMirrorRequest),
+    Stop,
+}
+
+/// Mirrors new live workspace purpose values into Git without delaying the
+/// session coordinator or taking the runtime lock. Each observed token change
+/// is queued once; a failed write is diagnosed and is not retried until a
+/// later token change makes a new intent.
+pub struct PurposeMirror {
+    sender: SyncSender<PurposeMirrorMessage>,
+    worker: Option<thread::JoinHandle<()>>,
+    observed: BTreeMap<(String, String, String), Option<String>>,
+}
+
+impl PurposeMirror {
+    const QUEUE_CAPACITY: usize = 64;
+
+    pub fn new() -> Result<Self, String> {
+        let (sender, receiver) = sync_channel(Self::QUEUE_CAPACITY);
+        let worker = thread::Builder::new()
+            .name("herdr-core-purpose-mirror".to_owned())
+            .spawn(move || {
+                let git = SystemGit;
+                while let Ok(message) = receiver.recv() {
+                    let PurposeMirrorMessage::Write(request) = message else {
+                        break;
+                    };
+                    let key = format!("branch.{}.description", request.branch);
+                    let result = match request.purpose.as_deref() {
+                        Some(purpose) => git
+                            .run(&request.repository_root, &["config", &key, purpose])
+                            .map(|_| ()),
+                        None => git.unset(&request.repository_root, &key),
+                    };
+                    match result {
+                        Ok(()) => crate::diagnostic!(serde_json::json!({
+                            "component": "checkout_purpose",
+                            "kind": "mirror.saved",
+                            "workspace_id": request.workspace_id,
+                            "branch": request.branch,
+                        })),
+                        Err(message) => crate::diagnostic!(serde_json::json!({
+                            "component": "checkout_purpose",
+                            "kind": "mirror.failed",
+                            "workspace_id": request.workspace_id,
+                            "branch": request.branch,
+                            "message": message,
+                        })),
+                    }
+                }
+            })
+            .map_err(|error| format!("purpose mirror worker could not be started: {error}"))?;
+        Ok(Self {
+            sender,
+            worker: Some(worker),
+            observed: BTreeMap::new(),
+        })
+    }
+
+    pub fn sync(&mut self, spaces: &[workspace::SessionSpace], workspaces: &[WorkspaceSnapshot]) {
+        let mut current = BTreeSet::new();
+        for space in spaces {
+            for workspace in workspaces {
+                for checkout in &workspace.checkouts {
+                    let checkout_path = Path::new(&checkout.path);
+                    let occupies_checkout = space.cwds.iter().any(|cwd| {
+                        Path::new(&workspace::normalized_for_comparison(Path::new(cwd)))
+                            .starts_with(Path::new(&workspace::normalized_for_comparison(
+                                checkout_path,
+                            )))
+                    });
+                    let Some(branch) = checkout.branch.as_deref().filter(|_| occupies_checkout)
+                    else {
+                        continue;
+                    };
+                    let key = (space.id.clone(), workspace.path.clone(), branch.to_owned());
+                    current.insert(key.clone());
+                    let previous = self.observed.get(&key);
+                    let first_live_value = previous.is_none() && space.purpose.is_some();
+                    let changed_value = previous.is_some_and(|value| value != &space.purpose);
+                    self.observed.insert(key, space.purpose.clone());
+                    if !first_live_value && !changed_value {
+                        continue;
+                    }
+                    let request = PurposeMirrorRequest {
+                        workspace_id: space.id.clone(),
+                        repository_root: workspace.path.clone(),
+                        branch: branch.to_owned(),
+                        purpose: space.purpose.clone(),
+                    };
+                    if let Err(error) = self.sender.try_send(PurposeMirrorMessage::Write(request)) {
+                        let kind = match error {
+                            TrySendError::Full(_) => "mirror.queue_full",
+                            TrySendError::Disconnected(_) => "mirror.worker_closed",
+                        };
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "checkout_purpose",
+                            "kind": kind,
+                            "workspace_id": space.id,
+                        }));
+                    }
+                }
+            }
+        }
+        self.observed.retain(|key, _| current.contains(key));
+    }
+}
+
+impl Drop for PurposeMirror {
+    fn drop(&mut self) {
+        let _ = self.sender.send(PurposeMirrorMessage::Stop);
+        if let Some(worker) = self.worker.take()
+            && worker.join().is_err()
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "checkout_purpose",
+                "kind": "mirror.join_failed",
+            }));
+        }
+    }
 }
 
 pub fn spawn_worktree_create(
@@ -157,6 +317,50 @@ pub fn spawn_worktree_create(
         })
         .map(|_| ())
         .map_err(|error| format!("worktree create worker could not be started: {error}"))
+}
+
+pub fn spawn_purpose_write(
+    context: LiveContext,
+    request: PurposeTaskRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-purpose-write".into())
+        .spawn(move || {
+            let git = SystemGit;
+            let result = write_purpose(context.api_connector.as_ref(), &git, &request);
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_purpose_operation_result(request.id, result);
+                } else {
+                    return;
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("purpose worker could not be started: {error}"))
+}
+
+pub fn spawn_remote_purpose_write(
+    context: RemoteControlContext,
+    request: PurposeTaskRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-remote-purpose-write".into())
+        .spawn(move || {
+            let git = SystemGit;
+            let result = write_purpose(context.api_connector.as_ref(), &git, &request);
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_purpose_operation_result(request.id, result);
+                } else {
+                    return;
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("remote purpose worker could not be started: {error}"))
 }
 
 /// `New agent here`: one new tab whose cwd is the checkout, in the Herdr
@@ -220,6 +424,7 @@ fn create_checkout_tab(
     Ok(WorktreeTaskOutcome {
         path: request.checkout_path.clone(),
         pane_id,
+        purpose_error: None,
     })
 }
 
@@ -273,9 +478,25 @@ fn create_worktree(
             .and_then(|path| path.as_deref())
             .is_some_and(|path| same_checkout_path(path, &created.path));
     if identity_matches {
+        let purpose_error = request.purpose.as_ref().and_then(|purpose| {
+            let git = SystemGit;
+            let purpose_request = PurposeTaskRequest {
+                id: request.id,
+                checkout_id: String::new(),
+                repository_root: request.repository_root.clone(),
+                branch: Some(request.branch.clone()),
+                session_workspace_id: Some(created.workspace_id.clone()),
+                purpose: purpose.clone(),
+            };
+            match write_purpose(connector, &git, &purpose_request) {
+                Ok(PurposeTaskOutcome::Saved { .. }) => None,
+                Ok(PurposeTaskOutcome::GitFailed { detail, .. }) | Err(detail) => Some(detail),
+            }
+        });
         return Ok(WorktreeTaskOutcome {
             path: created.path,
             pane_id: created.pane_id,
+            purpose_error,
         });
     }
 
@@ -386,6 +607,10 @@ fn reject_existing_unchecked_out_branch(repository_root: &str, branch: &str) -> 
 
 trait GitCommands {
     fn run(&self, cwd: &str, args: &[&str]) -> Result<String, String>;
+
+    fn unset(&self, cwd: &str, key: &str) -> Result<(), String> {
+        self.run(cwd, &["config", "--unset-all", key]).map(|_| ())
+    }
 }
 
 struct SystemGit;
@@ -408,6 +633,76 @@ impl GitCommands for SystemGit {
                 format!("git {}: {detail}", args[0])
             })
         }
+    }
+
+    fn unset(&self, cwd: &str, key: &str) -> Result<(), String> {
+        let output = Command::new("git")
+            .arg("--no-optional-locks")
+            .arg("-C")
+            .arg(cwd)
+            .args(["config", "--unset-all", key])
+            .output()
+            .map_err(|error| format!("git could not be run: {error}"))?;
+        if output.status.success() || output.status.code() == Some(5) {
+            Ok(())
+        } else {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            Err(if detail.is_empty() {
+                format!("git config exited with {}", output.status)
+            } else {
+                format!("git config: {detail}")
+            })
+        }
+    }
+}
+
+fn write_purpose(
+    connector: &dyn ApiConnector,
+    git: &dyn GitCommands,
+    request: &PurposeTaskRequest,
+) -> Result<PurposeTaskOutcome, String> {
+    let purpose = request.purpose.trim().to_owned();
+    if purpose.chars().count() > 80 {
+        return Err("Purpose must be 80 characters or fewer".to_owned());
+    }
+    if purpose.contains(['\n', '\r']) {
+        return Err("Purpose must be one line".to_owned());
+    }
+    let token_written = request.session_workspace_id.is_some();
+    if let Some(workspace_id) = request.session_workspace_id.as_deref() {
+        control_request(
+            connector,
+            "workspace.report_metadata",
+            wire::workspace_purpose_params(
+                workspace_id,
+                (!purpose.is_empty()).then_some(purpose.as_str()),
+            )?,
+        )
+        .map_err(|error| format!("workspace purpose: {error}"))?;
+    }
+    let Some(branch) = request.branch.as_deref() else {
+        return Ok(PurposeTaskOutcome::Saved {
+            purpose,
+            token_written,
+        });
+    };
+    let key = format!("branch.{branch}.description");
+    let git_result = if purpose.is_empty() {
+        git.unset(&request.repository_root, &key)
+    } else {
+        git.run(
+            &request.repository_root,
+            &["config", &key, purpose.as_str()],
+        )
+        .map(|_| ())
+    };
+    match git_result {
+        Ok(()) => Ok(PurposeTaskOutcome::Saved {
+            purpose,
+            token_written,
+        }),
+        Err(detail) if token_written => Ok(PurposeTaskOutcome::GitFailed { purpose, detail }),
+        Err(detail) => Err(detail),
     }
 }
 
@@ -444,6 +739,7 @@ fn migrate_branch(
     let create_request = WorktreeTaskRequest {
         branch: original.clone(),
         focus: false,
+        purpose: None,
         ..request.clone()
     };
     match create_worktree(connector, &create_request) {
@@ -706,7 +1002,100 @@ mod tests {
             base_branch: Some("main".into()),
             agent_kind: None,
             focus: true,
+            purpose: None,
         }
+    }
+
+    fn purpose_request(purpose: &str) -> PurposeTaskRequest {
+        PurposeTaskRequest {
+            id: 7,
+            checkout_id: "checkout:feature".into(),
+            repository_root: "/fixture/repo".into(),
+            branch: Some("feature".into()),
+            session_workspace_id: Some("w7".into()),
+            purpose: purpose.into(),
+        }
+    }
+
+    #[test]
+    fn purpose_writes_the_workspace_token_before_the_branch_description() {
+        let server = server(vec![json!({"result":{"type":"ok"}})]);
+        let git = ScriptedGit::new(vec![Ok("")]);
+
+        assert_eq!(
+            write_purpose(&server, &git, &purpose_request("Ship checkout row D")).unwrap(),
+            PurposeTaskOutcome::Saved {
+                purpose: "Ship checkout row D".into(),
+                token_written: true,
+            }
+        );
+
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["method"], "workspace.report_metadata");
+        assert_eq!(requests[0]["params"]["workspace_id"], "w7");
+        assert_eq!(requests[0]["params"]["source"], "hide");
+        assert_eq!(
+            requests[0]["params"]["tokens"]["purpose"],
+            "Ship checkout row D"
+        );
+        assert_eq!(
+            git.calls.lock().unwrap().as_slice(),
+            [vec![
+                "config".to_owned(),
+                "branch.feature.description".to_owned(),
+                "Ship checkout row D".to_owned(),
+            ]]
+        );
+    }
+
+    #[test]
+    fn rejected_workspace_token_never_writes_git() {
+        let server = server(vec![json!({
+            "error":{"code":"unavailable","message":"injected token refusal"}
+        })]);
+        let git = ScriptedGit::new(vec![]);
+
+        let error = write_purpose(&server, &git, &purpose_request("Keep input")).unwrap_err();
+
+        assert!(error.contains("injected token refusal"));
+        assert!(git.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn git_failure_after_a_workspace_token_is_a_partial_save() {
+        let server = server(vec![json!({"result":{"type":"ok"}})]);
+        let git = ScriptedGit::new(vec![Err("injected git lock")]);
+
+        assert_eq!(
+            write_purpose(&server, &git, &purpose_request("Visible live")).unwrap(),
+            PurposeTaskOutcome::GitFailed {
+                purpose: "Visible live".into(),
+                detail: "injected git lock".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn clearing_a_purpose_clears_the_token_and_branch_description() {
+        let server = server(vec![json!({"result":{"type":"ok"}})]);
+        let git = ScriptedGit::new(vec![Ok("")]);
+
+        assert!(matches!(
+            write_purpose(&server, &git, &purpose_request("")),
+            Ok(PurposeTaskOutcome::Saved { purpose, .. }) if purpose.is_empty()
+        ));
+
+        let requests = server.requests.lock().unwrap();
+        assert!(requests[0]["params"]["tokens"]["purpose"].is_null());
+        assert_eq!(
+            git.calls.lock().unwrap().as_slice(),
+            [vec![
+                "config".to_owned(),
+                "--unset-all".to_owned(),
+                "branch.feature.description".to_owned(),
+            ]]
+        );
     }
 
     #[test]

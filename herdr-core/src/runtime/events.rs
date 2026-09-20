@@ -518,6 +518,14 @@ pub(super) struct CreateWorktreePayload {
     pub(super) base_branch: Option<String>,
     #[serde(default)]
     pub(super) agent_kind: Option<String>,
+    #[serde(default)]
+    pub(super) purpose: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SetCheckoutPurposePayload {
+    pub(super) checkout_id: String,
+    pub(super) text: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -734,6 +742,7 @@ pub(super) enum Event {
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
     CreateWorktree(CreateWorktreePayload),
+    SetCheckoutPurpose(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
     TaskOperationAck(TaskOperationAckPayload),
     RemoveWorktree(RemoveWorktreePayload),
@@ -867,6 +876,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
         "create_worktree" => decode!(CreateWorktreePayload, CreateWorktree),
+        "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
         "task_operation_ack" => decode!(TaskOperationAckPayload, TaskOperationAck),
         "remove_worktree" => decode!(RemoveWorktreePayload, RemoveWorktree),
@@ -2466,6 +2476,7 @@ impl Runtime {
                 self.set_git_worktree_base(payload.repository_root, payload.branch)
             }
             Event::CreateWorktree(payload) => self.create_project_worktree(payload),
+            Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),
             Event::RemoveWorktree(payload) => self.remove_git_worktree(payload),

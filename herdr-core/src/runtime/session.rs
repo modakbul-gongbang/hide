@@ -35,6 +35,15 @@ impl Runtime {
                         id: layout.workspace_id.clone(),
                         label,
                         cwds: Vec::new(),
+                        purpose: payload
+                            .workspaces
+                            .iter()
+                            .find(|workspace| workspace.workspace_id == layout.workspace_id)
+                            .and_then(|workspace| workspace.tokens.get("purpose"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::trim)
+                            .filter(|purpose| !purpose.is_empty())
+                            .map(str::to_owned),
                     });
                     spaces.len() - 1
                 }
@@ -1173,9 +1182,17 @@ impl Runtime {
                 ),
             );
         }
+        let herdr_version = self
+            .remote_connections
+            .get(target_id)
+            .and_then(|connection| connection.client.cached_herdr_version());
         let status = &mut self.snapshot.status.remote[status_index];
 
         let mut changed = read_changed;
+        if status.herdr_version != herdr_version {
+            status.herdr_version = herdr_version;
+            changed = true;
+        }
         let mut observed_session = None;
         match fetched {
             Ok(session) => {
@@ -2326,6 +2343,14 @@ impl Runtime {
                     self.snapshot.focused.pane_id = Some(outcome.pane_id.clone());
                     self.snapshot.ui_state.selected_pane_id = Some(outcome.pane_id);
                 }
+                if let Some(detail) = outcome.purpose_error {
+                    self.push_diagnostic(
+                        "checkout_purpose.create_failed",
+                        format!(
+                            "The worktree was created, but its purpose was not saved: {detail}"
+                        ),
+                    );
+                }
                 self.refresh_worktrees();
             }
             Err(message) => {
@@ -2333,6 +2358,84 @@ impl Runtime {
                 operation.message = Some(message);
                 self.refresh_worktrees();
             }
+        }
+        true
+    }
+
+    pub fn ingest_purpose_operation_result(
+        &mut self,
+        id: u64,
+        result: Result<live::PurposeTaskOutcome, String>,
+    ) -> bool {
+        let Some(operation) = self.snapshot.task_operation.as_ref() else {
+            return false;
+        };
+        if operation.id != id
+            || operation.kind != "checkout_purpose"
+            || operation.phase != "working"
+        {
+            return false;
+        }
+        let path = operation.path.clone();
+        let mut visible_purpose = None;
+        let (phase, message, diagnostic) = match result {
+            Ok(live::PurposeTaskOutcome::Saved {
+                purpose,
+                token_written,
+            }) => {
+                visible_purpose = Some((purpose, token_written));
+                ("ready", None, None)
+            }
+            Ok(live::PurposeTaskOutcome::GitFailed { purpose, detail }) => {
+                visible_purpose = Some((purpose, true));
+                (
+                    "failed",
+                    Some("Saved to Herdr, but git did not record it. Save tries again.".to_owned()),
+                    Some(("checkout_purpose.git_failed", detail)),
+                )
+            }
+            Err(detail) => (
+                "failed",
+                Some("Herdr did not answer. Your text is kept; Save tries again.".to_owned()),
+                Some(("checkout_purpose.token_failed", detail)),
+            ),
+        };
+        if let Some((purpose, token_written)) = visible_purpose {
+            if let Some(checkout) = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter_mut()
+                .flat_map(|workspace| workspace.checkouts.iter_mut())
+                .find(|checkout| path.as_deref() == Some(checkout.path.as_str()))
+            {
+                checkout.purpose =
+                    (!purpose.is_empty()).then_some(crate::model::CheckoutPurposeSnapshot {
+                        text: purpose,
+                        origin: if token_written {
+                            crate::model::CheckoutPurposeOrigin::Token
+                        } else {
+                            crate::model::CheckoutPurposeOrigin::BranchDescription
+                        },
+                    });
+            }
+            crate::sidebar::sync_checkout_purposes(
+                &mut self.snapshot.navigator.workspaces,
+                &self.snapshot.navigator.agents,
+            );
+        }
+        let operation = self
+            .snapshot
+            .task_operation
+            .as_mut()
+            .expect("purpose operation was checked above");
+        operation.phase = phase.to_owned();
+        operation.message = message;
+        if let Some((kind, detail)) = diagnostic {
+            self.push_diagnostic(kind, detail);
+        }
+        if phase == "ready" {
+            self.refresh_worktrees();
         }
         true
     }

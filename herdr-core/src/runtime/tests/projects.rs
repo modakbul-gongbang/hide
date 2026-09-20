@@ -1057,6 +1057,7 @@ fn branch_migration_receipt_preserves_core_focus() {
         Ok(live::WorktreeTaskOutcome {
             path: "/fixture/worktree".into(),
             pane_id: "new:pane".into(),
+            purpose_error: None,
         })
     ));
     assert_eq!(
@@ -1176,6 +1177,7 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     let spaces = vec![workspace::SessionSpace {
         id: "w3M".to_owned(),
         label: "herdr-ide".to_owned(),
+        purpose: None,
         cwds: vec![repository_path.to_owned(), checkout_path.to_owned()],
     }];
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
@@ -1246,11 +1248,13 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
         workspace::SessionSpace {
             id: "w3P".to_owned(),
             label: "other".to_owned(),
+            purpose: None,
             cwds: vec![checkout_path.to_owned()],
         },
         workspace::SessionSpace {
             id: "w3Z".to_owned(),
             label: "selected".to_owned(),
+            purpose: None,
             cwds: vec![checkout_path.to_owned()],
         },
     ];
@@ -1346,6 +1350,7 @@ fn a_registration_herdr_already_has_a_workspace_for_is_listed_once() {
     let spaces = vec![workspace::SessionSpace {
         id: "w41".to_owned(),
         label: "duplicate".to_owned(),
+        purpose: None,
         cwds: vec![checkout_path.to_owned()],
     }];
     let registrations = vec![WorkspaceRegistration {
@@ -1377,6 +1382,7 @@ fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
     let spaces = vec![workspace::SessionSpace {
         id: "w5".to_owned(),
         label: "hide main".to_owned(),
+        purpose: None,
         cwds: vec![checkout_path.to_owned()],
     }];
     let project_id = workspace::workspace_id_for_path(Path::new(checkout_path));

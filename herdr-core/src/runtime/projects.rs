@@ -1,5 +1,34 @@
 use super::*;
 
+const MINIMUM_PURPOSE_HERDR_VERSION: (u64, u64, u64) = (0, 9, 1);
+
+fn herdr_version_supports_purpose(version: Option<&str>) -> bool {
+    parse_herdr_version(version.unwrap_or_default())
+        .is_some_and(|version| version >= MINIMUM_PURPOSE_HERDR_VERSION)
+}
+
+fn parse_herdr_version(version: &str) -> Option<(u64, u64, u64)> {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    let numeric = version.split(['-', '+']).next()?;
+    let mut parts = numeric.split('.');
+    let parsed = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    parts.next().is_none().then_some(parsed)
+}
+
+fn remote_purpose_unavailable_reason(version: Option<&str>) -> String {
+    match version {
+        Some(version) => format!(
+            "Set purpose requires Herdr 0.9.1 or newer on the remote device; {version} is installed"
+        ),
+        None => "Set purpose requires Herdr 0.9.1 or newer on the remote device; its version is unavailable"
+            .to_owned(),
+    }
+}
+
 impl Runtime {
     pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
         let changes_list_visible = self.snapshot.ui_state.right_panel_visible
@@ -1140,6 +1169,10 @@ impl Runtime {
                 }
             }
         }
+        changed |= crate::sidebar::sync_checkout_purposes(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+        );
         changed
     }
 
@@ -1257,6 +1290,7 @@ impl Runtime {
             base_branch: payload.base_branch,
             agent_kind: payload.agent_kind,
             focus: true,
+            purpose: payload.purpose,
         };
         let Some(context) = self.live.as_ref().cloned() else {
             return self.ingest_task_operation_result(
@@ -1266,6 +1300,136 @@ impl Runtime {
         };
         if let Err(message) = live::spawn_worktree_create(context, request) {
             return self.ingest_task_operation_result(id, Err(message));
+        }
+        true
+    }
+
+    /// Writes the live Herdr token first and the branch-description mirror
+    /// second on the task-operation worker. The runtime lock is held only for
+    /// validating the target and publishing the receipt.
+    pub(super) fn set_checkout_purpose(&mut self, payload: SetCheckoutPurposePayload) -> bool {
+        let text = payload.text.trim().to_owned();
+        if text.chars().count() > 80 || text.contains(['\n', '\r']) {
+            self.set_error(
+                "checkout_purpose.invalid",
+                "Purpose must be one line of 80 characters or fewer",
+                false,
+            );
+            return true;
+        }
+        let Some((workspace, checkout)) =
+            self.snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .find_map(|workspace| {
+                    workspace
+                        .checkouts
+                        .iter()
+                        .find(|checkout| checkout.id == payload.checkout_id)
+                        .map(|checkout| (workspace, checkout))
+                })
+        else {
+            self.set_error(
+                "checkout_purpose.unknown_checkout",
+                "The checkout is no longer available",
+                false,
+            );
+            return true;
+        };
+        let remote_target_id = workspace.remote_target_id.clone();
+        if let Some(target_id) = remote_target_id.as_deref() {
+            let version = self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|remote| remote.target_id == target_id)
+                .and_then(|remote| remote.herdr_version.as_deref());
+            if !herdr_version_supports_purpose(version) {
+                self.set_error(
+                    "checkout_purpose.remote_unsupported",
+                    remote_purpose_unavailable_reason(version),
+                    false,
+                );
+                return true;
+            }
+        }
+        let repository_root = workspace.path.clone();
+        let checkout_path = checkout.path.clone();
+        let branch = checkout.branch.clone();
+        let persisted_branch = remote_target_id.is_none().then(|| branch.clone()).flatten();
+        let session_workspace_id = if remote_target_id.is_some() {
+            workspace.session_workspace_ids.first().cloned()
+        } else {
+            self.last_session_spaces
+                .iter()
+                .find(|space| {
+                    space
+                        .cwds
+                        .iter()
+                        .any(|cwd| path_is_within_checkout(cwd, &checkout_path))
+                })
+                .map(|space| space.id.clone())
+        };
+        if branch.is_none() && session_workspace_id.is_none() {
+            self.set_error(
+                "checkout_purpose.no_target",
+                "This detached checkout has no live Herdr workspace to hold a purpose",
+                false,
+            );
+            return true;
+        }
+        if self
+            .snapshot
+            .task_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "working")
+        {
+            self.set_error(
+                "task_operation.busy",
+                "Another task operation is still running",
+                true,
+            );
+            return true;
+        }
+        self.next_task_operation_id = self.next_task_operation_id.wrapping_add(1).max(1);
+        let id = self.next_task_operation_id;
+        self.snapshot.task_operation = Some(crate::model::TaskOperationSnapshot {
+            id,
+            kind: "checkout_purpose".to_owned(),
+            phase: "working".to_owned(),
+            repository_root: Some(repository_root.clone()),
+            branch: persisted_branch.clone(),
+            base_branch: None,
+            path: Some(checkout_path),
+            pane_id: None,
+            agent_kind: None,
+            message: None,
+        });
+        let request = live::PurposeTaskRequest {
+            id,
+            checkout_id: payload.checkout_id,
+            repository_root,
+            branch: persisted_branch,
+            session_workspace_id,
+            purpose: text,
+        };
+        let spawn_result = if let Some(target_id) = remote_target_id.as_deref() {
+            self.remote_controls
+                .get(target_id)
+                .cloned()
+                .ok_or_else(|| "The remote Herdr connection is unavailable".to_owned())
+                .and_then(|context| live::spawn_remote_purpose_write(context, request))
+        } else {
+            self.live
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "A live Herdr connection is required".to_owned())
+                .and_then(|context| live::spawn_purpose_write(context, request))
+        };
+        if let Err(message) = spawn_result {
+            return self.ingest_purpose_operation_result(id, Err(message));
         }
         true
     }
@@ -1462,6 +1626,7 @@ impl Runtime {
             base_branch: Some(payload.base_branch),
             agent_kind: None,
             focus: false,
+            purpose: None,
         };
         let Some(context) = self.live.as_ref().cloned() else {
             return self.ingest_task_operation_result(
@@ -1551,5 +1716,20 @@ impl Runtime {
         // sidebar shows right now; the sync that follows Herdr's
         // workspace_closed rebuilds the catalog off the runtime lock.
         self.persist_current_ui_state();
+    }
+}
+
+#[cfg(test)]
+mod purpose_version_tests {
+    use super::*;
+
+    #[test]
+    fn remote_purpose_requires_the_pinned_minimum_version() {
+        assert!(!herdr_version_supports_purpose(None));
+        assert!(!herdr_version_supports_purpose(Some("0.9.0")));
+        assert!(herdr_version_supports_purpose(Some("0.9.1")));
+        assert!(herdr_version_supports_purpose(Some("v0.10.0")));
+        assert!(herdr_version_supports_purpose(Some("1.0.0-beta.1")));
+        assert!(!herdr_version_supports_purpose(Some("unknown")));
     }
 }

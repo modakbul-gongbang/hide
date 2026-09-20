@@ -16,6 +16,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         target_id: "mini".to_owned(),
         state: "connected".to_owned(),
         message: None,
+        herdr_version: Some("0.9.1".to_owned()),
         session: Some(RemoteSessionSnapshot {
             workspaces: vec![remote_workspace],
             agents: Vec::new(),
@@ -83,6 +84,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         target_id: "mini".to_owned(),
         state: "not_connected".to_owned(),
         message: None,
+        herdr_version: None,
         session: None,
         files: RemoteFileListSnapshot::idle(),
     });
@@ -255,6 +257,7 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
         target_id: "mini".to_owned(),
         state: "connected".to_owned(),
         message: None,
+        herdr_version: Some("0.9.1".to_owned()),
         session: Some(RemoteSessionSnapshot {
             workspaces: vec![remote_workspace],
             agents: Vec::new(),
@@ -713,6 +716,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         target_id: target_id.to_owned(),
         state: "connected".to_owned(),
         message: None,
+        herdr_version: Some("0.9.1".to_owned()),
         session: Some(RemoteSessionSnapshot {
             workspaces: vec![remote_workspace],
             agents: Vec::new(),
@@ -1431,6 +1435,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             target_id: target_id.to_owned(),
             state: "not_connected".to_owned(),
             message: None,
+            herdr_version: None,
             session: None,
             files: RemoteFileListSnapshot::idle(),
         });

@@ -199,7 +199,11 @@ mod tests {
         assert_eq!(params["source"], "hide-subagents");
         assert_eq!(
             params["tokens"],
-            json!({"hide_hooks": "1", "hide_sub_working": "2", "hide_sub_done": "5"})
+            json!({
+                "hide_hooks": HOOK_VERSION.to_string(),
+                "hide_sub_working": "2",
+                "hide_sub_done": "5"
+            })
         );
     }
 

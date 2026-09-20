@@ -49,6 +49,87 @@ impl Repository {
         let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
         (!name.is_empty()).then(|| name.to_owned())
     }
+
+    /// Reads the first line of `branch.<name>.description` from the shared
+    /// repository config without spawning git.
+    ///
+    /// This intentionally parses only the section and key Hide owns. Git's
+    /// quoted subsection escapes are decoded so branch names containing a
+    /// quote or backslash select the same section `git config` writes.
+    pub fn branch_description(&self, branch: &str) -> Result<Option<String>, String> {
+        let path = self.common_dir.join("config");
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("repository config could not be read: {error}"))?;
+        Ok(parse_branch_description(&text, branch))
+    }
+}
+
+fn parse_branch_description(config: &str, wanted_branch: &str) -> Option<String> {
+    let mut selected = false;
+    for raw_line in config.lines() {
+        let line = raw_line.trim();
+        if line.starts_with('[') {
+            selected = parse_branch_section(line).as_deref() == Some(wanted_branch);
+            continue;
+        }
+        if !selected || line.is_empty() || line.starts_with(['#', ';']) {
+            continue;
+        }
+        let (key, value) = line.split_once('=')?;
+        if !key.trim().eq_ignore_ascii_case("description") {
+            continue;
+        }
+        let value = parse_config_value(value.trim());
+        return (!value.is_empty()).then_some(value);
+    }
+    None
+}
+
+fn parse_branch_section(line: &str) -> Option<String> {
+    let body = line.strip_prefix('[')?.strip_suffix(']')?.trim();
+    let (section, rest) = body.split_once(char::is_whitespace)?;
+    if !section.eq_ignore_ascii_case("branch") {
+        return None;
+    }
+    parse_quoted(rest.trim())
+}
+
+fn parse_config_value(value: &str) -> String {
+    if value.starts_with('"') {
+        parse_quoted(value).unwrap_or_default()
+    } else {
+        value
+            .split(['#', ';'])
+            .next()
+            .unwrap_or_default()
+            .trim_end()
+            .to_owned()
+    }
+}
+
+fn parse_quoted(input: &str) -> Option<String> {
+    let mut chars = input.chars();
+    (chars.next()? == '"').then_some(())?;
+    let mut value = String::new();
+    let mut escaped = false;
+    for character in chars {
+        if escaped {
+            value.push(match character {
+                'n' => '\n',
+                't' => '\t',
+                'b' => '\u{0008}',
+                other => other,
+            });
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == '"' {
+            return Some(value);
+        } else {
+            value.push(character);
+        }
+    }
+    None
 }
 
 /// Finds the repository holding `path`, or `None` when no ancestor is a
@@ -177,6 +258,41 @@ mod tests {
                 "-m",
                 "fixture",
             ],
+        );
+    }
+
+    #[test]
+    fn reads_branch_description_with_git_quoted_section_names() {
+        let root = fixture("description");
+        repository_with_commit(&root);
+        git(&root, &["branch", "quoted\"branch", "HEAD"]);
+        git(
+            &root,
+            &[
+                "config",
+                "branch.quoted\"branch.description",
+                "One-line purpose",
+            ],
+        );
+
+        let repository = discover(&root).expect("repository");
+        assert_eq!(
+            repository
+                .branch_description("quoted\"branch")
+                .expect("config reads")
+                .as_deref(),
+            Some("One-line purpose")
+        );
+
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn branch_description_returns_only_the_first_physical_line() {
+        let config = "[branch \"topic\"]\n\tdescription = first line\nsecond line\n";
+        assert_eq!(
+            parse_branch_description(config, "topic").as_deref(),
+            Some("first line")
         );
     }
 

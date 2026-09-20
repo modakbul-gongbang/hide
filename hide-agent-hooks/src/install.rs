@@ -251,7 +251,7 @@ pub fn install(
         // (engineering rule 11, PRD B25).
         groups.retain(|group| group_marker_version(group).is_none());
         preserved += groups.len();
-        groups.push(hook_group(helper, event));
+        groups.push(hook_group(helper, runtime, event));
     }
     let after = serde_json::to_string(&document).unwrap_or_default();
     if before == after {
@@ -316,10 +316,11 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
 }
 
 /// The entry Hide writes: one command hook, carrying its own marker.
-fn hook_group(helper: &Path, event: HookEvent) -> Value {
+fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
     let command = format!(
-        "{} hook --event {} --source {}",
+        "{} hook --runtime {} --event {} --source {}",
         shell_quote(&helper.display().to_string()),
+        runtime.id(),
         event.name(),
         hook_source_id()
     );
@@ -709,6 +710,11 @@ mod tests {
         assert_eq!(after["model"], before["model"], "unrelated keys survive");
         assert!(after["hooks"]["SessionStart"].as_array().unwrap().len() == 1);
         assert!(after["hooks"]["SubagentStop"].as_array().unwrap().len() == 1);
+        let session_start_command = after["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(session_start_command.contains("--runtime codex"));
+        assert!(session_start_command.contains("--source hide-subagents@2"));
     }
 
     #[test]

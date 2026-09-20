@@ -1194,11 +1194,11 @@ pub fn parse_herdr_server_status(
 pub struct RusshRemoteClient {
     host: SshAlias,
     runtime: Arc<Runtime>,
-    /// The socket `herdr status server --json` reported on the host. It is
+    /// The answer `herdr status server --json` reported on the host. It is
     /// asked for on first use and forgotten when a socket open fails, so a
-    /// server restarted under another path is found again on the next
-    /// attempt instead of failing forever on the remembered one.
-    herdr_socket: Arc<Mutex<Option<String>>>,
+    /// server restarted under another path or version is found again on the
+    /// next attempt instead of failing forever on the remembered one.
+    herdr_status: Arc<Mutex<Option<RemoteHerdrServerStatus>>>,
 }
 
 #[derive(Clone)]
@@ -1516,7 +1516,7 @@ impl RusshRemoteClient {
         Ok(Self {
             host,
             runtime: Arc::new(runtime),
-            herdr_socket: Arc::new(Mutex::new(None)),
+            herdr_status: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -1527,17 +1527,24 @@ impl RusshRemoteClient {
     /// The remote Herdr socket, asked of the host on the first call and
     /// remembered until [`Self::forget_herdr_socket`].
     pub fn herdr_socket_path(&self) -> RemoteResult<String> {
-        if let Some(path) = lock_recover(&self.herdr_socket).clone() {
-            return Ok(path);
+        if let Some(status) = lock_recover(&self.herdr_status).clone() {
+            return Ok(status.socket);
         }
         let output = self.exec_read_only(RemoteReadCommand::HerdrServerStatus)?;
         let status = parse_herdr_server_status(&self.host.host_id, &output)?;
-        *lock_recover(&self.herdr_socket) = Some(status.socket.clone());
-        Ok(status.socket)
+        let socket = status.socket.clone();
+        *lock_recover(&self.herdr_status) = Some(status);
+        Ok(socket)
+    }
+
+    pub(crate) fn cached_herdr_version(&self) -> Option<String> {
+        lock_recover(&self.herdr_status)
+            .as_ref()
+            .and_then(|status| status.version.clone())
     }
 
     pub(crate) fn forget_herdr_socket(&self) {
-        *lock_recover(&self.herdr_socket) = None;
+        *lock_recover(&self.herdr_status) = None;
     }
 
     pub(crate) fn herdr_api_connector(&self) -> RusshApiConnector {

@@ -1,6 +1,7 @@
 //! Coordinates Herdr snapshot bootstrap, topology subscriptions, and capability readers.
 
 use super::*;
+use crate::live;
 
 pub(crate) fn spawn(
     context: SessionSyncContext,
@@ -40,6 +41,21 @@ fn run_coordinator(
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
     let mut next_hook_diagnosis_refresh = Instant::now();
     let mut catalog_cache: Option<CatalogCache> = None;
+    let mut purpose_mirror = if context.is_local() {
+        match live::PurposeMirror::new() {
+            Ok(mirror) => Some(mirror),
+            Err(message) => {
+                crate::diagnostic!(json!({
+                    "component": "checkout_purpose",
+                    "kind": "mirror.start_failed",
+                    "message": message,
+                }));
+                None
+            }
+        }
+    } else {
+        None
+    };
     // The hook-install state is two small file reads of this machine's own
     // configuration, so the local coordinator takes it once before the first
     // connect. It is not a poll: it changes only when the operator installs,
@@ -109,7 +125,12 @@ fn run_coordinator(
                     if replica
                         .as_ref()
                         .is_some_and(SessionReplica::ready_to_publish)
-                        && !publish_replica(&context, replica.as_ref().unwrap(), &mut catalog_cache)
+                        && !publish_replica(
+                            &context,
+                            replica.as_ref().unwrap(),
+                            &mut catalog_cache,
+                            &mut purpose_mirror,
+                        )
                     {
                         stop_subscription(&mut subscription);
                         return;
@@ -158,7 +179,12 @@ fn run_coordinator(
                         match current.refresh_published_state() {
                             Ok(changed)
                                 if (changed || requested)
-                                    && !publish_replica(&context, current, &mut catalog_cache) =>
+                                    && !publish_replica(
+                                        &context,
+                                        current,
+                                        &mut catalog_cache,
+                                        &mut purpose_mirror,
+                                    ) =>
                             {
                                 stop_subscription(&mut subscription);
                                 return;
@@ -215,7 +241,12 @@ fn run_coordinator(
             {
                 match settle_active_tab_reads(&context, current, &mut active_tab_reads) {
                     Ok(true) => {
-                        if !publish_replica(&context, current, &mut catalog_cache) {
+                        if !publish_replica(
+                            &context,
+                            current,
+                            &mut catalog_cache,
+                            &mut purpose_mirror,
+                        ) {
                             stop_subscription(&mut subscription);
                             return;
                         }
@@ -342,7 +373,12 @@ fn run_coordinator(
                         }
                         Some(true) => {
                             if let Some(current) = replica.as_ref()
-                                && !publish_replica(&context, current, &mut catalog_cache)
+                                && !publish_replica(
+                                    &context,
+                                    current,
+                                    &mut catalog_cache,
+                                    &mut purpose_mirror,
+                                )
                             {
                                 stop_subscription(&mut subscription);
                                 return;
@@ -462,7 +498,12 @@ fn run_coordinator(
                                     return;
                                 }
                                 if outcome.publish
-                                    && !publish_replica(&context, current, &mut catalog_cache)
+                                    && !publish_replica(
+                                        &context,
+                                        current,
+                                        &mut catalog_cache,
+                                        &mut purpose_mirror,
+                                    )
                                 {
                                     stop_subscription(&mut subscription);
                                     return;
@@ -478,6 +519,7 @@ fn run_coordinator(
                                                 &context,
                                                 current,
                                                 &mut catalog_cache,
+                                                &mut purpose_mirror,
                                             ) {
                                                 stop_subscription(&mut subscription);
                                                 return;
@@ -802,6 +844,7 @@ fn publish_replica(
     context: &SessionSyncContext,
     replica: &SessionReplica,
     catalog_cache: &mut Option<CatalogCache>,
+    purpose_mirror: &mut Option<live::PurposeMirror>,
 ) -> bool {
     if let SessionSyncTarget::Remote { target_id, .. } = &context.target {
         let projection = replica.project_remote(target_id);
@@ -868,6 +911,9 @@ fn publish_replica(
     let cache = catalog_cache
         .as_ref()
         .expect("catalog cache is filled on a miss");
+    if let Some(mirror) = purpose_mirror.as_mut() {
+        mirror.sync(&cache.spaces, &cache.workspaces);
+    }
     let precomputed = PrecomputedCatalog {
         registrations,
         workspaces: cache.workspaces.clone(),
