@@ -1,6 +1,11 @@
 use super::*;
 use crate::issues::{ISSUE_LIMIT, IssueCandidate, IssueLinkSnapshot, IssueReference};
 
+pub(super) struct UnconfirmedIssueToken {
+    pub value: String,
+    pub observed: bool,
+}
+
 impl Runtime {
     /// Pure projection over the accepted catalog and metadata. No reader is
     /// scheduled unless the chosen identity changes or a user refreshes it.
@@ -42,8 +47,19 @@ impl Runtime {
                 })
             })
             .collect();
-        self.unconfirmed_issue_tokens
-            .retain(|id, value| self.issue_tokens.workspaces.get(id) == Some(value));
+        self.unconfirmed_issue_tokens.retain(|id, token| {
+            if !self.last_session_spaces.iter().any(|space| &space.id == id) {
+                return false;
+            }
+            if self.issue_tokens.workspaces.get(id) == Some(&token.value) {
+                token.observed = true;
+                true
+            } else {
+                // A delayed event for the failed write must be seen before a
+                // later replacement/clear can confirm reconciliation.
+                !token.observed
+            }
+        });
         for workspace in &mut self.snapshot.navigator.workspaces {
             if workspace.remote_target_id.is_some() || !workspace.is_git {
                 continue;
@@ -66,10 +82,12 @@ impl Runtime {
                     .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
                     .collect();
                 let manual = sessions.get(&checkout.id).and_then(|id| {
-                    self.issue_tokens
-                        .workspaces
-                        .get(id)
-                        .filter(|value| self.unconfirmed_issue_tokens.get(id) != Some(*value))
+                    self.issue_tokens.workspaces.get(id).filter(|value| {
+                        !self
+                            .unconfirmed_issue_tokens
+                            .get(id)
+                            .is_some_and(|token| token.value == **value)
+                    })
                 });
                 let pane = physical
                     .iter()
@@ -229,7 +247,10 @@ impl Runtime {
             .ok_or_else(|| "Live connection is unavailable".to_owned())
             .and_then(|context| crate::live::spawn_issue_write(context, request.clone(), previous));
         if let Err(error) = result {
-            self.ingest_issue_operation_result(&request, Err(error));
+            self.ingest_issue_operation_result(
+                &request,
+                Err(crate::live::IssueWriteFailure::unchanged(error)),
+            );
         }
         true
     }
@@ -237,7 +258,7 @@ impl Runtime {
     pub(crate) fn ingest_issue_operation_result(
         &mut self,
         request: &crate::live::PurposeTaskRequest,
-        result: Result<Option<crate::issues::IssueSnapshot>, String>,
+        result: Result<Option<crate::issues::IssueSnapshot>, crate::live::IssueWriteFailure>,
     ) -> bool {
         if !self
             .issue_write_pending
@@ -265,6 +286,7 @@ impl Runtime {
                             issues: Default::default(),
                             status: Default::default(),
                             pull_requests: Vec::new(),
+                            ..Default::default()
                         });
                 }
                 if let Some(id) = &request.session_workspace_id {
@@ -312,11 +334,18 @@ impl Runtime {
                 self.apply_pull_requests();
             }
             Err(error) => {
-                if let Some(id) = &request.session_workspace_id {
-                    self.unconfirmed_issue_tokens
-                        .insert(id.clone(), request.purpose.clone());
+                if error.unconfirmed_token
+                    && let Some(id) = &request.session_workspace_id
+                {
+                    self.unconfirmed_issue_tokens.insert(
+                        id.clone(),
+                        UnconfirmedIssueToken {
+                            value: request.purpose.clone(),
+                            observed: false,
+                        },
+                    );
                 }
-                self.push_diagnostic("checkout_issue.save_failed", error);
+                self.push_diagnostic("checkout_issue.save_failed", error.detail);
                 if let Some(operation) = self.snapshot.task_operation.as_mut() {
                     operation.phase = "failed".into();
                 }

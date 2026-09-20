@@ -1582,6 +1582,12 @@ pub struct GithubStatusSnapshot {
 /// One repository's pull requests as `gh` reported them.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct GithubProjectSnapshot {
+    /// Successful component payloads, including a successful empty answer.
+    /// Internal reader provenance, not a snapshot wire field.
+    #[serde(skip)]
+    pub pull_requests_read: bool,
+    #[serde(skip)]
+    pub issues_read: bool,
     pub issues: crate::issues::ProjectIssuesSnapshot,
     /// The repository's main worktree, which is what identifies a project.
     pub root_path: String,

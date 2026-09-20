@@ -130,3 +130,89 @@ fn successful_manual_issue_is_immediate_even_before_first_project_read() {
     );
     assert!(runtime.snapshot.git_worktrees_loading);
 }
+
+fn manual_issue_runtime() -> Runtime {
+    let mut runtime = issue_runtime();
+    runtime.snapshot.navigator.workspaces[0].session_workspace_ids = vec!["w".into()];
+    runtime.last_session_spaces = vec![workspace::SessionSpace {
+        id: "w".into(),
+        label: "Repo".into(),
+        cwds: vec!["/repo/task".into()],
+        purpose: None,
+    }];
+    runtime
+        .issue_tokens
+        .workspaces
+        .insert("w".into(), "acme/project#1".into());
+    runtime
+        .issue_tokens
+        .panes
+        .insert("p".into(), "acme/project#2".into());
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].branch_issue =
+        Some("acme/project#1".into());
+    runtime.sync_issues();
+    runtime
+}
+fn manual_request(number: u32) -> crate::live::PurposeTaskRequest {
+    crate::live::PurposeTaskRequest {
+        id: 7,
+        checkout_id: "c".into(),
+        repository_root: "/repo".into(),
+        branch: Some("4-task".into()),
+        session_workspace_id: Some("w".into()),
+        purpose: format!("acme/project#{number}"),
+    }
+}
+fn linked_number(runtime: &Runtime) -> u32 {
+    runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .issue
+        .as_ref()
+        .unwrap()
+        .issue
+        .reference
+        .number
+}
+#[test]
+fn issue_validation_failure_keeps_the_previously_saved_manual_override() {
+    let mut runtime = manual_issue_runtime();
+    assert_eq!(linked_number(&runtime), 1);
+    let request = manual_request(1);
+    runtime.issue_write_pending = Some((7, "c".into(), request.purpose.clone()));
+    runtime.ingest_issue_operation_result(
+        &request,
+        Err(crate::live::IssueWriteFailure::unchanged(
+            "read failed before mutation".into(),
+        )),
+    );
+    runtime.sync_issues();
+    assert_eq!(linked_number(&runtime), 1);
+    assert!(runtime.unconfirmed_issue_tokens.is_empty());
+}
+#[test]
+fn issue_uncertain_write_is_suppressed_even_when_metadata_arrives_later() {
+    let mut runtime = manual_issue_runtime();
+    let request = manual_request(3);
+    runtime.issue_write_pending = Some((7, "c".into(), request.purpose.clone()));
+    runtime.ingest_issue_operation_result(
+        &request,
+        Err(crate::live::IssueWriteFailure {
+            detail: "rollback uncertain".into(),
+            unconfirmed_token: true,
+        }),
+    );
+    runtime.sync_issues();
+    assert_eq!(linked_number(&runtime), 1);
+    runtime
+        .issue_tokens
+        .workspaces
+        .insert("w".into(), "acme/project#3".into());
+    runtime.sync_issues();
+    assert_ne!(linked_number(&runtime), 3);
+    runtime
+        .issue_tokens
+        .workspaces
+        .insert("w".into(), "acme/project#1".into());
+    runtime.sync_issues();
+    assert_eq!(linked_number(&runtime), 1);
+    assert!(runtime.unconfirmed_issue_tokens.is_empty());
+}

@@ -936,7 +936,7 @@ pub struct Runtime {
     issue_tokens: crate::wire::IssueTokens,
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
     issue_write_pending: Option<(u64, String, String)>,
-    unconfirmed_issue_tokens: BTreeMap<String, String>,
+    unconfirmed_issue_tokens: BTreeMap<String, issues::UnconfirmedIssueToken>,
     /// The catalog and root index most recently accepted from the sync
     /// coordinator, reused when a later precomputation arrives stale so the
     /// reconcile never rebuilds under the runtime lock.

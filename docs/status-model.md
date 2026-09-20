@@ -277,7 +277,7 @@ The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request ad
 The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
 Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
-A failed generation retains both its last successful PR and issue answers, including a successfully empty answer.
+A failed component read retains that component's last successful answer, including a successfully empty answer, while a successful PR read still advances if issue reading fails.
 Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
 The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
 
@@ -361,11 +361,14 @@ Completed columns start collapsed and disappear only with their underlying pane 
 `wire.rs` extracts metadata and `git_dir.rs` reads the branch setting with the catalog off the runtime lock.
 The existing generation-driven GitHub reader fetches PRs, repository identity and open issues together; a 201st sentinel proves overflow and `sort:updated-desc` determines backlog order.
 Missing closed or cross-repository linked issues use one bounded read-only GraphQL query, not one process per card.
+An enriched issue lookup may retry once without optional Project fields; basic issue facts remain usable and the Project failure stays in the diagnostic and GitHub availability path.
 Linked issues take priority within the combined 200-identity project limit.
 A failed generation preserves its last successful payload, including a successful empty payload.
 The board keeps stale facts and puts their age in the shared issue tooltip; Overview owns the actionable GitHub availability explanation.
 
 Manual issue writes reuse the purpose operation slot and token-first, Git-second writer.
-Validation resolves an issue before writing, a failed Git mirror attempts to restore the previous token, and the runtime suppresses an unconfirmed token.
+Validation resolves an issue before writing, a failed Git mirror attempts to restore the previous token, and the runtime suppresses only an uncertain mutation until fresh metadata confirms replacement.
+A validation failure or confirmed rollback preserves the existing manual override.
 No GitHub mutation is allowed by this path.
-The existing purpose mirror worker clears a branch issue setting when an observed worktree is removed; an unregistered project is not treated as a removed worktree.
+The existing purpose mirror worker clears a branch issue setting when an observed worktree path is removed; a branch switch, detached HEAD, or unregistered project is not a removed worktree.
+A rejected cleanup enqueue is retained for the next catalog synchronization.
