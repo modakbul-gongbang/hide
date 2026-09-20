@@ -1,6 +1,6 @@
 // Resolve HideTheme's constants into the design canvas's variable values.
 //
-// HideTheme.swift is the one source of truth for a token, and design/hide.pen is a
+// HideTheme.swift is the one source of truth for a token, and design/hide-ui.lib.pen is a
 // consumer of it, the same way a Swift view is. This module reads the Swift and
 // answers what each mapped variable should be; gen-pen.mjs writes those into the
 // canvas and check-pen.mjs fails when the canvas disagrees.
@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const THEME = 'macos/Sources/HerdrMacOS/HideTheme.swift';
-export const CANVAS = 'design/hide.pen';
+export const CANVAS = 'design/hide-ui.lib.pen';
 export const MAP = 'scripts/pen-token-map.json';
 
 // --- Swift ------------------------------------------------------------------

@@ -8,7 +8,7 @@
 // the shell and never reaches the design, and nothing else says so. A value
 // that drifted is visible, and named with both sides. A board with no band
 // prefix cannot be found by the scheme. Anything else the generator would
-// change - a stale label or Foundations sheet, a token value written by hand -
+// change - a stale Foundations sheet, a token value written by hand -
 // is reported as one difference, with the command that repairs it. Where a
 // board sits is not checked; see `unplaced`.
 
@@ -53,4 +53,4 @@ if (failures.length) {
 }
 
 const counts = BANDS.map(band => `${band.prefix.replace(' /', '')} ${document.children.filter(node => node.name.startsWith(band.prefix)).length}`);
-console.log(`Design canvas agrees with HideTheme and its bands: ${expected.size} generated values, ${Object.keys(document.variables).length - expected.size} design-authored; ${counts.join(', ')}.`);
+console.log(`Design library agrees with HideTheme: ${expected.size} generated values, ${Object.keys(document.variables).length - expected.size} design-authored; ${counts.join(', ')}.`);

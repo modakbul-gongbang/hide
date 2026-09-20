@@ -125,61 +125,43 @@ Read `DESIGN.md` before changing any surface a user looks at; it is the design s
 Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception.
 Run `node scripts/check-design-contract.mjs` before delivery; it is the entrypoint `design-contract.yml` runs.
 
-### The Design Canvas
+### The Design Library
 
-Screen designs, layout proposals and component sheets live in one pen.dev document, `design/hide.pen`, and it is committed, so a design change shows up in `git diff` beside the code change that answers it.
-Put design work there rather than in a new file, an ad-hoc HTML page, or a screenshot pasted into a message: a second `.pen` file cannot use this one's variables (the import trap below) or its components (a `ref` names an id in its own document).
+`design/hide-ui.lib.pen` is the committed design-system library: tokens, primitive controls, reusable components and their state sheets.
+Only `System /` and `Component /` top-level sheets belong there.
+Product screens, proposals, audits and scratch do not.
+Read [DESIGN.md: Design library and exploration](DESIGN.md#design-library-and-exploration) for ownership, human review and local scratch.
 
-**Three rules cover the whole file; everything else is generated.**
+`HideTheme.swift` remains the numeric token authority.
+Use `$--` variables for supported visual properties; propose missing tokens in `HideTheme` rather than introducing one-off values.
+Run `node scripts/gen-pen.mjs` after editing the library; it refreshes mapped variables and Foundations without moving authored sheets.
+Run `node scripts/check-design-contract.mjs` before delivery.
+A component state is a `ref` of its reusable master with descendant overrides, not a redrawn copy.
+Preserve master IDs when editing so existing instances keep their identity.
 
-1. A board's name starts with its band prefix. `.pen` has no pages, so the prefix is the whole of a board's classification.
-2. Every value is a `$--` variable, never a literal, exactly as the shell designs against `HideTheme`. A value the set does not carry lands in `HideTheme.swift` first.
-3. Run `node scripts/gen-pen.mjs` before saving. It writes `HideTheme`'s values into the mapped variables, places every board at its band, and redraws the band labels and `System / Foundations`; `node scripts/check-pen.mjs` refuses a canvas that differs, and rides `check-design-contract.mjs`.
+Agents use independent Pen CLI headless sessions, not the shared desktop MCP or `--app desktop`.
+An explicit MCP `filePath` did not isolate the active desktop document in verification; it is not a lock or a routing guarantee.
+Start a task with `node scripts/design-scratch.mjs <task-slug>`; it checks the verified CLI version, imports this worktree's library and refuses an existing scratch.
+Use the exact document path printed by the command and confirm it with `get_app_state()` before editing.
+Only one writer edits a library document at a time; worktree agents explore in their own ignored files.
+Save and exit the CLI before human review; save and close the desktop document before resuming CLI edits of the same file.
+Do not resolve conflicting design edits by line-merging JSON: preserve both versions and reapply the approved change through Pen.
+When invoking Pen's own agent, `--repo .` is required for it to read project instructions:
 
-| Band | Prefix | Holds | Lifetime |
-|---|---|---|---|
-| System | `System /` | the generated Foundations sheet and the primitive sheets (badge, keycap, icon button, panel tab) | kept in step with `HideTheme` |
-| Component | `Component /` | one sheet per agreed component | `Screen /` boards reference the masters inside with `ref` nodes |
-| Screen | `Screen /<area> /<name>` | what the app draws at this commit | a PRD changes the board first; the code catches up in the same pull request |
-| Review | `Review /<date> <topic> / Audit`, `/ Proposal`, `/ As built / ...` | one audit, its proposal, and the as-built evidence beside them | deleted once the proposal lands in code |
-| Scratch | `Scratch /<topic>` | exploration, candidates side by side | deleted or redrawn as a `Screen /` or `Review /` board before the pull request opens |
+    pen interactive --in agents/runs/<task-slug>/design/scratch.pen --out agents/runs/<task-slug>/design/scratch.pen
+    pen --repo . --in agents/runs/<task-slug>/design/scratch.pen --out agents/runs/<task-slug>/design/scratch.pen --prompt "..."
 
-The check fails on a board with no prefix, a mapped variable that drifted from `HideTheme`, a `HideTheme` constant that `scripts/pen-token-map.json` neither maps nor excuses, and a stale label or Foundations sheet.
-The unclaimed constant is the one worth having: a token can otherwise reach the shell and never reach the design, and nothing says so.
-Where a board sits is not checked; a board dragged elsewhere in the pen app is still in its band by name, and the next `gen-pen.mjs` puts it back.
-The canvas also carries variables of its own that the generator never touches - the `--asbuilt-*` family naming the off-scale numbers the app writes directly, the `--proposed-*` family a reconciliation needs, and derived tints pen cannot compute.
+The desktop app's built-in agent does not automatically receive these repository rules.
+Inspect its output before promoting anything to the library.
+Use CLI `import_library({path: ...})` or `--library` for cross-document reuse, not a handwritten ordinary-file `imports` entry.
+Use the import ID reported by `list_libraries()` to qualify component and variable references; never hardcode another scratch's alias.
+Library imports were verified with CLI 0.3.8; 0.3.7 could reject the newer document format while presenting an empty document.
+Library changes load after the importing document is closed and reopened; instance overrides survive.
+Each worktree reads its own library revision, not a mutable library path in another checkout.
 
-**A component is a sheet, one column: title and spec, the `reusable` master, then one row per state.**
-A `ref` from a `Screen /` board resolves to the master inside its sheet.
-Each state row is a `ref` of the master with `descendants` overrides (`enabled: false` hides a slot, `<refId>/<childId>` reaches into a nested ref), never a redrawn copy, so a change to the master reaches every state.
-The states are the ones the code produces and the spec line says where (`ChangedFileRow`, `HideIconButton`); a state the app cannot reach is not drawn.
-
-There is no band for a feature's design, because `main` takes a PRD and its implementation in one pull-request merge and nothing runs at the merge to move a board.
-A PRD draws the screen it changes as the `Screen /` board itself, one frame per state the operator sees differently; a state that only changes a log line has no frame. On that branch the board is the target until the code catches up, and on `main` it is what was built.
-The target is kept outside the canvas: the PRD commit's `hide.pen`, and the boards exported to `agents/runs/<slug>/design/` when implementation starts.
-A component the design needs and does not have is drawn under a `Proposed /` name and recorded in the PRD's Decisions table, so the addition is a decision a reviewer sees rather than a shape that appeared.
-A review is adopted the same way: its tokens land in `HideTheme.swift`, its components are renamed into `Component /`, the `Screen /` boards are redrawn on them in the pull request that ships the code, and the `Review /` boards are deleted.
-
-`.pen` is JSON, and pen.dev is a local CLI reached over MCP or headlessly:
-
-    pen interactive --in design/hide.pen --out design/hide.pen                    # drive it yourself
-    pen --repo . --in design/hide.pen --out design/hide.pen --prompt "..."        # hand it to pen's own agent
-
-**`--repo .` is not optional.** It is the only thing that makes pen's agent read this file; `--repo` does not fall back to the working directory.
-Verified by planting a marker in `AGENTS.md`: with the flag the agent quotes it back, without the flag it reports no project instructions at all.
-Anything drawn inside the pen desktop app is scratch by default: its agent cannot reach this file, so assume literal colours and off-scale numbers and clean them up when you promote the board.
-Prefer structure a script could have produced over structure only a hand could have clicked, because that is what makes the file reviewable.
-
-Two substitutions are recorded rather than fixed, because pen cannot express either.
-SF Mono is not installed, so the canvas uses **JetBrains Mono**, which `DESIGN.md` accepts as a substitute.
-`ss03` cannot ride on a token, so type renders as plain Inter; sizes and spacing are exact, glyph shapes are not.
-For the same reason there is no pixel-comparison gate: it would be permanently red or uselessly loose.
-
-**Five traps, each of which cost a run or a wrong answer.**
-The last two are the dangerous ones, because they fail silently and look like they worked.
-
-- pen.dev is not HTML and not CSS - `alignItems: baseline`, `alignItems: stretch`, `margin` and percentage sizes all error, so think in the `.pen` schema rather than translating web properties.
-- `--enable-preview` crashes the renderer on the second `execute`; use `TakeScreenshot` inside `execute` instead.
-- `width` and `height` silently drop a `$variable` reference and leave the node at zero, so those two properties alone carry numeric literals - which is exactly why the generated check earns its keep on everything else.
-- **A variable reached through `imports` does not resolve, and renders black.** A second `.pen` file importing this one and filling a frame with `$--color-panel` drew `#000000`; the same variable declared locally drew `#1D1F21`, matching the literal exactly. There is no error. This is why there is one canvas file and not a scratch file beside it.
-- **A `context` node does not steer the agent.** A context node carrying a naming rule and "never use a literal hex" was ignored outright: the agent named the frame `Dark Frame` and filled it with `#1A1A1A`. Conventions have to arrive through `--repo .`, or not at all.
+Pen is not CSS: unsupported alignment, margin and percentage properties must not be invented.
+Width and height use numeric literals because variable references have rendered at zero in this toolchain.
+Variable-bound node opacity also renders invisible in this toolchain; the four state bindings in `pen-token-map.json` materialize their numeric values from `HideTheme` during generation and checking.
+The canvas uses JetBrains Mono in place of unavailable SF Mono, and plain Inter because `ss03` does not travel on a token.
+These substitutions are not a pixel-comparison acceptance gate.
+Use screenshots to inspect actual component rendering; keep them under `agents/runs/<slug>/`.

@@ -3,9 +3,9 @@
 //
 //   node scripts/gen-pen.mjs
 //
-// HideTheme's values go into the mapped variables, every board is placed at
-// its band, and the band labels and the Foundations sheet are redrawn. Every
-// other node, and every variable the design authored for itself, is left
+// HideTheme's values go into the mapped variables and the Foundations sheet
+// is redrawn without moving it. Declared opacity bindings are materialized.
+// Every other node, and every variable the design authored for itself, is left
 // alone. A HideTheme constant no list claims, or a board no band claims, is a
 // failure rather than a guess: the first is a token the design never received,
 // the second a board the scheme cannot find.
@@ -34,5 +34,5 @@ if (before === after) {
   console.log(`${CANVAS} is already what the generator writes: ${expected.size} token values, ${BANDS.length} bands.`);
 } else {
   fs.writeFileSync(file, after);
-  console.log(`${CANVAS} updated: ${expected.size} token values written, boards laid out across ${BANDS.length} bands.`);
+  console.log(`${CANVAS} updated: ${expected.size} token values written, Foundations refreshed; sheet placement preserved.`);
 }

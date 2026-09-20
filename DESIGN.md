@@ -120,9 +120,49 @@ components:
     rounded: "{rounded.radiusSmall}"
 ---
 
+## Design library and exploration
+
+[hide-ui.lib.pen](design/hide-ui.lib.pen) is the shared visual design-system library, not a catalog of every product screen.
+It contains Foundations, primitive controls, and agreed reusable components with their state examples.
+This document owns their meaning and behavior; `HideTheme.swift` owns the numeric token values mirrored into the library by `scripts/pen-token-map.json`.
+The library does not generate Swift controls automatically: an approved system change updates the library, token or component implementation, and this contract together.
+
+Keep task-specific screen exploration in `agents/runs/<slug>/design/scratch.pen` inside the task's worktree.
+That namespace is already ignored; scratch and screenshots are not merge deliverables.
+Create it from the task's checkout with `node scripts/design-scratch.mjs <task-slug>`.
+The command checks the verified Pen CLI version, uses headless `--library` to link this checkout's `design/hide-ui.lib.pen`, and prints the absolute scratch path and edit/review commands.
+It requires an existing Pen login, does not run a model prompt, refuses existing scratches and symlinked output directories, and publishes no scratch when the import fails.
+Do not automatically upgrade the CLI or silently fall back to a copied library when creation fails; resolve the reported cause first.
+The script owns the tested version pin; changing it requires repeating import, variable/component rendering, update/reopen and two-worktree isolation checks.
+
+Agents edit with `pen interactive --in <scratch-path> --out <scratch-path>` in an independent headless session per file.
+Do not use the shared desktop MCP or `--app desktop` for agent editing: a supplied MCP path did not reliably select that document in verification.
+Inside the CLI, read `read_skill()` and its schema/execute guides, then confirm `get_app_state()` and `list_libraries()` before editing.
+The latter returns each imported library's ID and status; a component is referenced as `<id>:<component-id>` and a variable as `$<id>:--token-name`.
+Discover the ID in each scratch rather than reusing an alias from another task.
+For an existing document needing a library, use CLI `import_library({path: ...})`; do not handwrite ordinary-file imports or redraw shared masters.
+The CLI 0.3.8 component guide still says cross-file references are unsupported; the library-qualified references described here were verified and take precedence for this workflow.
+
+Human review is a file handoff, not simultaneous editing.
+The agent saves with `save()` and exits with `exit()`, then the user opens the printed scratch path in Pen and gives feedback or edits it.
+Before the agent resumes, the user saves and closes that document; the agent starts a new headless session to load those changes.
+Do not keep a stale desktop editor open and later save over CLI changes.
+Library changes become visible when the importing document is closed and reopened, while per-instance overrides remain.
+Another worktree's library change first has to arrive through Git in this worktree; opening the scratch does not update Git or follow another checkout's library.
+
+Show alternatives in that task's scratch document, let the user choose and revise them, and obtain approval before implementing the selected screen.
+Record the approved behavior and any proposed system additions in the committed PRD, so the decision survives scratch cleanup.
+Capture the approved design under the run directory before implementation, then review the actual app against it.
+Promote only approved reusable components or tokens into the library, with one writer handling the shared update.
+Current product composition lives in code and the maintained behavioral contracts, not in long-lived screen boards.
+
+`node scripts/gen-pen.mjs` refreshes mapped variables and Foundations while preserving authored sheet positions.
+`node scripts/check-design-contract.mjs` rejects token drift, stale Foundations, and library sheets outside `System /` or `Component /`.
+The former `design/hide.pen` screen collection is recoverable from Git history and is no longer an active design input.
+
 ## Native Git and lineage tokens
 
-The [agent workflow contract](design/agent-workflow-review.md) and the adopted `Screen /` and `Component /` boards in `design/hide.pen` define parent-centric delegation, shared Agent identity, pane focus, and Explorer Git decorations.
+The [agent workflow contract](design/agent-workflow-review.md) and the reusable component sheets in `design/hide-ui.lib.pen` define parent-centric delegation, shared Agent identity, pane focus, and Explorer Git decorations.
 The former Review candidates, Final, R2, R3, the family-only Overview comparison, and the task-forest Overview that the worktree-grouped list replaced are historical and are not implementation references.
 `My Work` is a session-local default, and `All` restores delegated rows without changing status groups, pane focus, or read state.
 
@@ -605,7 +645,7 @@ A token name alone is not approval to add a new visual treatment.
 Every interactive component's contract specifies its label and accessible name, supported sizes/roles, default, hovered, pressed, keyboard-focused, selected and disabled states where applicable.
 Pending actions must show pending feedback and preserve the existing retry/duplicate-action contract.
 Relationship navigation uses the core's request-specific pane-focus outcome as that contract's authority.
-The adopted `Component / Spec / Relationship action states` and its referenced Ready, Pending, Target unavailable, and Open failed states use existing semantic and surface tokens without opacity overrides, so the disabled Open label, warning icon, long Korean or English reason, and Retry action remain legible.
+The adopted `Component / Relationship action states` and its referenced Ready, Pending, Target unavailable, and Open failed states use existing semantic and surface tokens without opacity overrides, so the disabled Open label, warning icon, long Korean or English reason, and Retry action remain legible.
 Status indicators retain text or a symbol alongside color; actual product state supplies their values.
 Keyboard activation, selection, IME handling and focus semantics remain part of the control contract when its appearance changes.
 Focus and hover are local presentation state and must not publish core snapshots or trigger Git/disk work.
@@ -666,7 +706,7 @@ Its toolbar keeps the breadcrumb and the two reveals, shows Find disabled with t
 A PDF that PDFKit cannot decode, cannot be read, or is password-protected shows the `PDF unavailable` empty state with the reason under the same toolbar.
 An image hides Wrap as well; a file that is not UTF-8 shows the `Preview only` empty state with `This file type cannot be shown as text.` and keeps Wrap disabled beside a disabled Find.
 The size and read-only reasons are unchanged.
-`Screen / Editor / Document kinds` in the design canvas draws one frame per kind, including the PDF failure.
+Task-local design review covers each changed document kind, including the PDF failure when that surface changes.
 
 Markdown files alone show the centered Live/Source HideChoiceGroup, and Live is the default.
 Both are editors over the same draft: Live draws the formatting in place and hides the markup on every line the caret is not on, the way Obsidian's Live Preview does; Source is the monospaced editor with its line-number ruler and Wrap toggle.
@@ -717,7 +757,7 @@ Editor tabs stay ephemeral, so the flag is never persisted.
 
 The italic variant is `HideTheme.Typography.previewSlant`, an oblique of the bundled Inter face applied through the font matrix, because that face carries no italic axis; it is reached only through `hideFont(italic:)`.
 The tooltip and the accessibility label read `name · Preview` while the tab is one and drop the suffix on promotion (`EditorTabTitlePresentation`); the tab's colors, close button, keycap and its Recent Panels row are the ordinary tab's.
-The `Screen / Workbench / Preview tab` board draws the preview, promoted and dirty-kept states; pen substitutes the family's own italic, so the angle is not reviewed there, only size and spacing.
+Task-local design review covers the preview, promoted and dirty-kept states; Pen substitutes the family's own italic, so its angle must be reviewed in the native app.
 The core's rules are fixed by `runtime/tests/editor_preview.rs`, the shell's by `EditorPreviewTabPresentationTests`.
 
 ## Explorer file management
@@ -730,7 +770,7 @@ Open with Default App hands the file to macOS through the existing external open
 Open in Browser Pane stays in the menu whether or not it can act; when it cannot, the item is disabled and its tooltip carries the one reason, in the order the operator can act on it: `Remote files open on their device`, `Opening…`, `Node.js is not on PATH`, `Not connected to Herdr`, `No focused pane to open beside`.
 The menu does not auto-enable, so the disabled state is the presentation's decision and not AppKit's.
 The outcome of an open is a notice: the host's own sentence when it refused, `No running chromux profile. Launch one with chromux launch <name>.` when nothing is running, `Browser pane did not open in time` after thirty seconds.
-`Screen / Panel / Explorer file menu` in the design canvas draws the file menu enabled and with the item disabled.
+`Component / Explorer file menu` in the design library draws the file menu enabled and with the item disabled.
 `docs/BROWSER_PANES.md` owns how the pane is opened and which profile is chosen.
 
 Delete has two entry points, the menu item and `⌘⌫` while the tree holds the keyboard, and both end in the same confirmation: an alert titled `Move 'name' to Trash?`, a folder told that everything in it goes too, and both told the item can be restored from Finder, with Cancel as the default and Move to Trash as the destructive button.

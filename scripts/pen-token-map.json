@@ -3,16 +3,23 @@
     "Which HideTheme values the design canvas carries, and under what name.",
     "",
     "`mapped` is the generator's territory: the generator writes each of these into",
-    "design/hide.pen and the check fails when one drifts. Every other variable in that",
-    "file is the canvas's own and is never touched - the --asbuilt-* family that names",
-    "the off-scale numbers the app writes directly, the --proposed-* family the",
-    "reconciliation needs, and the derived tints pen cannot compute.",
+    "design/hide-ui.lib.pen and the check fails when one drifts. Every other variable in that",
+    "file is the library's own and is never touched: font names, derived tints and",
+    "retained component geometry. Proposal-only variables stay in local run files.",
     "",
     "`unmapped` is the rest of HideTheme, with the reason it stays out. It exists so the",
     "check can refuse a new HideTheme constant that is in neither list: silence is how a",
     "token reaches the shell without ever reaching the design.",
     "",
-    "A Swift path is dot-separated from HideTheme; `lanes.0` indexes an array literal."
+    "A Swift path is dot-separated from HideTheme; `lanes.0` indexes an array literal.",
+    "renderedOpacity binds node or descendant-override opacity to mapped tokens as numeric",
+    "values because variable-bound opacity renders invisible in the installed Pen toolchain."
+  ],
+  "renderedOpacity": [
+    {"node": "ps-icon-button-ref-07", "variable": "--opacity-secondary"},
+    {"node": "ps-icon-button-ref-10", "variable": "--opacity-disabled"},
+    {"node": "fm-menu-disabled", "descendant": "fm-open-browser", "variable": "--opacity-disabled"},
+    {"node": "fm-menu-opening", "descendant": "fm-open-browser", "variable": "--opacity-disabled"}
   ],
   "mapped": {
     "--color-background": "background",
