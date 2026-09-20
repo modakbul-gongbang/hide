@@ -134,9 +134,7 @@ fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
     let mut retained = Vec::with_capacity(hide_memory::HOOK_INPUT_LIMIT_BYTES.min(16 * 1024));
     let mut buffer = [0_u8; 8192];
     loop {
-        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-            return None;
-        };
+        let remaining = deadline.checked_duration_since(Instant::now())?;
         // SAFETY: `buffer` is a writable byte array and `descriptor_number`
         // is the live stdin descriptor held by `input`.
         let read = unsafe {

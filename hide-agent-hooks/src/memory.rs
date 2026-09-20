@@ -62,11 +62,10 @@ pub fn read_bounded(mut input: impl Read) -> io::Result<(Vec<u8>, bool)> {
 
 pub fn database_path(home: &Path) -> PathBuf {
     let testing = std::env::var(MEMORY_TESTING_ENV).as_deref() == Ok("1");
-    if testing {
-        if let Some(path) = std::env::var_os(MEMORY_DATABASE_ENV).filter(|value| !value.is_empty())
-        {
-            return PathBuf::from(path);
-        }
+    if testing
+        && let Some(path) = std::env::var_os(MEMORY_DATABASE_ENV).filter(|value| !value.is_empty())
+    {
+        return PathBuf::from(path);
     }
     home.join("Library/Application Support/hide/project-memory.sqlite3")
 }
@@ -146,13 +145,12 @@ pub fn project_memory_output_until(
                 AgentRuntime::ClaudeCode => "claude",
             };
             let session_id = input.session_id.as_deref().unwrap_or_default();
-            if !session_id.is_empty() {
-                if let Ok(topics) = store.recent_session_topics(&project.id, runtime_id, session_id)
-                {
-                    for topic in topics {
-                        text.push('\n');
-                        text.push_str(&topic);
-                    }
+            if !session_id.is_empty()
+                && let Ok(topics) = store.recent_session_topics(&project.id, runtime_id, session_id)
+            {
+                for topic in topics {
+                    text.push('\n');
+                    text.push_str(&topic);
                 }
             }
             text.push('\n');

@@ -151,10 +151,9 @@ impl Runtime {
         };
         if self.memory_operation_in_flight
             && self.memory_operation_checkout_path.as_deref() != Some(checkout_path.as_str())
+            && let Some(cancel) = &self.memory_cancel
         {
-            if let Some(cancel) = &self.memory_cancel {
-                cancel.cancel();
-            }
+            cancel.cancel();
         }
         let Some(context) = self.worker_context.clone() else {
             self.snapshot.sessions.loading = false;
