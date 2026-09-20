@@ -224,8 +224,17 @@ New worktree uses stacked Branch name, Create from, and Start with fields, follo
 `formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
 `HideFormPicker` owns stacked menu selection with an explicit selected label, and `HideSettingsField` owns form text inputs through the shared input surface.
 Inside a settings row the same picker drops its stacked label and takes the `settingsControlWidth` (200pt) right-hand column, because the row already carries the label on the left; its accessibility label stays the picker's own.
-Terminal tabs use the stable Herdr tab name, with `tabTitleMaxWidth` (200pt) bounding long names; the pane header alone carries the focused pane title and its agent status/provider marks.
-The tooltip retains the stable tab name and full focused-pane title; file and diff tabs retain their file names.
+Terminal tabs use the stable Herdr tab name; the pane header alone carries the focused pane title and its agent status/provider marks.
+Work tabs begin at the shared `tabPreferredWidth` (180pt) and shrink equally as the strip fills, preserving titles and shortcut keycaps through the inclusive `tabTitleMinimumWidth` (104pt) boundary.
+Only the active tab draws the existing 24pt toolbar close control at every density; selecting an inactive tab reveals that control in the same trailing position.
+Below 104pt tabs become icon tabs and keep identity, live state, notice and dirty marks, using a filled document glyph for preview files.
+An inactive icon tab uses the leading `tabIconIdentityWidth` (40pt), while the active tab adds the close control for a 64pt total width.
+If those compact widths cannot all fit, the strip reserves `tabOverflowControlWidth` (28pt) for an ordered `…` menu and shows one contiguous canonical range containing the active tab.
+Selecting a hidden tab moves that visible range without reordering it, widening restores compact, title and preferred states in reverse, and drag destinations use the same per-tab widths and starts as rendering.
+The strip never scrolls horizontally or scrolls the active tab into view.
+With the left sidebar visible, the first tab background starts flush at the content edge with no outer leading inset; the tab's internal identity spacing and one-point dividers remain unchanged.
+With the left sidebar hidden, the strip retains `trafficLightInset` (69pt) before its first control.
+The tooltip and accessibility label retain the full stable tab name, focused-pane context and state at every density; file and diff tabs retain their file names.
 The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
 `worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.
 `gitSectionIcon` uses `externaldrive.badge.checkmark`, and `gitPullRequestIcon` uses `arrow.triangle.pull`; status uses existing semantic colors and every icon has a tooltip.
