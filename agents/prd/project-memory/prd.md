@@ -1,7 +1,7 @@
 ---
 topic: "Project Memory와 Session History"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-09-20 verbatim: $implement 이거 herdr sol xhigh로 해서 작업하게 시켜줘~ 검수도 꼼꼼히 ㄱㄱ
 review_profile: "high-risk"
 review_rationale: "로컬 Claude Code와 Codex 대화에서 파생 지식을 영구 저장하고, 로그인된 외부 provider로 세션 본문을 보내 분석하며, 두 runtime의 사용자 소유 hook 설정을 갱신해 이후 prompt에 context를 주입한다. 비밀값 유출, 잘못된 기억의 반복 주입, hook 지연, 사용자 설정 손상 위험 때문에 privacy, data lifecycle, runtime compatibility와 fail-open 동작을 높은 강도로 검토해야 한다."
 source_intake: "agents/interview/project-memory/qa-log.md"
