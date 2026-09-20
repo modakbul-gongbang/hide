@@ -234,6 +234,19 @@ impl PurposeMirror {
         })
     }
 
+    #[cfg(test)]
+    fn recording() -> (Self, std::sync::mpsc::Receiver<PurposeMirrorMessage>) {
+        let (sender, receiver) = sync_channel(Self::QUEUE_CAPACITY);
+        (
+            Self {
+                sender,
+                worker: None,
+                observed: BTreeMap::new(),
+            },
+            receiver,
+        )
+    }
+
     pub fn sync(&mut self, spaces: &[workspace::SessionSpace], workspaces: &[WorkspaceSnapshot]) {
         let mut current = BTreeSet::new();
         for space in spaces {
@@ -285,14 +298,14 @@ impl PurposeMirror {
 
 impl Drop for PurposeMirror {
     fn drop(&mut self) {
-        let _ = self.sender.send(PurposeMirrorMessage::Stop);
-        if let Some(worker) = self.worker.take()
-            && worker.join().is_err()
-        {
-            crate::diagnostic!(serde_json::json!({
-                "component": "checkout_purpose",
-                "kind": "mirror.join_failed",
-            }));
+        if let Some(worker) = self.worker.take() {
+            let _ = self.sender.send(PurposeMirrorMessage::Stop);
+            if worker.join().is_err() {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "checkout_purpose",
+                    "kind": "mirror.join_failed",
+                }));
+            }
         }
     }
 }
@@ -489,10 +502,7 @@ fn create_worktree(
                 session_workspace_id: Some(created.workspace_id.clone()),
                 purpose: purpose.clone(),
             };
-            match write_purpose(connector, &git, &purpose_request) {
-                Ok(PurposeTaskOutcome::Saved { .. }) => None,
-                Ok(PurposeTaskOutcome::GitFailed { detail, .. }) | Err(detail) => Some(detail),
-            }
+            write_created_purpose(connector, &git, &purpose_request)
         });
         return Ok(WorktreeTaskOutcome {
             path: created.path,
@@ -707,6 +717,43 @@ fn write_purpose(
             token_written,
             detail,
         }),
+    }
+}
+
+/// Creation closes its sheet after the worktree exists, even when purpose
+/// persistence fails. Compensate a token-first partial save so the new row
+/// shows its fallback instead of claiming a purpose Git did not preserve.
+fn write_created_purpose(
+    connector: &dyn ApiConnector,
+    git: &dyn GitCommands,
+    request: &PurposeTaskRequest,
+) -> Option<String> {
+    match write_purpose(connector, git, request) {
+        Ok(PurposeTaskOutcome::Saved { .. }) => None,
+        Ok(PurposeTaskOutcome::GitFailed {
+            token_written: true,
+            detail,
+            ..
+        }) => {
+            let cleanup = request.session_workspace_id.as_deref().map(|workspace_id| {
+                control_request(
+                    connector,
+                    "workspace.report_metadata",
+                    wire::workspace_purpose_params(workspace_id, None)
+                        .map_err(|error| error.to_string())?,
+                )
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+            });
+            match cleanup {
+                Some(Ok(())) => Some(detail),
+                Some(Err(cleanup_error)) => Some(format!(
+                    "{detail}; Herdr token cleanup failed: {cleanup_error}"
+                )),
+                None => Some(detail),
+            }
+        }
+        Ok(PurposeTaskOutcome::GitFailed { detail, .. }) | Err(detail) => Some(detail),
     }
 }
 
@@ -1119,6 +1166,110 @@ mod tests {
                 "branch.feature.description".to_owned(),
             ]]
         );
+    }
+
+    #[test]
+    fn creation_compensates_a_token_when_the_git_mirror_fails() {
+        let server = server(vec![
+            json!({"result":{"type":"ok"}}),
+            json!({"result":{"type":"ok"}}),
+        ]);
+        let git = ScriptedGit::new(vec![Err("injected git lock")]);
+
+        assert_eq!(
+            write_created_purpose(&server, &git, &purpose_request("Use the fallback")),
+            Some("injected git lock".to_owned())
+        );
+
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0]["params"]["tokens"]["purpose"],
+            "Use the fallback"
+        );
+        assert!(requests[1]["params"]["tokens"]["purpose"].is_null());
+    }
+
+    #[test]
+    fn purpose_mirror_emits_initial_changes_and_clear_for_the_exact_branch() {
+        let (mut mirror, receiver) = PurposeMirror::recording();
+        let mut space = workspace::SessionSpace {
+            id: "w-purpose".to_owned(),
+            label: "Fixture".to_owned(),
+            cwds: vec!["/fixture/repo/worktrees/topic".to_owned()],
+            purpose: Some("Initial purpose".to_owned()),
+        };
+        let checkout = WorkspaceSnapshot {
+            id: "project".to_owned(),
+            label: "Fixture".to_owned(),
+            path: "/fixture/repo".to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: "repo".to_owned(),
+            is_git: true,
+            default_branch: Some("main".to_owned()),
+            branches: vec!["main".to_owned(), "topic/quoted".to_owned()],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec!["w-purpose".to_owned()],
+            last_activity_unix_ms: None,
+            pinned: false,
+            checkouts: vec![crate::model::CheckoutSnapshot {
+                id: "checkout".to_owned(),
+                workspace_id: "project".to_owned(),
+                label: "topic/quoted".to_owned(),
+                path: "/fixture/repo/worktrees/topic".to_owned(),
+                branch: Some("topic/quoted".to_owned()),
+                exists: true,
+                is_worktree: true,
+                ..Default::default()
+            }],
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+        );
+        let PurposeMirrorMessage::Write(initial) = receiver.recv().unwrap() else {
+            panic!("initial purpose is a write")
+        };
+        assert_eq!(initial.workspace_id, "w-purpose");
+        assert_eq!(initial.repository_root, "/fixture/repo");
+        assert_eq!(initial.branch, "topic/quoted");
+        assert_eq!(initial.purpose.as_deref(), Some("Initial purpose"));
+
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "an unchanged token is not rewritten"
+        );
+
+        space.purpose = Some("Changed purpose".to_owned());
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+        );
+        let PurposeMirrorMessage::Write(changed) = receiver.recv().unwrap() else {
+            panic!("changed purpose is a write")
+        };
+        assert_eq!(changed.purpose.as_deref(), Some("Changed purpose"));
+
+        space.purpose = None;
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+        );
+        let PurposeMirrorMessage::Write(cleared) = receiver.recv().unwrap() else {
+            panic!("cleared purpose is a write")
+        };
+        assert_eq!(cleared.branch, "topic/quoted");
+        assert!(cleared.purpose.is_none());
     }
 
     #[test]

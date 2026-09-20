@@ -196,7 +196,11 @@ struct SidebarCheckoutPresentation: Equatable {
             )
             : nil
         let request = checkout.pullRequest
-        showsPullRequestGlyph = request != nil && checkout.github.unavailableReason == nil
+        // A stale refresh retains the last known pull request. Keep its
+        // lifecycle glyph and mute it; a non-stale unavailable answer falls
+        // back to the branch glyph and its unavailable-reason tooltip.
+        showsPullRequestGlyph = request != nil
+            && (checkout.github.available || checkout.github.stale || checkout.github.unavailableReason == nil)
         if showsPullRequestGlyph, let request {
             kindStage = OverviewPresentation.pullRequestLabel(request)
             kindSystemImage = HideTheme.gitPullRequestIcon
@@ -240,6 +244,9 @@ struct SidebarCheckoutPresentation: Equatable {
                 first += " · Last known \(age)"
             }
             tooltipLines.append(first)
+            if let reason = checkout.github.unavailableReason {
+                tooltipLines.append(reason)
+            }
         } else if let reason = checkout.github.unavailableReason {
             tooltipLines.append(reason)
         }

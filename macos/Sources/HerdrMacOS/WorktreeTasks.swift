@@ -39,17 +39,19 @@ enum PurposeInputPresentation {
     static let hardLimit = 80
 
     static func normalized(_ text: String) -> String {
-        String(text.replacingOccurrences(of: "\n", with: " ")
+        let oneLine = text.replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
-            .prefix(hardLimit))
+        var limited = String.UnicodeScalarView()
+        limited.append(contentsOf: oneLine.unicodeScalars.prefix(hardLimit))
+        return String(limited)
     }
 
     static func countLabel(_ text: String) -> String {
-        "\(text.count) / \(recommendedLimit)"
+        "\(text.unicodeScalars.count) / \(recommendedLimit)"
     }
 
     static func isWarning(_ text: String) -> Bool {
-        text.count > recommendedLimit
+        text.unicodeScalars.count > recommendedLimit
     }
 }
 

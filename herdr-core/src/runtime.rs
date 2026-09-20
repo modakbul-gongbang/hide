@@ -719,6 +719,13 @@ impl Default for TerminalSessionLifecycle {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PurposeOperationTarget {
+    id: u64,
+    checkout_id: String,
+    remote_target_id: Option<String>,
+}
+
 fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bool {
     !has_active_session
         && !matches!(
@@ -994,6 +1001,10 @@ pub struct Runtime {
     /// that runs is a quiet no-op rather than a second round of closes.
     workspace_removals_in_flight: HashSet<String>,
     next_task_operation_id: u64,
+    /// The checkout a purpose receipt belongs to. A remote checkout lives in
+    /// `status.remote[].session`, not the local navigator, so the operation
+    /// carries this target separately from its shell-facing receipt.
+    purpose_operation_target: Option<PurposeOperationTarget>,
     next_explorer_operation_id: u64,
     delta: snapshot_delta::DeltaState,
 }
@@ -1146,6 +1157,7 @@ impl Runtime {
             next_worktree_removal_id: 0,
             workspace_removals_in_flight: HashSet::new(),
             next_task_operation_id: 0,
+            purpose_operation_target: None,
             next_explorer_operation_id: 0,
             delta: snapshot_delta::DeltaState::default(),
         };

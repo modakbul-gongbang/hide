@@ -264,6 +264,24 @@ struct OverviewPresentationTests {
         ) == .success)
     }
 
+    @Test func githubPopoverNamesLifecycleAndChecksForEveryPullRequest() {
+        let requested = OverviewPresentation.pullRequestPopoverDetail(pullRequest(
+            118,
+            badge: .review,
+            review: .changesRequested,
+            checks: .failed
+        ))
+        #expect(requested.status == "#118 · Changes requested · feature")
+        #expect(requested.statusTone == .warning)
+        #expect(requested.checks == "Checks failing")
+        #expect(requested.checksTone == .danger)
+
+        let absent = OverviewPresentation.pullRequestPopoverDetail(pullRequest(119))
+        #expect(absent.status == "#119 · Open · feature")
+        #expect(absent.checks == "Checks unavailable")
+        #expect(absent.checksTone == .muted)
+    }
+
     @Test func headerBadgesRenderLoadingUnavailableAndMissingAsSmallStates() throws {
         var loading = checkout("loading", path: "/loading")
         loading.github = CoreGithubStatus(

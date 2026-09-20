@@ -464,6 +464,17 @@ fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
     assert_eq!(projected.agents[0].pane_id, "remote:mini:pane:w1:p1");
     assert_eq!(projected.agents[0].demand, "none");
     assert_eq!(projected.agents[0].activity, "working");
+    assert_eq!(
+        projected.workspaces[0].checkouts[0].agent_summary.working,
+        1
+    );
+    assert_eq!(
+        projected.workspaces[0].checkouts[0]
+            .purpose
+            .as_ref()
+            .map(|purpose| purpose.origin),
+        Some(crate::model::CheckoutPurposeOrigin::AgentTitle)
+    );
     assert_eq!(projected.pane_layouts[0].frames[0].x, 0.0);
     assert_eq!(projected.pane_layouts[0].frames[0].width, 1.0);
     assert!(projected.workspaces[0].checkouts[0].exists);
@@ -488,6 +499,21 @@ fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
         projected.agents[0].pane_id, other_target.agents[0].pane_id,
         "agent routing follows the target-scoped pane identity"
     );
+}
+
+#[test]
+fn remote_projection_keeps_workspace_purpose_tokens() {
+    let mut value = snapshot();
+    value["workspaces"][0]["tokens"] = json!({"purpose": "Remote purpose"});
+    let replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+
+    let (projected, _) = replica.project_remote("mini").expect("remote projection");
+    let purpose = projected.workspaces[0].checkouts[0]
+        .purpose
+        .as_ref()
+        .expect("workspace purpose");
+    assert_eq!(purpose.text, "Remote purpose");
+    assert_eq!(purpose.origin, crate::model::CheckoutPurposeOrigin::Token);
 }
 
 #[test]

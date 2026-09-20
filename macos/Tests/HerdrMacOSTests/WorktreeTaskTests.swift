@@ -98,6 +98,11 @@ struct WorktreeSheetSubmissionTests {
         #expect(PurposeInputPresentation.isWarning(fortyOne))
         #expect(PurposeInputPresentation.normalized(hundred).count == 80)
         #expect(PurposeInputPresentation.normalized("first\nsecond\rthird") == "first second third")
+
+        let combining = String(repeating: "e\u{301}", count: 50)
+        #expect(PurposeInputPresentation.countLabel(combining) == "100 / 40")
+        #expect(PurposeInputPresentation.isWarning(combining))
+        #expect(PurposeInputPresentation.normalized(combining).unicodeScalars.count == 80)
     }
 
     @Test func escapeAlsoDiscardsTheOptionalPurpose() {

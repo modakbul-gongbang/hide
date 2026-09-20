@@ -623,7 +623,7 @@ A completed removal disappears from the core snapshot and a repeated request is 
 Save failures remain caller-visible; normal no-op results never become alerts.
 
 The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
-The selected Overview project retains its open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
+Only the selected Overview project's GitHub cell popover owns explicit refresh and status detail; the sidebar has neither a GitHub popover nor a refresh menu action.
 All triggers share the existing bounded background reader, authentication and cache.
 Explorer and History do not independently start GitHub queries.
 Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.

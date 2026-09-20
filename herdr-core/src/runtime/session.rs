@@ -2325,17 +2325,24 @@ impl Runtime {
         id: u64,
         result: Result<live::WorktreeTaskOutcome, String>,
     ) -> bool {
-        let Some(operation) = self.snapshot.task_operation.as_mut() else {
+        let Some(operation) = self.snapshot.task_operation.as_ref() else {
             return false;
         };
         if operation.id != id || operation.phase != "working" {
             return false;
         }
-        let should_focus = operation.kind != "branch_migrate";
+        let operation_kind = operation.kind.clone();
+        let repository_root = operation.repository_root.clone();
+        let should_focus = operation_kind != "branch_migrate";
         match result {
             Ok(outcome) => {
+                let operation = self
+                    .snapshot
+                    .task_operation
+                    .as_mut()
+                    .expect("task operation was checked above");
                 operation.phase = "ready".into();
-                operation.path = Some(outcome.path);
+                operation.path = Some(outcome.path.clone());
                 operation.pane_id = Some(outcome.pane_id.clone());
                 if should_focus {
                     self.snapshot.terminal.pane_id = Some(outcome.pane_id.clone());
@@ -2351,9 +2358,42 @@ impl Runtime {
                         ),
                     );
                 }
+                if operation_kind == "worktree_create"
+                    && let Some(workspace_id) = repository_root.as_deref().and_then(|root| {
+                        self.snapshot
+                            .navigator
+                            .workspaces
+                            .iter()
+                            .find(|workspace| workspace.path == root)
+                            .map(|workspace| workspace.id.clone())
+                    })
+                {
+                    let checkout_id = workspace::checkout_id_for_path(
+                        &workspace_id,
+                        std::path::Path::new(&outcome.path),
+                    );
+                    if !self
+                        .snapshot
+                        .ui_state
+                        .collapsed_checkout_ids
+                        .contains(&checkout_id)
+                    {
+                        self.snapshot
+                            .ui_state
+                            .collapsed_checkout_ids
+                            .push(checkout_id);
+                        self.snapshot.ui_state.collapsed_checkout_ids.sort();
+                        self.persist_ui_state();
+                    }
+                }
                 self.refresh_worktrees();
             }
             Err(message) => {
+                let operation = self
+                    .snapshot
+                    .task_operation
+                    .as_mut()
+                    .expect("task operation was checked above");
                 operation.phase = "failed".into();
                 operation.message = Some(message);
                 self.refresh_worktrees();
@@ -2376,7 +2416,11 @@ impl Runtime {
         {
             return false;
         }
-        let path = operation.path.clone();
+        let target = self
+            .purpose_operation_target
+            .as_ref()
+            .filter(|target| target.id == id)
+            .cloned();
         let mut visible_purpose = None;
         let (phase, message, diagnostic) = match result {
             Ok(live::PurposeTaskOutcome::Saved {
@@ -2411,28 +2455,66 @@ impl Runtime {
             ),
         };
         if let Some((purpose, token_written)) = visible_purpose {
-            if let Some(checkout) = self
-                .snapshot
-                .navigator
-                .workspaces
-                .iter_mut()
-                .flat_map(|workspace| workspace.checkouts.iter_mut())
-                .find(|checkout| path.as_deref() == Some(checkout.path.as_str()))
+            let next = (!purpose.is_empty()).then_some(crate::model::CheckoutPurposeSnapshot {
+                text: purpose,
+                origin: if token_written {
+                    crate::model::CheckoutPurposeOrigin::Token
+                } else {
+                    crate::model::CheckoutPurposeOrigin::BranchDescription
+                },
+            });
+            match target
+                .as_ref()
+                .and_then(|target| target.remote_target_id.as_deref())
             {
-                checkout.purpose =
-                    (!purpose.is_empty()).then_some(crate::model::CheckoutPurposeSnapshot {
-                        text: purpose,
-                        origin: if token_written {
-                            crate::model::CheckoutPurposeOrigin::Token
-                        } else {
-                            crate::model::CheckoutPurposeOrigin::BranchDescription
-                        },
-                    });
+                Some(remote_target_id) => {
+                    if let Some(session) = self
+                        .snapshot
+                        .status
+                        .remote
+                        .iter_mut()
+                        .find(|status| status.target_id == remote_target_id)
+                        .and_then(|status| status.session.as_mut())
+                    {
+                        if let Some(checkout) = session
+                            .workspaces
+                            .iter_mut()
+                            .flat_map(|workspace| workspace.checkouts.iter_mut())
+                            .find(|checkout| {
+                                target
+                                    .as_ref()
+                                    .is_some_and(|target| checkout.id == target.checkout_id)
+                            })
+                        {
+                            checkout.purpose = next;
+                        }
+                        crate::sidebar::sync_checkout_agent_summaries(
+                            &mut session.workspaces,
+                            &session.agents,
+                        );
+                    }
+                }
+                None => {
+                    if let Some(checkout) = self
+                        .snapshot
+                        .navigator
+                        .workspaces
+                        .iter_mut()
+                        .flat_map(|workspace| workspace.checkouts.iter_mut())
+                        .find(|checkout| {
+                            target
+                                .as_ref()
+                                .is_some_and(|target| checkout.id == target.checkout_id)
+                        })
+                    {
+                        checkout.purpose = next;
+                    }
+                    crate::sidebar::sync_checkout_purposes(
+                        &mut self.snapshot.navigator.workspaces,
+                        &self.snapshot.navigator.agents,
+                    );
+                }
             }
-            crate::sidebar::sync_checkout_purposes(
-                &mut self.snapshot.navigator.workspaces,
-                &self.snapshot.navigator.agents,
-            );
         }
         let operation = self
             .snapshot
@@ -2441,12 +2523,36 @@ impl Runtime {
             .expect("purpose operation was checked above");
         operation.phase = phase.to_owned();
         operation.message = message;
+        self.purpose_operation_target = None;
         if let Some((kind, detail)) = diagnostic {
             self.push_diagnostic(kind, detail);
         }
         if phase == "ready" {
             self.refresh_worktrees();
         }
+        true
+    }
+
+    pub(super) fn fail_purpose_operation(
+        &mut self,
+        id: u64,
+        message: impl Into<String>,
+        diagnostic_kind: &'static str,
+    ) -> bool {
+        let message = message.into();
+        let Some(operation) = self.snapshot.task_operation.as_mut() else {
+            return false;
+        };
+        if operation.id != id
+            || operation.kind != "checkout_purpose"
+            || operation.phase != "working"
+        {
+            return false;
+        }
+        operation.phase = "failed".to_owned();
+        operation.message = Some(message.clone());
+        self.purpose_operation_target = None;
+        self.push_diagnostic(diagnostic_kind, message);
         true
     }
     /// Decides an explorer change under the lock and runs it off the lock.

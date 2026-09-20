@@ -174,6 +174,13 @@ enum OverviewPresentation {
         case success
     }
 
+    struct PullRequestPopoverDetail: Equatable {
+        let status: String
+        let statusTone: Tone
+        let checks: String
+        let checksTone: Tone
+    }
+
     /// One chip of the group header's detail line. `text` is the whole of
     /// what the chip draws; the pull request chip draws its number after the
     /// bundled icon the view supplies.
@@ -301,6 +308,22 @@ enum OverviewPresentation {
         if request.review == .changesRequested { return .warning }
         if request.review == .approved { return .success }
         return .open
+    }
+
+    static func pullRequestPopoverDetail(_ request: CorePullRequest) -> PullRequestPopoverDetail {
+        let checks: (String, Tone) = switch request.checks {
+        case .some(.passing): ("Checks passing", .success)
+        case .some(.failed): ("Checks failing", .danger)
+        case .some(.pending): ("Checks running", .warning)
+        case .some(.none): ("No checks", .muted)
+        case .some(.unknown), nil: ("Checks unavailable", .muted)
+        }
+        return PullRequestPopoverDetail(
+            status: "#\(request.number) · \(pullRequestLabel(request)) · \(request.headBranch)",
+            statusTone: pullRequestTone(request),
+            checks: checks.0,
+            checksTone: checks.1
+        )
     }
 
     /// What VoiceOver reads for a group header: the branch, then each chip

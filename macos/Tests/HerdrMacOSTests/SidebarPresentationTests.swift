@@ -563,11 +563,11 @@ private func presentationAgent(
 @Test func checkoutSummaryCarriesPurposeCommitAgeTooltipAndAccessibilityInOrder() throws {
     let now = Date(timeIntervalSince1970: 1_700_000_000)
     let github = CoreGithubStatus(
-        available: true,
+        available: false,
         loading: false,
         stale: true,
         lastSuccessAtUnixMS: 1_699_992_800_000,
-        unavailableReason: nil
+        unavailableReason: "gh timed out"
     )
     var checkout = presentationCheckout(
         id: "checkout-row-d",
@@ -601,8 +601,11 @@ private func presentationAgent(
 
     #expect(presentation.secondLine == "체크아웃 행 목적 표시")
     #expect(presentation.lastCommitAge == "4h")
+    #expect(presentation.showsPullRequestGlyph)
     #expect(presentation.kindMuted)
-    #expect(presentation.detailTooltip.hasPrefix("#118 · Open · Checkout row D · Last known 2h\nWorking: 1"))
+    #expect(presentation.detailTooltip.hasPrefix("#118 · Open · Checkout row D · Last known 2h\n"))
+    #expect(presentation.detailTooltip.contains("gh timed out"))
+    #expect(presentation.detailTooltip.contains("Working: 1"))
     #expect(presentation.detailTooltip.hasSuffix("Created 1 day ago"))
     #expect(presentation.accessibilityLabel == "checkout-row-d, Open, 4h, 체크아웃 행 목적 표시")
     #expect(presentation.showsSecondLine(expanded: false))

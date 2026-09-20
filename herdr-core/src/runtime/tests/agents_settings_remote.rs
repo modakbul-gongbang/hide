@@ -1745,3 +1745,164 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
     }
     let _ = std::fs::remove_file(&state_path);
 }
+
+fn remote_purpose_runtime(version: &str) -> Runtime {
+    let mut runtime = runtime();
+    let workspace_id = "remote:mini:workspace:w1";
+    let checkout_id = "remote:mini:checkout:w1";
+    let mut remote_workspace = workspace(
+        workspace_id,
+        "Remote fixture",
+        "/fixture/remote",
+        vec![checkout(workspace_id, checkout_id, "/fixture/remote", None)],
+    );
+    remote_workspace.remote_target_id = Some("mini".to_owned());
+    remote_workspace.device_id = "mini".to_owned();
+    remote_workspace.session_workspace_ids = vec!["w1".to_owned()];
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: "mini".to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some(version.to_owned()),
+        session: Some(RemoteSessionSnapshot {
+            workspaces: vec![remote_workspace],
+            agents: Vec::new(),
+            active_tab_ids: Default::default(),
+            focused_workspace_id: Some(workspace_id.to_owned()),
+            focused_checkout_id: Some(checkout_id.to_owned()),
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: Vec::new(),
+        }),
+        files: RemoteFileListSnapshot::idle(),
+    });
+    runtime
+}
+
+fn begin_remote_purpose_operation(runtime: &mut Runtime) -> u64 {
+    let id = runtime
+        .begin_task_operation(
+            "checkout_purpose",
+            Some("/fixture/remote".to_owned()),
+            None,
+            None,
+            None,
+        )
+        .expect("purpose operation");
+    runtime.purpose_operation_target = Some(PurposeOperationTarget {
+        id,
+        checkout_id: "remote:mini:checkout:w1".to_owned(),
+        remote_target_id: Some("mini".to_owned()),
+    });
+    id
+}
+
+/// B20. A remote save updates the exact target-scoped checkout instead of
+/// looking only in the local navigator. Clearing and refusal keep the same
+/// caller-visible task-operation contract as a local save.
+#[test]
+fn remote_purpose_results_update_clear_and_preserve_the_exact_checkout() {
+    let mut runtime = remote_purpose_runtime("0.9.1");
+
+    let id = begin_remote_purpose_operation(&mut runtime);
+    assert!(runtime.ingest_purpose_operation_result(
+        id,
+        Ok(live::PurposeTaskOutcome::Saved {
+            purpose: "Remote updated".to_owned(),
+            token_written: true,
+        })
+    ));
+    let purpose = runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .workspaces[0]
+        .checkouts[0]
+        .purpose
+        .as_ref()
+        .expect("saved purpose");
+    assert_eq!(purpose.text, "Remote updated");
+    assert_eq!(purpose.origin, crate::model::CheckoutPurposeOrigin::Token);
+
+    let id = begin_remote_purpose_operation(&mut runtime);
+    assert!(runtime.ingest_purpose_operation_result(
+        id,
+        Ok(live::PurposeTaskOutcome::Saved {
+            purpose: String::new(),
+            token_written: true,
+        })
+    ));
+    assert!(
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .workspaces[0]
+            .checkouts[0]
+            .purpose
+            .is_none()
+    );
+
+    runtime.snapshot.status.remote[0]
+        .session
+        .as_mut()
+        .unwrap()
+        .workspaces[0]
+        .checkouts[0]
+        .purpose = Some(crate::model::CheckoutPurposeSnapshot {
+        text: "Keep me".to_owned(),
+        origin: crate::model::CheckoutPurposeOrigin::Token,
+    });
+    let id = begin_remote_purpose_operation(&mut runtime);
+    assert!(runtime.ingest_purpose_operation_result(id, Err("injected refusal".to_owned())));
+    assert_eq!(
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .workspaces[0]
+            .checkouts[0]
+            .purpose
+            .as_ref()
+            .unwrap()
+            .text,
+        "Keep me"
+    );
+    let operation = runtime.snapshot.task_operation.as_ref().unwrap();
+    assert_eq!(operation.phase, "failed");
+    assert_eq!(
+        operation.message.as_deref(),
+        Some("Herdr did not answer. Your text is kept; Save tries again.")
+    );
+}
+
+/// B20. The remote row resolver reaches the projected checkout, then refuses
+/// an unsupported server through the sheet's task operation instead of a
+/// detached global error.
+#[test]
+fn remote_purpose_resolver_reports_an_unsupported_server_in_the_sheet() {
+    let mut runtime = remote_purpose_runtime("0.9.0");
+
+    assert!(runtime.set_checkout_purpose(SetCheckoutPurposePayload {
+        checkout_id: "remote:mini:checkout:w1".to_owned(),
+        text: "Remote purpose".to_owned(),
+    }));
+
+    let operation = runtime.snapshot.task_operation.as_ref().expect("operation");
+    assert_eq!(operation.kind, "checkout_purpose");
+    assert_eq!(operation.phase, "failed");
+    assert!(
+        operation
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("0.9.1 or newer"))
+    );
+    assert!(
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.kind == "checkout_purpose.remote_unsupported" })
+    );
+}

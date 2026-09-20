@@ -243,10 +243,12 @@ struct CheckoutOverview: View {
                 Text("No recent pull requests")
             }
             ForEach(project?.pullRequests ?? [], id: \.number) { pr in
+                let detail = OverviewPresentation.pullRequestPopoverDetail(pr)
                 Button { model.openPullRequest(pr) } label: {
                     VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
                         Text(pr.title ?? "PR #\(pr.number)").lineLimit(2)
-                        Text("#\(pr.number) · \(pr.headBranch)").foregroundStyle(HideTheme.secondary)
+                        Text(detail.status).foregroundStyle(tone(detail.statusTone))
+                        Text(detail.checks).foregroundStyle(tone(detail.checksTone))
                     }
                 }.buttonStyle(HideTextButtonStyle(appearance: .quiet))
             }
@@ -406,6 +408,13 @@ struct CheckoutOverview: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(HideInteractiveButtonStyle())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(OverviewPresentation.headerAccessibilityLabel(
+                    checkout: checkout,
+                    chips: chips
+                ))
+                .accessibilityHint("Open this workspace")
+                .accessibilityIdentifier("overview-group-\(checkout.id)")
                 Spacer(minLength: HideTheme.spacingXS)
             }
             headerChipStrip(chips, checkout: checkout)
@@ -415,10 +424,6 @@ struct CheckoutOverview: View {
         .frame(minHeight: HideTheme.overviewGroupHeaderHeight)
         .padding(.horizontal, HideTheme.spacingMD)
         .hideTooltip(checkout.purpose?.text ?? checkout.path)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(OverviewPresentation.headerAccessibilityLabel(checkout: checkout, chips: chips))
-        .accessibilityHint("Open this workspace")
-        .accessibilityIdentifier("overview-group-\(checkout.id)")
         .opacity(sidebar.rowDimmed ? HideTheme.Opacity.dimmed : 1)
         .contextMenu { headerMenu(checkout, workspace: workspace) }
     }

@@ -50,7 +50,7 @@ impl Repository {
         (!name.is_empty()).then(|| name.to_owned())
     }
 
-    /// Reads the first line of `branch.<name>.description` from the shared
+    /// Reads the first logical line of `branch.<name>.description` from the shared
     /// repository config without spawning git.
     ///
     /// This intentionally parses only the section and key Hide owns. Git's
@@ -75,12 +75,17 @@ fn parse_branch_description(config: &str, wanted_branch: &str) -> Option<String>
         if !selected || line.is_empty() || line.starts_with(['#', ';']) {
             continue;
         }
-        let (key, value) = line.split_once('=')?;
+        let Some((key, value)) = line.split_once('=') else {
+            // Git permits bare Boolean keys. They do not make a later
+            // description in the same section unreadable.
+            continue;
+        };
         if !key.trim().eq_ignore_ascii_case("description") {
             continue;
         }
         let value = parse_config_value(value.trim());
-        return (!value.is_empty()).then_some(value);
+        let first_line = value.lines().next().unwrap_or_default().trim_end();
+        return (!first_line.is_empty()).then(|| first_line.to_owned());
     }
     None
 }
@@ -98,13 +103,37 @@ fn parse_config_value(value: &str) -> String {
     if value.starts_with('"') {
         parse_quoted(value).unwrap_or_default()
     } else {
-        value
+        let value = value
             .split(['#', ';'])
             .next()
             .unwrap_or_default()
-            .trim_end()
-            .to_owned()
+            .trim_end();
+        decode_config_escapes(value)
     }
+}
+
+fn decode_config_escapes(input: &str) -> String {
+    let mut value = String::new();
+    let mut escaped = false;
+    for character in input.chars() {
+        if escaped {
+            value.push(match character {
+                'n' => '\n',
+                't' => '\t',
+                'b' => '\u{0008}',
+                other => other,
+            });
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else {
+            value.push(character);
+        }
+    }
+    if escaped {
+        value.push('\\');
+    }
+    value
 }
 
 fn parse_quoted(input: &str) -> Option<String> {
@@ -288,12 +317,44 @@ mod tests {
     }
 
     #[test]
-    fn branch_description_returns_only_the_first_physical_line() {
+    fn branch_description_returns_only_the_first_logical_line() {
         let config = "[branch \"topic\"]\n\tdescription = first line\nsecond line\n";
         assert_eq!(
             parse_branch_description(config, "topic").as_deref(),
             Some("first line")
         );
+    }
+
+    #[test]
+    fn branch_description_skips_bare_keys_and_decodes_git_written_values() {
+        let root = fixture("description-syntax");
+        repository_with_commit(&root);
+        git(
+            &root,
+            &[
+                "config",
+                "branch.topic.description",
+                "first \"quoted\" \\ path\nsecond line",
+            ],
+        );
+        let config_path = root.join(".git/config");
+        let written = fs::read_to_string(&config_path).expect("git config output");
+        let with_bare_key = written.replace(
+            "[branch \"topic\"]",
+            "[branch \"topic\"]\n\tbareFlag\n\t# an unrelated comment",
+        );
+        fs::write(&config_path, with_bare_key).expect("augmented config");
+
+        let repository = discover(&root).expect("repository");
+        assert_eq!(
+            repository
+                .branch_description("topic")
+                .expect("config reads")
+                .as_deref(),
+            Some("first \"quoted\" \\ path")
+        );
+
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
     fn assert_matches_git(path: &Path) {

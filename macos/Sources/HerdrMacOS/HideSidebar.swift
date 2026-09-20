@@ -751,9 +751,6 @@ private struct WorkspaceNavigatorRow: View {
             }
             Divider()
         }
-        if workspace.isGit && workspace.remoteTargetID == nil {
-            Button("Refresh GitHub status") { model.requestGithubStatus(workspace, refresh: true) }
-        }
         Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
             .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
         if isLocalRegistration {

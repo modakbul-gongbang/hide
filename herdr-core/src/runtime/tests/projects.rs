@@ -1074,6 +1074,112 @@ fn branch_migration_receipt_preserves_core_focus() {
     );
 }
 
+/// B16 and B19. A created checkout starts collapsed, and a purpose mirror
+/// failure is diagnostic detail on an otherwise ready creation receipt.
+#[test]
+fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
+    let mut runtime = runtime();
+    let state_path = runtime.state_path.clone();
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "workspace-fixture",
+        "Fixture",
+        "/fixture/repo",
+        vec![checkout(
+            "workspace-fixture",
+            "checkout-main",
+            "/fixture/repo",
+            None,
+        )],
+    )];
+    let id = runtime
+        .begin_task_operation(
+            "worktree_create",
+            Some("/fixture/repo".to_owned()),
+            Some("topic".to_owned()),
+            Some("main".to_owned()),
+            None,
+        )
+        .expect("creation operation");
+    let path = "/fixture/repo.worktrees/topic";
+
+    assert!(runtime.ingest_task_operation_result(
+        id,
+        Ok(live::WorktreeTaskOutcome {
+            path: path.to_owned(),
+            pane_id: "w-created:p1".to_owned(),
+            purpose_error: Some("injected purpose mirror failure".to_owned()),
+        })
+    ));
+
+    let created_id = workspace::checkout_id_for_path("workspace-fixture", Path::new(path));
+    assert!(
+        runtime
+            .snapshot
+            .ui_state
+            .collapsed_checkout_ids
+            .contains(&created_id),
+        "the created row starts collapsed before the catalog refresh arrives"
+    );
+    let operation = runtime.snapshot.task_operation.as_ref().unwrap();
+    assert_eq!(operation.phase, "ready");
+    assert!(operation.message.is_none());
+    assert!(
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .any(|diagnostic| {
+                diagnostic.kind == "checkout_purpose.create_failed"
+                    && diagnostic
+                        .message
+                        .contains("injected purpose mirror failure")
+            })
+    );
+    let _ = std::fs::remove_file(state_path);
+}
+
+/// B18. Unicode-scalar validation matches the Swift sheet and fails inside
+/// the caller-visible task operation instead of publishing a detached alert.
+#[test]
+fn invalid_purpose_fails_the_sheet_operation_with_the_shared_scalar_limit() {
+    let mut runtime = runtime();
+    let mut local = workspace(
+        "workspace-purpose",
+        "Purpose",
+        "/fixture/purpose",
+        vec![checkout(
+            "workspace-purpose",
+            "checkout-purpose",
+            "/fixture/purpose",
+            None,
+        )],
+    );
+    local.checkouts[0].branch = Some("topic".to_owned());
+    runtime.snapshot.navigator.workspaces = vec![local];
+
+    assert!(runtime.set_checkout_purpose(SetCheckoutPurposePayload {
+        checkout_id: "checkout-purpose".to_owned(),
+        text: "a".repeat(81),
+    }));
+
+    let operation = runtime.snapshot.task_operation.as_ref().expect("operation");
+    assert_eq!(operation.kind, "checkout_purpose");
+    assert_eq!(operation.phase, "failed");
+    assert_eq!(
+        operation.message.as_deref(),
+        Some("Purpose must be one line of 80 characters or fewer")
+    );
+    assert!(
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.kind == "checkout_purpose.invalid" })
+    );
+}
+
 /// B5, B12. The two fold events own independent persisted keys and update
 /// the snapshot immediately. Repeating each toggle converges back to the
 /// default collapsed state without changing project disclosure.

@@ -1309,35 +1309,91 @@ impl Runtime {
     /// validating the target and publishing the receipt.
     pub(super) fn set_checkout_purpose(&mut self, payload: SetCheckoutPurposePayload) -> bool {
         let text = payload.text.trim().to_owned();
-        if text.chars().count() > 80 || text.contains(['\n', '\r']) {
-            self.set_error(
-                "checkout_purpose.invalid",
-                "Purpose must be one line of 80 characters or fewer",
-                false,
-            );
-            return true;
-        }
-        let Some((workspace, checkout)) =
-            self.snapshot
-                .navigator
-                .workspaces
-                .iter()
-                .find_map(|workspace| {
-                    workspace
-                        .checkouts
+        let target = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == payload.checkout_id)
+                    .map(|checkout| (None, workspace.clone(), checkout.clone()))
+            })
+            .or_else(|| {
+                self.snapshot.status.remote.iter().find_map(|status| {
+                    status
+                        .session
+                        .as_ref()?
+                        .workspaces
                         .iter()
-                        .find(|checkout| checkout.id == payload.checkout_id)
-                        .map(|checkout| (workspace, checkout))
+                        .find_map(|workspace| {
+                            workspace
+                                .checkouts
+                                .iter()
+                                .find(|checkout| checkout.id == payload.checkout_id)
+                                .map(|checkout| {
+                                    (
+                                        Some(status.target_id.clone()),
+                                        workspace.clone(),
+                                        checkout.clone(),
+                                    )
+                                })
+                        })
                 })
-        else {
-            self.set_error(
-                "checkout_purpose.unknown_checkout",
+            });
+        let Some((remote_target_id, workspace, checkout)) = target else {
+            let id = match self.begin_task_operation("checkout_purpose", None, None, None, None) {
+                Ok(id) => id,
+                Err(message) => {
+                    self.set_error("task_operation.busy", message, true);
+                    return true;
+                }
+            };
+            self.purpose_operation_target = Some(PurposeOperationTarget {
+                id,
+                checkout_id: payload.checkout_id,
+                remote_target_id: None,
+            });
+            return self.fail_purpose_operation(
+                id,
                 "The checkout is no longer available",
-                false,
+                "checkout_purpose.unknown_checkout",
             );
-            return true;
         };
-        let remote_target_id = workspace.remote_target_id.clone();
+        let repository_root = workspace.path.clone();
+        let checkout_path = checkout.path.clone();
+        let branch = checkout.branch.clone();
+        let persisted_branch = remote_target_id.is_none().then(|| branch.clone()).flatten();
+        let id = match self.begin_task_operation(
+            "checkout_purpose",
+            Some(repository_root.clone()),
+            persisted_branch.clone(),
+            None,
+            None,
+        ) {
+            Ok(id) => id,
+            Err(message) => {
+                self.set_error("task_operation.busy", message, true);
+                return true;
+            }
+        };
+        if let Some(operation) = self.snapshot.task_operation.as_mut() {
+            operation.path = Some(checkout_path.clone());
+        }
+        self.purpose_operation_target = Some(PurposeOperationTarget {
+            id,
+            checkout_id: payload.checkout_id.clone(),
+            remote_target_id: remote_target_id.clone(),
+        });
+        if text.chars().count() > 80 || text.contains(['\n', '\r']) {
+            return self.fail_purpose_operation(
+                id,
+                "Purpose must be one line of 80 characters or fewer",
+                "checkout_purpose.invalid",
+            );
+        }
         if let Some(target_id) = remote_target_id.as_deref() {
             let version = self
                 .snapshot
@@ -1347,18 +1403,13 @@ impl Runtime {
                 .find(|remote| remote.target_id == target_id)
                 .and_then(|remote| remote.herdr_version.as_deref());
             if !herdr_version_supports_purpose(version) {
-                self.set_error(
-                    "checkout_purpose.remote_unsupported",
+                return self.fail_purpose_operation(
+                    id,
                     remote_purpose_unavailable_reason(version),
-                    false,
+                    "checkout_purpose.remote_unsupported",
                 );
-                return true;
             }
         }
-        let repository_root = workspace.path.clone();
-        let checkout_path = checkout.path.clone();
-        let branch = checkout.branch.clone();
-        let persisted_branch = remote_target_id.is_none().then(|| branch.clone()).flatten();
         let session_workspace_id = if remote_target_id.is_some() {
             workspace.session_workspace_ids.first().cloned()
         } else {
@@ -1373,40 +1424,12 @@ impl Runtime {
                 .map(|space| space.id.clone())
         };
         if branch.is_none() && session_workspace_id.is_none() {
-            self.set_error(
-                "checkout_purpose.no_target",
+            return self.fail_purpose_operation(
+                id,
                 "This detached checkout has no live Herdr workspace to hold a purpose",
-                false,
+                "checkout_purpose.no_target",
             );
-            return true;
         }
-        if self
-            .snapshot
-            .task_operation
-            .as_ref()
-            .is_some_and(|operation| operation.phase == "working")
-        {
-            self.set_error(
-                "task_operation.busy",
-                "Another task operation is still running",
-                true,
-            );
-            return true;
-        }
-        self.next_task_operation_id = self.next_task_operation_id.wrapping_add(1).max(1);
-        let id = self.next_task_operation_id;
-        self.snapshot.task_operation = Some(crate::model::TaskOperationSnapshot {
-            id,
-            kind: "checkout_purpose".to_owned(),
-            phase: "working".to_owned(),
-            repository_root: Some(repository_root.clone()),
-            branch: persisted_branch.clone(),
-            base_branch: None,
-            path: Some(checkout_path),
-            pane_id: None,
-            agent_kind: None,
-            message: None,
-        });
         let request = live::PurposeTaskRequest {
             id,
             checkout_id: payload.checkout_id,
