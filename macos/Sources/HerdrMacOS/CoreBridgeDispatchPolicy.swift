@@ -106,6 +106,30 @@ enum LocalHerdrMutationReadiness: Equatable {
     }
 }
 
+enum PersistedPaneRestoreDecision: Equatable {
+    case waitForConnection
+    case complete
+    case focus(String)
+}
+
+/// A saved pane is restored only after the first connected projection.
+/// Dispatching it against the core's initial disconnected snapshot used to
+/// present the shell's own restore as a refused operator action, then mark the
+/// restore complete so it was never retried.
+struct PersistedPaneRestorePolicy {
+    static func evaluate(
+        alreadyRestored: Bool,
+        herdrState: String?,
+        terminalPaneID: String?,
+        persistedPaneID: String?
+    ) -> PersistedPaneRestoreDecision {
+        guard !alreadyRestored else { return .complete }
+        guard herdrState == "connected" else { return .waitForConnection }
+        guard terminalPaneID == nil, let persistedPaneID else { return .complete }
+        return .focus(persistedPaneID)
+    }
+}
+
 enum LocalHerdrMutationPolicy {
     static func evaluate(
         runtimeSelection: HerdrRuntimeSelection?,

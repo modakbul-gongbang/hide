@@ -58,6 +58,9 @@ import Testing
             "USER": "tester",
             "HERDR_SOCKET_PATH": "/private/tmp/hide-worktree/herdr.sock",
             "HERDR_CONFIG_PATH": "/private/tmp/hide-worktree/config",
+            "HERDR_SESSION": "hide-worktree-verification",
+            "XDG_CONFIG_HOME": "/private/tmp/hide-worktree/xdg-config",
+            "XDG_STATE_HOME": "/private/tmp/hide-worktree/xdg-state",
         ],
         loginPath: "/usr/bin:/bin"
     )
@@ -66,6 +69,9 @@ import Testing
     // creates panes in a session the user is not looking at.
     #expect(environment["HERDR_SOCKET_PATH"] == "/private/tmp/hide-worktree/herdr.sock")
     #expect(environment["HERDR_CONFIG_PATH"] == "/private/tmp/hide-worktree/config")
+    #expect(environment["HERDR_SESSION"] == "hide-worktree-verification")
+    #expect(environment["XDG_CONFIG_HOME"] == "/private/tmp/hide-worktree/xdg-config")
+    #expect(environment["XDG_STATE_HOME"] == "/private/tmp/hide-worktree/xdg-state")
 }
 
 @Test func everyChildIsPinnedToTheSocketTheCoreReads() {
@@ -148,6 +154,49 @@ import Testing
         return
     }
     #expect(message.hasPrefix("Herdr could not start:"))
+}
+
+@Test func staleSocketPathDoesNotSuppressServerStartup() throws {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("hide-stale-socket-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let socketPath = directory.appendingPathComponent("herdr.sock").path
+    try Data().write(to: URL(fileURLWithPath: socketPath))
+
+    let result = HerdrRuntimeResolver.startServerIfNeeded(
+        selection: HerdrRuntimeSelection(
+            path: "/usr/bin/true",
+            version: "0.0.0-test",
+            sha256: String(repeating: "0", count: 64)
+        ),
+        socketPath: socketPath,
+        environment: [:],
+        probe: { _, _, _ in .notRunning }
+    )
+
+    guard case .started = result else {
+        Issue.record("A stale socket path must be probed and replaced by a server start.")
+        return
+    }
+}
+
+@Test func liveServerProbeSuppressesASecondServerEvenWithoutAPathCheck() {
+    let result = HerdrRuntimeResolver.startServerIfNeeded(
+        selection: HerdrRuntimeSelection(
+            path: "/private/tmp/hide-runtime-must-not-launch",
+            version: "0.0.0-test",
+            sha256: String(repeating: "0", count: 64)
+        ),
+        socketPath: "/private/tmp/hide-live-server-verification.sock",
+        environment: [:],
+        probe: { _, _, _ in .running }
+    )
+
+    guard case .notNeeded = result else {
+        Issue.record("A responding server must prevent a duplicate launch.")
+        return
+    }
 }
 
 /// A launch creates one core, and it cannot be created before the Herdr

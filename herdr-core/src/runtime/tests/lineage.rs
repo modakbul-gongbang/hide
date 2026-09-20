@@ -40,12 +40,7 @@ fn lineage_workspaces() -> Vec<WorkspaceSnapshot> {
 fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     let mut rows = lineage_rows();
     let mut records = std::collections::BTreeMap::new();
-    crate::sidebar::apply_read_state(
-        &mut rows,
-        &mut records,
-        Some("child"),
-        ReadRecordScope::Local,
-    );
+    crate::sidebar::apply_read_state(&mut rows, &mut records, Some("child"));
     let original = rows
         .iter()
         .map(|row| {
@@ -167,7 +162,6 @@ fn lineage_collapse_persists_without_attention_expanding_it_and_prunes_on_disapp
         &mut attention,
         &mut runtime.snapshot.ui_state.pane_read_records,
         None,
-        ReadRecordScope::Local,
     );
     crate::sidebar::apply_lineage(
         &mut attention,

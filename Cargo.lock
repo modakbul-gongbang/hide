@@ -49,6 +49,7 @@ dependencies = [
  "hide-ai",
  "hide-herdr-client",
  "hide-session",
+ "libc",
  "regex",
  "serde",
  "serde_json",
@@ -1059,6 +1060,7 @@ name = "hide-ai"
 version = "0.1.0"
 dependencies = [
  "jsonschema",
+ "libc",
  "serde",
  "serde_json",
 ]

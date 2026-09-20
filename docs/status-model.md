@@ -24,11 +24,16 @@ Its own documentation is explicit: focusing a tab, or targeting it with pane foc
 Three finished agents side by side in one tab therefore cleared together on a single click, which is the bug this model exists to fix.
 
 So Hide keeps its own record instead.
-A pane is read when it has held Hide's keyboard focus since its last state change, and a state change is Herdr's `state_change_seq` rising **or** the derived demand and activity pair changing.
+A pane is read when it has held Hide's keyboard focus since its last state change, and within one answering Herdr connection a state change is Herdr's `state_change_seq` moving **or** the derived demand and activity pair changing.
 The pair matters because Herdr's sequence does not always rise when only plugin tokens change: with a pane's lifecycle held at `idle`, clearing its idle token so only a question token remained left the sequence where it was.
+`state_change_seq` is process-local, so the first projection after a connection bootstrap reconciles a saved record only when the sequence moved backwards and the agent session id, demand and activity still match before adopting the new sequence.
+A sequence that moved forward is new work completed while Hide was disconnected and remains unread.
+A different known agent session or a different demand or activity also remains unread; a matching restored agent remains read when a restarted server reset the sequence.
+An older saved record with no session identity is migrated on that same backwards-sequence and matching-state proof, then persists the detected identity for later restarts.
+The reconciliation stays pending for a saved pane until agent detection catches up, because restored pane topology can arrive before the restored agent list.
 
 The record is `pane_read_records` in the persisted UI state, keyed by pane id, so it survives a restart.
-A record whose pane the server stops reporting is dropped on the same pass, scoped to the namespace that pass owns, so a local sync never drops a remote pane's record.
+A record is dropped only when the authoritative pane layout stops reporting that pane, scoped to the namespace that pass owns, so a temporarily incomplete agent list and a local sync can never drop a restored or remote pane's record.
 A corrupt store loads as an empty record, which reads as everything unread, and says so in a diagnostic; it is never silently treated as read.
 
 Nothing reads Herdr's `done` versus `idle` split, or a token's `_new` suffix, to decide the read axis.
