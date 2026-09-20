@@ -5,6 +5,7 @@ struct CoreRemoteStatus: Decodable, Identifiable {
     let targetID: String
     let state: String
     let message: String?
+    let herdrVersion: String?
     let session: CoreRemoteSessionSnapshot?
     let files: CoreRemoteFileList
 
@@ -12,6 +13,7 @@ struct CoreRemoteStatus: Decodable, Identifiable {
         case targetID = "target_id"
         case state
         case message
+        case herdrVersion = "herdr_version"
         case session
         case files
     }

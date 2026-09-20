@@ -158,18 +158,64 @@ struct SidebarCheckoutPresentation: Equatable {
     let status: AgentStatusPresentation?
     let representativeAgentKind: String?
     let isDetached: Bool
+    let secondLine: String?
+    let lastCommitAge: String?
+    let kindStage: String
+    let kindSystemImage: String
+    let showsPullRequestGlyph: Bool
+    let kindMuted: Bool
+    let kindDanger: Bool
+    let rowDimmed: Bool
     let detailTooltip: String
+    let accessibilityLabel: String
+
+    func showsSecondLine(expanded: Bool) -> Bool {
+        !expanded && canShowSecondLine && (agentCount > 0 || secondLine != nil)
+    }
+
+    private let canShowSecondLine: Bool
 
     init(
         workspace: CoreWorkspaceSnapshot,
         checkout: CoreCheckoutSnapshot,
         agents: [SidebarAgent],
-        connected: Bool = true
+        connected: Bool = true,
+        now: Date = Date()
     ) {
         let summary = checkout.agentSummary
         agentCount = summary.total
         isPrimary = !checkout.isWorktree && checkout.path == workspace.path
         isDetached = checkout.worktree.map { $0.branch == nil } ?? false
+        secondLine = checkout.purpose?.text
+        let gitLoading = workspace.isGit && checkout.worktree == nil
+        canShowSecondLine = !gitLoading
+        lastCommitAge = checkout.exists && !gitLoading
+            ? RelativeActivityToken.token(
+                unixMS: checkout.worktree?.lastCommitUnixSeconds.map { UInt64(max(0, $0 * 1000)) },
+                now: now
+            )
+            : nil
+        let request = checkout.pullRequest
+        showsPullRequestGlyph = request != nil && checkout.github.unavailableReason == nil
+        if showsPullRequestGlyph, let request {
+            kindStage = OverviewPresentation.pullRequestLabel(request)
+            kindSystemImage = HideTheme.gitPullRequestIcon
+        } else if !workspace.isGit {
+            kindStage = "Folder"
+            kindSystemImage = "folder"
+        } else if isPrimary {
+            kindStage = "Primary checkout"
+            kindSystemImage = "house"
+        } else if isDetached {
+            kindStage = "Detached commit"
+            kindSystemImage = "point.3.connected.trianglepath.dotted"
+        } else {
+            kindStage = "Branch"
+            kindSystemImage = "arrow.triangle.branch"
+        }
+        kindMuted = checkout.github.stale || request?.isDraft == true
+        kindDanger = !checkout.exists
+        rowDimmed = request?.badge.isSettled == true
         let pathDetail: String
         if isDetached {
             let commit = checkout.worktree?.headSHA.map { " at \($0)" } ?? ""
@@ -184,17 +230,39 @@ struct SidebarCheckoutPresentation: Equatable {
             status = nil
             representativeAgentKind = nil
         }
+        var tooltipLines: [String] = []
+        if let request, showsPullRequestGlyph {
+            var first = "#\(request.number) · \(OverviewPresentation.pullRequestLabel(request))"
+            if let title = request.title, !title.isEmpty { first += " · \(title)" }
+            if checkout.github.stale,
+               let last = checkout.github.lastSuccessAtUnixMS {
+                let age = RelativeActivityToken.token(unixMS: UInt64(max(0, last)), now: now) ?? "now"
+                first += " · Last known \(age)"
+            }
+            tooltipLines.append(first)
+        } else if let reason = checkout.github.unavailableReason {
+            tooltipLines.append(reason)
+        }
         if summary.total == 0 {
-            detailTooltip = pathDetail
+            tooltipLines.append(pathDetail)
         } else if !connected {
-            detailTooltip = "Disconnected · agent activity unavailable\n\(pathDetail)"
+            tooltipLines.append("Disconnected · agent activity unavailable")
+            tooltipLines.append(pathDetail)
         } else {
             let counts = [("Needs You", summary.needsYou), ("Done", summary.done),
                           ("Working", summary.working), ("Seen", summary.seen)]
                 .filter { $0.1 > 0 }.map { "\($0.0): \($0.1)" }.joined(separator: " · ")
             let unknown = summary.unknown > 0 ? " (\(summary.unknown) Unknown)" : ""
-            detailTooltip = "\(counts)\(unknown)\n\(pathDetail)"
+            tooltipLines.append("\(counts)\(unknown)")
+            tooltipLines.append(pathDetail)
         }
+        if let created = checkout.worktree?.createdAtUnixMS {
+            tooltipLines.append("Created \(CheckoutCardPresentation.relativeAge(fromUnixMS: created, now: now))")
+        }
+        detailTooltip = tooltipLines.joined(separator: "\n")
+        accessibilityLabel = [checkout.label, kindStage, lastCommitAge, secondLine]
+            .compactMap { $0 }
+            .joined(separator: ", ")
     }
 }
 

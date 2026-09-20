@@ -181,6 +181,9 @@ final class ShellModel: ObservableObject {
     @Published var worktreeWorkspace: CoreWorkspaceSnapshot?
     @Published var worktreeDraft = WorktreeSheetDraft()
     @Published private(set) var worktreeError: String?
+    @Published var purposeRequest: CheckoutPurposeRequest?
+    @Published var purposeText = ""
+    @Published private(set) var purposeError: String?
     @Published var branchMigration: BranchMigrationRequest?
     private var handledTaskOperationIDs: Set<UInt64> = []
     @Published var interactionNotice: String?
@@ -1254,7 +1257,7 @@ final class ShellModel: ObservableObject {
     }
 
     private var hintSuppressingSheetVisibility: [Bool] {
-        [showSearch, showFileSearch, showSettings]
+        [showSearch, showFileSearch, showSettings, worktreeWorkspace != nil, purposeRequest != nil]
     }
 
     var hintSheetPresented: Bool {
@@ -1707,6 +1710,50 @@ final class ShellModel: ObservableObject {
             "branch": worktreeDraft.branch.trimmingCharacters(in: .whitespacesAndNewlines),
             "base_branch": worktreeDraft.baseBranch.map { $0 as Any } ?? NSNull(),
             "agent_kind": worktreeDraft.agent.map { $0.rawValue as Any } ?? NSNull(),
+            "purpose": worktreeDraft.purpose.isEmpty ? NSNull() : worktreeDraft.purpose,
+        ])
+    }
+
+    func purposeUnavailableReason(for workspace: CoreWorkspaceSnapshot) -> String? {
+        guard let targetID = workspace.remoteTargetID else { return nil }
+        let version = core.snapshot?.status.remote.first { $0.targetID == targetID }?.herdrVersion
+        guard let version, Self.supportsRemotePurpose(version) else {
+            let installed = version.map { "; \($0) is installed" } ?? "; its version is unavailable"
+            return "Set purpose requires Herdr 0.9.1 or newer on the remote device\(installed)."
+        }
+        return nil
+    }
+
+    private static func supportsRemotePurpose(_ rawVersion: String) -> Bool {
+        let version = rawVersion.hasPrefix("v") ? String(rawVersion.dropFirst()) : rawVersion
+        let numeric = version.split(whereSeparator: { $0 == "-" || $0 == "+" }).first ?? ""
+        let parts = numeric.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 3 else { return false }
+        return (parts[0], parts[1], parts[2]) >= (0, 9, 1)
+    }
+
+    func requestSetPurpose(workspace: CoreWorkspaceSnapshot, checkout: CoreCheckoutSnapshot) {
+        guard purposeUnavailableReason(for: workspace) == nil else { return }
+        purposeRequest = CheckoutPurposeRequest(workspace: workspace, checkout: checkout)
+        purposeText = checkout.purpose?.text ?? ""
+        purposeError = nil
+    }
+
+    func cancelSetPurpose() {
+        guard core.snapshot?.taskOperation?.kind != "checkout_purpose"
+            || core.snapshot?.taskOperation?.phase != "working" else { return }
+        purposeRequest = nil
+        purposeText = ""
+        purposeError = nil
+    }
+
+    func submitSetPurpose() {
+        guard let request = purposeRequest,
+              core.snapshot?.taskOperation?.phase != "working" else { return }
+        purposeError = nil
+        core.dispatch(kind: "set_checkout_purpose", payload: [
+            "checkout_id": request.checkout.id,
+            "text": purposeText,
         ])
     }
 
@@ -1821,6 +1868,18 @@ final class ShellModel: ObservableObject {
         else { return }
         defer {
             core.dispatch(kind: "task_operation_ack", payload: ["id": operation.id])
+        }
+        if operation.kind == "checkout_purpose" {
+            if operation.phase == "failed" {
+                purposeError = WorktreeSubmissionPresentation.oneLine(
+                    operation.message ?? "The purpose was not saved."
+                )
+            } else {
+                purposeRequest = nil
+                purposeText = ""
+                purposeError = nil
+            }
+            return
         }
         if operation.phase == "failed" {
             let message = WorktreeSubmissionPresentation.oneLine(

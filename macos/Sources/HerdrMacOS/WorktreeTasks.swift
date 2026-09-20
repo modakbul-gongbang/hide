@@ -6,6 +6,7 @@ enum WorktreeMenuPolicy {
     static let newWorktree = "New worktree…"
     static let removeProject = "Remove project…"
     static let setBaseBranch = "Set as base branch"
+    static let setPurpose = "Set purpose…"
     static let copyPath = "Copy Path"
     static let openIn = "Open in"
 
@@ -19,6 +20,7 @@ struct WorktreeSheetDraft: Equatable {
     var branch = ""
     var baseBranch: String?
     var agent: AgentProvider?
+    var purpose = ""
 
     var canSubmit: Bool {
         !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -28,7 +30,33 @@ struct WorktreeSheetDraft: Equatable {
         branch = ""
         baseBranch = preferredBase.flatMap { branches.contains($0) ? $0 : nil }
         agent = nil
+        purpose = ""
     }
+}
+
+enum PurposeInputPresentation {
+    static let recommendedLimit = 40
+    static let hardLimit = 80
+
+    static func normalized(_ text: String) -> String {
+        String(text.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .prefix(hardLimit))
+    }
+
+    static func countLabel(_ text: String) -> String {
+        "\(text.count) / \(recommendedLimit)"
+    }
+
+    static func isWarning(_ text: String) -> Bool {
+        text.count > recommendedLimit
+    }
+}
+
+struct CheckoutPurposeRequest: Identifiable {
+    let workspace: CoreWorkspaceSnapshot
+    let checkout: CoreCheckoutSnapshot
+    var id: String { checkout.id }
 }
 
 enum MainWorktreeBranchState: Equatable {

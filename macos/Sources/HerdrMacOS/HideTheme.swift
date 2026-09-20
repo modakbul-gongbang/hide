@@ -270,7 +270,10 @@ enum HideTheme {
     /// full model name and narrow enough that the row still reads as a table.
     static let settingsControlWidth: CGFloat = 200
     static let checkoutRowHeight: CGFloat = 36
+    static let checkoutDetailedRowHeight: CGFloat = 44
+    static let overviewGroupHeaderHeight: CGFloat = 52
     static let checkoutIconWidth: CGFloat = 14
+    static let checkoutMetadataLeadingInset = lineageChevronWidth + checkoutIconWidth + spacingSM * 2
     /// Align the root agent mark center with the checkout branch center.
     static let compactAgentLeadingInset = spacingSM + agentMarkWidth + spacingSM
         + checkoutIconWidth / 2 - lineageChevronWidth - agentMarkWidth / 2

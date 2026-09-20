@@ -18,6 +18,7 @@ struct WorktreeMenuTests {
 
     @Test func everyCheckoutCanSetItsBranchAsBase() {
         #expect(WorktreeMenuPolicy.checkoutItems.contains("Set as base branch"))
+        #expect(WorktreeMenuPolicy.setPurpose == "Set purpose…")
     }
 }
 
@@ -84,5 +85,29 @@ struct WorktreeSheetSubmissionTests {
 
     @Test func anExternalFailureIsRenderedAsExactlyOneLine() {
         #expect(WorktreeSubmissionPresentation.oneLine("git refused\nextra envelope") == "git refused extra envelope")
+    }
+
+    @Test func purposeInputWarnsAfterFortyAndStopsAtEightyCharacters() {
+        let forty = String(repeating: "가", count: 40)
+        let fortyOne = forty + "나"
+        let hundred = String(repeating: "다", count: 100)
+
+        #expect(PurposeInputPresentation.countLabel(forty) == "40 / 40")
+        #expect(!PurposeInputPresentation.isWarning(forty))
+        #expect(PurposeInputPresentation.countLabel(fortyOne) == "41 / 40")
+        #expect(PurposeInputPresentation.isWarning(fortyOne))
+        #expect(PurposeInputPresentation.normalized(hundred).count == 80)
+        #expect(PurposeInputPresentation.normalized("first\nsecond\rthird") == "first second third")
+    }
+
+    @Test func escapeAlsoDiscardsTheOptionalPurpose() {
+        var draft = WorktreeSheetDraft(
+            branch: "topic",
+            baseBranch: "main",
+            agent: .codex,
+            purpose: "checkout row"
+        )
+        draft.reset(branches: ["main"], preferredBase: "main")
+        #expect(draft.purpose.isEmpty)
     }
 }

@@ -82,6 +82,10 @@ struct ShellView: View {
             WorktreeCreationSheet(workspace: workspace)
                 .environmentObject(model)
         }
+        .sheet(item: $model.purposeRequest) { request in
+            SetPurposeSheet(request: request)
+                .environmentObject(model)
+        }
         .sheet(item: $model.branchMigration) { request in
             VStack(alignment: .leading, spacing: HideTheme.spacingLG) {
                 Text("Move \(request.branch) out of the main worktree?")

@@ -16,6 +16,8 @@ enum OverviewPresentation {
         case normal
         case muted
         case warning
+        case success
+        case danger
     }
 
     /// One cell of the stat strip: a value, the word beside it, and the
@@ -155,10 +157,21 @@ enum OverviewPresentation {
     // MARK: - Group header
 
     enum ChipKind: Equatable {
-        case files
-        case aheadBehind
-        case disk
         case pullRequest
+        case checks
+        case files
+        case behind
+        case ahead
+        case disk
+    }
+
+    enum PullRequestColorRole: Equatable {
+        case open
+        case merged
+        case closed
+        case draft
+        case warning
+        case success
     }
 
     /// One chip of the group header's detail line. `text` is the whole of
@@ -171,11 +184,9 @@ enum OverviewPresentation {
         let tooltip: String
     }
 
-    /// `12 files · ↑3 ↓1 · 2.4 GB · #107`, each part only when it applies:
-    /// no changes reads `Clean`, a zero side of `↑↓` is left out, a plain
-    /// folder has only its size, and a worktree with no pull request has no
-    /// chip. Size follows the glyph language: `…` while measuring, `? GB`
-    /// when unreadable (PRD B7, D-04, D-08).
+    /// The worktree comparison card's fixed badge order. The sidebar omits
+    /// these details; this is where review, checks, files and ancestry can be
+    /// compared without moving columns between rows.
     static func headerChips(
         checkout: CoreCheckoutSnapshot,
         isGit: Bool,
@@ -185,8 +196,39 @@ enum OverviewPresentation {
         var chips: [HeaderChip] = []
         let worktree = checkout.worktree
         if isGit {
+            if let pullRequest = checkout.pullRequest {
+                let state = pullRequestLabel(pullRequest)
+                chips.append(HeaderChip(
+                    kind: .pullRequest,
+                    text: "#\(pullRequest.number) \(state)",
+                    tone: checkout.github.stale ? .muted : pullRequestTone(pullRequest),
+                    tooltip: "#\(pullRequest.number) · \(state)"
+                        + (pullRequest.title.map { " · \($0)" } ?? "")
+                ))
+                switch pullRequest.checks {
+                case .passing:
+                    chips.append(HeaderChip(kind: .checks, text: "✓ Checks", tone: .success,
+                                            tooltip: "Checks passing"))
+                case .failed:
+                    chips.append(HeaderChip(kind: .checks, text: "✗ Checks", tone: .danger,
+                                            tooltip: "Checks failing"))
+                case .pending:
+                    chips.append(HeaderChip(kind: .checks, text: "… Checks", tone: .warning,
+                                            tooltip: "Checks running"))
+                case .some(.none), .some(.unknown), nil:
+                    break
+                }
+            } else if checkout.github.loading {
+                chips.append(HeaderChip(kind: .pullRequest, text: "… PR", tone: .muted,
+                                        tooltip: "Updating GitHub status…"))
+            } else if let reason = checkout.github.unavailableReason {
+                chips.append(HeaderChip(kind: .pullRequest, text: "? PR", tone: .warning,
+                                        tooltip: reason))
+            }
+        }
+        if isGit {
             if let worktree, worktree.missing {
-                chips.append(HeaderChip(kind: .files, text: "missing", tone: .warning,
+                chips.append(HeaderChip(kind: .files, text: "missing", tone: .danger,
                                         tooltip: "Git lists this worktree but its folder is not on disk"))
             } else if let worktree, worktree.unavailableReason != nil {
                 chips.append(HeaderChip(kind: .files, text: "? files", tone: .warning,
@@ -198,22 +240,22 @@ enum OverviewPresentation {
                 chips.append(HeaderChip(
                     kind: .files,
                     text: count == 0 ? "Clean" : "\(count) \(count == 1 ? "file" : "files")",
-                    tone: .normal,
-                    tooltip: count == 0 ? "No uncommitted changes · Open in History"
+                    tone: count == 0 ? .muted : .warning,
+                    tooltip: count == 0 ? "No uncommitted changes"
                         : "\(count) uncommitted \(count == 1 ? "change" : "changes") · Open in History"
                 ))
             }
-            if let worktree, !worktree.missing, worktree.baseBranch != nil, worktree.ahead > 0 || worktree.behind > 0 {
-                var parts: [String] = []
-                if worktree.ahead > 0 { parts.append("↑\(worktree.ahead)") }
-                if worktree.behind > 0 { parts.append("↓\(worktree.behind)") }
-                let base = worktree.baseBranch ?? ""
+            if let worktree, !worktree.missing, let base = worktree.baseBranch, worktree.behind > 0 {
                 chips.append(HeaderChip(
-                    kind: .aheadBehind,
-                    text: parts.joined(separator: " "),
-                    tone: worktree.behind > 0 ? .warning : .normal,
+                    kind: .behind,
+                    text: "↓\(worktree.behind) behind \(base)",
+                    tone: .warning,
                     tooltip: "\(worktree.ahead) ahead, \(worktree.behind) behind \(base)"
                 ))
+            }
+            if let worktree, !worktree.missing, checkout.pullRequest == nil, worktree.ahead > 0 {
+                chips.append(HeaderChip(kind: .ahead, text: "↑\(worktree.ahead) ahead", tone: .normal,
+                                        tooltip: "\(worktree.ahead) ahead of \(worktree.baseBranch ?? "the base")"))
             }
         }
         if let disk = worktree?.disk ?? (isGit ? nil : folderDisk) {
@@ -227,35 +269,66 @@ enum OverviewPresentation {
                 chips.append(HeaderChip(kind: .disk, text: "…", tone: .muted, tooltip: "Measuring allocated disk…"))
             }
         }
-        if isGit, let pullRequest = checkout.pullRequest {
-            chips.append(HeaderChip(
-                kind: .pullRequest,
-                text: "#\(pullRequest.number)",
-                tone: .normal,
-                tooltip: "#\(pullRequest.number) · \(CheckoutCardPresentation.pullRequestState(pullRequest).lowercased())"
-                    + (pullRequest.title.map { " · \($0)" } ?? "")
-            ))
-        }
         return chips
+    }
+
+    static func pullRequestLabel(_ request: CorePullRequest) -> String {
+        switch request.badge {
+        case .merged: return "Merged"
+        case .closed: return "Closed"
+        default: break
+        }
+        if request.isDraft { return "Draft" }
+        switch request.review {
+        case .reviewRequired: return "Review required"
+        case .changesRequested: return "Changes requested"
+        case .approved: return "Approved"
+        case nil: return "Open"
+        }
+    }
+
+    static func pullRequestTone(_ request: CorePullRequest) -> Tone {
+        if request.badge == .closed { return .danger }
+        if request.badge == .merged || request.review == .approved { return .success }
+        if request.review == .changesRequested { return .warning }
+        return request.isDraft ? .muted : .normal
+    }
+
+    static func pullRequestColorRole(_ request: CorePullRequest) -> PullRequestColorRole {
+        if request.badge == .merged { return .merged }
+        if request.badge == .closed { return .closed }
+        if request.isDraft { return .draft }
+        if request.review == .changesRequested { return .warning }
+        if request.review == .approved { return .success }
+        return .open
     }
 
     /// What VoiceOver reads for a group header: the branch, then each chip
     /// in words, so `#107` becomes `pull request 107 open` (PRD B21).
     static func headerAccessibilityLabel(checkout: CoreCheckoutSnapshot, chips: [HeaderChip]) -> String {
         var parts = [checkout.label]
+        if let purpose = checkout.purpose?.text { parts.append(purpose) }
         for chip in chips {
             switch chip.kind {
             case .files:
                 parts.append(chip.text == "Clean" ? "clean" : chip.text.replacingOccurrences(of: "files", with: "changed files"))
-            case .aheadBehind:
+            case .behind:
                 let worktree = checkout.worktree
-                if let ahead = worktree?.ahead, ahead > 0 { parts.append("\(ahead) ahead") }
                 if let behind = worktree?.behind, behind > 0 { parts.append("\(behind) behind") }
+            case .ahead:
+                if let ahead = checkout.worktree?.ahead, ahead > 0 { parts.append("\(ahead) ahead") }
             case .disk:
                 parts.append(chip.text == "…" ? "size measuring" : chip.text)
             case .pullRequest:
                 if let pullRequest = checkout.pullRequest {
-                    parts.append("pull request \(pullRequest.number) \(CheckoutCardPresentation.pullRequestState(pullRequest).lowercased())")
+                    parts.append("pull request \(pullRequest.number) \(pullRequestLabel(pullRequest).lowercased())")
+                }
+            case .checks:
+                switch checkout.pullRequest?.checks {
+                case .passing: parts.append("checks passing")
+                case .failed: parts.append("checks failing")
+                case .pending: parts.append("checks running")
+                default: break
                 }
             }
         }

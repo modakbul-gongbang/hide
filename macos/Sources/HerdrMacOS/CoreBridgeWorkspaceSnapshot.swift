@@ -378,9 +378,22 @@ struct CoreCheckoutAgentSummary: Decodable, Equatable {
     }
 }
 
+struct CoreCheckoutPurpose: Decodable, Equatable {
+    enum Origin: String, Decodable {
+        case token
+        case branchDescription = "branch_description"
+        case agentTitle = "agent_title"
+        case pullRequestTitle = "pr_title"
+    }
+
+    let text: String
+    let origin: Origin
+}
+
 struct CoreCheckoutSnapshot: Decodable, Identifiable {
     var github: CoreGithubStatus = .empty
     var agentSummary = CoreCheckoutAgentSummary()
+    var purpose: CoreCheckoutPurpose? = nil
     let id: String
     let workspaceID: String
     let label: String
@@ -418,6 +431,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case github
         case agentSummary = "agent_summary"
+        case purpose
         case id
         case workspaceID = "workspace_id"
         case label
@@ -462,6 +476,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         removedLines: Int = 0,
         unpushed: CoreUnpushed? = nil,
         pullRequest: CorePullRequest? = nil,
+        purpose: CoreCheckoutPurpose? = nil,
         tabs: [CoreTabSnapshot],
         strip: [CoreStripTabSnapshot] = [],
         activeTabID: String? = nil,
@@ -485,6 +500,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         self.removedLines = removedLines
         self.unpushed = unpushed
         self.pullRequest = pullRequest
+        self.purpose = purpose
         self.tabs = tabs
         self.strip = strip
         self.activeTabID = activeTabID
@@ -495,6 +511,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
         agentSummary = try container.decode(CoreCheckoutAgentSummary.self, forKey: .agentSummary)
+        purpose = try container.decodeIfPresent(CoreCheckoutPurpose.self, forKey: .purpose)
         id = try container.decode(String.self, forKey: .id)
         workspaceID = try container.decode(String.self, forKey: .workspaceID)
         label = try container.decode(String.self, forKey: .label)

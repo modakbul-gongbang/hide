@@ -51,10 +51,28 @@ private func worktree(
     return try JSONDecoder().decode(CoreGitWorktree.self, from: Data(text.utf8))
 }
 
-private func pullRequest(_ number: Int, badge: CorePullRequestBadge = .open) -> CorePullRequest {
-    CorePullRequest(number: number, headBranch: "feature", baseBranch: "main",
-                    url: "https://example.invalid/pull/\(number)", badge: badge, review: nil,
-                    isDraft: false, mergedAtUnixMS: nil, updatedAtUnixMS: nil)
+private func pullRequest(
+    _ number: Int,
+    badge: CorePullRequestBadge = .open,
+    title: String? = nil,
+    review: CoreReviewDecision? = nil,
+    isDraft: Bool = false,
+    checks: CorePullRequestChecks? = nil
+) -> CorePullRequest {
+    var request = CorePullRequest(
+        number: number,
+        headBranch: "feature",
+        baseBranch: "main",
+        url: "https://example.invalid/pull/\(number)",
+        badge: badge,
+        review: review,
+        isDraft: isDraft,
+        mergedAtUnixMS: nil,
+        updatedAtUnixMS: nil
+    )
+    request.title = title
+    request.checks = checks
+    return request
 }
 
 private func checkout(
@@ -171,14 +189,14 @@ struct OverviewPresentationTests {
         let busy = checkout("feature", path: "/f", changed: 12, pullRequest: pullRequest(107),
                             worktree: try worktree(path: "/f", branch: "feature", changed: 12, ahead: 3, behind: 2, diskBytes: 2_576_980_378))
         let chips = OverviewPresentation.headerChips(checkout: busy, isGit: true)
-        #expect(chips.map(\.text) == ["12 files", "↑3 ↓2", "2.4 GB", "#107"])
-        #expect(chips[1].tone == .warning)
-        #expect(chips[3].tooltip == "#107 · open")
+        #expect(chips.map(\.text) == ["#107 Open", "12 files", "↓2 behind main", "2.4 GB"])
+        #expect(chips[0].tone == .normal)
+        #expect(chips[0].tooltip == "#107 · Open")
         #expect(OverviewPresentation.headerAccessibilityLabel(checkout: busy, chips: chips)
-                == "feature, 12 changed files, 3 ahead, 2 behind, 2.4 GB, pull request 107 open")
+                == "feature, pull request 107 open, 12 changed files, 2 behind, 2.4 GB")
 
         let aheadOnly = checkout("a", path: "/a", worktree: try worktree(path: "/a", branch: "a", ahead: 1))
-        #expect(OverviewPresentation.headerChips(checkout: aheadOnly, isGit: true).map(\.text) == ["Clean", "↑1", "1.0 GB"])
+        #expect(OverviewPresentation.headerChips(checkout: aheadOnly, isGit: true).map(\.text) == ["Clean", "↑1 ahead", "1.0 GB"])
 
         let measuring = checkout("m", path: "/m", worktree: try worktree(path: "/m", branch: "m", diskBytes: nil))
         let measuringChips = OverviewPresentation.headerChips(checkout: measuring, isGit: true)
@@ -195,6 +213,88 @@ struct OverviewPresentationTests {
         let folderDisk = CoreDiskUsage(path: "/d", totalBytes: 432_013_312, largestChildName: nil, largestChildBytes: nil, unavailableReason: nil)
         #expect(OverviewPresentation.headerChips(checkout: folder, isGit: false, folderDisk: folderDisk).map(\.text) == ["412 MB"])
         #expect(OverviewPresentation.headerChips(checkout: folder, isGit: false, folderDisk: .empty).map(\.text) == ["…"])
+    }
+
+    @Test func headerBadgesKeepLifecycleChecksAndAncestryInTheApprovedOrder() throws {
+        let request = pullRequest(
+            118,
+            badge: .review,
+            title: "Ship checkout purpose",
+            review: .changesRequested,
+            checks: .failed
+        )
+        var row = checkout(
+            "topic",
+            path: "/topic",
+            changed: 3,
+            pullRequest: request,
+            worktree: try worktree(
+                path: "/topic",
+                branch: "topic",
+                changed: 3,
+                ahead: 4,
+                behind: 64,
+                diskBytes: 2_362_232_012
+            )
+        )
+        row.purpose = CoreCheckoutPurpose(text: "체크아웃 행 목적 표시", origin: .token)
+
+        let chips = OverviewPresentation.headerChips(checkout: row, isGit: true)
+        #expect(chips.map(\.text) == [
+            "#118 Changes requested", "✗ Checks", "3 files", "↓64 behind main", "2.2 GB",
+        ])
+        #expect(chips.map(\.tone) == [.warning, .danger, .warning, .warning, .normal])
+        #expect(OverviewPresentation.headerAccessibilityLabel(checkout: row, chips: chips) ==
+            "topic, 체크아웃 행 목적 표시, pull request 118 changes requested, checks failing, 3 changed files, 64 behind, 2.2 GB")
+
+        #expect(OverviewPresentation.pullRequestLabel(pullRequest(1, badge: .merged, isDraft: true)) == "Merged")
+        #expect(OverviewPresentation.pullRequestLabel(pullRequest(2, badge: .closed, review: .approved)) == "Closed")
+        #expect(OverviewPresentation.pullRequestLabel(pullRequest(3, isDraft: true)) == "Draft")
+        #expect(OverviewPresentation.pullRequestLabel(pullRequest(4, badge: .review, review: .approved)) == "Approved")
+        #expect(OverviewPresentation.pullRequestLabel(pullRequest(5, badge: .review, review: .reviewRequired)) == "Review required")
+        #expect(OverviewPresentation.pullRequestColorRole(pullRequest(6)) == .open)
+        #expect(OverviewPresentation.pullRequestColorRole(pullRequest(7, badge: .merged)) == .merged)
+        #expect(OverviewPresentation.pullRequestColorRole(pullRequest(8, badge: .closed)) == .closed)
+        #expect(OverviewPresentation.pullRequestColorRole(pullRequest(9, isDraft: true)) == .draft)
+        #expect(OverviewPresentation.pullRequestColorRole(
+            pullRequest(10, badge: .review, review: .changesRequested)
+        ) == .warning)
+        #expect(OverviewPresentation.pullRequestColorRole(
+            pullRequest(11, badge: .review, review: .approved)
+        ) == .success)
+    }
+
+    @Test func headerBadgesRenderLoadingUnavailableAndMissingAsSmallStates() throws {
+        var loading = checkout("loading", path: "/loading")
+        loading.github = CoreGithubStatus(
+            available: false,
+            loading: true,
+            stale: false,
+            lastSuccessAtUnixMS: nil,
+            unavailableReason: nil
+        )
+        #expect(OverviewPresentation.headerChips(checkout: loading, isGit: true).map(\.text) == ["… PR", "… files"])
+
+        var unavailable = checkout(
+            "unavailable",
+            path: "/unavailable",
+            worktree: try worktree(path: "/unavailable", branch: "unavailable")
+        )
+        unavailable.github = CoreGithubStatus(
+            available: false,
+            loading: false,
+            stale: false,
+            lastSuccessAtUnixMS: nil,
+            unavailableReason: "Sign in required"
+        )
+        #expect(OverviewPresentation.headerChips(checkout: unavailable, isGit: true).map(\.text) == ["? PR", "Clean", "1.0 GB"])
+
+        let missing = checkout(
+            "missing",
+            path: "/missing",
+            worktree: try worktree(path: "/missing", branch: "missing", missing: true)
+        )
+        #expect(OverviewPresentation.headerChips(checkout: missing, isGit: true).map(\.text) == ["missing", "1.0 GB"])
     }
 
     @Test func theOrderIsPrimaryThenLinkedByCreationTimeThenInactive() throws {
