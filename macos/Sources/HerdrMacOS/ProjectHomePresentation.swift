@@ -54,6 +54,10 @@ enum ProjectHomeStage: String, CaseIterable {
 }
 
 struct ProjectHomeRow: Identifiable {
+    static func showsDetail(_ agent: SidebarAgent) -> Bool {
+        agent.group != "working" && (agent.demand == "question" || agent.demand == "error" || agent.group == "done")
+    }
+
     let agent: SidebarAgent
     let depth: Int
     let foreignBranch: String?

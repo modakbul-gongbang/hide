@@ -214,7 +214,7 @@ private struct ProjectHomeCardView: View {
                         Spacer(minLength: HideTheme.spacingNone)
                         Text(agent.elapsed).foregroundStyle(HideTheme.muted)
                     }
-                    if (agent.demand == "question" || agent.demand == "error" || agent.group == "done"), let detail = agent.detail {
+                    if ProjectHomeRow.showsDetail(agent), let detail = agent.detail {
                         Text(detail).foregroundStyle(HideTheme.secondary).lineLimit(2)
                     }
                     if let branch = row.foreignBranch {

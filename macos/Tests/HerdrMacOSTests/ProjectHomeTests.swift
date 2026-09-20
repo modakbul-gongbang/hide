@@ -43,6 +43,32 @@ struct ProjectHomeTests {
             #expect(model.interactionNotice == nil)
         }
     }
+    @Test @MainActor func homeEscapeDefersToPetAndMigrationSheets() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("hide-home-modal-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = ShellModel(core: CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
+            "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path]))
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        model.showPetDashboard = true
+        #expect(!ProjectHomeShortcutPolicy.shouldClose(event, visible: true, sheetPresented: model.projectHomeModalPresented))
+        model.showPetDashboard = false
+        model.branchMigration = .init(repositoryRoot: root.path, branch: "topic", baseBranch: "main")
+        #expect(!ProjectHomeShortcutPolicy.shouldClose(event, visible: true, sheetPresented: model.projectHomeModalPresented))
+        model.branchMigration = nil
+        #expect(ProjectHomeShortcutPolicy.shouldClose(event, visible: true, sheetPresented: model.projectHomeModalPresented))
+    }
+    @Test func workingRowsStayQuietEvenWithReadOrDelegatedDemand() {
+        func agent(_ group: String, _ demand: String) -> SidebarAgent {
+            SidebarAgent(id: "p", paneID: "p", workspaceLabel: "Project", agentKind: "terminal",
+                demand: demand, group: group, symbol: "●", identityLabel: "Work", elapsed: "1m", lastActivity: "")
+        }
+        #expect(!ProjectHomeRow.showsDetail(agent("working", "question")))
+        #expect(!ProjectHomeRow.showsDetail(agent("working", "error")))
+        #expect(ProjectHomeRow.showsDetail(agent("needs_you", "error")))
+        #expect(ProjectHomeRow.showsDetail(agent("done", "none")))
+    }
     @Test func gitStagePriorityDoesNotDependOnAgentOrProjectStatus() throws {
         let open = try JSONDecoder().decode(CorePullRequest.self, from: Data(#"{"number":7,"head_branch":"task","base_branch":"main","url":"https://github.com/acme/project/pull/7","badge":"open","is_draft":false}"#.utf8))
         let merged = try JSONDecoder().decode(CorePullRequest.self, from: Data(#"{"number":7,"head_branch":"task","base_branch":"main","url":"https://github.com/acme/project/pull/7","badge":"merged","is_draft":false}"#.utf8))

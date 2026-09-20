@@ -361,11 +361,7 @@ private struct HideEmptyCheckoutState: View {
                             .foregroundStyle(HideTheme.secondary)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 420)
-                        Button("Retry terminal") {
-                            if let checkout = model.focusedCheckout {
-                                model.selectCheckout(checkout)
-                            }
-                        }
+                        Button("Retry terminal") { model.addTab() }
                             .buttonStyle(HideTextButtonStyle(appearance: .prominent))
                     case .idle:
                         // This state used to promise a terminal Hide never

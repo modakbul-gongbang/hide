@@ -1274,6 +1274,12 @@ final class ShellModel: ObservableObject {
         [showSearch, showFileSearch, showSettings, worktreeWorkspace != nil, purposeRequest != nil]
     }
 
+    var projectHomeModalPresented: Bool {
+        hintSheetPresented || projectHomeIssuePopover || showPetDashboard
+            || branchMigration != nil || worktreeToDelete != nil
+            || workspaceToRemove != nil || explorerTrashPrompt != nil || interactionNotice != nil
+    }
+
     var hintSheetPresented: Bool {
         hintSuppressingSheetVisibility.contains(true)
     }

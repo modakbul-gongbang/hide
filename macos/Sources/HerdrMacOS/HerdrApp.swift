@@ -273,7 +273,8 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
             }
             let homeTakesEscape = MainActor.assumeIsolated {
                 ProjectHomeShortcutPolicy.shouldClose(event, visible: self.model.projectHomeVisible,
-                    sheetPresented: self.model.hintSheetPresented || self.model.projectHomeIssuePopover)
+                    sheetPresented: self.model.projectHomeModalPresented
+                        || event.window?.attachedSheet != nil || event.window?.sheetParent != nil)
             }
             if homeTakesEscape {
                 MainActor.assumeIsolated { self.model.closeProjectHome() }
