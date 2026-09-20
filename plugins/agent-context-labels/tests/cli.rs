@@ -138,6 +138,83 @@ fn the_watcher_moves_legacy_state_once_on_start() {
     );
 }
 
+/// A server launched outside a login shell has only the system PATH. The
+/// shipped startup wrapper must still discover either macOS pnpm CLI layout.
+/// Run the actual watcher against the existing external Codex protocol fixture;
+/// neither an operator login nor a live Herdr socket is available to this test.
+#[cfg(target_os = "macos")]
+#[test]
+fn startup_discovers_pnpm_providers_without_a_login_shell() {
+    use std::os::unix::fs::symlink;
+
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let codex_fixture = manifest
+        .join("../../hide-ai/tests/fixtures/fake-app-server.py")
+        .canonicalize()
+        .unwrap();
+    for location in ["Library/pnpm", "Library/pnpm/bin"] {
+        let fixture = tempfile::Builder::new()
+            .prefix("hcl-startup-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let home = fixture.path().join("home with spaces");
+        let scripts = fixture.path().join("plugins/agent-context-labels/scripts");
+        let bin_dir = fixture.path().join("target/release");
+        for directory in [
+            &scripts,
+            &bin_dir,
+            &home.join(location),
+            &home.join(".local/bin"),
+        ] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        let startup = scripts.join("start-watcher.sh");
+        std::fs::copy(manifest.join("scripts/start-watcher.sh"), &startup).unwrap();
+        symlink(BIN, bin_dir.join("hide-agent-context-labels")).unwrap();
+        symlink(&codex_fixture, home.join(location).join("codex")).unwrap();
+        // Prevent a globally installed Claude CLI from being probed at all.
+        symlink("/usr/bin/false", home.join(".local/bin/claude")).unwrap();
+
+        let mut watcher = Command::new("/bin/sh")
+            .arg(startup)
+            .env_clear()
+            .env("HOME", &home)
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .env("FAKE_ARGS_FILE", home.join("provider-args.json"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let log = current_state(&home).join("events.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut ready = false;
+        while Instant::now() < deadline {
+            if let Ok(text) = std::fs::read_to_string(&log) {
+                ready = text.lines().any(|line| {
+                    serde_json::from_str::<serde_json::Value>(line).is_ok_and(|event| {
+                        event["event"] == "ai_provider_availability"
+                            && event["detail"]
+                                .as_str()
+                                .is_some_and(|detail| detail.split(';').any(|p| p == "codex=ready"))
+                    })
+                });
+            }
+            if ready || watcher.try_wait().is_ok_and(|status| status.is_some()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = watcher.kill();
+        let _ = watcher.wait();
+        assert!(ready, "startup did not discover the provider in {location}");
+        assert!(
+            home.join("provider-args.json").is_file(),
+            "startup used a provider outside the isolated pnpm install"
+        );
+    }
+}
+
 /// A short-path home that removes itself on drop, for the one test that needs
 /// the watcher's wake socket path to fit in `SUN_LEN`.
 #[cfg(unix)]
