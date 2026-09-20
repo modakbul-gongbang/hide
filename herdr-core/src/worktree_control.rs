@@ -300,6 +300,16 @@ impl PurposeMirror {
         let mut retained = current_issues.clone();
         for (root, path, branch) in self.issue_worktrees.difference(&current_issues) {
             let project = workspaces.iter().find(|workspace| &workspace.path == root);
+            if project.is_some_and(|project| {
+                project
+                    .checkouts
+                    .iter()
+                    .any(|checkout| &checkout.path == path && checkout.branch.is_none())
+            }) {
+                // Detaching keeps the last branch's cleanup ownership until removal.
+                retained.insert((root.clone(), path.clone(), branch.clone()));
+                continue;
+            }
             // A branch switch or detached HEAD is not a removed worktree.
             if project.is_some_and(|project| {
                 !project
@@ -1406,6 +1416,10 @@ mod tests {
         mirror.sync(&[], &[], &HashMap::new());
         assert!(receiver.try_recv().is_err(), "unregister is not deletion");
         mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        project.checkouts[0].branch = None;
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        assert!(receiver.try_recv().is_err(), "detaching is not deletion");
         project.checkouts.clear();
         let space = workspace::SessionSpace {
             id: "w-purpose".into(),
@@ -1418,7 +1432,9 @@ mod tests {
             branch,
             workspace_ids,
             ..
-        } = receiver.recv().unwrap()
+        } = receiver
+            .try_recv()
+            .expect("detached removal still owns cleanup")
         else {
             panic!("expected cleanup")
         };

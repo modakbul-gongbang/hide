@@ -371,4 +371,5 @@ Validation resolves an issue before writing, a failed Git mirror attempts to res
 A validation failure or confirmed rollback preserves the existing manual override.
 No GitHub mutation is allowed by this path.
 The existing purpose mirror worker clears a branch issue setting when an observed worktree path is removed; a branch switch, detached HEAD, or unregistered project is not a removed worktree.
+While a worktree stays detached, the worker retains its last known branch for cleanup if that path is later removed.
 A rejected cleanup enqueue is retained for the next catalog synchronization.
