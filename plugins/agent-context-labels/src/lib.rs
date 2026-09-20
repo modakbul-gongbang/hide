@@ -1653,7 +1653,11 @@ impl AnalysisFailure {
             Self::Provider(
                 AiError::NotAuthenticated
                 | AiError::NoProvider(_)
-                | AiError::ProviderUnavailable(_),
+                | AiError::ProviderUnavailable(_)
+                // A budget cap is an environmental limit, like a usage window:
+                // keep the last label and ask again after the recovery
+                // interval rather than retrying the same turn in a loop.
+                | AiError::OverBudget { .. },
             ) => Some(PROVIDER_RECOVERY_INTERVAL),
             Self::Provider(_) | Self::Invalid(_) | Self::Worker(_) => None,
         }
@@ -2959,6 +2963,23 @@ fn reconnect_delay(delay: Duration) -> Duration {
     (delay * 2).min(Duration::from_secs(5))
 }
 
+/// The current parent process id, or `None` on a platform that cannot report
+/// one. The watcher remembers this at startup: when it changes, the host
+/// (Herdr) that started the watcher is gone and the watcher exits, taking its
+/// app-server with it, rather than reconnecting forever (resident-process
+/// practice, rule 3).
+#[cfg(unix)]
+fn parent_pid() -> Option<u32> {
+    // SAFETY: `getppid` takes no arguments and only reads the caller's own
+    // parent pid.
+    Some(unsafe { libc::getppid() } as u32)
+}
+
+#[cfg(not(unix))]
+fn parent_pid() -> Option<u32> {
+    None
+}
+
 fn watcher_failure(paths: &StatePaths, streak: &mut u32, error: &str) {
     if *streak == 0 {
         let _ = append_log(paths, "watcher_scan_failed", None, Some(error));
@@ -3000,8 +3021,36 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
         let mut reconnect_at = std::time::Instant::now();
         let mut reconnect_wait = Duration::from_millis(100);
         let mut failure_streak = 0_u32;
+        // The host that started this watcher. When it changes, Herdr is gone
+        // and reconnecting forever is exactly what leaked the app-server on
+        // 2026-09-17, so the watcher exits instead. A bare socket drop with
+        // the host still alive stays on the reconnect path below.
+        let initial_parent = parent_pid();
 
         loop {
+            // The host is gone when the parent changed from what it was at
+            // startup, or when the watcher has been reparented to init (pid 1)
+            // - which also covers a host that died during startup, before the
+            // initial parent could be read as anything but init.
+            let current_parent = parent_pid();
+            if let Some(initial) = initial_parent
+                && (current_parent != Some(initial) || current_parent == Some(1))
+            {
+                let current = current_parent;
+                let _ = append_log(
+                    &self.paths,
+                    "watcher_host_gone",
+                    None,
+                    Some(&format!(
+                        "initial_ppid={initial};current_ppid={}",
+                        current.map_or_else(|| "unknown".to_owned(), |pid| pid.to_string())
+                    )),
+                );
+                // Returning drops the watcher, whose router drops the codex
+                // backend, whose session shutdown ends the app-server tree;
+                // the exclusive lock releases with the process. Exit is 0.
+                return Ok(());
+            }
             if subscription.is_none() && std::time::Instant::now() >= reconnect_at {
                 let bootstrap = self.transport.panes();
                 let next_panes = match bootstrap {
@@ -3088,7 +3137,10 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                 }
             }
 
-            let mut wait = Duration::from_secs(60);
+            // The idle cap is five seconds so the host-gone check above runs
+            // at least that often (D-08); elapsed-display and reconnect waits
+            // still shorten it.
+            let mut wait = Duration::from_secs(5);
             if subscription.is_none() {
                 wait = reconnect_at
                     .saturating_duration_since(std::time::Instant::now())

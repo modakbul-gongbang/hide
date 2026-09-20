@@ -4,10 +4,17 @@
 Speaks the subset of the JSON-RPC protocol the backend uses. Behaviour is
 selected with FAKE_MODE: ok (default), slow, usage_limit, garbage,
 exit_at_thread_start, exit (at turn/start, before answering),
-exit_after_turn_start, no_account, no_model. FAKE_ARGS_FILE records the argument vector when set.
+exit_after_turn_start, no_account, no_model, and child_per_thread. The last
+one models the process leak this change exists to cap: it starts a long-lived
+child process on every thread/start and answers the turn normally, and it ends
+all of those children when its stdin reaches EOF (the owner's shutdown signal)
+so a killed owner leaves no survivors. FAKE_ARGS_FILE records the argument
+vector when set.
 """
+import atexit
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -16,6 +23,25 @@ REPLY = os.environ.get("FAKE_REPLY", '{"summary":"fixture","attention":"none"}')
 if path := os.environ.get("FAKE_ARGS_FILE"):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(sys.argv[1:], f)
+
+# Children started per thread, ended when this process does (atexit) or when
+# stdin reaches EOF - the same ownership the real app-server has over its tree.
+CHILDREN = []
+
+
+def spawn_child():
+    CHILDREN.append(subprocess.Popen(["sleep", "600"]))
+
+
+def reap_children():
+    for child in CHILDREN:
+        try:
+            child.kill()
+        except Exception:
+            pass
+
+
+atexit.register(reap_children)
 
 
 def send(obj):
@@ -56,6 +82,8 @@ for raw in sys.stdin:
         if MODE == "exit_at_thread_start":
             sys.exit(2)
         assert params.get("ephemeral") is True and params.get("baseInstructions")
+        if MODE == "child_per_thread":
+            spawn_child()
         result(rid, {"thread": {"id": "thread-1"}, "model": params.get("model"), "instructionSources": []})
     elif method == "turn/start":
         if MODE == "exit":
