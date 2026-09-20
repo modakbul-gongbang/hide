@@ -1,7 +1,7 @@
 ---
 topic: "Project Home 조용한 판: Tasks/Agents 두 뷰 보드와 GitHub 이슈 칩"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-09-20 verbatim: 셋 다 그대로 가자 승인 + 그리고 이거 herdr astra high로 해서 implement 확실하게 시키고 작업 부탁해~ 나 자러간다!
 review_profile: "standard"
 review_rationale: "새 화면 하나와 gh 읽기 필드 추가, 그리고 사람이 직접 연결한 이슈를 purpose와 같은 경로로 저장하는 변경이며, GitHub 쓰기·자격 증명·프로덕션 데이터 변경은 없다."
 source_intake: "current conversation"
