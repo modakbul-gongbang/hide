@@ -35,6 +35,10 @@ pub struct SessionWorkspacePayload {
     /// position.
     #[serde(default)]
     pub active_tab_id: Option<String>,
+    /// Workspace metadata is the live purpose authority. Herdr caps token
+    /// values at 80 characters before they reach this boundary.
+    #[serde(default)]
+    pub tokens: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -429,6 +433,66 @@ pub fn sync_checkout_agent_summaries(
         }
         if workspace.removal != removal {
             workspace.removal = removal;
+            changed = true;
+        }
+    }
+    changed |= sync_checkout_purposes(workspaces, agents);
+    changed
+}
+
+/// Resolves the non-persistent half of the checkout purpose ladder.
+///
+/// Token and branch-description values were selected while the catalog was
+/// built and always win. Agent and pull-request titles are rebuilt whenever
+/// either projection changes, so a vanished representative cannot leave a
+/// stale sentence on the row.
+pub fn sync_checkout_purposes(
+    workspaces: &mut [crate::model::WorkspaceSnapshot],
+    agents: &[crate::model::SidebarAgentSnapshot],
+) -> bool {
+    use crate::model::{CheckoutPurposeOrigin, CheckoutPurposeSnapshot};
+
+    let agent_titles = agents
+        .iter()
+        .map(|agent| (agent.pane_id.as_str(), agent.identity_label.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut changed = false;
+    for checkout in workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+    {
+        if checkout.purpose.as_ref().is_some_and(|purpose| {
+            matches!(
+                purpose.origin,
+                CheckoutPurposeOrigin::Token | CheckoutPurposeOrigin::BranchDescription
+            )
+        }) {
+            continue;
+        }
+        let next = checkout
+            .agent_summary
+            .representative_pane_id
+            .as_deref()
+            .and_then(|pane_id| agent_titles.get(pane_id).copied())
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(|title| CheckoutPurposeSnapshot {
+                text: title.to_owned(),
+                origin: CheckoutPurposeOrigin::AgentTitle,
+            })
+            .or_else(|| {
+                checkout
+                    .pull_request
+                    .as_ref()
+                    .map(|pull_request| pull_request.title.trim())
+                    .filter(|title| !title.is_empty())
+                    .map(|title| CheckoutPurposeSnapshot {
+                        text: title.to_owned(),
+                        origin: CheckoutPurposeOrigin::PullRequestTitle,
+                    })
+            });
+        if checkout.purpose != next {
+            checkout.purpose = next;
             changed = true;
         }
     }
@@ -1353,6 +1417,97 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn checkout_purpose_uses_agent_then_pull_request_after_persistent_sources() {
+        use crate::model::{
+            CheckoutPurposeOrigin, CheckoutPurposeSnapshot, CheckoutSnapshot, PullRequestBadge,
+            PullRequestChecks, PullRequestSnapshot, WorkspaceSnapshot,
+        };
+        let mut checkout = CheckoutSnapshot {
+            id: "checkout".into(),
+            agent_summary: crate::model::CheckoutAgentSummary {
+                representative_pane_id: Some("pane".into()),
+                ..Default::default()
+            },
+            pull_request: Some(PullRequestSnapshot {
+                number: 18,
+                title: "Pull request fallback".into(),
+                head_branch: "feature".into(),
+                base_branch: "main".into(),
+                url: "https://example.invalid/pull/18".into(),
+                badge: PullRequestBadge::Open,
+                review: None,
+                checks: PullRequestChecks::default(),
+                is_draft: false,
+                merged_at_unix_ms: None,
+                updated_at_unix_ms: None,
+            }),
+            ..Default::default()
+        };
+        let workspace = |checkout| WorkspaceSnapshot {
+            id: "project".into(),
+            label: "Project".into(),
+            path: "/fixture/project".into(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".into(),
+            repo_name: "Project".into(),
+            is_git: true,
+            default_branch: Some("main".into()),
+            branches: vec![],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec![],
+            last_activity_unix_ms: None,
+            checkouts: vec![checkout],
+            pinned: false,
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+        let agent = project_agents(payload(json!([{
+            "pane_id": "pane",
+            "workspace_label": "Workspace",
+            "agent": "codex",
+            "agent_status": "running",
+            "state_change_seq": 1,
+            "tokens": {"task": "Agent session title"}
+        }])))
+        .agents
+        .remove(0);
+        let mut workspaces = vec![workspace(checkout.clone())];
+
+        assert!(sync_checkout_purposes(&mut workspaces, &[agent]));
+        assert_eq!(
+            workspaces[0].checkouts[0].purpose,
+            Some(CheckoutPurposeSnapshot {
+                text: "Agent session title".into(),
+                origin: CheckoutPurposeOrigin::AgentTitle,
+            })
+        );
+
+        checkout.agent_summary.representative_pane_id = None;
+        let mut workspaces = vec![workspace(checkout.clone())];
+        assert!(sync_checkout_purposes(&mut workspaces, &[]));
+        assert_eq!(
+            workspaces[0].checkouts[0]
+                .purpose
+                .as_ref()
+                .map(|purpose| purpose.origin),
+            Some(CheckoutPurposeOrigin::PullRequestTitle)
+        );
+
+        checkout.purpose = Some(CheckoutPurposeSnapshot {
+            text: "Live token".into(),
+            origin: CheckoutPurposeOrigin::Token,
+        });
+        let mut workspaces = vec![workspace(checkout)];
+        assert!(!sync_checkout_purposes(&mut workspaces, &[]));
+        assert_eq!(
+            workspaces[0].checkouts[0].purpose.as_ref().unwrap().text,
+            "Live token"
+        );
+    }
 
     #[test]
     fn workspace_summary_uses_physical_ownership_priority_and_unique_panes() {

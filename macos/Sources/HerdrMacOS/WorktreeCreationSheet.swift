@@ -50,6 +50,16 @@ struct WorktreeCreationSheet: View {
                 }
             }
             .disabled(working)
+            if model.purposeUnavailableReason(for: workspace) == nil {
+                PurposeEditorField(
+                    label: "Purpose · optional, one line",
+                    placeholder: "What is this worktree for?",
+                    text: $model.worktreeDraft.purpose,
+                    error: nil
+                )
+                .disabled(working)
+                .accessibilityIdentifier("worktree-purpose")
+            }
             if model.worktreeBranches.isEmpty {
                 Text("Create the repository's first branch before creating a worktree.")
                     .hideFont(size: HideTheme.Typography.caption)
@@ -83,5 +93,88 @@ struct WorktreeCreationSheet: View {
         .onDisappear {
             if !working { model.cancelNewWorktree() }
         }
+    }
+}
+
+struct PurposeEditorField: View {
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    let error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+            Text(label)
+                .hideFont(size: HideTheme.Typography.body, weight: .medium)
+                .foregroundStyle(HideTheme.secondary)
+            HStack(spacing: HideTheme.spacingSM) {
+                HideSettingsField(
+                    placeholder: placeholder,
+                    text: Binding(
+                        get: { text },
+                        set: { text = PurposeInputPresentation.normalized($0) }
+                    ),
+                    height: HideTheme.formControlHeight
+                )
+                Text(PurposeInputPresentation.countLabel(text))
+                    .hideFont(size: HideTheme.Typography.caption, design: .monospaced)
+                    .foregroundStyle(PurposeInputPresentation.isWarning(text) ? HideTheme.warning : HideTheme.muted)
+                    .fixedSize()
+            }
+            if let error {
+                Text(error)
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(HideTheme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("purpose-error")
+            }
+        }
+    }
+}
+
+struct SetPurposeSheet: View {
+    @EnvironmentObject private var model: ShellModel
+    let request: CheckoutPurposeRequest
+
+    private var working: Bool {
+        model.core.snapshot?.taskOperation?.kind == "checkout_purpose"
+            && model.core.snapshot?.taskOperation?.phase == "working"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: HideTheme.spacingLG) {
+            VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+                Text("Set purpose")
+                    .hideFont(size: HideTheme.Typography.headline, weight: .semibold)
+                Text(request.checkout.branch ?? request.checkout.label)
+                    .hideFont(size: HideTheme.Typography.body)
+                    .foregroundStyle(HideTheme.secondary)
+            }
+            PurposeEditorField(
+                label: "Purpose · optional, one line",
+                placeholder: "What is this checkout for?",
+                text: $model.purposeText,
+                error: model.purposeError
+            )
+            .disabled(working)
+            Text("Shown on the collapsed row and the Overview header. Herdr keeps 80 characters; aim for one glance.")
+                .hideFont(size: HideTheme.Typography.caption)
+                .foregroundStyle(HideTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel", action: model.cancelSetPurpose)
+                    .buttonStyle(HideTextButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+                Button(working ? "Saving…" : "Save", action: model.submitSetPurpose)
+                    .buttonStyle(HideTextButtonStyle(appearance: .prominent))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(working)
+            }
+        }
+        .padding(HideTheme.spacingXL)
+        .frame(width: HideTheme.worktreeDialogWidth)
+        .background(HideTheme.panel)
+        .interactiveDismissDisabled(working)
     }
 }

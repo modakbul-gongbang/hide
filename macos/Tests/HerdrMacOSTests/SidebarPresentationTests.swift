@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import SwiftUI
 
@@ -17,9 +18,13 @@ private func presentationCheckout(
     path: String,
     isWorktree: Bool = false,
     exists: Bool = true,
+    purpose: CoreCheckoutPurpose? = nil,
+    pullRequest: CorePullRequest? = nil,
+    worktree: CoreGitWorktree? = nil,
+    github: CoreGithubStatus = .empty,
     paneIDs: [String] = []
 ) -> CoreCheckoutSnapshot {
-    CoreCheckoutSnapshot(
+    var checkout = CoreCheckoutSnapshot(
         id: id,
         workspaceID: "workspace-1",
         label: id,
@@ -28,6 +33,8 @@ private func presentationCheckout(
         isWorktree: isWorktree,
         exists: exists,
         temporary: false,
+        pullRequest: pullRequest,
+        purpose: purpose,
         tabs: paneIDs.isEmpty ? [] : [
             CoreTabSnapshot(
                 id: "tab-\(id)",
@@ -39,6 +46,68 @@ private func presentationCheckout(
             ),
         ]
     )
+    checkout.worktree = worktree
+    checkout.github = github
+    return checkout
+}
+
+private func presentationPullRequest(
+    _ number: Int,
+    badge: CorePullRequestBadge = .open,
+    title: String? = nil,
+    review: CoreReviewDecision? = nil,
+    draft: Bool = false
+) -> CorePullRequest {
+    var request = CorePullRequest(
+        number: number,
+        headBranch: "feature",
+        baseBranch: "main",
+        url: "https://example.invalid/pull/\(number)",
+        badge: badge,
+        review: review,
+        isDraft: draft,
+        mergedAtUnixMS: nil,
+        updatedAtUnixMS: nil
+    )
+    request.title = title
+    return request
+}
+
+private func presentationWorktree(
+    branch: String? = "feature",
+    missing: Bool = false,
+    createdAtUnixMS: Int? = nil,
+    lastCommitUnixSeconds: Int? = nil
+) throws -> CoreGitWorktree {
+    func json(_ value: Any?) -> String {
+        switch value {
+        case nil: return "null"
+        case let string as String: return "\"\(string)\""
+        case let bool as Bool: return bool ? "true" : "false"
+        case let int as Int: return "\(int)"
+        default: return "null"
+        }
+    }
+    let text = """
+    {
+        "path": "/tmp/hide.worktrees/feature", "branch": \(json(branch)), "head_sha": "abc12345",
+        "last_commit_subject": "work", "missing": \(missing), "is_main": false,
+        "dirty": false, "changed_file_count": 0, "base_branch": "main",
+        "ahead": 0, "behind": 0, "merged": false, "upstream_state": "pushed",
+        "unpushed": null, "unavailable_reason": null, "behind_upstream": 0,
+        "created_at_unix_ms": \(json(createdAtUnixMS)), "last_fetch_at_unix_ms": null,
+        "measured_at_unix_ms": null, "last_commit_unix_seconds": \(json(lastCommitUnixSeconds)),
+        "pane_count": 0, "running_agent_count": 0,
+        "disk": {"path": "/tmp/hide.worktrees/feature", "total_bytes": 1024, "unavailable_reason": null},
+        "pull_request": null,
+        "github": {"available": true, "loading": false, "stale": false,
+                   "last_success_at_unix_ms": null, "unavailable_reason": null},
+        "deletion_gate": {"blocked_reason": null, "warnings": [], "button_label": "Delete worktree…",
+                          "can_delete_branch": false},
+        "open_error": null
+    }
+    """
+    return try JSONDecoder().decode(CoreGitWorktree.self, from: Data(text.utf8))
 }
 
 private func presentationWorkspace(
@@ -387,6 +456,245 @@ private func presentationAgent(
     #expect(presentation.agentCount == 0)
     #expect(presentation.status == nil)
     #expect(!presentation.isPrimary)
+}
+
+@Test func checkoutKindGlyphStagesCoverPullRequestsBranchesAndSpecialRows() throws {
+    let workspace = presentationWorkspace(checkouts: [])
+    let open = SidebarCheckoutPresentation(
+        workspace: workspace,
+        checkout: presentationCheckout(
+            id: "open",
+            path: "/tmp/open",
+            isWorktree: true,
+            pullRequest: presentationPullRequest(1),
+            worktree: try presentationWorktree()
+        ),
+        agents: []
+    )
+    let draft = SidebarCheckoutPresentation(
+        workspace: workspace,
+        checkout: presentationCheckout(
+            id: "draft",
+            path: "/tmp/draft",
+            isWorktree: true,
+            pullRequest: presentationPullRequest(2, draft: true),
+            worktree: try presentationWorktree()
+        ),
+        agents: []
+    )
+    let merged = SidebarCheckoutPresentation(
+        workspace: workspace,
+        checkout: presentationCheckout(
+            id: "merged",
+            path: "/tmp/merged",
+            isWorktree: true,
+            pullRequest: presentationPullRequest(3, badge: .merged),
+            worktree: try presentationWorktree()
+        ),
+        agents: []
+    )
+    let closed = SidebarCheckoutPresentation(
+        workspace: workspace,
+        checkout: presentationCheckout(
+            id: "closed",
+            path: "/tmp/closed",
+            isWorktree: true,
+            pullRequest: presentationPullRequest(4, badge: .closed),
+            worktree: try presentationWorktree()
+        ),
+        agents: []
+    )
+    let branch = SidebarCheckoutPresentation(
+        workspace: workspace,
+        checkout: presentationCheckout(
+            id: "branch",
+            path: "/tmp/branch",
+            isWorktree: true,
+            worktree: try presentationWorktree()
+        ),
+        agents: []
+    )
+    let primary = SidebarCheckoutPresentation(
+        workspace: workspace,
+        checkout: presentationCheckout(id: "main", path: "/tmp/hide"),
+        agents: []
+    )
+    let detached = SidebarCheckoutPresentation(
+        workspace: workspace,
+        checkout: presentationCheckout(
+            id: "detached",
+            path: "/tmp/detached",
+            isWorktree: true,
+            worktree: try presentationWorktree(branch: nil)
+        ),
+        agents: []
+    )
+    let folderWorkspace = CoreWorkspaceSnapshot(
+        id: "folder",
+        label: "folder",
+        path: "/tmp/folder",
+        remoteTargetID: nil,
+        expanded: true,
+        deviceID: "local",
+        repoName: "folder",
+        isGit: false,
+        defaultBranch: nil,
+        registered: true,
+        temporary: false,
+        checkouts: []
+    )
+    let folder = SidebarCheckoutPresentation(
+        workspace: folderWorkspace,
+        checkout: presentationCheckout(id: "folder", path: "/tmp/folder"),
+        agents: []
+    )
+
+    #expect([open.kindStage, draft.kindStage, merged.kindStage, closed.kindStage] ==
+        ["Open", "Draft", "Merged", "Closed"])
+    #expect([open, draft, merged, closed].map(\.showsPullRequestGlyph) == [true, true, true, true])
+    #expect(draft.kindMuted)
+    #expect(merged.rowDimmed && closed.rowDimmed)
+    #expect(branch.kindStage == "Branch" && branch.kindSystemImage == "arrow.triangle.branch")
+    #expect(primary.kindStage == "Primary checkout" && primary.kindSystemImage == "house")
+    #expect(detached.kindStage == "Detached commit")
+    #expect(folder.kindStage == "Folder" && folder.kindSystemImage == "folder")
+}
+
+@Test func checkoutSummaryCarriesPurposeCommitAgeTooltipAndAccessibilityInOrder() throws {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let github = CoreGithubStatus(
+        available: false,
+        loading: false,
+        stale: true,
+        lastSuccessAtUnixMS: 1_699_992_800_000,
+        unavailableReason: "gh timed out"
+    )
+    var checkout = presentationCheckout(
+        id: "checkout-row-d",
+        path: "/tmp/hide.worktrees/checkout-row-d",
+        isWorktree: true,
+        purpose: CoreCheckoutPurpose(text: "체크아웃 행 목적 표시", origin: .token),
+        pullRequest: presentationPullRequest(118, title: "Checkout row D"),
+        worktree: try presentationWorktree(
+            createdAtUnixMS: 1_699_913_600_000,
+            lastCommitUnixSeconds: 1_699_985_600
+        ),
+        github: github,
+        paneIDs: ["pane-1"]
+    )
+    checkout.agentSummary = CoreCheckoutAgentSummary(
+        representativePaneID: "pane-1",
+        working: 1
+    )
+    let agent = presentationAgent(
+        id: "agent-1",
+        paneID: "pane-1",
+        group: "working",
+        identityLabel: "Checkout row D"
+    )
+    let presentation = SidebarCheckoutPresentation(
+        workspace: presentationWorkspace(checkouts: [checkout]),
+        checkout: checkout,
+        agents: [agent],
+        now: now
+    )
+
+    #expect(presentation.secondLine == "체크아웃 행 목적 표시")
+    #expect(presentation.lastCommitAge == "4h")
+    #expect(presentation.showsPullRequestGlyph)
+    #expect(presentation.kindMuted)
+    #expect(presentation.detailTooltip.hasPrefix("#118 · Open · Checkout row D · Last known 2h\n"))
+    #expect(presentation.detailTooltip.contains("gh timed out"))
+    #expect(presentation.detailTooltip.contains("Working: 1"))
+    #expect(presentation.detailTooltip.hasSuffix("Created 1 day ago"))
+    #expect(presentation.accessibilityLabel == "checkout-row-d, Open, 4h, 체크아웃 행 목적 표시")
+    #expect(presentation.showsSecondLine(expanded: false))
+    #expect(!presentation.showsSecondLine(expanded: true))
+}
+
+@Test func missingCheckoutKeepsItsBranchPurposeButGitLoadingStaysOneLine() throws {
+    let purpose = CoreCheckoutPurpose(text: "브랜치에 남은 목적", origin: .branchDescription)
+    let missing = presentationCheckout(
+        id: "missing",
+        path: "/tmp/missing",
+        isWorktree: true,
+        exists: false,
+        purpose: purpose,
+        worktree: try presentationWorktree(branch: "missing", missing: true)
+    )
+    let missingPresentation = SidebarCheckoutPresentation(
+        workspace: presentationWorkspace(checkouts: [missing]),
+        checkout: missing,
+        agents: []
+    )
+    #expect(missingPresentation.secondLine == "브랜치에 남은 목적")
+    #expect(missingPresentation.showsSecondLine(expanded: false))
+
+    let loading = presentationCheckout(
+        id: "loading",
+        path: "/tmp/loading",
+        isWorktree: true,
+        purpose: purpose
+    )
+    let loadingPresentation = SidebarCheckoutPresentation(
+        workspace: presentationWorkspace(checkouts: [loading]),
+        checkout: loading,
+        agents: []
+    )
+    #expect(!loadingPresentation.showsSecondLine(expanded: false))
+}
+
+@Test func unavailableGithubFallsBackToBranchGlyphAndKeepsItsReasonInTheTooltip() throws {
+    let github = CoreGithubStatus(
+        available: false,
+        loading: false,
+        stale: false,
+        lastSuccessAtUnixMS: nil,
+        unavailableReason: "Sign in required"
+    )
+    let checkout = presentationCheckout(
+        id: "feature",
+        path: "/tmp/feature",
+        isWorktree: true,
+        pullRequest: presentationPullRequest(118),
+        worktree: try presentationWorktree(),
+        github: github
+    )
+    let presentation = SidebarCheckoutPresentation(
+        workspace: presentationWorkspace(checkouts: [checkout]),
+        checkout: checkout,
+        agents: []
+    )
+
+    #expect(!presentation.showsPullRequestGlyph)
+    #expect(presentation.kindStage == "Branch")
+    #expect(presentation.detailTooltip.hasPrefix("Sign in required\n"))
+}
+
+@Test func staleGithubWithoutARetainedPullRequestKeepsTheBranchGlyphUnmuted() throws {
+    let github = CoreGithubStatus(
+        available: false,
+        loading: false,
+        stale: true,
+        lastSuccessAtUnixMS: 1_788_000_000_000,
+        unavailableReason: "Last refresh failed"
+    )
+    let checkout = presentationCheckout(
+        id: "feature",
+        path: "/tmp/feature",
+        isWorktree: true,
+        worktree: try presentationWorktree(),
+        github: github
+    )
+    let presentation = SidebarCheckoutPresentation(
+        workspace: presentationWorkspace(checkouts: [checkout]),
+        checkout: checkout,
+        agents: []
+    )
+
+    #expect(!presentation.showsPullRequestGlyph)
+    #expect(presentation.kindStage == "Branch")
+    #expect(!presentation.kindMuted)
 }
 
 @Test func workspaceSummaryCountsOnlyAgentsAttachedToItsPanes() {

@@ -22,11 +22,17 @@ Entries belonging to other tools are counted before and after, and a regression 
 Four events are registered, because those are the four both runtimes declare here: `SessionStart`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
 
-Every entry carries `--source hide-subagents@<version>` inside its command.
+Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command.
+The runtime argument selects that runtime's SessionStart stdout envelope; the version-2 marker makes a version-1 installation outdated so Settings offers to refresh the stored commands.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
 Nothing parses the rest of the command, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
 
-## What the hook reports back
+## What the hook returns and reports back
+
+On `SessionStart`, the helper writes the runtime's JSON hook envelope to stdout with one `hookSpecificOutput.additionalContext` sentence telling the agent to set a one-line worktree purpose with the exact `herdr workspace report-metadata <workspace> --source <you> --token purpose="…"` command.
+Claude Code and Codex currently accept the same envelope, but the installed runtime argument keeps that protocol choice explicit.
+`SubagentStart`, `SubagentStop`, and `Stop` write nothing to stdout, preserving their existing silent behavior.
+This stdout is advisory context for the agent and is independent of the best-effort metadata report described below.
 
 The helper is stateless, as a hook script must be.
 The count lives in `~/.hide/agent-hooks/panes/`, keyed by `$HERDR_PANE_ID`, and is republished after every event through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata.
@@ -51,7 +57,7 @@ A token that is not a count is dropped rather than coerced.
 `Stop` sweeps `working` to zero, because the turn is over and a `SubagentStop` that never arrived cannot leave a count behind.
 A pane Herdr has stopped listing has its record swept on the next session bootstrap.
 
-The helper always exits zero and drains its standard input.
+The helper always exits zero and drains its standard input after writing the SessionStart context when applicable.
 A hook that fails must never be what breaks the operator's agent.
 
 Exiting zero is not the same as saying nothing.

@@ -199,7 +199,11 @@ mod tests {
         assert_eq!(params["source"], "hide-subagents");
         assert_eq!(
             params["tokens"],
-            json!({"hide_hooks": "1", "hide_sub_working": "2", "hide_sub_done": "5"})
+            json!({
+                "hide_hooks": HOOK_VERSION.to_string(),
+                "hide_sub_working": "2",
+                "hide_sub_done": "5"
+            })
         );
     }
 
@@ -270,7 +274,7 @@ mod tests {
             json!({
                 "pane_id": "w1:p1",
                 "source": "hide-subagents",
-                "tokens": {"hide_hooks": "1", "hide_sub_working": "1", "hide_sub_done": "0"}
+                "tokens": {"hide_hooks": "2", "hide_sub_working": "1", "hide_sub_done": "0"}
             })
         );
 

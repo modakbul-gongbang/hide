@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use hide_agent_hooks::counters;
 use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::report;
-use hide_agent_hooks::runtime::HookEvent;
+use hide_agent_hooks::runtime::{AgentRuntime, HookEvent, hook_stdout};
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -49,7 +49,8 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> String {
-    "usage: hide-agent-hooks hook --event <SessionStart|SubagentStart|SubagentStop|Stop> \
+    "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
+     --event <SessionStart|SubagentStart|SubagentStop|Stop> \
      [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
 }
@@ -66,6 +67,8 @@ fn run_hook(arguments: &[String]) {
     else {
         return;
     };
+    let runtime =
+        argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
     let Some(pane_id) = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.is_empty())
@@ -73,6 +76,9 @@ fn run_hook(arguments: &[String]) {
         // Not inside a Herdr pane: there is no pane to describe.
         return;
     };
+    if let Some(output) = runtime.and_then(|runtime| hook_stdout(runtime, event)) {
+        println!("{output}");
+    }
     let Some(home) = home_directory() else {
         return;
     };

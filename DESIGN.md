@@ -175,12 +175,15 @@ Continuing ancestor rails remain in that ancestor parent column through deeper d
 `lineageElbowY` places the turn at the row's status mark, a fixed offset from the row's top rather than a fraction of its height, so a row that grows a stall notice does not slide the connector off the mark.
 `HideTheme.gitRowFontSize` (11pt) and `HideTheme.gitDetailFontSize` (10pt) are the History board's row and detail sizes; the Overview draws its group headers on the shared scale instead.
 Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
-The branch is the title; the primary checkout carries a separate `primary` role badge.
+The one-line checkout row reserves fixed columns for its kind glyph and right-edge chevron, with the title and last-commit age between them, so disclosure and agent changes do not move its identity.
+The kind glyph is the pull-request lifecycle octicon when current GitHub data has a pull request, then branch, home for the primary checkout, commit for detached HEAD, or folder for a plain folder; `primary` and `detached` are not separate badges.
+Open, draft, merged and closed pull requests keep their lifecycle shapes and colors, stale GitHub data mutes only the octicon, an unavailable GitHub lookup falls back to the branch glyph, and a missing folder colors its branch glyph with `danger` and omits the age.
+`missing` and `temporary` remain the only checkout-row badges.
 The sidebar hierarchy is Project > Workspace > Agents; a workspace corresponds to one checkout path, including a plain folder.
 Workspaces without a branch use their actual folder name, including missing paths.
-Detached checkouts carry a separate `detached` badge; their tooltip retains the commit and path.
-Workspaces with nested agent rows toggle disclosure across the whole row; the right-edge arrow only indicates expansion.
-Workspaces without nested agent rows open when clicked and have no arrow.
+Detached checkouts use the commit glyph and retain the commit and path in their tooltip.
+Workspaces with nested agent rows toggle disclosure across the whole row, while the always-reserved right-edge slot contains the expansion arrow only when disclosure applies.
+Workspaces without nested agent rows open when clicked and leave that slot empty.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 Project-view number shortcuts skip agents hidden by workspace disclosure.
 `agentMarkWidth` (12pt) and `checkoutIconWidth` (14pt) define the status and branch columns.
@@ -200,27 +203,30 @@ A row with no sentence draws the status word instead, `Typography.caption` mediu
 A delegated row's sentence is `muted`, like the rest of it.
 The sentence is one line with tail truncation, and the full text is the row tooltip and the accessibility label, which reads name, agent kind, status word, sentence in that order even when the word left the screen.
 There is no third gray for the sentence: a `muted` step between `secondary` and `primary` was tried and the two grays did not separate in the rendered row.
-The Workspace status is shown once in a trailing chip with the representative provider and `+N` remaining agents; single agents omit the suffix, and empty Workspaces omit the chip.
-An expanded Workspace omits the chip as well: each nested agent row carries its own status and provider, so the summary would repeat what is already beside it. The disclosure chevron stays in both states.
-The chip uses the toolbar height, `radiusMedium`, `spacingXS`, and the elevated surface; the disclosure chevron follows it at the far right.
+Only a collapsed Workspace can gain a second line.
+That line starts with the representative agent's status mark and provider badge, adds `+N` for additional agents, then shows one tail-truncated sentence chosen by the core in this order: purpose token, branch description, representative agent title, pull-request title.
+When no agent exists, the mark and provider summary are absent and the sentence keeps the same leading alignment; when neither an agent nor a sentence exists, the row stays one line.
+An expanded Workspace omits the summary and sentence because each nested agent row already carries its own state.
+The full second-line sentence remains in the checkout tooltip and accessibility label.
 The right-edge disclosure and fixed semantic status colors follow [the shared status contract](docs/status-model.md#shared-agent-and-workspace-status-contract).
 `agentWorking` (`#61A6FF`) is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
-Workspace agent counts use the trailing representative chip; uncommitted changes retain their separate Git indicator.
-A PR icon appears before the chip for a known pull request, an active GitHub lookup, or a lookup failure.
-Clicking it opens a 360pt details popover with PR number, title, state, CI rollup, branches, refresh, and an external GitHub action.
-The PR control is a sibling of the full-row disclosure button, so opening details never folds the Workspace.
-Workspace rows without agents reserve no disclosure slot.
-Their PR control uses the same trailing 24pt column as populated rows' disclosure, keeping the icon centers and right inset aligned.
+The checkout tooltip starts with `#N · state · title` when a pull request is known and appends `Last known <age>` when stale, then carries the agent count, detached commit and path when applicable.
+Pull-request numbers, file counts, ahead and behind counts, review decisions and CI do not appear on the sidebar surface.
+Clicking the lifecycle octicon or choosing `Open PR #N` from the checkout context menu opens that pull request in GitHub; the rest of the row retains its disclosure or selection action.
+GitHub refresh, unavailable detail and stale detail live only in Overview's GitHub popover, and the former sidebar pull-request popover has no retained control.
 PR lifecycle is a semantic-color exception to monochrome chrome: Open `#3FB950`, Merged `#A371F7`, Closed `#F85149`, and Draft `#9198A1`.
 `HideTheme.PullRequest` owns this GitHub-style dark palette and the 14pt glyph size, shared with the branch icon, inside the existing 24pt control.
 Official MIT-licensed Octicons distinguish open, merged, closed, and draft by shape as well as color; the vector PDF resources and license ship in the bundle.
-The sidebar control, popover header, and State badge use the same lifecycle color, including during hover and selection.
+The sidebar glyph, Overview popover header, and State badge use the same lifecycle color, including during hover and selection.
 Review decisions and CI retain their own status meanings.
 `HideIconButton` supports template image content with an explicit semantic color while keeping the shared hit area, interaction treatment, tooltip, and accessibility behavior.
 Reference: [GitHub Primer state labels](https://primer.github.io/design/components/state-label/).
 The primary branch mismatch keeps its migration action as a warning icon beside the role badge.
 The context menu groups creation, branch configuration, path access, and guarded deletion with native separators.
-New worktree uses stacked Branch name, Create from, and Start with fields, followed by Cancel and Create worktree.
+New worktree uses stacked Branch name, Create from, Start with, and optional one-line Purpose fields, followed by Cancel and Create worktree.
+Purpose shows a `current / 40` count, warns after 40 characters, stops at 80, and is absent for a remote Herdr older than 0.9.1.
+The checkout row and Overview header context menus both offer `Set purpose…`, whose one-field sheet keeps the current text while a retryable save error remains visible.
+Saving an empty purpose clears it; display falls back through branch description, representative agent title and pull-request title.
 `formControlHeight` is 36pt; compact settings retain `settingsFieldHeight` at 24pt.
 `HideFormPicker` owns stacked menu selection with an explicit selected label, and `HideSettingsField` owns form text inputs through the shared input surface.
 Inside a settings row the same picker drops its stacked label and takes the `settingsControlWidth` (200pt) right-hand column, because the row already carries the label on the left; its accessibility label stays the picker's own.
@@ -574,10 +580,17 @@ A plain folder project has only its size in the strip and only its size on its g
 GitHub summarizes active branches from the existing bounded, per-branch PR selection, not an invented repository-wide PR total.
 The popover states the lookup window and preserves loading, no recent PRs, authentication, unavailable and stale results.
 
-A group header is `▾ ⎇ branch` on the left, opening the workspace, and one mono micro line on the right: `<N files|Clean> · <↑a ↓b> · <size> · <#PR>`, each part only when it applies.
-A zero side of `↑↓` is left out, behind is in the warning color, and the pull request chip is the bundled octicon in its state color with the number beside it and the state word in its tooltip only.
-A long branch name truncates on the left so its distinguishing tail stays visible; the detail line is never truncated.
-The `N files` chip is the one chip that navigates: hover washes it, its tooltip reads `Open in History`, and a click opens that checkout on History in one core event.
+A group header is a minimum 52pt comparison card with its identity on the first line and its badge strip below.
+Its first line is the disclosure chevron, the same checkout kind glyph as the sidebar, the semibold branch, and a muted one-line purpose; when no purpose exists, the pull-request title is the fallback, and when neither exists only the branch remains.
+The full purpose is the header tooltip when the visible copy truncates.
+Its second line is a `HideBadge` strip in the fixed order pull request, checks, files, behind, ahead and allocated size.
+The strip stays on one line when it fits; at a narrow width it wraps without truncating the pull-request lifecycle or review-decision word or dropping a later badge.
+The pull-request badge includes the bundled octicon, number and visible lifecycle or review-decision word; merged and closed outrank draft, draft outranks review decisions, and open is the final fallback.
+Checks are `✓ Checks`, `✗ Checks` or `… Checks`, and the badge is absent when the pull request has no checks.
+Files are `Clean`, `N files`, `… files`, `? files` or `missing` with the matching muted, warning or danger treatment.
+Behind is shown only above zero as `↓N behind <base>` in warning; ahead is shown only above zero and only without a pull request as `↑N ahead`.
+A plain folder project keeps only its allocated-size badge.
+The pull-request and checks badges open the existing GitHub popover, `N files` opens that checkout on History, and `Clean` does not activate; none of these badges opens GitHub directly.
 The chevron folds the group's rows and shares the sidebar's collapsed set.
 Groups sit in one fixed order, the primary checkout first, then linked worktrees oldest first by the time they were added, then a `› Inactive N` fold that shares the sidebar's fold state; an unfolded inactive checkout is a header line with no rows.
 No agent state and no search reorders a group.
@@ -585,7 +598,7 @@ No agent state and no search reorders a group.
 An agent row is mark · badge · title · optional detail · `↗`, at the pane header's 28pt height, and the whole row is the button: a click shows that pane, and the `↗` says so.
 A delegated child is indented under its parent with `↳`; a child delegated into another worktree stands in its own group with the caption `↳ from <parent> · <parent branch>` under it.
 An empty group has one row, `No agent · Start agent…`, whose menu is the same `Terminal only / Claude / Codex` choice the header's `New agent here ▸` offers.
-The header's context menu is `New agent here ▸`, `New worktree…`, `Set as base branch`, then `Open pull request #N` when there is one and `Open in History`, then `Copy Path` and `Open in ▸`, then the destructive `Delete worktree…` behind the sidebar's gate and wording.
+The header's context menu is `New agent here ▸`, `New worktree…`, `Set purpose…`, `Set as base branch`, then `Open pull request #N` when there is one and `Open in History`, then `Copy Path` and `Open in ▸`, then the destructive `Delete worktree…` behind the sidebar's gate and wording.
 An agent row's context menu is `Open pane`, `Reveal in sidebar`, `Copy pane id` and the destructive `Close pane…`, with the same confirmation the pane header uses.
 Search matches an agent's title, its state sentence and a branch; it keeps the matching rows with their group header, and no match reads `No matching agents or workspaces` with a `Clear search` action.
 
@@ -597,7 +610,7 @@ Retired or moved panes leave the list on the next topology projection.
 Remote Overview explicitly reports that local Git context is unavailable.
 Explorer contains file navigation only, with no checkout summary above it.
 History retains its diff navigation; Git/PR context remains in Overview and Workspace controls.
-VoiceOver reads a group header as its branch followed by each chip in words, `prd/hide-orchestrator, 12 changed files, 3 ahead, 2.4 GB, pull request 107 open`, and a row as `Open sasu, Working, prd/hide-orchestrator`; every tooltip is also the control's accessibility help.
+VoiceOver reads a group header as its branch, purpose and each badge in words, such as `prd/hide-orchestrator, review the checkout flow, pull request 107 changes requested, checks failing, 12 changed files, 2.4 GB`, and a checkout row as its name, lifecycle, commit age and second-line sentence in that order; every tooltip is also the control's accessibility help.
 
 Allocated on disk sums main, linked worktree folders and the actual shared Git directory once.
 Nested roots belong to the longest matching root; hard links share one inode allocation, and descendant symlinks are not followed.
@@ -636,7 +649,7 @@ A completed removal disappears from the core snapshot and a repeated request is 
 Save failures remain caller-visible; normal no-op results never become alerts.
 
 The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
-The selected Overview project retains its open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
+Only the selected Overview project's GitHub cell popover owns explicit refresh and status detail; the sidebar has neither a GitHub popover nor a refresh menu action.
 All triggers share the existing bounded background reader, authentication and cache.
 Explorer and History do not independently start GitHub queries.
 Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.

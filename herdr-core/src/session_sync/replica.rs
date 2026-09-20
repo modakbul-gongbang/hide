@@ -411,6 +411,16 @@ impl SessionReplica {
                         // A remote checkout carries no worktree, pull-request,
                         // or disk facts: those readers describe this machine.
                         has_panes: !tabs.is_empty(),
+                        purpose: workspace
+                            .tokens
+                            .get("purpose")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|purpose| !purpose.is_empty())
+                            .map(|purpose| crate::model::CheckoutPurposeSnapshot {
+                                text: purpose.chars().take(80).collect(),
+                                origin: crate::model::CheckoutPurposeOrigin::Token,
+                            }),
                         tabs,
                         active_tab_id,
                         strip,
@@ -428,6 +438,11 @@ impl SessionReplica {
             agent.id = format!("remote:{target_id}:agent:{source_pane_id}");
             agent.pane_id = remote_pane_id(target_id, &source_pane_id);
         }
+
+        // Remote rows use the same representative-agent and purpose fallback
+        // ladder as local rows. Run this after target-scoping pane ids so the
+        // summary can join each agent to its projected checkout.
+        crate::sidebar::sync_checkout_agent_summaries(&mut workspaces, &agents);
 
         // A remote project list follows the same activity order as a local
         // one, so a user reading two devices reads one rule. The agent pane

@@ -1,7 +1,9 @@
 //! Worktree actions cross the socket boundary before publishing removal readiness.
 use super::*;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::process::Command;
+use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const CONFIRM_POLL: Duration = Duration::from_millis(100);
@@ -128,12 +130,205 @@ pub struct WorktreeTaskRequest {
     pub base_branch: Option<String>,
     pub agent_kind: Option<String>,
     pub focus: bool,
+    pub purpose: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorktreeTaskOutcome {
     pub path: String,
     pub pane_id: String,
+    /// Worktree creation succeeded even when its optional purpose did not.
+    /// The runtime records this as a diagnostic without turning the finished
+    /// creation into a failed operation.
+    pub purpose_error: Option<String>,
+    /// A token-first creation save whose Git write and compensating token
+    /// clear both failed. The runtime hides this unconfirmed value so the
+    /// completed row follows the creation contract and shows its fallback.
+    pub unconfirmed_purpose_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PurposeTaskRequest {
+    pub id: u64,
+    pub checkout_id: String,
+    pub repository_root: String,
+    pub branch: Option<String>,
+    pub session_workspace_id: Option<String>,
+    pub purpose: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PurposeTaskOutcome {
+    Saved {
+        purpose: String,
+        token_written: bool,
+    },
+    GitFailed {
+        purpose: String,
+        token_written: bool,
+        detail: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PurposeMirrorRequest {
+    workspace_id: String,
+    repository_root: String,
+    branch: String,
+    purpose: Option<String>,
+}
+
+enum PurposeMirrorMessage {
+    Write(PurposeMirrorRequest),
+    Stop,
+}
+
+/// Mirrors new live workspace purpose values into Git without delaying the
+/// session coordinator or taking the runtime lock. Each observed token change
+/// is queued once; a failed write is diagnosed and is not retried until a
+/// later token change makes a new intent.
+pub struct PurposeMirror {
+    sender: SyncSender<PurposeMirrorMessage>,
+    worker: Option<thread::JoinHandle<()>>,
+    observed: BTreeMap<(String, String, String), Option<String>>,
+}
+
+impl PurposeMirror {
+    const QUEUE_CAPACITY: usize = 64;
+
+    pub fn new() -> Result<Self, String> {
+        let (sender, receiver) = sync_channel(Self::QUEUE_CAPACITY);
+        let worker = thread::Builder::new()
+            .name("herdr-core-purpose-mirror".to_owned())
+            .spawn(move || {
+                let git = SystemGit;
+                while let Ok(message) = receiver.recv() {
+                    let PurposeMirrorMessage::Write(request) = message else {
+                        break;
+                    };
+                    let key = format!("branch.{}.description", request.branch);
+                    let result = match request.purpose.as_deref() {
+                        Some(purpose) => git
+                            .run(&request.repository_root, &["config", &key, purpose])
+                            .map(|_| ()),
+                        None => git.unset(&request.repository_root, &key),
+                    };
+                    match result {
+                        Ok(()) => crate::diagnostic!(serde_json::json!({
+                            "component": "checkout_purpose",
+                            "kind": "mirror.saved",
+                            "workspace_id": request.workspace_id,
+                            "branch": request.branch,
+                        })),
+                        Err(message) => crate::diagnostic!(serde_json::json!({
+                            "component": "checkout_purpose",
+                            "kind": "mirror.failed",
+                            "workspace_id": request.workspace_id,
+                            "branch": request.branch,
+                            "message": message,
+                        })),
+                    }
+                }
+            })
+            .map_err(|error| format!("purpose mirror worker could not be started: {error}"))?;
+        Ok(Self {
+            sender,
+            worker: Some(worker),
+            observed: BTreeMap::new(),
+        })
+    }
+
+    #[cfg(test)]
+    fn recording() -> (Self, std::sync::mpsc::Receiver<PurposeMirrorMessage>) {
+        let (sender, receiver) = sync_channel(Self::QUEUE_CAPACITY);
+        (
+            Self {
+                sender,
+                worker: None,
+                observed: BTreeMap::new(),
+            },
+            receiver,
+        )
+    }
+
+    pub fn sync(
+        &mut self,
+        spaces: &[workspace::SessionSpace],
+        workspaces: &[WorkspaceSnapshot],
+        unconfirmed_created_purposes: &HashMap<String, String>,
+    ) {
+        let mut current = BTreeSet::new();
+        for workspace in workspaces {
+            for checkout in &workspace.checkouts {
+                let Some(branch) = checkout.branch.as_deref() else {
+                    continue;
+                };
+                let Some(effective) =
+                    workspace::effective_checkout_purpose(spaces, workspace, &checkout.path)
+                else {
+                    continue;
+                };
+                let key = (
+                    workspace::normalized_for_comparison(Path::new(&workspace.path)),
+                    workspace::normalized_for_comparison(Path::new(&checkout.path)),
+                    branch.to_owned(),
+                );
+                current.insert(key.clone());
+                let purpose = effective.purpose.map(str::to_owned);
+                if purpose.as_deref().is_some_and(|purpose| {
+                    unconfirmed_created_purposes
+                        .get(&key.1)
+                        .is_some_and(|unconfirmed| unconfirmed == purpose)
+                }) {
+                    // Do not remember the suppressed value as mirrored. Once
+                    // Herdr confirms a clear or replacement, the next sync
+                    // must treat that visible value as new work.
+                    self.observed.remove(&key);
+                    continue;
+                }
+                let previous = self.observed.get(&key);
+                let first_live_value =
+                    previous.is_none() && (purpose.is_some() || effective.has_shadowed_purpose);
+                let changed_value = previous.is_some_and(|value| value != &purpose);
+                self.observed.insert(key, purpose.clone());
+                if !first_live_value && !changed_value {
+                    continue;
+                }
+                let request = PurposeMirrorRequest {
+                    workspace_id: effective.workspace_id.to_owned(),
+                    repository_root: workspace.path.clone(),
+                    branch: branch.to_owned(),
+                    purpose,
+                };
+                if let Err(error) = self.sender.try_send(PurposeMirrorMessage::Write(request)) {
+                    let kind = match error {
+                        TrySendError::Full(_) => "mirror.queue_full",
+                        TrySendError::Disconnected(_) => "mirror.worker_closed",
+                    };
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "checkout_purpose",
+                        "kind": kind,
+                        "workspace_id": effective.workspace_id,
+                    }));
+                }
+            }
+        }
+        self.observed.retain(|key, _| current.contains(key));
+    }
+}
+
+impl Drop for PurposeMirror {
+    fn drop(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            let _ = self.sender.send(PurposeMirrorMessage::Stop);
+            if worker.join().is_err() {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "checkout_purpose",
+                    "kind": "mirror.join_failed",
+                }));
+            }
+        }
+    }
 }
 
 pub fn spawn_worktree_create(
@@ -145,7 +340,19 @@ pub fn spawn_worktree_create(
         .spawn(move || {
             let result =
                 reject_existing_unchecked_out_branch(&request.repository_root, &request.branch)
-                    .and_then(|()| create_worktree(context.api_connector.as_ref(), &request));
+                    .and_then(|()| {
+                        create_worktree_observing_purpose(
+                            context.api_connector.as_ref(),
+                            &request,
+                            |path, purpose| {
+                                if let Some(runtime) = context.runtime.upgrade()
+                                    && let Ok(mut guard) = runtime.lock()
+                                {
+                                    guard.begin_created_purpose_write(path, purpose);
+                                }
+                            },
+                        )
+                    });
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
                     guard.ingest_task_operation_result(request.id, result);
@@ -157,6 +364,50 @@ pub fn spawn_worktree_create(
         })
         .map(|_| ())
         .map_err(|error| format!("worktree create worker could not be started: {error}"))
+}
+
+pub fn spawn_purpose_write(
+    context: LiveContext,
+    request: PurposeTaskRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-purpose-write".into())
+        .spawn(move || {
+            let git = SystemGit;
+            let result = write_purpose(context.api_connector.as_ref(), &git, &request);
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_purpose_operation_result(request.id, result);
+                } else {
+                    return;
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("purpose worker could not be started: {error}"))
+}
+
+pub fn spawn_remote_purpose_write(
+    context: RemoteControlContext,
+    request: PurposeTaskRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-remote-purpose-write".into())
+        .spawn(move || {
+            let git = SystemGit;
+            let result = write_purpose(context.api_connector.as_ref(), &git, &request);
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_purpose_operation_result(request.id, result);
+                } else {
+                    return;
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("remote purpose worker could not be started: {error}"))
 }
 
 /// `New agent here`: one new tab whose cwd is the checkout, in the Herdr
@@ -220,6 +471,8 @@ fn create_checkout_tab(
     Ok(WorktreeTaskOutcome {
         path: request.checkout_path.clone(),
         pane_id,
+        purpose_error: None,
+        unconfirmed_purpose_token: None,
     })
 }
 
@@ -249,6 +502,14 @@ fn create_worktree(
     connector: &dyn ApiConnector,
     request: &WorktreeTaskRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
+    create_worktree_observing_purpose(connector, request, |_, _| {})
+}
+
+fn create_worktree_observing_purpose(
+    connector: &dyn ApiConnector,
+    request: &WorktreeTaskRequest,
+    on_purpose_write: impl FnOnce(&str, &str),
+) -> Result<WorktreeTaskOutcome, String> {
     let params = wire::worktree_create_params(
         &request.repository_root,
         &request.branch,
@@ -273,9 +534,27 @@ fn create_worktree(
             .and_then(|path| path.as_deref())
             .is_some_and(|path| same_checkout_path(path, &created.path));
     if identity_matches {
+        let purpose_failure = request.purpose.as_ref().and_then(|purpose| {
+            on_purpose_write(&created.path, purpose);
+            let git = SystemGit;
+            let purpose_request = PurposeTaskRequest {
+                id: request.id,
+                checkout_id: String::new(),
+                repository_root: request.repository_root.clone(),
+                branch: Some(request.branch.clone()),
+                session_workspace_id: Some(created.workspace_id.clone()),
+                purpose: purpose.clone(),
+            };
+            write_created_purpose(connector, &git, &purpose_request)
+        });
         return Ok(WorktreeTaskOutcome {
             path: created.path,
             pane_id: created.pane_id,
+            purpose_error: purpose_failure
+                .as_ref()
+                .map(|failure| failure.detail.clone()),
+            unconfirmed_purpose_token: purpose_failure
+                .and_then(|failure| failure.unconfirmed_token),
         });
     }
 
@@ -386,6 +665,10 @@ fn reject_existing_unchecked_out_branch(repository_root: &str, branch: &str) -> 
 
 trait GitCommands {
     fn run(&self, cwd: &str, args: &[&str]) -> Result<String, String>;
+
+    fn unset(&self, cwd: &str, key: &str) -> Result<(), String> {
+        self.run(cwd, &["config", "--unset-all", key]).map(|_| ())
+    }
 }
 
 struct SystemGit;
@@ -406,6 +689,131 @@ impl GitCommands for SystemGit {
                 format!("git {} exited with {}", args[0], output.status)
             } else {
                 format!("git {}: {detail}", args[0])
+            })
+        }
+    }
+
+    fn unset(&self, cwd: &str, key: &str) -> Result<(), String> {
+        let output = Command::new("git")
+            .arg("--no-optional-locks")
+            .arg("-C")
+            .arg(cwd)
+            .args(["config", "--unset-all", key])
+            .output()
+            .map_err(|error| format!("git could not be run: {error}"))?;
+        if output.status.success() || output.status.code() == Some(5) {
+            Ok(())
+        } else {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            Err(if detail.is_empty() {
+                format!("git config exited with {}", output.status)
+            } else {
+                format!("git config: {detail}")
+            })
+        }
+    }
+}
+
+fn write_purpose(
+    connector: &dyn ApiConnector,
+    git: &dyn GitCommands,
+    request: &PurposeTaskRequest,
+) -> Result<PurposeTaskOutcome, String> {
+    let purpose = request.purpose.trim().to_owned();
+    if purpose.chars().count() > 80 {
+        return Err("Purpose must be 80 characters or fewer".to_owned());
+    }
+    if purpose.contains(['\n', '\r']) {
+        return Err("Purpose must be one line".to_owned());
+    }
+    let token_written = request.session_workspace_id.is_some();
+    if let Some(workspace_id) = request.session_workspace_id.as_deref() {
+        control_request(
+            connector,
+            "workspace.report_metadata",
+            wire::workspace_purpose_params(
+                workspace_id,
+                (!purpose.is_empty()).then_some(purpose.as_str()),
+            )?,
+        )
+        .map_err(|error| format!("workspace purpose: {error}"))?;
+    }
+    let Some(branch) = request.branch.as_deref() else {
+        return Ok(PurposeTaskOutcome::Saved {
+            purpose,
+            token_written,
+        });
+    };
+    let key = format!("branch.{branch}.description");
+    let git_result = if purpose.is_empty() {
+        git.unset(&request.repository_root, &key)
+    } else {
+        git.run(
+            &request.repository_root,
+            &["config", &key, purpose.as_str()],
+        )
+        .map(|_| ())
+    };
+    match git_result {
+        Ok(()) => Ok(PurposeTaskOutcome::Saved {
+            purpose,
+            token_written,
+        }),
+        Err(detail) => Ok(PurposeTaskOutcome::GitFailed {
+            purpose,
+            token_written,
+            detail,
+        }),
+    }
+}
+
+/// Creation closes its sheet after the worktree exists, even when purpose
+/// persistence fails. Compensate a token-first partial save so the new row
+/// shows its fallback instead of claiming a purpose Git did not preserve.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CreatedPurposeFailure {
+    detail: String,
+    unconfirmed_token: Option<String>,
+}
+
+fn write_created_purpose(
+    connector: &dyn ApiConnector,
+    git: &dyn GitCommands,
+    request: &PurposeTaskRequest,
+) -> Option<CreatedPurposeFailure> {
+    match write_purpose(connector, git, request) {
+        Ok(PurposeTaskOutcome::Saved { .. }) => None,
+        Ok(PurposeTaskOutcome::GitFailed {
+            purpose,
+            token_written: true,
+            detail,
+            ..
+        }) => {
+            let cleanup = request.session_workspace_id.as_deref().map(|workspace_id| {
+                control_request(
+                    connector,
+                    "workspace.report_metadata",
+                    wire::workspace_purpose_params(workspace_id, None)
+                        .map_err(|error| error.to_string())?,
+                )
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+            });
+            match cleanup {
+                Some(Ok(())) | None => Some(CreatedPurposeFailure {
+                    detail,
+                    unconfirmed_token: None,
+                }),
+                Some(Err(cleanup_error)) => Some(CreatedPurposeFailure {
+                    detail: format!("{detail}; Herdr token cleanup failed: {cleanup_error}"),
+                    unconfirmed_token: Some(purpose),
+                }),
+            }
+        }
+        Ok(PurposeTaskOutcome::GitFailed { detail, .. }) | Err(detail) => {
+            Some(CreatedPurposeFailure {
+                detail,
+                unconfirmed_token: None,
             })
         }
     }
@@ -444,6 +852,7 @@ fn migrate_branch(
     let create_request = WorktreeTaskRequest {
         branch: original.clone(),
         focus: false,
+        purpose: None,
         ..request.clone()
     };
     match create_worktree(connector, &create_request) {
@@ -706,7 +1115,406 @@ mod tests {
             base_branch: Some("main".into()),
             agent_kind: None,
             focus: true,
+            purpose: None,
         }
+    }
+
+    fn purpose_request(purpose: &str) -> PurposeTaskRequest {
+        PurposeTaskRequest {
+            id: 7,
+            checkout_id: "checkout:feature".into(),
+            repository_root: "/fixture/repo".into(),
+            branch: Some("feature".into()),
+            session_workspace_id: Some("w7".into()),
+            purpose: purpose.into(),
+        }
+    }
+
+    #[test]
+    fn purpose_writes_the_workspace_token_before_the_branch_description() {
+        let server = server(vec![json!({"result":{"type":"ok"}})]);
+        let git = ScriptedGit::new(vec![Ok("")]);
+
+        assert_eq!(
+            write_purpose(&server, &git, &purpose_request("Ship checkout row D")).unwrap(),
+            PurposeTaskOutcome::Saved {
+                purpose: "Ship checkout row D".into(),
+                token_written: true,
+            }
+        );
+
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["method"], "workspace.report_metadata");
+        assert_eq!(requests[0]["params"]["workspace_id"], "w7");
+        assert_eq!(requests[0]["params"]["source"], "hide");
+        assert_eq!(
+            requests[0]["params"]["tokens"]["purpose"],
+            "Ship checkout row D"
+        );
+        assert_eq!(
+            git.calls.lock().unwrap().as_slice(),
+            [vec![
+                "config".to_owned(),
+                "branch.feature.description".to_owned(),
+                "Ship checkout row D".to_owned(),
+            ]]
+        );
+    }
+
+    #[test]
+    fn rejected_workspace_token_never_writes_git() {
+        let server = server(vec![json!({
+            "error":{"code":"unavailable","message":"injected token refusal"}
+        })]);
+        let git = ScriptedGit::new(vec![]);
+
+        let error = write_purpose(&server, &git, &purpose_request("Keep input")).unwrap_err();
+
+        assert!(error.contains("injected token refusal"));
+        assert!(git.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn git_failure_after_a_workspace_token_is_a_partial_save() {
+        let server = server(vec![json!({"result":{"type":"ok"}})]);
+        let git = ScriptedGit::new(vec![Err("injected git lock")]);
+
+        assert_eq!(
+            write_purpose(&server, &git, &purpose_request("Visible live")).unwrap(),
+            PurposeTaskOutcome::GitFailed {
+                purpose: "Visible live".into(),
+                token_written: true,
+                detail: "injected git lock".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn git_failure_without_a_live_workspace_reports_no_partial_save() {
+        let server = server(vec![]);
+        let git = ScriptedGit::new(vec![Err("injected git lock")]);
+        let mut request = purpose_request("Keep input");
+        request.session_workspace_id = None;
+
+        assert_eq!(
+            write_purpose(&server, &git, &request).unwrap(),
+            PurposeTaskOutcome::GitFailed {
+                purpose: "Keep input".into(),
+                token_written: false,
+                detail: "injected git lock".into(),
+            }
+        );
+        assert!(server.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn clearing_a_purpose_clears_the_token_and_branch_description() {
+        let server = server(vec![json!({"result":{"type":"ok"}})]);
+        let git = ScriptedGit::new(vec![Ok("")]);
+
+        assert!(matches!(
+            write_purpose(&server, &git, &purpose_request("")),
+            Ok(PurposeTaskOutcome::Saved { purpose, .. }) if purpose.is_empty()
+        ));
+
+        let requests = server.requests.lock().unwrap();
+        assert!(requests[0]["params"]["tokens"]["purpose"].is_null());
+        assert_eq!(
+            git.calls.lock().unwrap().as_slice(),
+            [vec![
+                "config".to_owned(),
+                "--unset-all".to_owned(),
+                "branch.feature.description".to_owned(),
+            ]]
+        );
+    }
+
+    #[test]
+    fn creation_compensates_a_token_when_the_git_mirror_fails() {
+        let server = server(vec![
+            json!({"result":{"type":"ok"}}),
+            json!({"result":{"type":"ok"}}),
+        ]);
+        let git = ScriptedGit::new(vec![Err("injected git lock")]);
+
+        assert_eq!(
+            write_created_purpose(&server, &git, &purpose_request("Use the fallback")),
+            Some(CreatedPurposeFailure {
+                detail: "injected git lock".to_owned(),
+                unconfirmed_token: None,
+            })
+        );
+
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0]["params"]["tokens"]["purpose"],
+            "Use the fallback"
+        );
+        assert!(requests[1]["params"]["tokens"]["purpose"].is_null());
+    }
+
+    #[test]
+    fn creation_marks_a_token_unconfirmed_when_git_and_cleanup_both_fail() {
+        let server = server(vec![
+            json!({"result":{"type":"ok"}}),
+            json!({"error":{"code":"unavailable","message":"injected cleanup refusal"}}),
+        ]);
+        let git = ScriptedGit::new(vec![Err("injected git lock")]);
+
+        assert_eq!(
+            write_created_purpose(&server, &git, &purpose_request("Use the fallback")),
+            Some(CreatedPurposeFailure {
+                detail: "injected git lock; Herdr token cleanup failed: workspace.report_metadata failed: unavailable: injected cleanup refusal".to_owned(),
+                unconfirmed_token: Some("Use the fallback".to_owned()),
+            })
+        );
+        assert_eq!(server.requests.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn purpose_mirror_emits_initial_changes_and_clear_for_the_exact_branch() {
+        let (mut mirror, receiver) = PurposeMirror::recording();
+        let mut space = workspace::SessionSpace {
+            id: "w-purpose".to_owned(),
+            label: "Fixture".to_owned(),
+            cwds: vec!["/fixture/repo/worktrees/topic".to_owned()],
+            purpose: Some("Initial purpose".to_owned()),
+        };
+        let checkout = WorkspaceSnapshot {
+            id: "project".to_owned(),
+            label: "Fixture".to_owned(),
+            path: "/fixture/repo".to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: "repo".to_owned(),
+            is_git: true,
+            default_branch: Some("main".to_owned()),
+            branches: vec!["main".to_owned(), "topic/quoted".to_owned()],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec!["w-purpose".to_owned()],
+            last_activity_unix_ms: None,
+            pinned: false,
+            checkouts: vec![crate::model::CheckoutSnapshot {
+                id: "checkout".to_owned(),
+                workspace_id: "project".to_owned(),
+                label: "topic/quoted".to_owned(),
+                path: "/fixture/repo/worktrees/topic".to_owned(),
+                branch: Some("topic/quoted".to_owned()),
+                exists: true,
+                is_worktree: true,
+                ..Default::default()
+            }],
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+
+        let suppressed = HashMap::from([(
+            workspace::normalized_for_comparison(Path::new("/fixture/repo/worktrees/topic")),
+            "Initial purpose".to_owned(),
+        )]);
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+            &suppressed,
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "an unconfirmed creation token is never mirrored back into Git"
+        );
+
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+            &HashMap::new(),
+        );
+        let PurposeMirrorMessage::Write(initial) = receiver.recv().unwrap() else {
+            panic!("initial purpose is a write")
+        };
+        assert_eq!(initial.workspace_id, "w-purpose");
+        assert_eq!(initial.repository_root, "/fixture/repo");
+        assert_eq!(initial.branch, "topic/quoted");
+        assert_eq!(initial.purpose.as_deref(), Some("Initial purpose"));
+
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+            &HashMap::new(),
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "an unchanged token is not rewritten"
+        );
+
+        space.purpose = Some("Changed purpose".to_owned());
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+            &HashMap::new(),
+        );
+        let PurposeMirrorMessage::Write(changed) = receiver.recv().unwrap() else {
+            panic!("changed purpose is a write")
+        };
+        assert_eq!(changed.purpose.as_deref(), Some("Changed purpose"));
+
+        space.purpose = None;
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+            &HashMap::new(),
+        );
+        let PurposeMirrorMessage::Write(cleared) = receiver.recv().unwrap() else {
+            panic!("cleared purpose is a write")
+        };
+        assert_eq!(cleared.branch, "topic/quoted");
+        assert!(cleared.purpose.is_none());
+    }
+
+    #[test]
+    fn purpose_mirror_uses_the_projects_authoritative_workspace_only() {
+        let (mut mirror, receiver) = PurposeMirror::recording();
+        let spaces = vec![
+            workspace::SessionSpace {
+                id: "w-outer".to_owned(),
+                label: "Outer".to_owned(),
+                cwds: vec!["/fixture/repo/worktrees/topic".to_owned()],
+                purpose: Some("Outer purpose".to_owned()),
+            },
+            workspace::SessionSpace {
+                id: "w-nested".to_owned(),
+                label: "Nested".to_owned(),
+                cwds: vec!["/fixture/repo/worktrees/topic/nested".to_owned()],
+                purpose: Some("Nested purpose".to_owned()),
+            },
+            workspace::SessionSpace {
+                id: "w-authority".to_owned(),
+                label: "Outer second".to_owned(),
+                cwds: vec!["/fixture/repo/worktrees/topic".to_owned()],
+                purpose: Some("Authoritative purpose".to_owned()),
+            },
+        ];
+        let project = WorkspaceSnapshot {
+            id: "outer".to_owned(),
+            label: "Outer".to_owned(),
+            path: "/fixture/repo".to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: "repo".to_owned(),
+            is_git: true,
+            default_branch: Some("main".to_owned()),
+            branches: vec!["topic".to_owned()],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec!["w-outer".to_owned(), "w-authority".to_owned()],
+            last_activity_unix_ms: None,
+            pinned: false,
+            checkouts: vec![crate::model::CheckoutSnapshot {
+                id: "checkout".to_owned(),
+                workspace_id: "outer".to_owned(),
+                label: "topic".to_owned(),
+                path: "/fixture/repo/worktrees/topic".to_owned(),
+                branch: Some("topic".to_owned()),
+                exists: true,
+                is_worktree: true,
+                ..Default::default()
+            }],
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+
+        mirror.sync(&spaces, std::slice::from_ref(&project), &HashMap::new());
+
+        let PurposeMirrorMessage::Write(write) = receiver.recv().unwrap() else {
+            panic!("the authoritative purpose is a write")
+        };
+        assert_eq!(write.workspace_id, "w-authority");
+        assert_eq!(write.purpose.as_deref(), Some("Authoritative purpose"));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn purpose_mirror_tracks_source_switches_by_checkout_and_restores_the_last_value() {
+        let (mut mirror, receiver) = PurposeMirror::recording();
+        let first = workspace::SessionSpace {
+            id: "w-first".to_owned(),
+            label: "First".to_owned(),
+            cwds: vec!["/fixture/repo/worktrees/topic".to_owned()],
+            purpose: Some("First purpose".to_owned()),
+        };
+        let later_without_token = workspace::SessionSpace {
+            id: "w-later".to_owned(),
+            label: "Later".to_owned(),
+            cwds: vec!["/fixture/repo/worktrees/topic".to_owned()],
+            purpose: None,
+        };
+        let mut project = WorkspaceSnapshot {
+            id: "project".to_owned(),
+            label: "Fixture".to_owned(),
+            path: "/fixture/repo".to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: "repo".to_owned(),
+            is_git: true,
+            default_branch: Some("main".to_owned()),
+            branches: vec!["topic".to_owned()],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec!["w-first".to_owned()],
+            last_activity_unix_ms: None,
+            pinned: false,
+            checkouts: vec![crate::model::CheckoutSnapshot {
+                id: "checkout".to_owned(),
+                workspace_id: "project".to_owned(),
+                label: "topic".to_owned(),
+                path: "/fixture/repo/worktrees/topic".to_owned(),
+                branch: Some("topic".to_owned()),
+                exists: true,
+                is_worktree: true,
+                ..Default::default()
+            }],
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+
+        mirror.sync(
+            std::slice::from_ref(&first),
+            std::slice::from_ref(&project),
+            &HashMap::new(),
+        );
+        let PurposeMirrorMessage::Write(initial) = receiver.recv().unwrap() else {
+            panic!("initial purpose is written")
+        };
+        assert_eq!(initial.workspace_id, "w-first");
+        assert_eq!(initial.purpose.as_deref(), Some("First purpose"));
+
+        project.session_workspace_ids.push("w-later".to_owned());
+        mirror.sync(
+            &[first.clone(), later_without_token],
+            std::slice::from_ref(&project),
+            &HashMap::new(),
+        );
+        let PurposeMirrorMessage::Write(cleared) = receiver.recv().unwrap() else {
+            panic!("later explicit absence clears the mirror")
+        };
+        assert_eq!(cleared.workspace_id, "w-later");
+        assert!(cleared.purpose.is_none());
+
+        project.session_workspace_ids.pop();
+        mirror.sync(
+            std::slice::from_ref(&first),
+            std::slice::from_ref(&project),
+            &HashMap::new(),
+        );
+        let PurposeMirrorMessage::Write(restored) = receiver.recv().unwrap() else {
+            panic!("removing the later workspace restores the earlier value")
+        };
+        assert_eq!(restored.workspace_id, "w-first");
+        assert_eq!(restored.purpose.as_deref(), Some("First purpose"));
     }
 
     #[test]
@@ -903,6 +1711,7 @@ mod tests {
         run(&["init", "-b", "main"]);
         run(&["config", "user.name", "Fixture"]);
         run(&["config", "user.email", "fixture@example.invalid"]);
+        run(&["config", "commit.gpgsign", "false"]);
         run(&["commit", "--allow-empty", "-m", "seed"]);
         run(&["branch", "existing"]);
 
@@ -1055,6 +1864,7 @@ mod tests {
         run(&["init", "-b", "main"]);
         run(&["config", "user.name", "Fixture"]);
         run(&["config", "user.email", "fixture@example.invalid"]);
+        run(&["config", "commit.gpgsign", "false"]);
         std::fs::write(root.join("ignored.txt"), "base bytes").unwrap();
         run(&["add", "ignored.txt"]);
         run(&["commit", "-m", "base"]);

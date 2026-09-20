@@ -220,6 +220,8 @@ struct CheckoutOverview: View {
         case .normal: HideTheme.primary
         case .muted: HideTheme.muted
         case .warning: HideTheme.warning
+        case .success: HideTheme.success
+        case .danger: HideTheme.danger
         }
     }
 
@@ -241,10 +243,12 @@ struct CheckoutOverview: View {
                 Text("No recent pull requests")
             }
             ForEach(project?.pullRequests ?? [], id: \.number) { pr in
+                let detail = OverviewPresentation.pullRequestPopoverDetail(pr)
                 Button { model.openPullRequest(pr) } label: {
                     VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
                         Text(pr.title ?? "PR #\(pr.number)").lineLimit(2)
-                        Text("#\(pr.number) · \(pr.headBranch)").foregroundStyle(HideTheme.secondary)
+                        Text(detail.status).foregroundStyle(tone(detail.statusTone))
+                        Text(detail.checks).foregroundStyle(tone(detail.checksTone))
                     }
                 }.buttonStyle(HideTextButtonStyle(appearance: .quiet))
             }
@@ -355,108 +359,191 @@ struct CheckoutOverview: View {
     /// shares the sidebar's collapsed set; an inactive checkout is one line.
     private func groupHeader(_ group: WorktreeGroup, workspace: CoreWorkspaceSnapshot) -> some View {
         let checkout = group.checkout
+        let sidebar = SidebarCheckoutPresentation(
+            workspace: workspace,
+            checkout: checkout,
+            agents: model.agents,
+            connected: model.agentsConnected
+        )
         let chips = OverviewPresentation.headerChips(
             checkout: checkout, isGit: workspace.isGit,
             folderDisk: model.focusedCheckout?.id == checkout.id ? model.card.disk : nil
         )
         let expanded = !group.inactive && model.isCheckoutExpanded(checkout)
         let focused = model.focusedCheckout?.id == checkout.id
-        return HStack(spacing: HideTheme.spacingXS) {
-            if group.inactive {
-                Image(systemName: "chevron.right")
-                    .hideFont(size: HideTheme.Typography.micro, weight: .bold)
-                    .foregroundStyle(HideTheme.muted)
+        return VStack(alignment: .leading, spacing: HideTheme.spacingXS) {
+            HStack(spacing: HideTheme.spacingSM) {
+                if group.inactive {
+                    Image(systemName: "chevron.right")
+                        .hideFont(size: HideTheme.Typography.micro, weight: .bold)
+                        .foregroundStyle(HideTheme.muted)
+                        .frame(width: HideTheme.lineageChevronWidth)
+                        .accessibilityHidden(true)
+                } else {
+                    HideIconButton(
+                        systemImage: expanded ? "chevron.down" : "chevron.right",
+                        help: expanded ? "Fold \(checkout.label)" : "Unfold \(checkout.label)",
+                        variant: .toolbar
+                    ) {
+                        model.toggleCheckoutExpansion(checkout)
+                    }
                     .frame(width: HideTheme.lineageChevronWidth)
-                    .accessibilityHidden(true)
-            } else {
-                HideIconButton(
-                    systemImage: expanded ? "chevron.down" : "chevron.right",
-                    help: expanded ? "Fold \(checkout.label)" : "Unfold \(checkout.label)",
-                    variant: .toolbar
-                ) {
-                    model.toggleCheckoutExpansion(checkout)
                 }
-                .frame(width: HideTheme.lineageChevronWidth)
-            }
-            Button { model.selectCheckout(checkout) } label: {
-                HStack(spacing: HideTheme.spacingXS) {
-                    if workspace.isGit {
-                        Image(systemName: "arrow.triangle.branch")
-                            .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                            .foregroundStyle(HideTheme.secondary)
-                            .frame(width: HideTheme.checkoutIconWidth)
+                groupKindGlyph(sidebar: sidebar, checkout: checkout)
+                Button { model.selectCheckout(checkout) } label: {
+                    HStack(spacing: HideTheme.spacingXS) {
+                        Text(checkout.label)
+                            .hideFont(size: HideTheme.Typography.body, weight: .semibold)
+                            .foregroundStyle(focused ? HideTheme.primary : HideTheme.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                        if let purpose = checkout.purpose?.text {
+                            Text(purpose)
+                                .hideFont(size: HideTheme.Typography.caption)
+                                .foregroundStyle(HideTheme.muted)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
                     }
-                    Text(checkout.label)
-                        .hideFont(size: HideTheme.Typography.body, weight: .semibold)
-                        .foregroundStyle(focused ? HideTheme.primary : HideTheme.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(HideInteractiveButtonStyle())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(OverviewPresentation.headerAccessibilityLabel(
+                    checkout: checkout,
+                    chips: chips
+                ))
+                .accessibilityHint("Open this workspace")
+                .accessibilityIdentifier("overview-group-\(checkout.id)")
+                Spacer(minLength: HideTheme.spacingXS)
             }
-            .buttonStyle(HideInteractiveButtonStyle())
-            .hideTooltip(checkout.path)
-            .accessibilityLabel(OverviewPresentation.headerAccessibilityLabel(checkout: checkout, chips: chips))
-            .accessibilityHint("Open this workspace")
-            .accessibilityIdentifier("overview-group-\(checkout.id)")
-            Spacer(minLength: HideTheme.spacingSM)
-            HStack(spacing: HideTheme.spacingXS) {
-                ForEach(Array(chips.enumerated()), id: \.offset) { index, chip in
-                    if index > 0 {
-                        Text("·").hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                            .foregroundStyle(HideTheme.muted).accessibilityHidden(true)
-                    }
-                    headerChip(chip, checkout: checkout)
-                }
-            }
-            .fixedSize()
+            headerChipStrip(chips, checkout: checkout)
+                .padding(.leading, HideTheme.checkoutMetadataLeadingInset)
+                .frame(maxWidth: .infinity, minHeight: HideTheme.badgeHeight, alignment: .leading)
         }
+        .frame(minHeight: HideTheme.overviewGroupHeaderHeight)
         .padding(.horizontal, HideTheme.spacingMD)
-        .padding(.top, HideTheme.spacingMD).padding(.bottom, HideTheme.spacingSM)
+        .hideTooltip(checkout.purpose?.text ?? checkout.path)
+        .opacity(sidebar.rowDimmed ? HideTheme.Opacity.dimmed : 1)
         .contextMenu { headerMenu(checkout, workspace: workspace) }
     }
 
     @ViewBuilder
-    private func headerChip(_ chip: OverviewPresentation.HeaderChip, checkout: CoreCheckoutSnapshot) -> some View {
-        let color: Color = switch chip.tone {
-        case .normal: HideTheme.muted
-        case .muted: HideTheme.muted
-        case .warning: HideTheme.warning
+    private func headerChipStrip(
+        _ chips: [OverviewPresentation.HeaderChip],
+        checkout: CoreCheckoutSnapshot
+    ) -> some View {
+        ViewThatFits(in: .horizontal) {
+            headerChipRow(chips, checkout: checkout)
+            if chips.count > 2 {
+                VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                    headerChipRow(Array(chips.prefix(2)), checkout: checkout)
+                    headerChipRow(Array(chips.dropFirst(2)), checkout: checkout)
+                }
+            }
         }
+    }
+
+    private func headerChipRow(
+        _ chips: [OverviewPresentation.HeaderChip],
+        checkout: CoreCheckoutSnapshot
+    ) -> some View {
+        HStack(spacing: HideTheme.spacingXS) {
+            ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
+                headerChip(chip, checkout: checkout)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func groupKindColor(
+        sidebar: SidebarCheckoutPresentation,
+        checkout: CoreCheckoutSnapshot
+    ) -> Color {
+        if sidebar.kindDanger { return HideTheme.danger }
+        if sidebar.kindMuted { return HideTheme.muted }
+        if sidebar.showsPullRequestGlyph {
+            return CheckoutCardPresentation.pullRequestColor(checkout.pullRequest)
+        }
+        return HideTheme.secondary
+    }
+
+    @ViewBuilder
+    private func groupKindGlyph(
+        sidebar: SidebarCheckoutPresentation,
+        checkout: CoreCheckoutSnapshot
+    ) -> some View {
+        let color = groupKindColor(sidebar: sidebar, checkout: checkout)
+        if sidebar.showsPullRequestGlyph {
+            CheckoutCardPresentation.pullRequestIcon(checkout.pullRequest)
+                .resizable()
+                .scaledToFit()
+                .frame(width: HideTheme.checkoutIconWidth, height: HideTheme.checkoutIconWidth)
+                .foregroundStyle(color)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: sidebar.kindSystemImage)
+                .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                .foregroundStyle(color)
+                .frame(width: HideTheme.checkoutIconWidth)
+                .accessibilityHidden(true)
+        }
+    }
+
+    @ViewBuilder
+    private func headerChip(_ chip: OverviewPresentation.HeaderChip, checkout: CoreCheckoutSnapshot) -> some View {
+        let color = headerChipColor(chip, checkout: checkout)
         switch chip.kind {
-        case .files where chip.tone == .normal:
+        case .files where chip.text != "Clean" && chip.text != "… files" && chip.text != "? files" && chip.text != "missing":
             Button { model.openHistory(for: checkout) } label: {
-                Text(chip.text).hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                    .foregroundStyle(color)
-                    .padding(.horizontal, HideTheme.spacingXXS)
-                    .contentShape(Rectangle())
+                HideBadge(label: chip.text, color: color)
             }
             .buttonStyle(HideInteractiveButtonStyle())
             .hideTooltip(OverviewPresentation.openInHistory)
             .accessibilityLabel(chip.tooltip)
             .accessibilityIdentifier("overview-files-\(checkout.id)")
-        case .pullRequest:
-            if let pullRequest = checkout.pullRequest {
-                Button { model.openPullRequest(pullRequest) } label: {
-                    HStack(spacing: HideTheme.spacingXXS) {
-                        CheckoutCardPresentation.pullRequestIcon(pullRequest)
-                            .resizable().frame(width: HideTheme.Typography.caption, height: HideTheme.Typography.caption)
-                        Text(chip.text).hideFont(size: HideTheme.Typography.micro, weight: .semibold, design: .monospaced)
-                    }
-                    .foregroundStyle(CheckoutCardPresentation.pullRequestColor(pullRequest))
-                    .padding(.horizontal, HideTheme.spacingXXS)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(HideInteractiveButtonStyle())
-                .hideTooltip(chip.tooltip)
-                .accessibilityLabel("pull request \(pullRequest.number) \(CheckoutCardPresentation.pullRequestState(pullRequest).lowercased())")
-                .accessibilityIdentifier("overview-pull-request-\(checkout.id)")
+        case .pullRequest, .checks:
+            Button { showGitHub = true } label: {
+                HideBadge(
+                    label: chip.text,
+                    color: color,
+                    dimmed: chip.tone == .muted,
+                    leadingImage: chip.kind == .pullRequest
+                        ? checkout.pullRequest.map(CheckoutCardPresentation.pullRequestIcon)
+                        : nil
+                )
             }
+            .buttonStyle(HideInteractiveButtonStyle())
+            .hideTooltip(chip.tooltip)
+            .accessibilityLabel(chip.tooltip)
+            .accessibilityIdentifier("overview-\(chip.kind == .checks ? "checks" : "pull-request")-\(checkout.id)")
         default:
-            Text(chip.text).hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                .foregroundStyle(color)
+            HideBadge(label: chip.text, color: color, dimmed: chip.tone == .muted)
                 .hideTooltip(chip.tooltip)
                 .accessibilityLabel(chip.tooltip)
+        }
+    }
+
+    private func headerChipColor(
+        _ chip: OverviewPresentation.HeaderChip,
+        checkout: CoreCheckoutSnapshot
+    ) -> Color {
+        if chip.kind == .pullRequest, let pullRequest = checkout.pullRequest {
+            if checkout.github.stale { return HideTheme.muted }
+            return switch OverviewPresentation.pullRequestColorRole(pullRequest) {
+            case .open: HideTheme.PullRequest.open
+            case .merged: HideTheme.PullRequest.merged
+            case .closed: HideTheme.PullRequest.closed
+            case .draft: HideTheme.PullRequest.draft
+            case .warning: HideTheme.warning
+            case .success: HideTheme.success
+            }
+        }
+        return switch chip.tone {
+        case .normal, .muted: HideTheme.muted
+        case .warning: HideTheme.warning
+        case .success: HideTheme.success
+        case .danger: HideTheme.danger
         }
     }
 
@@ -464,6 +551,15 @@ struct CheckoutOverview: View {
     private func headerMenu(_ checkout: CoreCheckoutSnapshot, workspace: CoreWorkspaceSnapshot) -> some View {
         providerMenu(OverviewPresentation.newAgentHere, systemImage: "plus.circle", checkout: checkout)
         Button(WorktreeMenuPolicy.newWorktree, systemImage: "plus") { model.requestNewWorktree(workspace) }
+        Button(WorktreeMenuPolicy.setPurpose, systemImage: "text.cursor") {
+            model.requestSetPurpose(workspace: workspace, checkout: checkout)
+        }
+        .disabled(model.purposeUnavailableReason(for: workspace) != nil)
+        .hideTooltip(
+            model.purposeUnavailableReason(for: workspace) ?? WorktreeMenuPolicy.setPurpose,
+            hint: false
+        )
+        if let reason = model.purposeUnavailableReason(for: workspace) { Text(reason) }
         if let branch = checkout.branch {
             Button(WorktreeMenuPolicy.setBaseBranch, systemImage: "arrow.triangle.branch") { model.setBaseBranch(checkout, in: workspace) }
                 .disabled(branch == model.baseBranch(for: workspace))

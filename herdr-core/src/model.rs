@@ -442,9 +442,11 @@ pub struct WorkspaceSnapshot {
     /// The Herdr workspaces whose panes sit in this project, in Herdr order.
     /// Project identity is the repository path, not a Herdr workspace id, so
     /// Herdr dropping its workspace when the last pane closes leaves the row
-    /// and the persisted focus in place. Commands may reuse an entry only
-    /// while no other project also contains it; an empty list means Herdr has
-    /// none here yet.
+    /// and the persisted focus in place. Commands that need any workspace use
+    /// the first entry; purpose projection and persistence use the last
+    /// checkout occupant because that is the token whose value wins. An empty
+    /// list means Herdr has none here yet. Commands may reuse an entry only
+    /// while no other project also contains it.
     pub session_workspace_ids: Vec<String>,
     /// The newest activity anywhere in this project, in Unix milliseconds:
     /// the latest of its checkouts' last commit and its agents' last activity,
@@ -502,6 +504,25 @@ pub struct CheckoutAgentSummary {
     pub unknown: usize,
 }
 
+/// The source of the one-line checkout purpose chosen by the core.
+///
+/// The shell uses this only for presentation tone. Resolution stays here so
+/// every surface reads the same fallback order instead of reconstructing it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckoutPurposeOrigin {
+    Token,
+    BranchDescription,
+    AgentTitle,
+    PullRequestTitle,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CheckoutPurposeSnapshot {
+    pub text: String,
+    pub origin: CheckoutPurposeOrigin,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
     pub github: GithubStatusSnapshot,
@@ -511,6 +532,9 @@ pub struct CheckoutSnapshot {
     pub label: String,
     pub path: String,
     pub branch: Option<String>,
+    /// One line chosen in this order: Herdr workspace token, branch
+    /// description, representative agent title, pull-request title.
+    pub purpose: Option<CheckoutPurposeSnapshot>,
     pub is_worktree: bool,
     pub exists: bool,
     pub temporary: bool,
@@ -1992,6 +2016,9 @@ pub struct RemoteStatusSnapshot {
     pub target_id: String,
     pub state: String,
     pub message: Option<String>,
+    /// The version reported by `herdr status server --json` on this device.
+    /// A missing version keeps version-gated mutations disabled.
+    pub herdr_version: Option<String>,
     pub session: Option<RemoteSessionSnapshot>,
     pub files: RemoteFileListSnapshot,
 }

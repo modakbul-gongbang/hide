@@ -21,7 +21,28 @@ pub const HELPER_BINARY_NAME: &str = "hide-agent-hooks";
 /// changes shape, so an older entry is reported as outdated and the operator
 /// is offered a reinstall rather than being silently left with a hook that
 /// reports nothing.
-pub const HOOK_VERSION: u32 = 1;
+pub const HOOK_VERSION: u32 = 2;
+
+/// The one sentence SessionStart adds to either agent runtime inside Hide.
+/// Both runtimes accept the same `hookSpecificOutput.additionalContext`
+/// envelope, while the runtime argument remains explicit in the installed
+/// command so a future protocol difference has one dispatch point.
+pub const PURPOSE_CONTEXT: &str = "When you create a worktree, set its one-line purpose in 40 characters or fewer by running `herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\"`.";
+
+pub fn hook_stdout(runtime: AgentRuntime, event: HookEvent) -> Option<String> {
+    if event != HookEvent::SessionStart {
+        return None;
+    }
+    let output = match runtime {
+        AgentRuntime::ClaudeCode | AgentRuntime::Codex => serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": PURPOSE_CONTEXT,
+            }
+        }),
+    };
+    serde_json::to_string(&output).ok()
+}
 
 /// The token that says this pane's session is running Hide's hook at all.
 ///
@@ -44,7 +65,7 @@ pub const DONE_TOKEN: &str = "hide_sub_done";
 /// than a zero (PRD B32, D-53).
 pub const BLOCKED_TOKEN: &str = "hide_sub_blocked";
 
-/// `hide-subagents@1`, the exact value the helper hands Herdr as its source.
+/// `hide-subagents@N`, the exact value the helper writes into its command.
 pub fn hook_source_id() -> String {
     format!("{HOOK_SOURCE_NAME}@{HOOK_VERSION}")
 }
@@ -225,5 +246,34 @@ mod tests {
             AgentRuntime::Codex.config_path(home),
             Path::new("/Users/example/.codex/hooks.json")
         );
+    }
+
+    #[test]
+    fn both_runtimes_emit_the_purpose_instruction_only_at_session_start() {
+        for runtime in AgentRuntime::ALL {
+            let output: serde_json::Value = serde_json::from_str(
+                &hook_stdout(runtime, HookEvent::SessionStart).expect("SessionStart output"),
+            )
+            .expect("valid JSON output");
+            assert_eq!(
+                output["hookSpecificOutput"]["hookEventName"],
+                "SessionStart"
+            );
+            assert_eq!(
+                output["hookSpecificOutput"]["additionalContext"],
+                PURPOSE_CONTEXT
+            );
+            assert!(PURPOSE_CONTEXT.contains("40 characters or fewer"));
+            assert!(PURPOSE_CONTEXT.contains(
+                "herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\""
+            ));
+            for event in [
+                HookEvent::SubagentStart,
+                HookEvent::SubagentStop,
+                HookEvent::Stop,
+            ] {
+                assert_eq!(hook_stdout(runtime, event), None);
+            }
+        }
     }
 }

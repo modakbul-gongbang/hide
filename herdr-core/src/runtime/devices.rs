@@ -17,7 +17,7 @@ use crate::model::{
 use crate::remote::{CapabilityReport, CapabilityState, RusshRemoteClient, SshAlias};
 
 pub(super) struct RemoteDeviceConnection {
-    client: Arc<RusshRemoteClient>,
+    pub(super) client: Arc<RusshRemoteClient>,
     /// `None` when the coordinator could not be started; the status entry
     /// then carries why.
     sync: Option<session_sync::SessionSyncHandle>,
@@ -61,6 +61,7 @@ impl Runtime {
                 target_id: device_id.clone(),
                 state: "not_connected".to_owned(),
                 message: Some("Waiting for the first remote connection attempt".to_owned()),
+                herdr_version: None,
                 session: None,
                 files: RemoteFileListSnapshot::idle(),
             });

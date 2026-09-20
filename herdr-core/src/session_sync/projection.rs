@@ -7,6 +7,7 @@ pub(crate) struct ProjectedWorkspace {
     pub(crate) workspace_id: String,
     pub(crate) label: String,
     pub(crate) active_tab_id: String,
+    pub(crate) tokens: BTreeMap<String, Value>,
     pub(crate) worktree: Option<ProjectedWorktree>,
 }
 
@@ -135,6 +136,7 @@ impl ProjectionState {
                 workspace_id: workspace.workspace_id.clone(),
                 label: workspace.label.clone(),
                 active_tab_id: non_blank(Some(workspace.active_tab_id.as_str())),
+                tokens: workspace.tokens.clone(),
             })
             .collect();
         SessionSnapshotPayload {

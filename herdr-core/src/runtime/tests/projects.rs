@@ -1057,6 +1057,8 @@ fn branch_migration_receipt_preserves_core_focus() {
         Ok(live::WorktreeTaskOutcome {
             path: "/fixture/worktree".into(),
             pane_id: "new:pane".into(),
+            purpose_error: None,
+            unconfirmed_purpose_token: None,
         })
     ));
     assert_eq!(
@@ -1070,6 +1072,139 @@ fn branch_migration_receipt_preserves_core_focus() {
     assert_eq!(
         runtime.snapshot.ui_state.selected_pane_id.as_deref(),
         Some("existing:pane")
+    );
+}
+
+/// B16 and B19. A created checkout starts collapsed, and a purpose mirror
+/// failure is diagnostic detail on an otherwise ready creation receipt.
+#[test]
+fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
+    let mut runtime = runtime();
+    let state_path = runtime.state_path.clone();
+    let path = "/fixture/repo.worktrees/topic";
+    let mut created = checkout("workspace-fixture", "checkout-created", path, None);
+    created.purpose = Some(crate::model::CheckoutPurposeSnapshot {
+        text: "Unconfirmed creation purpose".to_owned(),
+        origin: crate::model::CheckoutPurposeOrigin::Token,
+    });
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "workspace-fixture",
+        "Fixture",
+        "/fixture/repo",
+        vec![
+            checkout("workspace-fixture", "checkout-main", "/fixture/repo", None),
+            created,
+        ],
+    )];
+    let id = runtime
+        .begin_task_operation(
+            "worktree_create",
+            Some("/fixture/repo".to_owned()),
+            Some("topic".to_owned()),
+            Some("main".to_owned()),
+            None,
+        )
+        .expect("creation operation");
+    runtime.begin_created_purpose_write(path, "Unconfirmed creation purpose");
+    assert_eq!(
+        runtime
+            .unconfirmed_created_purpose_values()
+            .get(&workspace::normalized_for_comparison(Path::new(path)))
+            .map(String::as_str),
+        Some("Unconfirmed creation purpose"),
+        "the mirror sees the suppression before the token write can publish"
+    );
+    assert!(runtime.ingest_task_operation_result(
+        id,
+        Ok(live::WorktreeTaskOutcome {
+            path: path.to_owned(),
+            pane_id: "w-created:p1".to_owned(),
+            purpose_error: Some("injected purpose mirror failure".to_owned()),
+            unconfirmed_purpose_token: Some("Unconfirmed creation purpose".to_owned()),
+        })
+    ));
+
+    assert!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[1]
+            .purpose
+            .is_none(),
+        "a token whose compensating clear failed is hidden behind the row fallback"
+    );
+    assert_eq!(
+        runtime
+            .unconfirmed_created_purposes
+            .get(&workspace::normalized_for_comparison(Path::new(path)))
+            .map(String::as_str),
+        Some("Unconfirmed creation purpose")
+    );
+    assert!(runtime.created_purpose_writes_in_flight.is_empty());
+
+    let created_id = workspace::checkout_id_for_path("workspace-fixture", Path::new(path));
+    assert!(
+        runtime
+            .snapshot
+            .ui_state
+            .collapsed_checkout_ids
+            .contains(&created_id),
+        "the created row starts collapsed before the catalog refresh arrives"
+    );
+    let operation = runtime.snapshot.task_operation.as_ref().unwrap();
+    assert_eq!(operation.phase, "ready");
+    assert!(operation.message.is_none());
+    assert!(
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .any(|diagnostic| {
+                diagnostic.kind == "checkout_purpose.create_failed"
+                    && diagnostic
+                        .message
+                        .contains("injected purpose mirror failure")
+            })
+    );
+    let _ = std::fs::remove_file(state_path);
+}
+
+/// B18. Unicode-scalar validation matches the Swift sheet and fails inside
+/// the caller-visible task operation instead of publishing a detached alert.
+#[test]
+fn invalid_purpose_fails_the_sheet_operation_with_the_shared_scalar_limit() {
+    let mut runtime = runtime();
+    let mut local = workspace(
+        "workspace-purpose",
+        "Purpose",
+        "/fixture/purpose",
+        vec![checkout(
+            "workspace-purpose",
+            "checkout-purpose",
+            "/fixture/purpose",
+            None,
+        )],
+    );
+    local.checkouts[0].branch = Some("topic".to_owned());
+    runtime.snapshot.navigator.workspaces = vec![local];
+
+    assert!(runtime.set_checkout_purpose(SetCheckoutPurposePayload {
+        checkout_id: "checkout-purpose".to_owned(),
+        text: "a".repeat(81),
+    }));
+
+    let operation = runtime.snapshot.task_operation.as_ref().expect("operation");
+    assert_eq!(operation.kind, "checkout_purpose");
+    assert_eq!(operation.phase, "failed");
+    assert_eq!(
+        operation.message.as_deref(),
+        Some("Purpose must be one line of 80 characters or fewer")
+    );
+    assert!(
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.kind == "checkout_purpose.invalid" })
     );
 }
 
@@ -1176,6 +1311,7 @@ fn a_pane_in_a_second_directory_projects_into_its_own_project() {
     let spaces = vec![workspace::SessionSpace {
         id: "w3M".to_owned(),
         label: "herdr-ide".to_owned(),
+        purpose: None,
         cwds: vec![repository_path.to_owned(), checkout_path.to_owned()],
     }];
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
@@ -1246,11 +1382,13 @@ fn another_workspace_layout_does_not_steal_the_selected_checkout_projection() {
         workspace::SessionSpace {
             id: "w3P".to_owned(),
             label: "other".to_owned(),
+            purpose: None,
             cwds: vec![checkout_path.to_owned()],
         },
         workspace::SessionSpace {
             id: "w3Z".to_owned(),
             label: "selected".to_owned(),
+            purpose: None,
             cwds: vec![checkout_path.to_owned()],
         },
     ];
@@ -1346,6 +1484,7 @@ fn a_registration_herdr_already_has_a_workspace_for_is_listed_once() {
     let spaces = vec![workspace::SessionSpace {
         id: "w41".to_owned(),
         label: "duplicate".to_owned(),
+        purpose: None,
         cwds: vec![checkout_path.to_owned()],
     }];
     let registrations = vec![WorkspaceRegistration {
@@ -1377,6 +1516,7 @@ fn closing_the_last_pane_keeps_an_unregistered_project_listed() {
     let spaces = vec![workspace::SessionSpace {
         id: "w5".to_owned(),
         label: "hide main".to_owned(),
+        purpose: None,
         cwds: vec![checkout_path.to_owned()],
     }];
     let project_id = workspace::workspace_id_for_path(Path::new(checkout_path));
