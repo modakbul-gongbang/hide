@@ -436,8 +436,10 @@ pub struct WorkspaceSnapshot {
     /// The Herdr workspaces whose panes sit in this project, in Herdr order.
     /// Project identity is the repository path, not a Herdr workspace id, so
     /// Herdr dropping its workspace when the last pane closes leaves the row
-    /// and the persisted focus in place. Commands that need a Herdr workspace
-    /// target the first entry; an empty list means Herdr has none here yet.
+    /// and the persisted focus in place. Commands that need any workspace use
+    /// the first entry; purpose projection and persistence use the last
+    /// checkout occupant because that is the token whose value wins. An empty
+    /// list means Herdr has none here yet.
     pub session_workspace_ids: Vec<String>,
     /// The newest activity anywhere in this project, in Unix milliseconds:
     /// the latest of its checkouts' last commit and its agents' last activity,

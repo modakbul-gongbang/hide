@@ -1411,17 +1411,14 @@ impl Runtime {
             }
         }
         let session_workspace_id = if remote_target_id.is_some() {
-            workspace.session_workspace_ids.first().cloned()
+            workspace.session_workspace_ids.last().cloned()
         } else {
-            self.last_session_spaces
-                .iter()
-                .find(|space| {
-                    space
-                        .cwds
-                        .iter()
-                        .any(|cwd| path_is_within_checkout(cwd, &checkout_path))
-                })
-                .map(|space| space.id.clone())
+            workspace::authoritative_session_space(
+                &self.last_session_spaces,
+                &workspace,
+                &checkout_path,
+            )
+            .map(|space| space.id.clone())
         };
         if branch.is_none() && session_workspace_id.is_none() {
             return self.fail_purpose_operation(

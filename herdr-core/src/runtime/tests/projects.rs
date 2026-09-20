@@ -1058,6 +1058,7 @@ fn branch_migration_receipt_preserves_core_focus() {
             path: "/fixture/worktree".into(),
             pane_id: "new:pane".into(),
             purpose_error: None,
+            unconfirmed_purpose_token: None,
         })
     ));
     assert_eq!(
@@ -1080,16 +1081,20 @@ fn branch_migration_receipt_preserves_core_focus() {
 fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
     let mut runtime = runtime();
     let state_path = runtime.state_path.clone();
+    let path = "/fixture/repo.worktrees/topic";
+    let mut created = checkout("workspace-fixture", "checkout-created", path, None);
+    created.purpose = Some(crate::model::CheckoutPurposeSnapshot {
+        text: "Unconfirmed creation purpose".to_owned(),
+        origin: crate::model::CheckoutPurposeOrigin::Token,
+    });
     runtime.snapshot.navigator.workspaces = vec![workspace(
         "workspace-fixture",
         "Fixture",
         "/fixture/repo",
-        vec![checkout(
-            "workspace-fixture",
-            "checkout-main",
-            "/fixture/repo",
-            None,
-        )],
+        vec![
+            checkout("workspace-fixture", "checkout-main", "/fixture/repo", None),
+            created,
+        ],
     )];
     let id = runtime
         .begin_task_operation(
@@ -1100,16 +1105,40 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
             None,
         )
         .expect("creation operation");
-    let path = "/fixture/repo.worktrees/topic";
-
     assert!(runtime.ingest_task_operation_result(
         id,
         Ok(live::WorktreeTaskOutcome {
             path: path.to_owned(),
             pane_id: "w-created:p1".to_owned(),
             purpose_error: Some("injected purpose mirror failure".to_owned()),
+            unconfirmed_purpose_token: Some("Unconfirmed creation purpose".to_owned()),
         })
     ));
+
+    assert!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[1]
+            .purpose
+            .is_none(),
+        "a token whose compensating clear failed is hidden behind the row fallback"
+    );
+    assert_eq!(
+        runtime
+            .unconfirmed_created_purposes
+            .get(path)
+            .map(String::as_str),
+        Some("Unconfirmed creation purpose")
+    );
+
+    runtime.snapshot.navigator.workspaces[0].checkouts[1].purpose =
+        Some(crate::model::CheckoutPurposeSnapshot {
+            text: "Confirmed replacement".to_owned(),
+            origin: crate::model::CheckoutPurposeOrigin::Token,
+        });
+    super::super::session::retain_live_created_purpose_suppressions(
+        &mut runtime.unconfirmed_created_purposes,
+        &runtime.snapshot.navigator.workspaces,
+    );
+    assert!(runtime.unconfirmed_created_purposes.is_empty());
 
     let created_id = workspace::checkout_id_for_path("workspace-fixture", Path::new(path));
     assert!(

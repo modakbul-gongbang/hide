@@ -1005,6 +1005,11 @@ pub struct Runtime {
     /// `status.remote[].session`, not the local navigator, so the operation
     /// carries this target separately from its shell-facing receipt.
     purpose_operation_target: Option<PurposeOperationTarget>,
+    /// Creation values whose token write succeeded but whose Git mirror and
+    /// compensating token clear both failed. Keyed by checkout path so the
+    /// row shows its fallback until Herdr confirms the token changed or a
+    /// later Set purpose operation resolves it.
+    unconfirmed_created_purposes: HashMap<String, String>,
     next_explorer_operation_id: u64,
     delta: snapshot_delta::DeltaState,
 }
@@ -1158,6 +1163,7 @@ impl Runtime {
             workspace_removals_in_flight: HashSet::new(),
             next_task_operation_id: 0,
             purpose_operation_target: None,
+            unconfirmed_created_purposes: HashMap::new(),
             next_explorer_operation_id: 0,
             delta: snapshot_delta::DeltaState::default(),
         };

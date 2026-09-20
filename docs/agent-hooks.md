@@ -22,7 +22,7 @@ Entries belonging to other tools are counted before and after, and a regression 
 Four events are registered, because those are the four both runtimes declare here: `SessionStart`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
 
-Every entry carries `--runtime claude|codex` and `--source hide-subagents@<version>` inside its command.
+Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command.
 The runtime argument selects that runtime's SessionStart stdout envelope; the version-2 marker makes a version-1 installation outdated so Settings offers to refresh the stored commands.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
 Nothing parses the rest of the command, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).

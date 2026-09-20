@@ -671,6 +671,32 @@ private func presentationAgent(
     #expect(presentation.detailTooltip.hasPrefix("Sign in required\n"))
 }
 
+@Test func staleGithubWithoutARetainedPullRequestKeepsTheBranchGlyphUnmuted() throws {
+    let github = CoreGithubStatus(
+        available: false,
+        loading: false,
+        stale: true,
+        lastSuccessAtUnixMS: 1_788_000_000_000,
+        unavailableReason: "Last refresh failed"
+    )
+    let checkout = presentationCheckout(
+        id: "feature",
+        path: "/tmp/feature",
+        isWorktree: true,
+        worktree: try presentationWorktree(),
+        github: github
+    )
+    let presentation = SidebarCheckoutPresentation(
+        workspace: presentationWorkspace(checkouts: [checkout]),
+        checkout: checkout,
+        agents: []
+    )
+
+    #expect(!presentation.showsPullRequestGlyph)
+    #expect(presentation.kindStage == "Branch")
+    #expect(!presentation.kindMuted)
+}
+
 @Test func workspaceSummaryCountsOnlyAgentsAttachedToItsPanes() {
     let root = presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-1"])
     let worktree = presentationCheckout(

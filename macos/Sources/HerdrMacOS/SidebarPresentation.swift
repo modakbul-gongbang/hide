@@ -217,7 +217,7 @@ struct SidebarCheckoutPresentation: Equatable {
             kindStage = "Branch"
             kindSystemImage = "arrow.triangle.branch"
         }
-        kindMuted = checkout.github.stale || request?.isDraft == true
+        kindMuted = (showsPullRequestGlyph && checkout.github.stale) || request?.isDraft == true
         kindDanger = !checkout.exists
         rowDimmed = request?.badge.isSettled == true
         let pathDetail: String

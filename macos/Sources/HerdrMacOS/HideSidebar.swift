@@ -917,7 +917,15 @@ private struct CheckoutNavigatorRow: View {
             VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
                 HStack(spacing: HideTheme.spacingSM) {
                     Color.clear.frame(width: HideTheme.agentMarkWidth)
-                    kindGlyph
+                    if presentation.showsPullRequestGlyph {
+                        Color.clear
+                            .frame(
+                                width: HideTheme.checkoutIconWidth,
+                                height: HideTheme.IconButton.toolbarSize.height
+                            )
+                    } else {
+                        kindGlyph
+                    }
                     Text(checkout.label)
                         .hideFont(size: HideTheme.Typography.subhead, weight: isFocused ? .semibold : .medium)
                         .foregroundStyle(HideTheme.primary)
@@ -938,6 +946,12 @@ private struct CheckoutNavigatorRow: View {
                 }
                 .frame(height: HideTheme.spacingXL)
                 .accessibilityHidden(true)
+                .overlay(alignment: .leading) {
+                    if presentation.showsPullRequestGlyph {
+                        kindGlyph
+                            .padding(.leading, HideTheme.agentMarkWidth + HideTheme.spacingSM)
+                    }
+                }
                 if showsSecondLine {
                     HStack(spacing: HideTheme.spacingXS) {
                         if hasAgents { WorkspaceAgentSummary(presentation: presentation) }
@@ -971,6 +985,10 @@ private struct CheckoutNavigatorRow: View {
                 model.requestSetPurpose(workspace: workspace, checkout: checkout)
             }
             .disabled(model.purposeUnavailableReason(for: workspace) != nil)
+            .hideTooltip(
+                model.purposeUnavailableReason(for: workspace) ?? WorktreeMenuPolicy.setPurpose,
+                hint: false
+            )
             if let reason = model.purposeUnavailableReason(for: workspace) { Text(reason) }
             if let branch = checkout.branch {
                 Button(WorktreeMenuPolicy.setBaseBranch, systemImage: "arrow.triangle.branch") { model.setBaseBranch(checkout, in: workspace) }
@@ -1007,6 +1025,7 @@ private struct CheckoutNavigatorRow: View {
             .frame(width: HideTheme.checkoutIconWidth, height: HideTheme.IconButton.toolbarSize.height)
             .hideTooltip("Open PR #\(pullRequest.number) on GitHub")
             .accessibilityLabel("Open PR #\(pullRequest.number) on GitHub")
+            .accessibilityIdentifier("hide-checkout-pull-request-\(checkout.id)")
         } else {
             Image(systemName: presentation.kindSystemImage)
                 .hideFont(size: HideTheme.Typography.caption, weight: .semibold)

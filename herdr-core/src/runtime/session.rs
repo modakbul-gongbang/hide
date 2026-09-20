@@ -1,5 +1,50 @@
 use super::*;
 
+fn suppress_unconfirmed_created_purposes(
+    pending: &HashMap<String, String>,
+    workspaces: &mut [crate::model::WorkspaceSnapshot],
+    agents: &[crate::model::SidebarAgentSnapshot],
+) -> bool {
+    use crate::model::CheckoutPurposeOrigin;
+
+    let mut changed = false;
+    for checkout in workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+    {
+        let Some(unconfirmed) = pending.get(&checkout.path) else {
+            continue;
+        };
+        if checkout.purpose.as_ref().is_some_and(|purpose| {
+            purpose.origin == CheckoutPurposeOrigin::Token && purpose.text == *unconfirmed
+        }) {
+            checkout.purpose = None;
+            changed = true;
+        }
+    }
+    if changed {
+        changed |= crate::sidebar::sync_checkout_purposes(workspaces, agents);
+    }
+    changed
+}
+
+pub(super) fn retain_live_created_purpose_suppressions(
+    pending: &mut HashMap<String, String>,
+    workspaces: &[crate::model::WorkspaceSnapshot],
+) {
+    pending.retain(|path, unconfirmed| {
+        workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| checkout.path == *path)
+            .and_then(|checkout| checkout.purpose.as_ref())
+            .is_some_and(|purpose| {
+                purpose.origin == crate::model::CheckoutPurposeOrigin::Token
+                    && purpose.text == *unconfirmed
+            })
+    });
+}
+
 impl Runtime {
     /// Groups the session's working directories under the Herdr workspace that
     /// owns them. Shared with the session-sync coordinator so a catalog
@@ -333,6 +378,15 @@ impl Runtime {
         let previous = self.snapshot.navigator.clone();
         let previous_card = self.snapshot.card.clone();
         crate::sidebar::sync_checkout_agent_summaries(
+            &mut workspaces,
+            &self.snapshot.navigator.agents,
+        );
+        retain_live_created_purpose_suppressions(
+            &mut self.unconfirmed_created_purposes,
+            &workspaces,
+        );
+        suppress_unconfirmed_created_purposes(
+            &self.unconfirmed_created_purposes,
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );
@@ -2336,21 +2390,36 @@ impl Runtime {
         let should_focus = operation_kind != "branch_migrate";
         match result {
             Ok(outcome) => {
+                let live::WorktreeTaskOutcome {
+                    path,
+                    pane_id,
+                    purpose_error,
+                    unconfirmed_purpose_token,
+                } = outcome;
                 let operation = self
                     .snapshot
                     .task_operation
                     .as_mut()
                     .expect("task operation was checked above");
                 operation.phase = "ready".into();
-                operation.path = Some(outcome.path.clone());
-                operation.pane_id = Some(outcome.pane_id.clone());
+                operation.path = Some(path.clone());
+                operation.pane_id = Some(pane_id.clone());
                 if should_focus {
-                    self.snapshot.terminal.pane_id = Some(outcome.pane_id.clone());
+                    self.snapshot.terminal.pane_id = Some(pane_id.clone());
                     self.snapshot.focused.surface = Surface::Terminal;
-                    self.snapshot.focused.pane_id = Some(outcome.pane_id.clone());
-                    self.snapshot.ui_state.selected_pane_id = Some(outcome.pane_id);
+                    self.snapshot.focused.pane_id = Some(pane_id.clone());
+                    self.snapshot.ui_state.selected_pane_id = Some(pane_id);
                 }
-                if let Some(detail) = outcome.purpose_error {
+                if let Some(unconfirmed) = unconfirmed_purpose_token {
+                    self.unconfirmed_created_purposes
+                        .insert(path.clone(), unconfirmed);
+                    suppress_unconfirmed_created_purposes(
+                        &self.unconfirmed_created_purposes,
+                        &mut self.snapshot.navigator.workspaces,
+                        &self.snapshot.navigator.agents,
+                    );
+                }
+                if let Some(detail) = purpose_error {
                     self.push_diagnostic(
                         "checkout_purpose.create_failed",
                         format!(
@@ -2368,10 +2437,8 @@ impl Runtime {
                             .map(|workspace| workspace.id.clone())
                     })
                 {
-                    let checkout_id = workspace::checkout_id_for_path(
-                        &workspace_id,
-                        std::path::Path::new(&outcome.path),
-                    );
+                    let checkout_id =
+                        workspace::checkout_id_for_path(&workspace_id, std::path::Path::new(&path));
                     if !self
                         .snapshot
                         .ui_state
@@ -2454,6 +2521,25 @@ impl Runtime {
                 Some(("checkout_purpose.token_failed", detail)),
             ),
         };
+        if visible_purpose.is_some()
+            && target
+                .as_ref()
+                .is_some_and(|target| target.remote_target_id.is_none())
+            && let Some(path) = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.checkouts.iter())
+                .find(|checkout| {
+                    target
+                        .as_ref()
+                        .is_some_and(|target| checkout.id == target.checkout_id)
+                })
+                .map(|checkout| checkout.path.clone())
+        {
+            self.unconfirmed_created_purposes.remove(&path);
+        }
         if let Some((purpose, token_written)) = visible_purpose {
             let next = (!purpose.is_empty()).then_some(crate::model::CheckoutPurposeSnapshot {
                 text: purpose,
@@ -3058,6 +3144,15 @@ impl Runtime {
             &self.snapshot.ui_state.collapsed_workspace_ids,
         );
         crate::sidebar::sync_checkout_agent_summaries(
+            &mut workspaces,
+            &self.snapshot.navigator.agents,
+        );
+        retain_live_created_purpose_suppressions(
+            &mut self.unconfirmed_created_purposes,
+            &workspaces,
+        );
+        suppress_unconfirmed_created_purposes(
+            &self.unconfirmed_created_purposes,
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );

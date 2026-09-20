@@ -555,6 +555,10 @@ struct CheckoutOverview: View {
             model.requestSetPurpose(workspace: workspace, checkout: checkout)
         }
         .disabled(model.purposeUnavailableReason(for: workspace) != nil)
+        .hideTooltip(
+            model.purposeUnavailableReason(for: workspace) ?? WorktreeMenuPolicy.setPurpose,
+            hint: false
+        )
         if let reason = model.purposeUnavailableReason(for: workspace) { Text(reason) }
         if let branch = checkout.branch {
             Button(WorktreeMenuPolicy.setBaseBranch, systemImage: "arrow.triangle.branch") { model.setBaseBranch(checkout, in: workspace) }

@@ -145,6 +145,27 @@ pub struct SessionSpace {
     pub purpose: Option<String>,
 }
 
+/// The Herdr workspace whose token represents this checkout.
+///
+/// A repository can have more than one Herdr workspace. Catalog projection
+/// merges them in session order and the later token wins, so Save and the Git
+/// mirror use that same later occupant. Intersecting with the project's own
+/// workspace ids prevents a pane in a nested repository from claiming its
+/// ancestor checkout merely because its cwd sits below that path.
+pub fn authoritative_session_space<'a>(
+    spaces: &'a [SessionSpace],
+    workspace: &WorkspaceSnapshot,
+    checkout_path: &str,
+) -> Option<&'a SessionSpace> {
+    spaces.iter().rev().find(|space| {
+        workspace.session_workspace_ids.contains(&space.id)
+            && space
+                .cwds
+                .iter()
+                .any(|cwd| Path::new(cwd).starts_with(Path::new(checkout_path)))
+    })
+}
+
 /// Each pane directory's repository root in comparison form, keyed by the raw
 /// directory Herdr reported. Resolved by the sync coordinator before it takes
 /// the runtime lock, because the reconcile that consumes it runs on every
@@ -1090,6 +1111,56 @@ mod tests {
             vec!["w1".to_owned(), "w2".to_owned()]
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn purpose_authority_is_the_last_project_occupant_not_a_nested_repository() {
+        let spaces = vec![
+            SessionSpace {
+                id: "outer-first".to_owned(),
+                label: "Outer first".to_owned(),
+                purpose: Some("First".to_owned()),
+                cwds: vec!["/fixture/outer/worktree".to_owned()],
+            },
+            SessionSpace {
+                id: "nested".to_owned(),
+                label: "Nested".to_owned(),
+                purpose: Some("Wrong repository".to_owned()),
+                cwds: vec!["/fixture/outer/worktree/nested".to_owned()],
+            },
+            SessionSpace {
+                id: "outer-last".to_owned(),
+                label: "Outer last".to_owned(),
+                purpose: Some("Last".to_owned()),
+                cwds: vec!["/fixture/outer/worktree".to_owned()],
+            },
+        ];
+        let project = WorkspaceSnapshot {
+            id: "outer".to_owned(),
+            label: "Outer".to_owned(),
+            path: "/fixture/outer".to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: "outer".to_owned(),
+            is_git: true,
+            default_branch: Some("main".to_owned()),
+            branches: vec!["main".to_owned()],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec!["outer-first".to_owned(), "outer-last".to_owned()],
+            last_activity_unix_ms: None,
+            checkouts: Vec::new(),
+            pinned: false,
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+
+        let authority = authoritative_session_space(&spaces, &project, "/fixture/outer/worktree")
+            .expect("outer checkout authority");
+
+        assert_eq!(authority.id, "outer-last");
+        assert_eq!(authority.purpose.as_deref(), Some("Last"));
     }
 
     fn listed_worktree(path: &str, branch: &str, is_main: bool) -> WorktreeSnapshot {
