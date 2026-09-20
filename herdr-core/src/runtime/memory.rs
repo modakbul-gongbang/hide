@@ -422,6 +422,19 @@ impl Runtime {
             })
     }
 
+    fn refresh_active_memory_detail(&mut self) {
+        let item_id = self
+            .snapshot
+            .editor
+            .archive_detail
+            .as_ref()
+            .filter(|detail| detail.kind == "memory")
+            .map(|detail| detail.id.clone());
+        if let Some(item_id) = item_id {
+            self.open_archive_detail("memory", &item_id, false);
+        }
+    }
+
     pub(super) fn hooks_support_memory(&self) -> bool {
         self.hook_diagnosis.as_ref().is_some_and(|diagnosis| {
             diagnosis.runtimes.iter().all(|row| match row.status {
@@ -553,6 +566,14 @@ impl Runtime {
                                     guard.snapshot.sessions.analysis = analysis;
                                 }
                                 guard.request_sessions_refresh();
+                                if action == "delete" {
+                                    guard.close_memory_archive_tabs();
+                                } else if matches!(
+                                    action.as_str(),
+                                    "edit" | "forget" | "undo" | "resolve_conflict"
+                                ) {
+                                    guard.refresh_active_memory_detail();
+                                }
                             }
                             Err(message) => guard.set_error("memory.action_failed", message, true),
                         }

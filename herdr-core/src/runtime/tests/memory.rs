@@ -1,6 +1,7 @@
 use super::*;
 use crate::model::{
-    MemoryRowSnapshot, RightPanelSection, SessionRowSnapshot, SessionsMode, SessionsProviderFilter,
+    ArchiveDetailSnapshot, MemoryDetailSnapshot, MemoryRowSnapshot, RightPanelSection,
+    SessionRowSnapshot, SessionsMode, SessionsProviderFilter,
 };
 
 fn session(id: &str, provider: &str, request: &str, updated_at_unix_ms: u64) -> SessionRowSnapshot {
@@ -33,6 +34,63 @@ fn memory(id: &str, body: &str) -> MemoryRowSnapshot {
         provided_session_count: 0,
         updated_at_unix_ms: 1,
     }
+}
+
+#[test]
+fn focusing_a_checkout_refreshes_an_already_visible_sessions_panel() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    runtime.snapshot.ui_state.right_panel_visible = true;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Sessions;
+    runtime.snapshot.sessions.unavailable_reason =
+        Some("Choose a local Project to view sessions".to_owned());
+    let project = runtime.snapshot.navigator.workspaces[0].clone();
+
+    assert!(runtime.focus_checkout(&project.id, &project.checkouts[0].id));
+
+    assert_eq!(
+        runtime.snapshot.sessions.unavailable_reason.as_deref(),
+        Some("Session reader is unavailable")
+    );
+}
+
+#[test]
+fn reopening_an_archive_tab_replaces_its_cached_memory_detail() {
+    let mut runtime = runtime();
+    let detail = |revision: u64, body: &str| ArchiveDetailSnapshot {
+        id: "memory-1".to_owned(),
+        kind: "memory".to_owned(),
+        title: "Memory".to_owned(),
+        provider: None,
+        unavailable_reason: None,
+        events: Vec::new(),
+        memory: Some(MemoryDetailSnapshot {
+            id: "memory-1".to_owned(),
+            body: body.to_owned(),
+            lifecycle: "active".to_owned(),
+            revision,
+            source_count: 0,
+            provided_session_count: 0,
+            learned_at_unix_ms: 1,
+            conflict_existing_id: None,
+            conflict_candidate_id: None,
+            sources: Vec::new(),
+            revisions: Vec::new(),
+        }),
+    };
+
+    runtime.show_archive_tab("workspace", "checkout", detail(1, "First"), true);
+    runtime.show_archive_tab("workspace", "checkout", detail(2, "Updated"), false);
+
+    let memory = runtime
+        .snapshot
+        .editor
+        .archive_detail
+        .as_ref()
+        .and_then(|archive| archive.memory.as_ref())
+        .expect("active memory detail");
+    assert_eq!(memory.revision, 2);
+    assert_eq!(memory.body, "Updated");
 }
 
 #[test]

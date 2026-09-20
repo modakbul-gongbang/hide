@@ -582,13 +582,13 @@ impl Runtime {
             "{}:{}:{}:{}",
             detail.kind, workspace_id, checkout_id, detail.id
         );
+        self.archive_documents
+            .insert(tab_id.clone(), detail.clone());
         if self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
             if !preview {
                 self.promote_editor_tab(&tab_id);
             }
         } else {
-            self.archive_documents
-                .insert(tab_id.clone(), detail.clone());
             self.place_editor_tab(EditorTabSnapshot {
                 id: tab_id.clone(),
                 workspace_id: workspace_id.to_owned(),
@@ -605,6 +605,20 @@ impl Runtime {
         }
         if let Err(message) = self.activate_editor_tab(&tab_id) {
             self.set_error("archive.focus_failed", message, false);
+        }
+    }
+
+    pub(super) fn close_memory_archive_tabs(&mut self) {
+        let tab_ids = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .filter(|tab| tab.kind == EditorTabKind::Memory)
+            .map(|tab| tab.id.clone())
+            .collect::<Vec<_>>();
+        for tab_id in tab_ids {
+            self.close_file_tab_now(&tab_id);
         }
     }
 
