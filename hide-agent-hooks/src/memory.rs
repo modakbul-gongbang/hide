@@ -166,8 +166,6 @@ pub fn project_memory_output_until(
                     text.push_str(&topic);
                 }
             }
-            text.push('\n');
-            text.push_str(&cwd.to_string_lossy());
             let mut excluded = if session_id.is_empty() {
                 Vec::new()
             } else {
@@ -184,6 +182,7 @@ pub fn project_memory_output_until(
             excluded.sort_unstable();
             excluded.dedup();
             RetrievalQuery::prompt(&project.id, text, excluded)
+                .with_path_context(cwd.to_string_lossy())
         }
         HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Stop => return base(),
     };
@@ -407,6 +406,63 @@ mod tests {
         unsafe {
             std::env::remove_var(MEMORY_DATABASE_ENV);
         }
+    }
+
+    #[test]
+    fn project_path_terms_rank_matches_but_never_create_a_prompt_match() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project-memory");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let path = database_path(&home);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut store = MemoryStore::open(&path).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, "local")
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "path-query-batch".into(),
+                    project_id: project.id.clone(),
+                    provider: "codex".into(),
+                    analysis_provider: "codex".into(),
+                    session_id: "source-session".into(),
+                    content_hash: "path-query-hash".into(),
+                    created_at_unix_ms: 1,
+                },
+                &[Candidate {
+                    text: "Project Memory provider work uses a bounded queue".into(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    direct_human_source: true,
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        drop(store);
+
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "cwd": project_root,
+            "session_id": "unrelated-session",
+            "prompt": "zz--no-match-unrelated-query"
+        }))
+        .unwrap();
+        let result = project_memory_output(
+            AgentRuntime::Codex,
+            HookEvent::UserPromptSubmit,
+            &payload,
+            false,
+            &home,
+        );
+
+        assert_eq!(result.outcome, HookMemoryOutcome::Empty);
+        assert!(result.stdout.is_none());
     }
 
     #[test]

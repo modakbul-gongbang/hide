@@ -1622,6 +1622,7 @@ fn active_memories_json(
         .retrieve(&RetrievalQuery {
             project_id: project_id.to_owned(),
             text: source_events.to_owned(),
+            path_context: String::new(),
             excluded_memory_ids: Vec::new(),
             maximum_items: 60,
             maximum_tokens: 5_000,

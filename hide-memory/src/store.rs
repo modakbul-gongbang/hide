@@ -191,6 +191,7 @@ pub struct SessionCursorRecord {
 pub struct RetrievalQuery {
     pub project_id: String,
     pub text: String,
+    pub path_context: String,
     pub excluded_memory_ids: Vec<String>,
     pub maximum_items: usize,
     pub maximum_tokens: usize,
@@ -215,6 +216,7 @@ impl RetrievalQuery {
         Self {
             project_id: project_id.into(),
             text: String::new(),
+            path_context: String::new(),
             excluded_memory_ids: Vec::new(),
             maximum_items: SESSION_START_ITEM_LIMIT,
             maximum_tokens: INJECTION_TOKEN_LIMIT,
@@ -230,11 +232,17 @@ impl RetrievalQuery {
         Self {
             project_id: project_id.into(),
             text: text.into(),
+            path_context: String::new(),
             excluded_memory_ids,
             maximum_items: PROMPT_ITEM_LIMIT,
             maximum_tokens: INJECTION_TOKEN_LIMIT,
             deadline: Duration::from_millis(HOOK_DEADLINE_MS),
         }
+    }
+
+    pub fn with_path_context(mut self, path: impl Into<String>) -> Self {
+        self.path_context = path.into();
+        self
     }
 }
 
@@ -1017,10 +1025,11 @@ impl MemoryStore {
             .iter()
             .cloned()
             .collect::<HashSet<_>>();
-        let mut candidates = if query.text.trim().is_empty() {
+        let mut candidates = if query.text.trim().is_empty() && query.path_context.trim().is_empty()
+        {
             self.top_active(&query.project_id)?
         } else {
-            self.search_active(&query.project_id, &query.text)?
+            self.search_active(&query.project_id, &query.text, &query.path_context)?
         };
         if started.elapsed() >= query.deadline {
             return Ok(Injection {
@@ -1162,11 +1171,13 @@ impl MemoryStore {
         &self,
         project_id: &str,
         text: &str,
+        path_context: &str,
     ) -> Result<Vec<RetrievalCandidate>, MemoryError> {
         let terms = search_terms(text);
         if terms.is_empty() {
-            return self.top_active(project_id);
+            return Ok(Vec::new());
         }
+        let path_terms = search_terms(path_context);
         let match_query = terms
             .iter()
             .filter(|term| term.chars().count() >= 2)
@@ -1175,9 +1186,10 @@ impl MemoryStore {
             .join(" OR ");
         if match_query.is_empty() {
             let literal = normalize(text);
-            let mut statement = self.connection.prepare("SELECT i.id,r.revision,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE i.project_id=?1 AND i.lifecycle='active' AND lower(r.body) LIKE '%'||?2||'%' ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT 60")?;
+            let mut statement = self.connection.prepare("SELECT i.id,r.revision,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,COALESCE((SELECT ss.checkout_path FROM memory_sources s JOIN session_sources ss ON ss.project_id=i.project_id AND ss.provider=s.provider AND ss.id=s.session_id WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),'') FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE i.project_id=?1 AND i.lifecycle='active' AND lower(r.body) LIKE '%'||?2||'%' ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT 60")?;
             return Ok(statement
                 .query_map(params![project_id, literal], |row| {
+                    let source_path: String = row.get(7)?;
                     Ok(RetrievalCandidate {
                         id: row.get(0)?,
                         revision: row.get(1)?,
@@ -1187,7 +1199,7 @@ impl MemoryStore {
                         salience: row.get(5)?,
                         updated_at_unix_ms: row.get(6)?,
                         lexical_score: 1.0,
-                        path_overlap: 0.0,
+                        path_overlap: term_overlap(&path_terms, &search_terms(&source_path)),
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?);
@@ -1205,7 +1217,7 @@ impl MemoryStore {
                     salience: row.get(5)?,
                     updated_at_unix_ms: row.get(6)?,
                     lexical_score: row.get(7)?,
-                    path_overlap: term_overlap(&terms, &search_terms(&source_path)),
+                    path_overlap: term_overlap(&path_terms, &search_terms(&source_path)),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
