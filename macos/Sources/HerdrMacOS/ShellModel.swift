@@ -417,6 +417,7 @@ final class ShellModel: ObservableObject {
             case "pane.zoom": return " · zooming…"
             case "pane.resize": return " · resizing…"
             case "tab.move": return " · moving…"
+            case "terminal.attachment": return " · preparing files…"
             default: return " · working…"
             }
         }
@@ -424,6 +425,7 @@ final class ShellModel: ObservableObject {
 
     private func asyncOperationNotice(_ operation: CoreAsyncOperation?) -> String? {
         guard let operation,
+              operation.kind != "terminal.attachment",
               ["failed", "refused", "unknown"].contains(operation.phase)
         else { return nil }
         return operation.message
@@ -1439,6 +1441,7 @@ final class ShellModel: ObservableObject {
         guard snapshot.navigationRevision != observedNavigationRevision || selectedDevice != observedNavigationDevice else { return }
         observedNavigationRevision = snapshot.navigationRevision
         observedNavigationDevice = selectedDevice
+        let deviceLabels = Dictionary(uniqueKeysWithValues: snapshot.navigator.devices.map { ($0.id, $0.label) })
         var projects: [String: RecentProject] = [:]
         var surfaces: [String: RecentSurface] = [:]
         var projectOrder: [String] = []
@@ -1463,11 +1466,12 @@ final class ShellModel: ObservableObject {
         }
         for (deviceID, workspaces, focusedWorkspaceID, focusedCheckoutID, activeFileID, editorTabs,
              layoutPaneIDs, contextAgents, focusedPaneID) in contexts {
+            let location = RecentLocation.resolve(deviceID: deviceID, labels: deviceLabels)
             var paneIDs = layoutPaneIDs
             let agentsByPane = Dictionary(uniqueKeysWithValues: contextAgents.map { ($0.paneID, $0) })
             for workspace in workspaces {
                 let projectID = "\(deviceID):\(workspace.id)"
-                projects[projectID] = RecentProject(id: projectID, deviceID: deviceID, workspace: workspace)
+                projects[projectID] = RecentProject(id: projectID, deviceID: deviceID, workspace: workspace, location: location)
                 projectOrder.append(projectID)
                 let selected = deviceID == selectedDevice && workspace.id == focusedWorkspaceID
                 if selected { currentProjectID = projectID }
@@ -1491,7 +1495,7 @@ final class ShellModel: ObservableObject {
                         availableSurfaces.append(id)
                         surfaces[id] = RecentSurface(id: id, projectID: projectID, projectLabel: workspace.label,
                             deviceID: deviceID, workspaceID: workspace.id, checkoutID: checkout.id,
-                            checkoutLabel: checkout.label, item: item)
+                            checkoutLabel: checkout.label, item: item, location: location)
                         if isFocused && item.active { currentSurfaceID = id }
                     }
                 }

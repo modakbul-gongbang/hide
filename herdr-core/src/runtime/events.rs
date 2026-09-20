@@ -18,6 +18,31 @@ pub(super) struct KeyPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct AttachmentPayload {
+    pub request_id: String,
+    pub pane_id: String,
+    pub bracketed_paste: bool,
+    #[serde(default)]
+    pub clipboard: bool,
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AttachmentCompletionPayload {
+    pub request_id: String,
+    pub pane_id: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AttachmentActionPayload {
+    pub request_id: String,
+    pub pane_id: String,
+    pub action: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct TerminalOutputPayload {
     pub(super) pane_id: String,
     pub(super) bytes_base64: String,
@@ -671,6 +696,9 @@ pub(super) struct TerminalResizePayload {
 
 pub(super) enum Event {
     Key(KeyPayload),
+    Attachment(AttachmentPayload),
+    AttachmentReady(AttachmentCompletionPayload),
+    AttachmentAction(AttachmentActionPayload),
     TerminalOutput(TerminalOutputPayload),
     SessionSnapshot(SessionSnapshotPayload),
     RefreshStatus,
@@ -801,6 +829,9 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
 
     match kind.as_str() {
         "key" => decode!(KeyPayload, Key),
+        "terminal_attachment" => decode!(AttachmentPayload, Attachment),
+        "terminal_attachment_ready" => decode!(AttachmentCompletionPayload, AttachmentReady),
+        "terminal_attachment_action" => decode!(AttachmentActionPayload, AttachmentAction),
         "terminal_output" => decode!(TerminalOutputPayload, TerminalOutput),
         "session_snapshot" => decode!(SessionSnapshotPayload, SessionSnapshot),
         "refresh_status" => Ok(Event::RefreshStatus),
@@ -898,7 +929,13 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
 impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
+            Event::Attachment(payload) => self.begin_attachment(payload),
+            Event::AttachmentReady(payload) => self.attachment_ready(payload),
+            Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
+                if let Some(changed) = self.hold_attachment_input(&payload) {
+                    return changed;
+                }
                 self.snapshot.input_generation = self.snapshot.input_generation.saturating_add(1);
                 self.snapshot.focused.surface = Surface::Terminal;
                 self.snapshot.focused.pane_id = Some(payload.pane_id.clone());

@@ -96,6 +96,7 @@ impl Runtime {
         self.terminal_sessions.retain(|pane_id, _| keep(pane_id));
         self.terminal_session_generations
             .retain(|pane_id, _| keep(pane_id));
+        self.reconcile_attachment_target();
         self.terminal_session_lifecycles
             .retain(|pane_id, _| keep(pane_id));
         self.terminal_recovery.retain(|pane_id, _| keep(pane_id));

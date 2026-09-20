@@ -12,7 +12,7 @@ Building this checkout changes nothing about the live sidebar.
 Confirm which binary is running before concluding a fix did or did not work:
 
 ```sh
-ps -eo pid,etime,command | grep 'hide-agent-context-labels watch' | grep -v grep
+ps -eo pid,ppid,etime,command | rg '[h]ide-agent-context-labels watch'
 ```
 
 The path in that output is the answer.
@@ -34,18 +34,27 @@ This is temporary. A plugin rebuild or reinstall discards it, so a trial that wo
 
 ## Restarting the watcher
 
-The startup wrapper launches the watcher once and waits on the Herdr server; it does not respawn a watcher that exits.
-Killing the watcher leaves no watcher running, and the sidebar silently stops updating.
+The startup wrapper replaces itself with the watcher, making Herdr its normal parent.
+The watcher exits when that parent disappears and does not respawn itself.
+Killing it therefore stops label updates until an explicit restart or the next normal Herdr startup.
+A bare `nohup` launch is not a restart procedure: when its launching shell exits, the parent-death guard ends the watcher.
 
-Restart it by hand, or restart the Herdr server to get the wrapper to run the normal startup path:
+Before replacement, resolve the exact watcher executable, its parent, and any separate service registration that could respawn an old installation.
+Back up the plugin registry, managed hook entries and state, then use the official plugin installer with an explicit revision and compare both registry `resolved_commit` and the installed checkout HEAD.
+Stop only the confirmed old watcher and its own obsolete service registration, never an operator's Herdr server or agent sessions.
+For a no-server-restart cutover, an operational supervisor must watch the exact live Herdr process, start the unmodified startup script once, terminate and reap that child on host exit or cancellation, and never respawn it.
+Keep this host-specific supervisor and its private logs outside the repository.
+Validate its owner-exit cleanup with a disposable child before using it for the live watcher.
+The next normal Herdr startup uses the official startup entrypoint directly and needs no manual supervisor.
 
-```sh
-kill <watcher-pid>
-nohup /bin/sh "$P/plugins/agent-context-labels/scripts/start-watcher.sh" >/tmp/watcher.log 2>&1 &
-```
+Verify exactly one watcher, provider availability, a fresh analysis event and current Claude/Codex integrations after the cutover.
+Plugin installation and configuration reload alone do not prove the running process or hooks changed.
 
 The startup script needs no credential.
 It extends `PATH` with the usual install locations so the watcher finds the `codex` binary when the Herdr server was started outside a login shell; the account is whichever one `codex login` left on this machine.
+The startup path includes the macOS pnpm locations `~/Library/pnpm` and `~/Library/pnpm/bin` after the account's ordinary local-bin overrides.
+Check the actual executable resolved in that process environment; a previously installed revision may still require the package-manager directory in the supervisor's launch environment until upgraded.
+Do not copy credentials between machines to resolve provider availability.
 
 ## State lives outside both checkouts
 

@@ -335,10 +335,17 @@ Do not weaken an externally promised deadline to make a flaky test pass.
 
 ### File drop and editor typography
 
-Local file drop checks pasteboard URL types at drag entry, then quotes O(total path characters) once at drop.
-It performs no file reads, provider queries, persistent attachment allocation, viewport observation or work on ordinary pointer movement.
-The complete ordered payload uses one existing terminal send; input publication and writer backpressure retain their existing owners.
-`TerminalFileDropTests` checks outgoing bytes, no submission, preserved text and file order, quoted special characters, native focus and hidden/detached refusal.
+File drop checks pasteboard URL types at drag entry and does no file work on ordinary pointer movement.
+An explicit file or image paste reserves one core-owned intent before a single worker reads at most eight files, 20 MiB each and 40 MiB total; native clipboard decoding runs off-main and is limited to 16 megapixels and 20 MiB encoded data.
+Remote attachment bytes pass through the existing authenticated SFTP boundary with a 45-second transfer timeout, not through a JSON event or the runtime mutex.
+While an intent is pending, only its originating pane adds O(input bytes) work to the key path, retaining at most 64 KiB; keys for every other pane retain their existing path.
+Appending held input does not publish a new snapshot; admission, completion, refusal and failure transitions do.
+The complete ordered path payload and held input use one existing terminal writer send after success, without synthetic Enter; failure keeps input held until explicit Retry or Cancel.
+One worker and one clipboard preparation task are admitted globally, with at most one additional refusal notice, and immediate-directory staging inspection stops at 128 entries and 256 MiB.
+Expiry is 24 hours on the next explicit intent, not a timer or idle scan.
+`TerminalFileDropTests` checks native focus, Control-V fallback, image Command-V/Control-V, IME preservation, private PNG normalization, size limits, scoped core failure, held Enter and ordered retry through the real bridge.
+Rust attachment tests cover source validation and quoted bytes; the ignored `remote_attachment_sftp_roundtrip_probe` uses the existing `HERDR_TEST_SSH_ALIAS` to verify actual upload, same-byte retry, readback and exact generated-file cleanup without terminal input.
+Record idle and driven measurements separately with representative clipboard size, file count, remote latency and queue load; a compile or unit test does not establish native responsiveness.
 Native OS drag geometry remains a separate user review when desktop automation is unavailable.
 Editor highlighting uses the configured font at creation and actual font changes; identical language/font updates schedule no new full-document highlight.
 `FileDocumentStateTests` observes real attributed font sizes across background highlighting, unrelated view updates and explicit zoom changes, including Korean fallback.

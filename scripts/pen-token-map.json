@@ -107,6 +107,7 @@
     "--size-hairline": "Layout.hairlineWidth",
     "--size-agent-mark": "agentMarkWidth",
     "--size-badge-height": "badgeHeight",
+    "--size-recent-location-max": "recentLocationMaxWidth",
     "--size-keycap-height": "Hint.keycapHeight",
     "--size-control-compact": "Control.compactHeight",
     "--size-control-regular": "Control.regularHeight",
