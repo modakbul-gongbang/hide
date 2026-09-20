@@ -1431,6 +1431,7 @@ mod tests {
                 ..Default::default()
             },
             pull_request: Some(PullRequestSnapshot {
+                closing_issues: Default::default(),
                 number: 18,
                 title: "Pull request fallback".into(),
                 head_branch: "feature".into(),
@@ -1446,6 +1447,7 @@ mod tests {
             ..Default::default()
         };
         let workspace = |checkout| WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "project".into(),
             label: "Project".into(),
             path: "/fixture/project".into(),
@@ -1545,6 +1547,7 @@ mod tests {
             ..Default::default()
         };
         let mut workspaces = vec![WorkspaceSnapshot {
+            home_issues: Default::default(),
             checkouts: vec![
                 checkout(
                     "main",

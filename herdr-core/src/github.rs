@@ -233,7 +233,7 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
             "--limit",
             PULL_REQUEST_LIMIT,
             "--json",
-            "number,title,statusCheckRollup,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt",
+            "number,title,statusCheckRollup,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,closingIssuesReferences",
         ],
     ) {
         Ok(listed) => listed,
@@ -246,9 +246,20 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
         }
     };
 
+    let issues = match read_issues(root) {
+        Ok(issues) => issues,
+        Err(reason) => {
+            return GithubProjectSnapshot {
+                root_path,
+                status: failed(reason),
+                ..Default::default()
+            };
+        }
+    };
     match parse_pull_requests(&listed) {
         Ok(pull_requests) => GithubProjectSnapshot {
             root_path,
+            issues,
             status: GithubStatusSnapshot {
                 available: true,
                 loading: false,
@@ -268,6 +279,37 @@ fn read_project(root: &Path, root_path: String) -> GithubProjectSnapshot {
             ..GithubProjectSnapshot::default()
         },
     }
+}
+
+fn read_issues(root: &Path) -> Result<crate::issues::ProjectIssuesSnapshot, GhFailure> {
+    // Read one sentinel beyond the display cap. Search sorting is required:
+    // gh's ordinary list orders by creation, not last update.
+    let output = gh(
+        Some(root),
+        &[
+            "issue",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "201",
+            "--search",
+            "sort:updated-desc",
+            "--json",
+            "number,title,url,state,projectItems,updatedAt",
+        ],
+    )?;
+    let mut issues = crate::issues::parse_issues(&output).map_err(GhFailure::network)?;
+    let overflow = issues.len() > crate::issues::ISSUE_LIMIT;
+    issues.truncate(crate::issues::ISSUE_LIMIT);
+    let repository = issues
+        .first()
+        .map(|issue| issue.reference.repository.clone());
+    Ok(crate::issues::ProjectIssuesSnapshot {
+        repository,
+        issues,
+        overflow,
+    })
 }
 
 fn failed(reason: GhFailure) -> GithubStatusSnapshot {
@@ -295,6 +337,13 @@ struct GhPullRequest {
     url: String,
     merged_at: Option<String>,
     updated_at: Option<String>,
+    #[serde(default)]
+    closing_issues_references: Vec<GhIssueReference>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhIssueReference {
+    url: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -427,13 +476,21 @@ pub fn parse_pull_requests(output: &str) -> Result<Vec<PullRequestSnapshot>, Str
     let listed: Vec<GhPullRequest> = serde_json::from_str(output)
         .map_err(|error| format!("gh pr list returned output Hide could not read: {error}"))?;
     Ok(select_per_branch(
-        listed.into_iter().map(project).collect::<Vec<_>>(),
+        listed
+            .into_iter()
+            .map(project)
+            .collect::<Result<Vec<_>, _>>()?,
     ))
 }
 
-fn project(listed: GhPullRequest) -> PullRequestSnapshot {
+fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {
     let review = review_decision(listed.review_decision.as_deref());
-    PullRequestSnapshot {
+    Ok(PullRequestSnapshot {
+        closing_issues: listed
+            .closing_issues_references
+            .into_iter()
+            .map(|issue| crate::issues::IssueReference::parse(&issue.url, None))
+            .collect::<Result<_, _>>()?,
         title: listed.title,
         checks: rollup_checks(listed.status_check_rollup.as_deref()),
         badge: badge(&listed.state, listed.is_draft, review),
@@ -445,7 +502,7 @@ fn project(listed: GhPullRequest) -> PullRequestSnapshot {
         is_draft: listed.is_draft,
         merged_at_unix_ms: listed.merged_at.as_deref().and_then(parse_rfc3339_ms),
         updated_at_unix_ms: listed.updated_at.as_deref().and_then(parse_rfc3339_ms),
-    }
+    })
 }
 
 /// The mapping the whole feature's colour scheme rests on.
@@ -614,7 +671,10 @@ fn run_gh(
     arguments: &[&str],
     timeout: Duration,
 ) -> Result<String, GhFailure> {
-    if !(arguments.starts_with(&["auth", "status"]) || arguments.starts_with(&["pr", "list"])) {
+    if !(arguments.starts_with(&["auth", "status"])
+        || arguments.starts_with(&["pr", "list"])
+        || arguments.starts_with(&["issue", "list"]))
+    {
         return Err(GhFailure::network(
             "Unsupported read-only gh command".to_owned(),
         ));
@@ -780,7 +840,7 @@ mod tests {
             r#"
 [ "$GH_PROMPT_DISABLED" = 1 ] && [ "$GIT_TERMINAL_PROMPT" = 0 ] || exit 90
 case "$1 $2" in
-  "pr list") printf '[]';;
+  "pr list"|"issue list") printf '[]';;
   "auth status") printf 'not logged into any GitHub hosts' >&2; exit 1;;
   *) touch forbidden; exit 91;;
 esac"#,
@@ -795,6 +855,32 @@ esac"#,
             .unwrap(),
             "[]"
         );
+        assert_eq!(
+            run_gh(
+                &fixture.binary,
+                Some(&fixture.root),
+                &["issue", "list"],
+                Duration::from_secs(1)
+            )
+            .unwrap(),
+            "[]"
+        );
+        for write in [
+            ["issue", "create"],
+            ["issue", "edit"],
+            ["issue", "comment"],
+            ["issue", "close"],
+        ] {
+            assert!(
+                run_gh(
+                    &fixture.binary,
+                    Some(&fixture.root),
+                    &write,
+                    Duration::from_secs(1)
+                )
+                .is_err()
+            );
+        }
         let failure = run_gh(
             &fixture.binary,
             Some(&fixture.root),

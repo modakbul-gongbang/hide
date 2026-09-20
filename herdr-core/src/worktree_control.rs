@@ -1283,6 +1283,7 @@ mod tests {
             purpose: Some("Initial purpose".to_owned()),
         };
         let checkout = WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1397,6 +1398,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "outer".to_owned(),
             label: "Outer".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1452,6 +1454,7 @@ mod tests {
             purpose: None,
         };
         let mut project = WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),

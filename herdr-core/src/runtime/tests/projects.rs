@@ -403,6 +403,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
     };
     let mut runtime = runtime();
     let pull_request = PullRequestSnapshot {
+        closing_issues: Default::default(),
         title: "Fixture pull request".into(),
         checks: crate::model::PullRequestChecks::Unknown,
         number: 7,
@@ -417,6 +418,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
     };
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            issues: Default::default(),
             root_path: "/tmp/hide".to_owned(),
             status: GithubStatusSnapshot {
                 available: true,

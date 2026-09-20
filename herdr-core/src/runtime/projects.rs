@@ -472,10 +472,11 @@ impl Runtime {
         for project in &mut merged.projects {
             if (project.status.stale || project.status.unavailable_reason.is_some())
                 && let Some(previous) = self.github.project(&project.root_path)
-                && !previous.pull_requests.is_empty()
+                && previous.status.last_success_at_unix_ms.is_some()
             {
                 project.status.stale = true;
                 project.pull_requests = previous.pull_requests.clone();
+                project.issues = previous.issues.clone();
                 project.status.last_success_at_unix_ms = previous.status.last_success_at_unix_ms;
             }
         }
@@ -1151,6 +1152,13 @@ impl Runtime {
                             || git_requested),
                     ..Default::default()
                 });
+            let home_issues = project
+                .map(|project| project.issues.clone())
+                .unwrap_or_default();
+            if workspace.home_issues != home_issues {
+                workspace.home_issues = home_issues;
+                changed = true;
+            }
             for checkout in workspace.checkouts.iter_mut() {
                 if checkout.github != status {
                     checkout.github = status.clone();

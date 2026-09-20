@@ -274,6 +274,10 @@ The first appearance of a local Git project requests its GitHub status once for 
 Repeated appearances are no-ops; explicit refresh advances that repository's generation.
 The selected Overview project and explicit sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
 The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request additionally asks for `title` and `statusCheckRollup`; it retains the 200-PR limit and existing branch tie-breaking policy.
+The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
+The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
+Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
+A failed generation retains both its last successful PR and issue answers, including a successfully empty answer.
 Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
 The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
 
