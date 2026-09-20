@@ -2,15 +2,16 @@
 
 How Herdr's raw agent state becomes a group in the sidebar, a pet pose, and a badge row.
 
-The state of an agent is four axes, not one word.
-What it needs from the operator, whether it is running, whether the operator has looked at it, and whose work it is are independent, and mixing them into one string is what made the same agent read differently in different views.
+The state of an agent is five axes, not one word.
+What it needs from the operator, whether it is running, whether it has reported a completion, whether the operator has looked at it, and whose work it is are independent, and mixing them into one string is what made the same agent read differently in different views.
 
 - Demand: question, approval, error, none.
 - Activity: working, stopped, unknown.
+- Completion: reported, not reported.
 - Read: read, unread.
 - Ownership: operator, delegated, escalated.
 
-`herdr-core/src/sidebar.rs` is the single owner of all four.
+`herdr-core/src/sidebar.rs` is the single owner of all five.
 It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
 
 Ownership is not stored anywhere.
@@ -39,6 +40,14 @@ A corrupt store loads as an empty record, which reads as everything unread, and 
 Nothing reads Herdr's `done` versus `idle` split, or a token's `_new` suffix, to decide the read axis.
 This is enforced by `INV-herdr-unseen-token`.
 
+## Completion is separate from stopped
+
+An agent can be stopped because it has completed a turn or because a newly opened pane is ready for its first instruction.
+Only `agent_status: done` or a `status_done` token reports a completion.
+An idle lifecycle or `status_idle` token reports a ready stopped pane and does not put it in Done, even though a missing read record still makes its read axis unread.
+The completion fact is part of the pane read fingerprint, so a ready-to-completed transition becomes unread even when Herdr's process-local sequence does not move.
+Herdr's done/idle distinction supplies completion evidence only; Hide's own pane record remains the sole read authority.
+
 ## Herdr token contract: both forms mean the same demand
 
 Herdr reports attention state as suffixed string tokens, not booleans:
@@ -56,9 +65,9 @@ The suffix is Herdr's answer to a question Hide no longer asks it, so reading th
 | Group | Membership |
 | --- | --- |
 | Needs You | An unread demand - question, approval or error - a pane Herdr reports as blocked right now, or a lineage root whose descendant has been stalled past the hard threshold |
-| Done | No demand, stopped, and unread |
+| Done | No demand, stopped, completion reported, and unread |
 | Working | Running |
-| Seen | Everything else: read demands, read completions, unknown |
+| Seen | Everything else: ready idle, read demands, read completions, unknown |
 
 A blocked pane stays in Needs You whether or not it has been read.
 The approval prompt is still on screen waiting, so it leaves the group when the prompt is answered, not when it is looked at.
@@ -136,7 +145,8 @@ The symbol and accessible text accompany color, so color alone never carries the
 | Question | `?` | Yellow | Question; Needs You while unread or blocked |
 | Approval | `!` | Yellow | Approval; a blocked pane stays Needs You even after being read |
 | Error | `×` | Red | Error; Needs You while unread or blocked |
-| No demand, stopped, unread | `✓` | Green | Done; completion awaiting the operator's review |
+| No demand, stopped, completion reported, unread | `✓` | Green | Done; completion awaiting the operator's review |
+| No demand, stopped, no completion | `○` | Gray | Idle; a newly opened agent is ready for its first instruction |
 | No demand, working | `●` | Blue | Working |
 | No demand, stopped, read | `○` | Gray | Idle; a read completion is not another unread Done |
 | No demand, unknown activity | `~` | Gray | Unknown; never silently labeled Idle |

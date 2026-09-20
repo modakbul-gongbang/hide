@@ -387,8 +387,8 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     assert_eq!(working["pet"]["badges"]["working"], 2);
     assert_eq!(working["pet"]["badges"]["needs_you"], 0);
     assert_eq!(
-        working["pet"]["badges"]["done"], 1,
-        "the idle pane nobody has focused is unread, so it is Done"
+        working["pet"]["badges"]["done"], 0,
+        "a newly opened idle pane is ready, not completed"
     );
     assert_eq!(working["pet"]["connection"], "connected");
 
@@ -948,10 +948,12 @@ fn multi_pane_terminal_session_destroy_releases_and_reaps_children() {
             concat!(
                 "#!/bin/sh\n",
                 "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
-                "  /usr/bin/printf '%s' \"$$\" > '{}/'$4.pid\n",
-                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":80,\"height\":24,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
+                // Keep capture in the owned shell: a forked writer can outlive
+                // the terminal child and race its release/reaping assertion.
+                "  printf '%s' \"$$\" > '{}/'$4.pid\n",
+                "  printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":80,\"height\":24,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
                 "  while IFS= read -r line; do\n",
-                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "    printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
                 "    case \"$line\" in *'\"type\":\"terminal.release\"'*) exit 0 ;; esac\n",
                 "  done\n",
                 "  exit 0\n",
@@ -1078,6 +1080,46 @@ fn multi_pane_terminal_session_destroy_releases_and_reaps_children() {
 extern "C" fn count_change(context: *mut c_void) {
     let counter = unsafe { &*(context.cast::<AtomicUsize>()) };
     counter.fetch_add(1, Ordering::SeqCst);
+}
+
+#[test]
+fn terminal_attachment_destroy_cleans_idle_failed_clipboard_only() {
+    let root = std::env::temp_dir().join(format!(
+        "hide-attachment-destroy-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let clipboard = root.join("TerminalClipboard");
+    fs::create_dir_all(&clipboard).unwrap();
+    let request_id = "01234567-0123-0123-0123-0123456789ab";
+    let staged = clipboard.join(format!("hide-{request_id}.png"));
+    let original = root.join("original.png");
+    fs::write(&staged, b"owned clipboard bytes").unwrap();
+    fs::write(&original, b"original user bytes").unwrap();
+    let core = create_with_socket_override_hidden(&options_with_state(&root.join("state.json")));
+    assert!(!core.is_null());
+    dispatch(
+        core,
+        json!({"schema_version":2, "kind":"key", "payload":{"pane_id":"attachment-pane", "bytes_base64":""}}),
+    );
+    dispatch(
+        core,
+        json!({"schema_version":2, "kind":"terminal_attachment", "payload":{"request_id":request_id,"pane_id":"attachment-pane","clipboard":true,"bracketed_paste":true,"paths":[]}}),
+    );
+    dispatch(
+        core,
+        json!({"schema_version":2, "kind":"terminal_attachment_ready", "payload":{"request_id":request_id,"pane_id":"attachment-pane","error":"Image preparation failed."}}),
+    );
+    herdr_core_destroy(core);
+    assert!(
+        !staged.exists(),
+        "destruction joins cleanup even when the failed intent has no transfer worker"
+    );
+    assert_eq!(fs::read(&original).unwrap(), b"original user bytes");
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1659,10 +1701,10 @@ fn one_launch_attaches_each_pane_once_at_the_size_its_view_reported() {
             concat!(
                 "#!/bin/sh\n",
                 "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
-                "  /usr/bin/printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
-                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":100,\"height\":30,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
+                "  printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
+                "  printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":100,\"height\":30,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
                 "  while IFS= read -r line; do\n",
-                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "    printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
                 "  done\n",
                 "  exit 0\n",
                 "fi\n",
@@ -1798,10 +1840,10 @@ fn one_launch_attaches_at_the_last_known_size_without_waiting_for_a_view() {
             concat!(
                 "#!/bin/sh\n",
                 "if [ \"$1\" = terminal ] && [ \"$2\" = session ] && [ \"$3\" = control ]; then\n",
-                "  /usr/bin/printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
-                "  /usr/bin/printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":152,\"height\":44,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
+                "  printf '%s\\n' \"$*\" >> '{}/attach.argv'\n",
+                "  printf '%s\\n' '{{\"type\":\"terminal.frame\",\"seq\":1,\"encoding\":\"ansi\",\"width\":152,\"height\":44,\"full\":true,\"bytes\":\"G2M=\"}}'\n",
                 "  while IFS= read -r line; do\n",
-                "    /usr/bin/printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
+                "    printf '%s\\n' \"$line\" >> '{}/'$4.stdin\n",
                 "  done\n",
                 "  exit 0\n",
                 "fi\n",

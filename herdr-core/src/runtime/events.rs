@@ -18,6 +18,31 @@ pub(super) struct KeyPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct AttachmentPayload {
+    pub request_id: String,
+    pub pane_id: String,
+    pub bracketed_paste: bool,
+    #[serde(default)]
+    pub clipboard: bool,
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AttachmentCompletionPayload {
+    pub request_id: String,
+    pub pane_id: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AttachmentActionPayload {
+    pub request_id: String,
+    pub pane_id: String,
+    pub action: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct TerminalOutputPayload {
     pub(super) pane_id: String,
     pub(super) bytes_base64: String,
@@ -679,6 +704,9 @@ pub(super) struct TerminalResizePayload {
 
 pub(super) enum Event {
     Key(KeyPayload),
+    Attachment(AttachmentPayload),
+    AttachmentReady(AttachmentCompletionPayload),
+    AttachmentAction(AttachmentActionPayload),
     TerminalOutput(TerminalOutputPayload),
     SessionSnapshot(SessionSnapshotPayload),
     RefreshStatus,
@@ -810,6 +838,9 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
 
     match kind.as_str() {
         "key" => decode!(KeyPayload, Key),
+        "terminal_attachment" => decode!(AttachmentPayload, Attachment),
+        "terminal_attachment_ready" => decode!(AttachmentCompletionPayload, AttachmentReady),
+        "terminal_attachment_action" => decode!(AttachmentActionPayload, AttachmentAction),
         "terminal_output" => decode!(TerminalOutputPayload, TerminalOutput),
         "session_snapshot" => decode!(SessionSnapshotPayload, SessionSnapshot),
         "refresh_status" => Ok(Event::RefreshStatus),
@@ -908,7 +939,13 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
 impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
+            Event::Attachment(payload) => self.begin_attachment(payload),
+            Event::AttachmentReady(payload) => self.attachment_ready(payload),
+            Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
+                if let Some(changed) = self.hold_attachment_input(&payload) {
+                    return changed;
+                }
                 self.snapshot.input_generation = self.snapshot.input_generation.saturating_add(1);
                 self.snapshot.focused.surface = Surface::Terminal;
                 self.snapshot.focused.pane_id = Some(payload.pane_id.clone());
@@ -1144,13 +1181,43 @@ impl Runtime {
                 true
             }
             Event::CreateTab(payload) => {
-                let Some(workspace_snapshot) = self
+                let Some((workspace_id, workspace_label, checkout_id, cwd)) = self
                     .snapshot
                     .navigator
                     .workspaces
                     .iter()
                     .find(|workspace| workspace.id == payload.workspace_id)
+                    .and_then(|workspace| {
+                        payload
+                            .checkout_id
+                            .as_deref()
+                            .and_then(|checkout_id| {
+                                workspace
+                                    .checkouts
+                                    .iter()
+                                    .find(|checkout| checkout.id == checkout_id)
+                            })
+                            .or_else(|| workspace.checkouts.first())
+                            .map(|checkout| {
+                                (
+                                    workspace.id.clone(),
+                                    workspace.label.clone(),
+                                    checkout.id.clone(),
+                                    checkout.path.clone(),
+                                )
+                            })
+                    })
                 else {
+                    let workspace_exists = self
+                        .snapshot
+                        .navigator
+                        .workspaces
+                        .iter()
+                        .any(|workspace| workspace.id == payload.workspace_id);
+                    if workspace_exists {
+                        self.set_error("tab.no_checkout", "Workspace has no checkout", false);
+                        return true;
+                    }
                     self.set_error(
                         "tab.unknown_workspace",
                         format!("Workspace {} is not registered", payload.workspace_id),
@@ -1158,57 +1225,13 @@ impl Runtime {
                     );
                     return true;
                 };
-                let checkout = payload
-                    .checkout_id
-                    .as_deref()
-                    .and_then(|checkout_id| {
-                        workspace_snapshot
-                            .checkouts
-                            .iter()
-                            .find(|checkout| checkout.id == checkout_id)
-                    })
-                    .or_else(|| workspace_snapshot.checkouts.first());
-                let Some(checkout) = checkout else {
-                    self.set_error("tab.no_checkout", "Workspace has no checkout", false);
-                    return true;
-                };
-                let workspace_id = workspace_snapshot.id.clone();
-                let checkout_id = checkout.id.clone();
-                let cwd = checkout.path.clone();
                 let label = payload.label.trim();
                 if label.is_empty() {
                     self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
                     return true;
                 }
-                // The new tab goes next to the tab the operator is looking
-                // at, in that tab's Herdr workspace: a checkout can hold tabs
-                // from several. Herdr closes a workspace with its last pane,
-                // so a project can be listed with no Herdr workspace behind
-                // it. A tab needs one; the shell starts a terminal (which
-                // creates the workspace) for a checkout with no panes instead.
-                let visible_tab_workspace_id = self
-                    .visible_tab_ids
-                    .get(&checkout_id)
-                    .and_then(|tab_id| {
-                        self.snapshot
-                            .pane_layouts
-                            .iter()
-                            .find(|layout| &layout.tab_id == tab_id)
-                    })
-                    .map(|layout| layout.workspace_id.clone())
-                    .filter(|id| workspace_snapshot.session_workspace_ids.contains(id));
-                let Some(session_workspace_id) = visible_tab_workspace_id
-                    .or_else(|| workspace_snapshot.session_workspace_ids.first().cloned())
-                else {
-                    self.set_error(
-                        "tab.no_live_workspace",
-                        format!(
-                            "Project {workspace_id} has no Herdr workspace; start a terminal in it first"
-                        ),
-                        false,
-                    );
-                    return true;
-                };
+                let session_workspace_id =
+                    self.reusable_session_workspace_id(&workspace_id, &checkout_id);
                 let Some(context) = self.live.as_ref().cloned() else {
                     self.set_error(
                         "tab.control_unavailable",
@@ -1222,10 +1245,16 @@ impl Runtime {
                 self.snapshot.navigator.root_path = Some(cwd.clone());
                 self.deactivate_editor_tab();
                 self.persist_current_ui_state();
-                let action = RemoteControlAction::CreateTab {
-                    workspace_id: session_workspace_id,
-                    cwd,
-                    label: label.to_owned(),
+                let action = match session_workspace_id {
+                    Some(session_workspace_id) => RemoteControlAction::CreateTab {
+                        workspace_id: session_workspace_id,
+                        cwd,
+                        label: label.to_owned(),
+                    },
+                    None => RemoteControlAction::CreateWorkspace {
+                        cwd,
+                        label: workspace_label,
+                    },
                 };
                 self.push_diagnostic(
                     "tab.create.requested",

@@ -1916,3 +1916,64 @@ fn close_context_keeps_project_lookup_separate_from_session_workspace() {
     assert_eq!(context.tab_id, "w7:t2");
     assert_eq!(context.tab_index, 1);
 }
+
+#[test]
+fn a_session_workspace_shared_by_two_projects_is_not_reused_for_new_tabs() {
+    let mut runtime = runtime();
+    let mut target = workspace(
+        "project:hide",
+        "hide",
+        "/repo/hide",
+        vec![checkout(
+            "project:hide",
+            "checkout:hide",
+            "/repo/hide",
+            Some(pane("shared:p1", "/repo/hide")),
+        )],
+    );
+    target.session_workspace_ids = vec!["shared".to_owned()];
+    target.checkouts[0].tabs[0].id = Some("shared:t1".to_owned());
+    target.checkouts[0].tabs[0].workspace_id = Some("shared".to_owned());
+    target.checkouts[0].active_tab_id = Some("shared:t1".to_owned());
+
+    let mut neighbor = workspace(
+        "project:task-factory",
+        "task-factory",
+        "/repo/task-factory",
+        vec![checkout(
+            "project:task-factory",
+            "checkout:task-factory",
+            "/repo/task-factory",
+            Some(pane("shared:p2", "/repo/task-factory")),
+        )],
+    );
+    neighbor.session_workspace_ids = vec!["shared".to_owned()];
+    runtime.snapshot.navigator.workspaces = vec![target, neighbor];
+    runtime
+        .visible_tab_ids
+        .insert("checkout:hide".to_owned(), "shared:t1".to_owned());
+    runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
+        workspace_id: "shared".to_owned(),
+        tab_id: "shared:t1".to_owned(),
+        focused_pane_id: "shared:p1".to_owned(),
+        zoomed: false,
+        root: PaneLayoutNodeSnapshot::Pane {
+            pane_id: "shared:p1".to_owned(),
+        },
+    }];
+
+    assert_eq!(
+        runtime.reusable_session_workspace_id("project:hide", "checkout:hide"),
+        None,
+        "a new tab must create a project-owned Herdr workspace instead of inheriting the neighbor's label"
+    );
+
+    runtime.snapshot.navigator.workspaces[1].session_workspace_ids = vec!["neighbor".to_owned()];
+    assert_eq!(
+        runtime
+            .reusable_session_workspace_id("project:hide", "checkout:hide")
+            .as_deref(),
+        Some("shared"),
+        "an exclusive workspace remains reusable"
+    );
+}

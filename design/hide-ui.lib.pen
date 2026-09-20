@@ -12633,6 +12633,660 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "adaptive-work-tab-sheet",
+      "name": "Component / Adaptive Work Tab",
+      "width": 420,
+      "layout": "vertical",
+      "gap": "$--spacing-md",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "text",
+          "id": "adaptive-work-tab-title",
+          "name": "Title",
+          "content": "Adaptive work tab",
+          "fill": "$--color-primary",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "adaptive-work-tab-spec",
+          "name": "Spec",
+          "content": "HideTabStrip: 180 preferred, equal title compression through 104, then a leading 40 identity. Only the active tab adds the 24 toolbar close for 64 total. Compact marks retain notice, dirty and preview meaning; overflow keeps a contiguous active range.",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "fill": "$--color-secondary",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead"
+        },
+        {
+          "type": "frame",
+          "id": "adaptive-work-tab-master",
+          "name": "Component / Adaptive work tab",
+          "reusable": true,
+          "width": 180,
+          "height": 32,
+          "fill": "$--color-panel",
+          "layout": "horizontal",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "awt-standard-identity",
+              "name": "Title identity",
+              "width": 36,
+              "height": 24,
+              "layout": "horizontal",
+              "gap": "$--spacing-xxs",
+              "padding": [
+                0,
+                0,
+                0,
+                "$--spacing-md"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "awt-status-mark",
+                  "name": "Status mark",
+                  "content": "●",
+                  "fill": "$--color-agent-working",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "awt-agent-badge",
+                  "name": "Agent badge",
+                  "width": 16,
+                  "height": 16,
+                  "fill": "$--color-selected-fill",
+                  "cornerRadius": "$--radius-sm",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "awt-agent-letter",
+                      "name": "Agent",
+                      "content": "C",
+                      "fill": "$--color-agent-working",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "700"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "awt-icon-identity",
+              "name": "Leading compact identity",
+              "enabled": false,
+              "width": 40,
+              "height": 24,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "awt-icon-status",
+                  "name": "Status mark",
+                  "x": 4,
+                  "y": 6,
+                  "content": "●",
+                  "fill": "$--color-agent-working",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "icon",
+                  "id": "awt-icon-preview",
+                  "name": "Preview identity",
+                  "x": 17,
+                  "y": 5,
+                  "width": 14,
+                  "height": 14,
+                  "icon": "file-text",
+                  "library": "lucide",
+                  "fill": "$--color-secondary"
+                },
+                {
+                  "type": "ellipse",
+                  "id": "awt-icon-dirty",
+                  "name": "Dirty",
+                  "x": 30,
+                  "y": 17,
+                  "width": 5,
+                  "height": 5,
+                  "fill": "$--color-secondary"
+                },
+                {
+                  "type": "icon",
+                  "id": "awt-icon-notice",
+                  "name": "Notice",
+                  "x": 29,
+                  "y": 1,
+                  "width": 7,
+                  "height": 7,
+                  "icon": "triangle-alert",
+                  "library": "lucide",
+                  "fill": "$--color-warning"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "awt-tab-label",
+              "name": "Title",
+              "content": "browser-like-tab-sizing",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "fill": "$--color-primary",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-body",
+              "fontWeight": "600"
+            },
+            {
+              "type": "ref",
+              "id": "awt-keycap",
+              "name": "Shortcut keycap",
+              "ref": "Ec2W1",
+              "descendants": {
+                "HqL2p": {
+                  "content": "⌘3"
+                }
+              }
+            },
+            {
+              "type": "frame",
+              "id": "awt-close",
+              "name": "Active close",
+              "width": 24,
+              "height": 24,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "awt-close-icon",
+                  "name": "Close icon",
+                  "width": 10,
+                  "height": 10,
+                  "icon": "x",
+                  "library": "lucide",
+                  "fill": "$--color-secondary"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "ref",
+          "id": "adaptive-work-tab-preferred-active",
+          "name": "State / Preferred active 180",
+          "ref": "adaptive-work-tab-master",
+          "width": 180
+        },
+        {
+          "type": "ref",
+          "id": "adaptive-work-tab-title-minimum",
+          "name": "State / Title minimum active 104",
+          "ref": "adaptive-work-tab-master",
+          "width": 104,
+          "descendants": {
+            "awt-tab-label": {
+              "content": "긴 한글 탭"
+            }
+          }
+        },
+        {
+          "type": "ref",
+          "id": "adaptive-work-tab-icon-active",
+          "name": "State / Icon active 64",
+          "ref": "adaptive-work-tab-master",
+          "width": 64,
+          "descendants": {
+            "awt-standard-identity": {
+              "enabled": false
+            },
+            "awt-icon-identity": {
+              "enabled": true
+            },
+            "awt-tab-label": {
+              "enabled": false
+            },
+            "awt-keycap": {
+              "enabled": false
+            }
+          }
+        },
+        {
+          "type": "ref",
+          "id": "adaptive-work-tab-icon-inactive",
+          "name": "State / Icon inactive 40",
+          "ref": "adaptive-work-tab-master",
+          "width": 40,
+          "descendants": {
+            "awt-standard-identity": {
+              "enabled": false
+            },
+            "awt-icon-identity": {
+              "enabled": true
+            },
+            "awt-tab-label": {
+              "enabled": false
+            },
+            "awt-keycap": {
+              "enabled": false
+            },
+            "awt-close": {
+              "enabled": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "zSLIh",
+      "x": 1600,
+      "y": 7264,
+      "name": "Component / Device picker row",
+      "width": 440,
+      "height": 430,
+      "fill": "$--color-background",
+      "layout": "none",
+      "children": [
+        {
+          "type": "text",
+          "id": "g5PViy",
+          "x": 24,
+          "y": 24,
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "Device picker row / A",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "Y2GMWO",
+          "x": 24,
+          "y": 64,
+          "name": "Component / Device picker row",
+          "reusable": true,
+          "width": 336,
+          "height": 44,
+          "fill": "$--color-elevated",
+          "cornerRadius": "$--radius-md",
+          "layout": "none",
+          "children": [
+            {
+              "type": "icon",
+              "id": "UOTDs",
+              "x": 12,
+              "y": 15,
+              "name": "Device kind",
+              "width": 14,
+              "height": 14,
+              "icon": "server",
+              "library": "lucide",
+              "fill": "$--color-secondary"
+            },
+            {
+              "type": "text",
+              "id": "k9CFB",
+              "x": 38,
+              "y": 6,
+              "name": "Device name",
+              "fill": "$--color-primary",
+              "content": "Mac mini",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-subhead",
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "j5qee8",
+              "x": 38,
+              "y": 24,
+              "name": "Location and connection",
+              "fill": "$--color-secondary",
+              "content": "Remote · Connected · 7 agents",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "type": "icon",
+              "id": "fjURC",
+              "x": 310,
+              "y": 15,
+              "name": "Selected",
+              "opacity": 0,
+              "width": 14,
+              "height": 14,
+              "icon": "check",
+              "library": "lucide",
+              "fill": "$--color-primary"
+            }
+          ]
+        },
+        {
+          "id": "AdcjS",
+          "type": "ref",
+          "ref": "Y2GMWO",
+          "name": "Local selected",
+          "x": 24,
+          "y": 124,
+          "width": 336,
+          "height": 44,
+          "fill": "$--color-selected-wash",
+          "descendants": {
+            "UOTDs": {
+              "icon": "laptop"
+            },
+            "k9CFB": {
+              "content": "This Mac"
+            },
+            "j5qee8": {
+              "content": "Local · 18 agents"
+            },
+            "fjURC": {
+              "opacity": 1
+            }
+          }
+        },
+        {
+          "id": "rQUUQ",
+          "type": "ref",
+          "ref": "Y2GMWO",
+          "name": "Remote unavailable",
+          "x": 24,
+          "y": 184,
+          "width": 336,
+          "height": 44,
+          "descendants": {
+            "j5qee8": {
+              "content": "Remote · Not connected"
+            }
+          }
+        },
+        {
+          "id": "Ku6R5",
+          "type": "ref",
+          "ref": "Y2GMWO",
+          "name": "Remote connecting",
+          "x": 24,
+          "y": 244,
+          "width": 336,
+          "height": 44,
+          "descendants": {
+            "j5qee8": {
+              "content": "Remote · Connecting…"
+            }
+          }
+        },
+        {
+          "id": "b5U9o",
+          "type": "ref",
+          "ref": "Y2GMWO",
+          "name": "Korean long device name",
+          "x": 24,
+          "y": 304,
+          "width": 336,
+          "height": 44,
+          "descendants": {
+            "k9CFB": {
+              "content": "작업용 원격 Mac · 디자인 검토"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "hfJUk",
+          "x": 24,
+          "y": 376,
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "content": "Arrow keys preview; Return selects; Escape dismisses.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "U2iEq",
+      "x": 2120,
+      "y": 7264,
+      "name": "Component / Recent remote location",
+      "width": 440,
+      "height": 250,
+      "fill": "$--color-background",
+      "layout": "none",
+      "children": [
+        {
+          "type": "text",
+          "id": "Bi4np",
+          "x": 24,
+          "y": 24,
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "Recent remote location / A",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "B2UZO",
+          "x": 24,
+          "y": 68,
+          "name": "Component / Remote location badge",
+          "reusable": true,
+          "width": 112,
+          "height": 16,
+          "layout": "none",
+          "children": [
+            {
+              "id": "fktoe",
+              "type": "ref",
+              "ref": "eHAjc",
+              "name": "Badge",
+              "x": 0,
+              "y": 0,
+              "width": 112,
+              "height": 16,
+              "fill": "$--color-panel",
+              "descendants": {
+                "n8L5dm": {
+                  "content": "Remote · Mac mini",
+                  "fontSize": "$--text-micro"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "wZ8XX",
+          "type": "ref",
+          "ref": "B2UZO",
+          "name": "Long device identity",
+          "x": 24,
+          "y": 112,
+          "width": 112,
+          "height": 16,
+          "descendants": {
+            "fktoe/n8L5dm": {
+              "content": "Remote · 작업…Mac"
+            }
+          }
+        },
+        {
+          "id": "R2vYJ",
+          "type": "ref",
+          "ref": "B2UZO",
+          "name": "Unregistered label uses ID",
+          "x": 24,
+          "y": 156,
+          "width": 112,
+          "height": 16,
+          "descendants": {
+            "fktoe/n8L5dm": {
+              "content": "Remote · device-7"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "eqfPK",
+          "x": 24,
+          "y": 208,
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "content": "112pt cap; full host in tooltip and accessibility help.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "w4fTAr",
+      "x": 2640,
+      "y": 7264,
+      "name": "Component / Terminal attachment notice",
+      "width": 660,
+      "height": 400,
+      "fill": "$--color-background",
+      "layout": "none",
+      "children": [
+        {
+          "type": "text",
+          "id": "oOJ3V",
+          "x": 24,
+          "y": 24,
+          "name": "Title",
+          "fill": "$--color-primary",
+          "content": "Terminal attachment / scoped outcomes",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "Fai2e",
+          "x": 24,
+          "y": 76,
+          "name": "Component / Terminal attachment notice",
+          "reusable": true,
+          "width": 608,
+          "height": 64,
+          "fill": "$--color-panel",
+          "layout": "none",
+          "children": [
+            {
+              "type": "text",
+              "id": "s4uTm9",
+              "x": 8,
+              "y": 4,
+              "name": "Outcome",
+              "fill": "$--color-secondary",
+              "content": "Uploading files…",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "B2dYb",
+              "x": 8,
+              "y": 36,
+              "name": "Retry",
+              "opacity": 0,
+              "fill": "$--color-secondary",
+              "content": "Retry",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-body",
+              "fontWeight": "normal"
+            },
+            {
+              "type": "text",
+              "id": "YLu6p",
+              "x": 8,
+              "y": 36,
+              "name": "Cancel action",
+              "fill": "$--color-secondary",
+              "content": "Cancel and discard held input",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-body",
+              "fontWeight": "normal"
+            }
+          ]
+        },
+        {
+          "id": "a1ZBo",
+          "type": "ref",
+          "ref": "Fai2e",
+          "name": "Failed with held input",
+          "x": 24,
+          "y": 164,
+          "width": 608,
+          "height": 64,
+          "descendants": {
+            "s4uTm9": {
+              "content": "Files were not pasted. Typed input is held. Check the files and device, then retry.",
+              "fill": "$--color-warning"
+            },
+            "B2dYb": {
+              "opacity": 1
+            },
+            "YLu6p": {
+              "x": 52
+            }
+          }
+        },
+        {
+          "id": "pfyAn",
+          "type": "ref",
+          "ref": "Fai2e",
+          "name": "Original session retired",
+          "x": 24,
+          "y": 252,
+          "width": 608,
+          "height": 64,
+          "descendants": {
+            "s4uTm9": {
+              "content": "The original terminal closed or reconnected. Nothing was sent; paste again.",
+              "fill": "$--color-warning"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "gAq1q",
+          "x": 24,
+          "y": 348,
+          "name": "Behavior",
+          "fill": "$--color-secondary",
+          "content": "Only the original pane owns this intent. No automatic Enter and no attachment shelf.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "normal"
+        }
+      ]
     }
   ],
   "variables": {
@@ -12976,10 +13630,6 @@
       "type": "number",
       "value": 132
     },
-    "--size-tab-title-max": {
-      "type": "number",
-      "value": 200
-    },
     "--size-tab-drag-activation": {
       "type": "number",
       "value": 6
@@ -13239,6 +13889,30 @@
     "--size-checkout-metadata-inset": {
       "type": "number",
       "value": 46
+    },
+    "--size-tab-icon-identity": {
+      "type": "number",
+      "value": 40
+    },
+    "--size-tab-overflow-control": {
+      "type": "number",
+      "value": 28
+    },
+    "--size-tab-preferred": {
+      "type": "number",
+      "value": 180
+    },
+    "--size-tab-status-dot": {
+      "type": "number",
+      "value": 5
+    },
+    "--size-tab-title-min": {
+      "type": "number",
+      "value": 104
+    },
+    "--size-recent-location-max": {
+      "type": "number",
+      "value": 112
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

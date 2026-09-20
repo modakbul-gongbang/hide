@@ -55,7 +55,8 @@ struct HideTerminalSurface: View {
             if let operation = model.paneSelectionOperation {
                 PaneSelectionOutcomeNotice(
                     operation: operation,
-                    onRetry: model.retryPaneSelection
+                    onRetry: model.retryPaneSelection,
+                    onDismiss: model.dismissPaneSelection
                 )
                 .padding(HideTheme.spacingSM)
             }
@@ -71,6 +72,7 @@ struct HideTerminalSurface: View {
 struct PaneSelectionOutcomeNotice: View {
     let operation: PaneSelectionOperation
     let onRetry: () -> Void
+    let onDismiss: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: HideTheme.spacingSM) {
@@ -94,6 +96,12 @@ struct PaneSelectionOutcomeNotice: View {
                     Button("Retry", action: onRetry)
                         .buttonStyle(HideInteractiveButtonStyle())
                 }
+                HideIconButton(
+                    systemImage: "xmark",
+                    help: "Dismiss",
+                    variant: .toolbar,
+                    action: onDismiss
+                )
             }
         }
         .padding(.horizontal, HideTheme.spacingMD)
@@ -185,6 +193,8 @@ private struct HideTabCanvas: View {
                         // split (PRD B7, D-16).
                         onSelectPane: { model.requestPaneSelection(from: pane.id, to: $0) }
                     ) {
+                        VStack(spacing: HideTheme.spacingNone) {
+                        TerminalAttachmentNotice(bridge: model.core, paneID: pane.id)
                         if model.isConversation(for: pane.id),
                            model.canShowConversation(for: pane.id),
                            let agent = model.agents.first(where: { $0.paneID == pane.id }),
@@ -219,6 +229,7 @@ private struct HideTabCanvas: View {
                                 onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
                             )
                             .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                        }
                         }
                     }
                 }

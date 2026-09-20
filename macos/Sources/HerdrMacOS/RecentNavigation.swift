@@ -11,7 +11,7 @@ struct RecentNavigationOverlay: View {
                 rows: cycle.visibleIDs.compactMap { id in
                     guard let project = model.recentProjects[id] else { return nil }
                     return RecentSwitcherRow(id: id, title: project.workspace.label,
-                        detail: model.recentProjectDetail(id), symbol: "folder")
+                        detail: model.recentProjectDetail(id), symbol: "folder", location: project.location)
                 }, selectedID: cycle.selectedProjectID,
                 identifier: "project-mru-switcher"
             )
@@ -22,7 +22,7 @@ struct RecentNavigationOverlay: View {
                     guard let surface = model.recentSurfaces[id] else { return nil }
                     return RecentSwitcherRow(
                         id: id, title: RecentSurfacePresentation.title(surface),
-                        detail: surface.contextLabel, symbol: surface.symbol, dirty: surface.item.dirty,
+                        detail: surface.contextLabel, symbol: surface.symbol, location: surface.location, dirty: surface.item.dirty,
                         agent: surface.item.focusedAgent,
                         identity: surface.item.agentIdentity.map {
                             RecentSwitcherRow.Identity(
@@ -64,6 +64,7 @@ private struct RecentSwitcherRow: Identifiable {
     let title: String
     let detail: String
     let symbol: String
+    let location: RecentLocation
     var dirty = false
     var agent: SidebarAgent? = nil
     var identity: Identity? = nil
@@ -118,6 +119,10 @@ private struct RecentSwitcherOverlay: View {
                             .truncationMode(.middle)
                     }
                     Spacer()
+                    if row.location.isRemote {
+                        RecentLocationBadge(location: row.location)
+                            .layoutPriority(1)
+                    }
                     if row.dirty {
                         Image(systemName: "circle.fill")
                             .hideFont(size: HideTheme.Typography.caption)
@@ -135,7 +140,8 @@ private struct RecentSwitcherOverlay: View {
                 // The mark is hidden from VoiceOver, so a named tab says its
                 // agent's state in words here (PRD D-10).
                 .accessibilityLabel(
-                    [row.title, row.identity?.statusLabel, row.detail].compactMap { $0 }.joined(separator: ", ")
+                    [row.title, row.identity?.statusLabel, row.detail, row.location.spoken]
+                        .compactMap { $0 }.joined(separator: ", ")
                 )
                 .accessibilityAddTraits(row.id == selectedID ? .isSelected : [])
             }
@@ -147,5 +153,17 @@ private struct RecentSwitcherOverlay: View {
             RoundedRectangle(cornerRadius: HideTheme.radiusLarge).stroke(HideTheme.divider)
         }
         .accessibilityIdentifier(identifier)
+    }
+}
+
+/// The trailing location mark never replaces an agent's activity or provider.
+struct RecentLocationBadge: View {
+    let location: RecentLocation
+
+    var body: some View {
+        HideBadge(label: "Remote · \(location.label)", color: HideTheme.secondary,
+                  maximumWidth: HideTheme.recentLocationMaxWidth)
+            .hideTooltip(location.spoken)
+            .accessibilityLabel(location.spoken)
     }
 }

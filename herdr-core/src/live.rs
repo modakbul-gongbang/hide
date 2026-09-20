@@ -374,6 +374,10 @@ pub enum RemoteControlAction {
         cwd: String,
         label: String,
     },
+    CreateWorkspace {
+        cwd: String,
+        label: String,
+    },
     CloseTab {
         tab_id: String,
     },
@@ -410,6 +414,7 @@ impl RemoteControlAction {
             Self::FocusWorkspace { .. } => "workspace.focus",
             Self::FocusTab { .. } => "tab.focus",
             Self::CreateTab { .. } => "tab.create",
+            Self::CreateWorkspace { .. } => "workspace.create",
             Self::CloseTab { .. } => "tab.close",
             Self::MoveTab { .. } => "tab.move",
         }
@@ -531,6 +536,16 @@ fn execute_remote_control(
                 wire::tab_create_params(workspace_id, cwd, label)?,
             )?;
             let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
+            (Some(tab_id), Some(pane_id))
+        }
+        RemoteControlAction::CreateWorkspace { cwd, label } => {
+            let result = mutation_request(
+                connector,
+                "workspace.create",
+                wire::workspace_create_params(cwd, label)?,
+            )?;
+            let (_, tab_id, pane_id) =
+                wire::created_workspace(result).map_err(ControlFailure::Ambiguous)?;
             (Some(tab_id), Some(pane_id))
         }
         RemoteControlAction::CloseTab { tab_id } => {
@@ -1973,6 +1988,9 @@ pub fn spawn_remote_control(
         RemoteControlAction::CreateTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-create")
         }
+        RemoteControlAction::CreateWorkspace { .. } => {
+            return Err("a remote context cannot create a local workspace".to_owned());
+        }
         RemoteControlAction::CloseTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-close")
         }
@@ -2018,6 +2036,7 @@ pub fn spawn_local_control(
     let worker_name = match &action {
         RemoteControlAction::FocusTab { .. } => "herdr-core-tab-focus",
         RemoteControlAction::CreateTab { .. } => "herdr-core-tab-create",
+        RemoteControlAction::CreateWorkspace { .. } => "herdr-core-workspace-create",
         RemoteControlAction::CloseTab { .. } => "herdr-core-tab-close",
         RemoteControlAction::MoveTab { .. } => "herdr-core-tab-move",
         _ => return Err(format!("{} is not a local tab action", action.kind())),
@@ -3950,6 +3969,47 @@ mod tests {
                     "cwd": "/tmp/herdr-ide-verify-workspace",
                     "focus": true,
                     "label": "Verify workspace",
+                })
+            )]
+        );
+    }
+
+    #[test]
+    fn local_tab_control_can_create_an_exclusive_workspace() {
+        let herdr = FakeHerdr::start("local-workspace-control", |method, _| match method {
+            "workspace.create" => json!({
+                "type": "workspace_created",
+                "workspace": {"workspace_id": "w2", "number": 2, "label": "hide", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w2:t1", "agent_status": "idle"},
+                "tab": {"tab_id": "w2:t1", "workspace_id": "w2", "number": 1, "label": "hide", "focused": true, "pane_count": 1, "agent_status": "idle"},
+                "root_pane": {"pane_id": "w2:p1", "terminal_id": "fixture-terminal", "workspace_id": "w2", "tab_id": "w2:t1", "focused": true, "agent_status": "idle", "revision": 1}
+            }),
+            other => panic!("unexpected {other}"),
+        });
+
+        let outcome = execute_remote_control(
+            &herdr.connector(),
+            &RemoteControlAction::CreateWorkspace {
+                cwd: "/tmp/herdr-ide-hide".to_owned(),
+                label: "hide".to_owned(),
+            },
+        )
+        .expect("workspace control request");
+
+        assert!(matches!(
+            outcome,
+            RemoteControlOutcome::Acknowledged {
+                created_tab_id: Some(ref tab_id),
+                created_pane_id: Some(ref pane_id),
+            } if tab_id == "w2:t1" && pane_id == "w2:p1"
+        ));
+        assert_eq!(
+            herdr.calls(),
+            [(
+                "workspace.create".to_owned(),
+                json!({
+                    "cwd": "/tmp/herdr-ide-hide",
+                    "focus": true,
+                    "label": "hide"
                 })
             )]
         );

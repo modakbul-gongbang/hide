@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
+mod attachments;
 mod devices;
 mod editor;
 mod events;
@@ -776,6 +777,9 @@ pub struct Runtime {
     terminal_recovery: HashMap<String, crate::terminal_recovery::Recovery>,
     next_terminal_session_generation: u64,
     next_remote_file_generation: u64,
+    attachment: Option<attachments::PendingAttachment>,
+    attachment_rejection: Option<crate::model::AsyncOperationSnapshot>,
+    attachment_worker: Option<thread::JoinHandle<()>>,
     terminal_sizes: HashMap<String, (u16, u16)>,
     terminal_view_sizes: HashMap<String, (u16, u16)>,
     terminal_frames_need_full: HashSet<String>,
@@ -1091,6 +1095,9 @@ impl Runtime {
             terminal_recovery: HashMap::new(),
             next_terminal_session_generation: 0,
             next_remote_file_generation: 0,
+            attachment: None,
+            attachment_rejection: None,
+            attachment_worker: None,
             terminal_view_sizes: HashMap::new(),
             terminal_frames_need_full: HashSet::new(),
             terminal_foreign_frame_sizes: HashMap::new(),

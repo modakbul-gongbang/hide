@@ -234,6 +234,7 @@ private struct SidebarCommandBar: View {
 private struct SidebarUtilityBar: View {
     @EnvironmentObject private var model: ShellModel
     @State private var showingUsage = false
+    @State private var showingDevices = false
 
     let devices: [CoreDeviceSnapshot]
     let usages: [CoreProviderUsageSnapshot]
@@ -256,45 +257,34 @@ private struct SidebarUtilityBar: View {
 
     var body: some View {
         HStack(spacing: HideTheme.spacingXS) {
-            Menu {
-                ForEach(devices) { device in
-                    Button {
-                        model.selectDevice(device)
-                    } label: {
-                        Label(
-                            device.agentCount > 0
-                                ? "\(device.label), \(device.agentCount) agents"
-                                : device.label,
-                            systemImage: device.id == model.selectedDeviceID ? "checkmark" : "circle"
-                        )
-                    }
-                }
+            Button {
+                showingDevices.toggle()
             } label: {
-                HStack(spacing: HideTheme.spacingSM) {
-                    Circle()
-                        .fill(selectedDevice.map(deviceStatusColor) ?? HideTheme.muted)
-                        .frame(width: 6, height: 6)
-                    Text(selectedDevice?.label ?? "No device")
-                        .hideFont(size: HideTheme.Typography.caption, weight: .medium)
-                        .lineLimit(1)
-                    if let agentCount = selectedDevice?.agentCount, agentCount > 0 {
-                        Text("\(agentCount)")
-                            .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                            .foregroundStyle(HideTheme.muted)
-                    }
-                    Image(systemName: "chevron.up.chevron.down")
-                        .hideFont(size: HideTheme.Typography.micro, weight: .semibold)
-                        .foregroundStyle(HideTheme.muted)
-                }
-                .foregroundStyle(HideTheme.secondary)
-                .padding(.horizontal, HideTheme.spacingSM)
-                .frame(height: 30)
-                .background(HideTheme.elevated, in: RoundedRectangle(cornerRadius: HideTheme.radiusSmall))
+                HideMenuChipLabel(
+                    title: selectedDevice?.label ?? "No device",
+                    image: Image(systemName: selectedDevice?.kind == "remote" ? "server.rack" : "laptopcomputer")
+                )
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .buttonStyle(.plain)
             .hideTooltip("Choose device")
+            .accessibilityLabel("Choose device, \(selectedDevice?.label ?? "No device")")
+            .accessibilityIdentifier("device-picker-trigger")
+            .popover(isPresented: $showingDevices, arrowEdge: .bottom) {
+                HideDevicePicker(devices: devices, selectedID: model.selectedDeviceID) { device in
+                    model.selectDevice(device)
+                    showingDevices = false
+                } dismiss: {
+                    showingDevices = false
+                }
+            }
+            #if DEBUG
+            .onAppear {
+                if CommandLine.arguments.contains("--verification-ui-fixture"),
+                   LaunchArguments.value("--verification-scene", in: CommandLine.arguments) == "device-picker" {
+                    DispatchQueue.main.async { showingDevices = true }
+                }
+            }
+            #endif
 
             Spacer(minLength: 0)
 
@@ -351,11 +341,6 @@ private struct SidebarUtilityBar: View {
         }
     }
 
-    private func deviceStatusColor(_ device: CoreDeviceSnapshot) -> Color {
-        device.state == "ready" || device.state == "available"
-            ? HideTheme.success
-            : HideTheme.warning
-    }
 }
 
 private struct HideProviderMark: View {

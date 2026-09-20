@@ -558,6 +558,140 @@ fn pane_focus_request_waits_for_its_matching_authoritative_confirmation() {
     );
 }
 
+/// A child can live in another registered checkout. Opening it is still one
+/// pane-focus intent: Hide moves the local project context on the dispatch,
+/// then the session event from that pane confirms the same request.
+#[test]
+fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
+    let fixture_root = std::env::temp_dir().join(format!(
+        "herdr-core-cross-checkout-{}-{}",
+        std::process::id(),
+        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let root_a = fixture_root.join("alpha");
+    let root_b = fixture_root.join("beta");
+    std::fs::create_dir_all(&root_a).expect("first registered checkout");
+    std::fs::create_dir_all(&root_b).expect("second registered checkout");
+    let path_a = root_a.to_string_lossy().into_owned();
+    let path_b = root_b.to_string_lossy().into_owned();
+    let project_a = "project:a";
+    let project_b = "project:b";
+    let checkout_a = workspace::checkout_id_for_path(project_a, &root_a);
+    let mut runtime = runtime();
+    runtime.snapshot.ui_state.workspace_registrations = vec![
+        WorkspaceRegistration {
+            id: project_a.to_owned(),
+            label: "Alpha".to_owned(),
+            path: path_a.clone(),
+            device_id: "local".to_owned(),
+            pinned: false,
+        },
+        WorkspaceRegistration {
+            id: project_b.to_owned(),
+            label: "Beta".to_owned(),
+            path: path_b.clone(),
+            device_id: "local".to_owned(),
+            pinned: false,
+        },
+    ];
+    runtime.rebuild_catalog();
+    runtime.snapshot.navigator.focused_workspace_id = Some(project_a.to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout_a.clone());
+    runtime.snapshot.navigator.root_path = Some(path_a.clone());
+    runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_a);
+    let socket_path = std::env::temp_dir()
+        .join(format!(
+            "herdr-core-cross-checkout-focus-{}-{}.sock",
+            std::process::id(),
+            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+        .to_string_lossy()
+        .into_owned();
+    runtime.live = Some(live::LiveContext {
+        socket_path: socket_path.clone().into(),
+        herdr_bin: None,
+        runtime: std::sync::Weak::new(),
+        notifier: crate::ffi::ChangeNotifier::noop(),
+        api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
+    });
+    let payload = |focused_workspace_id: &str, focused_pane_id: &str| {
+        serde_json::from_value(serde_json::json!({
+            "agents": [],
+            "focused_workspace_id": focused_workspace_id,
+            "focused_pane_id": focused_pane_id,
+            "workspaces": [
+                {"workspace_id": "herdr-a", "label": "Alpha", "active_tab_id": "herdr-a:t1"},
+                {"workspace_id": "herdr-b", "label": "Beta", "active_tab_id": "herdr-b:t1"}
+            ],
+            "tabs": [
+                {"workspace_id": "herdr-a", "tab_id": "herdr-a:t1", "label": "1"},
+                {"workspace_id": "herdr-b", "tab_id": "herdr-b:t1", "label": "1"}
+            ],
+            "panes": [
+                {"pane_id": "herdr-a:p1", "cwd": path_a},
+                {"pane_id": "herdr-b:p1", "cwd": path_b}
+            ],
+            "layouts": [
+                {
+                    "workspace_id": "herdr-a", "tab_id": "herdr-a:t1", "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "herdr-a:p1",
+                    "panes": [{"pane_id": "herdr-a:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                },
+                {
+                    "workspace_id": "herdr-b", "tab_id": "herdr-b:t1", "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": "herdr-b:p1",
+                    "panes": [{"pane_id": "herdr-b:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                }
+            ]
+        }))
+        .expect("two-checkout session payload")
+    };
+
+    runtime.ingest_session(Ok(payload("herdr-a", "herdr-a:p1")));
+    let checkout_b = runtime
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == project_b)
+        .and_then(|workspace| workspace.checkouts.first())
+        .map(|checkout| checkout.id.clone())
+        .expect("second registered checkout is projected");
+    assert!(runtime.dispatch_json(&correlated_pane_focus_event(
+        "herdr-b:p1",
+        "relationship-cross-checkout",
+    )));
+    assert_eq!(
+        runtime.snapshot().navigator.focused_workspace_id.as_deref(),
+        Some(project_b)
+    );
+    assert_eq!(
+        runtime.snapshot().navigator.focused_checkout_id.as_deref(),
+        Some(checkout_b.as_str())
+    );
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("herdr-b:p1")
+    );
+
+    runtime.ingest_session(Ok(payload("herdr-b", "herdr-b:p1")));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .pane_focus_request
+            .as_ref()
+            .map(|request| request.phase.as_str()),
+        Some("succeeded")
+    );
+    assert_eq!(diagnostic_count(&runtime, "view_focus.timed_out"), 0);
+    std::fs::remove_dir_all(fixture_root).ok();
+}
+
 /// PRD B24, engineering rule 11. Replaying one request id produces no
 /// second pane-control effect. A retry receives a new id only after the
 /// core-owned timeout has ended the first wait.

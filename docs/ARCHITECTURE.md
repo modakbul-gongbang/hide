@@ -28,10 +28,12 @@ Its event loop also receives hook and refresh wakes through a short-lived Unix s
 When the stream ends, the plugin reconnects with bounded exponential backoff and always starts from a fresh pane list; an event is only a prompt to list again, and nothing is read off it but its kind.
 
 The shell holds no authority, but the core does not hand all of it to Herdr either.
-Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
+Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns the focused project and checkout, each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
 The core also owns which Claude and Codex panes show their conversation ledger in place of the terminal (`ui_state.conversation_pane_ids`): a pane opens on its terminal, enters the set only through `toggle_conversation`, and leaves it with the pane, so a refresh never turns a pane back into a conversation the operator did not ask for.
 A core-owned value changes on the event that asked for it and Herdr is told afterwards, so the canvas and the focus ring never wait for a round trip.
-While that notification is pending, the Herdr workspace that owns the target showing it is read as its confirmation, whichever workspace holds Herdr's keyboard, because a checkout is keyed by path and can hold tabs from several Herdr workspaces; with nothing pending, a move of Herdr's focused tab or pane to another value is followed and a diagnostic records the ids and the origin; a refusal or a timeout keeps the core's value and records a diagnostic, and nothing is presented to the operator.
+Selecting a pane first moves the core-owned project, checkout and visible tab to the context that owns that pane, then sends one `pane.focus` request to Herdr; splitting that user action into project, tab and pane requests would expose intermediate frames and make partial refusal possible.
+While that notification is pending, the Herdr workspace that owns the target showing it is read as its confirmation, whichever workspace holds Herdr's keyboard, because a checkout is keyed by path and can hold tabs from several Herdr workspaces; with nothing pending, a move of Herdr's focused tab or pane to another value is followed and a diagnostic records the ids and the origin.
+A refusal or timeout keeps the core-owned context at the requested target, records a diagnostic and resolves the correlated shell request as a retryable failure; the shell presents Retry and Dismiss, and Dismiss clears only that notice.
 A non-focused workspace's active tab is that workspace's memory, never a focus to follow: folding every workspace's active tab into one value per checkout let the last one overwrite the rest, and every tab focus on the other workspace timed out and snapped back.
 Herdr moves that memory silently: a close that removes a workspace's active tab is followed by `tab_focused` only when the workspace holds Herdr's keyboard focus, and by nothing at all otherwise.
 The replica therefore asks `workspace.get` for the replacement the moment such a close is applied and on each operation tick while the answer names a tab the stream has not delivered yet; a workspace still waiting after a bounded number of reads is a replica that cannot converge, and it is rebuilt from a fresh snapshot.
@@ -60,13 +62,14 @@ Herdr owns split geometry and the PTY size, so a delegated child pane is really 
 Detection is the same on every pass, so a child that arrives while Hide is running and one already split when Hide started take the same path, and a refusal is retried on a fixed interval rather than assumed to have worked.
 Herdr reports a refusal as an unchanged move with a reason rather than as an error, so the decision reads `changed` instead of trusting a successful request.
 
-Ownership is the fourth derived status axis and it is read off the lineage, never stored.
+Ownership is the fifth derived status axis and it is read off the lineage, never stored.
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; a per-child stall clock is what brings work back when it stops being anybody's problem.
 `docs/status-model.md` owns both rules.
 The Agents `My Work` view filters only the core-final Delegated answer and leaves hard escalations and visible orphans in operator-owned groups; `All` changes only the shell's session-local visibility projection.
 Overview groups the same canonical agents by the checkout their pane is in and nests a child under its parent only from authoritative child IDs; a parent in another worktree is named in a caption, never inferred.
 The Overview has no selection of its own: a row click dispatches the existing pane-selection event, a header click the checkout-focus event, and the `N files` chip one `overview_open_section` event that focuses the checkout and switches the panel to History together, so a refusal cannot leave the screen half moved.
-`agent_start_in_checkout` creates a tab in the checkout's workspace through the task-operation slot that `create_worktree` already uses, and the shell starts the chosen provider in the created pane on the same path.
+`agent_start_in_checkout` creates a tab in a Herdr workspace used exclusively by that project through the task-operation slot that `create_worktree` already uses, and the shell starts the chosen provider in the created pane on the same path.
+When every known Herdr workspace for the checkout is also associated with another registered project, Add Tab and agent start create a fresh workspace with the checkout path instead of leaking the other project's label and tabs into the new surface.
 
 What an agent has spawned in-process is not on Herdr's wire at all.
 The hook helper reports it through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.
@@ -90,6 +93,35 @@ Deciding this for the whole checkout is what refused every drag in a checkout tw
 A pane that is going away ends its attach quietly.
 Herdr closes the PTY before it reports the pane gone, so the attach child ends while the pane is still drawn; projecting that as `ended` is what flashed "terminal attach ended" over a pane the operator had just closed.
 A close Hide asked for, or a pane Herdr has already stopped listing, projects `closing` with no notice chunk and keeps the pane's last frame until it is removed. Every other reason still reports `ended` with its message.
+
+### Explicit terminal attachments
+
+`ImeTerminalView` and `TerminalFileDrop` own only native pasteboard ingress.
+Finder file URLs, Command-V images and Control-V images become one `terminal_attachment` intent carrying the original pane ID, bracketed-paste mode and a generated request UUID.
+Control-V without an image and ordinary text paste retain SwiftTerm's input path; active IME composition is not consumed by image ingress.
+Clipboard preparation completes that same intent with `terminal_attachment_ready`, after one off-main task validates encoded bytes and pixel dimensions and writes a private PNG beside the app state under `TerminalClipboard`.
+No clipboard image bytes enter the JSON event or the render mutex.
+
+`runtime/attachments.rs` owns admission, captured terminal and remote connection generations, one active worker, retry, cancellation and an ordered 64 KiB input reservation.
+Subsequent input to the originating pane is held until file preparation and transfer succeed, then the complete quoted path payload and held bytes enter the existing terminal writer together.
+No Enter is synthesized, and an upload failure never forwards held input, because it may contain an Enter that would submit an incomplete prompt.
+Retry keeps immutable prepared bytes; cancel discards held input explicitly.
+Missing, closed, released or reconnected targets retire the intent and cannot forward its data to a replacement session or fall back to the local host.
+Only admission, completion and actionable failure transitions publish a notice through `status.async_operations`; terminal-specific actions render in the originating pane.
+
+`terminal_attachments.rs` reads only explicitly selected regular files, rejects final-component symlinks, special files, control-character paths and files that change while read, and constructs ordered quoted terminal input.
+The bounds are eight files, 20 MiB per file and 40 MiB per intent; clipboard decoding additionally allows at most 16 megapixels.
+`remote/attachments.rs` transfers the immutable bytes with the existing authenticated `RusshSftpTransport`, not a shell command or a subprocess, and returns only remote paths.
+Remote staging lives in the remote user's private `.hide-terminal-attachments` directory, with generated exclusive filenames, 0700 directory and 0600 file permissions, ownership checks and same-byte verification before adopting a completed upload on retry.
+Connection setup is bounded at 15 seconds and transfer work at 45 seconds; cleanup has its own bounded connection and operation timeouts.
+Neither filesystem nor network I/O runs under `Mutex<Runtime>`.
+
+Both staging locations admit at most 128 files and 256 MiB.
+Cleanup scans only their immediate generated entries on the next explicit attachment intent and expires entries older than 24 hours; there is no background janitor and successful paths may therefore survive longer while idle.
+Local clipboard PNGs remain available after a successful local paste, while remote success releases the local PNG after upload.
+Cancellation, retirement and destruction attempt to remove only that intent's exact generated files; failed remote cleanup is diagnostic and remains bounded by the next-intent expiry policy.
+Original user-selected files are never deleted.
+This boundary has no provider-specific draft, composer or attachment shelf.
 
 ### Reopening locally closed work
 

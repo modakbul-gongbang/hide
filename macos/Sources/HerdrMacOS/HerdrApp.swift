@@ -333,7 +333,15 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                     self.model.settingsInitialTab = .agents
                     self.model.showSettings = true
                 case "file-search": self.model.showFileSearch = true
+                case "recent-panels": self.model.beginOrAdvanceTabSwitcher()
+                case "recent-projects": self.model.beginOrAdvanceProjectSwitcher()
+                case "device-picker": break // The sidebar presents its real anchored popover.
                 case "add-device": self.presentVerificationAddDeviceSheet()
+                case "pane-selection-failure":
+                    self.model.requestPaneSelection(
+                        from: "fixture-working",
+                        to: "fixture-retired"
+                    )
                 default:
                     self.model.interactionNotice = "Unknown verification scene: \(scene)"
                 }

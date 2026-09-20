@@ -20,7 +20,8 @@ Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host 
 
 `main` takes pull-request merges only, and the `verify` workflow has to pass; this repository currently uses merge commits, and no one, maintainer included, can push around branch protection.
 `CONTRIBUTING.md` lists every gate with its local command; run the lanes the diff touches before opening the pull request, and change a gate that is wrong in the same pull request with the reason in the description.
-Answer the template's `Risk surface`, `Review focus` and `Breaking change` from the diff, not from intent, and delete the lines that do not apply rather than filling them with "N/A".
+Write the template in the order a reviewer reads it: `Summary` with screenshots, `Review` (what needs judgment, which files to watch and why, questions), `Evidence` (what was and was not confirmed), then `Breaking change` only when something breaks; answer from the diff, not from intent, and delete the lines that do not apply rather than filling them with "N/A".
+The reasons this repository has been burned by stay behind `Review`'s file list (runtime mutex, snapshot wire, ownership, Herdr contract, failure path, high-frequency path); machine facts such as SHAs, suite output and evidence hashes go in the folded `Verification record` block at the end, which `/ship` fills.
 
 ## Evidence Belongs Outside The Repository
 
