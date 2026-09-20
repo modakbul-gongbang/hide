@@ -213,7 +213,7 @@ enum HideSearchPresentation {
         return HideSearchEntry.filtered(entries, query: query)
     }
 
-    /// The line under an agent's name: the sentence the core chose for its
+    /// The line under an agent's title: the sentence the core chose for its
     /// state, else the rolling task when it is not already the title, else
     /// the status word. The pane id left this line for the match field and
     /// the accessibility label (PRD D-15).

@@ -825,7 +825,7 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     let requiresCloseConfirmation: Bool
     /// Whether activity must be refreshed before the core permits a close.
     let requiresCloseStatusCheck: Bool
-    /// The agent's stable name, from the same ladder the sidebar row shows.
+    /// The agent's title, from the same ladder the sidebar row shows.
     let identityLabel: String?
     let activityAt: UInt64?
     let fork: CorePaneFork
@@ -1147,7 +1147,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let requiresCloseConfirmation: Bool
     /// Whether the activity status must be refreshed before closing this pane.
     let requiresCloseStatusCheck: Bool
-    /// The stable name every surface calls this agent by (PRD D-01).
+    /// The title every surface calls this agent by (PRD D-01).
     let identityLabel: String
     /// The label plugin's rolling task title; the search sheet's subtitle
     /// when the state chose no sentence (PRD D-15).
@@ -1298,4 +1298,3 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case stallNotice = "stall_notice"
     }
 }
-

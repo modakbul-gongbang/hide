@@ -346,15 +346,18 @@ enum OverviewPresentation {
     }
 
     /// The row's second text: the sentence the core chose for its state, or
-    /// the rolling task title when the state chose none.
+    /// the rolling task when an operator name is the title. A task already
+    /// used as the title is not repeated.
     static func rowTask(_ agent: SidebarAgent) -> String? {
-        agent.detail ?? agent.task
+        if let detail = agent.detail { return detail }
+        if let task = agent.task, task != agent.identityLabel { return task }
+        return nil
     }
 
     // MARK: - Search
 
     /// Whether a group survives the query: its branch matches, or one of its
-    /// rows does by name or task. A matching group keeps only its matching
+    /// rows does by title or task. A matching group keeps only its matching
     /// rows plus their ancestors, in the order they already had (PRD B15).
     static func filter(
         entries: [AgentEntry],

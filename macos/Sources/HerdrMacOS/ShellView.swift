@@ -706,12 +706,11 @@ enum PaneHeaderPresentation {
     /// The name a pane is shown by, most specific first.
     ///
     /// A Herdr label is a name the user chose for this pane, so it outranks
-    /// everything. The core's agent identity is the stable session name the
-    /// sidebar row already shows, so the header and the sidebar name one pane
-    /// the same way (PRD D-09). A terminal title is what the running program
-    /// calls itself; Claude Code flips it between the session name and a
-    /// status line such as "Claude is waiting for…", which is why it ranks
-    /// below the identity. The workspace label names the project, which
+    /// everything. The core's agent identity is the operator's Herdr name or
+    /// rolling task title that the sidebar already shows, so the header and
+    /// sidebar call one pane the same thing (PRD D-09). A terminal title is
+    /// what the running program calls itself and can change with status, which
+    /// is why it ranks below the identity. The workspace label names the project, which
     /// every pane in it shares. The pane id is the last resort and is never
     /// empty.
     static func title(

@@ -558,7 +558,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
     changed
 }
 
-/// Names each Herdr strip entry after the one agent its tab holds.
+/// Titles each Herdr strip entry after the one agent its tab holds.
 ///
 /// Runs on the same passes as the pane status, so the entry's mark and
 /// emphasis follow the read axis, and again whenever a strip is rebuilt, so

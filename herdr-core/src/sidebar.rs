@@ -685,21 +685,14 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
     }
 }
 
-/// The stable, user-facing identity shared by lineage surfaces.
+/// The user-facing title shared by lineage surfaces.
 ///
-/// The ladder is `name token → Herdr agent name → task → workspace label`
-/// (PRD D-01, D-03). The `name` token is the session name the label plugin
-/// read off the agent's own session file when Herdr refused it as an agent
-/// name; the Herdr agent name is the one the operator or the plugin gave. `task` is the
-/// plugin's rolling title, which moves between turns, so it stands in only
-/// when no name exists at all. A pane id is a transport handle, never a
-/// name: a report-only pane whose `id` is its pane id falls through to the
-/// workspace label.
+/// The ladder is `operator Herdr agent name → task → workspace label` (PRD
+/// D-01). A pane id is a transport handle, never a name: a report-only pane
+/// whose `id` is its pane id falls through to the task or workspace label.
 fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
-    agent
-        .name
-        .clone()
-        .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
+    (agent.id != agent.pane_id)
+        .then(|| agent.id.clone())
         .or_else(|| agent.task.clone())
         .unwrap_or_else(|| agent.workspace_label.clone())
 }
@@ -962,10 +955,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         })
         .unwrap_or("workspace")
         .to_owned();
-    // The three label-plugin sentences, each one line. The plugin already
+    // The label-plugin title and sentences, each one line. The plugin already
     // bounds them; the cut here is the same bound applied once more so a
     // value that outran it cannot reach a row.
-    let name = token_text(&agent.tokens, "name", MAX_TOKEN_TEXT_CHARS);
     let task = token_text(&agent.tokens, "task", MAX_TOKEN_TEXT_CHARS);
     let progress = token_text(&agent.tokens, "progress", MAX_TOKEN_TEXT_CHARS);
     let expected_reply = token_text(&agent.tokens, "expected_reply", MAX_EXPECTED_REPLY_CHARS);
@@ -995,7 +987,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         requires_close_confirmation: false,
         requires_close_status_check: false,
         identity_label: String::new(),
-        name,
         task,
         progress,
         expected_reply,
@@ -1777,12 +1768,14 @@ mod tests {
         );
     }
 
-    /// PRD D-01, D-03: the name ladder, one rung at a time, top to bottom.
+    /// PRD D-01: an operator name wins, otherwise the rolling task is the
+    /// title and the workspace is the final fallback. A retired `name` token
+    /// has no effect.
     #[test]
-    fn identity_ladder_prefers_name_then_herdr_name_then_task() {
+    fn identity_ladder_prefers_herdr_name_then_task_then_workspace() {
         let projected = projected(json!([
             {"pane_id":"p2","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p3","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p3","id":"p3","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","name":"첫 프롬프트","task":"hook 보고 경로 수정"}},
             {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}},
             {"pane_id":"p5","id":"p5","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000005"}}
         ]));
@@ -1792,7 +1785,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             labels,
-            ["Hook 버그 확인", "impl-x", "hook 보고 경로 수정", "hide"]
+            [
+                "impl-x",
+                "hook 보고 경로 수정",
+                "hook 보고 경로 수정",
+                "hide"
+            ]
         );
     }
 
@@ -1870,7 +1868,7 @@ mod tests {
     #[test]
     fn projected_rows_carry_the_second_line_and_the_chip_repeats_it() {
         let projected = projected(json!([
-            {"pane_id":"p1","id":"p1","workspace_label":"hide","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000001","name":"Hook 버그 확인","progress":"hook 보고 경로를 소켓 호출로 교체 중","expected_reply":"무시됨"}},
+            {"pane_id":"p1","id":"p1","workspace_label":"hide","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000001","task":"Hook 버그 확인","progress":"hook 보고 경로를 소켓 호출로 교체 중","expected_reply":"무시됨"}},
             {"pane_id":"p2","id":"p2","workspace_label":"hide","tokens":{"status_question_new":"?","activity":"0000000000002","progress":"푸시 완료","expected_reply":"A/B 선택"}},
             {"pane_id":"p3","id":"p3","workspace_label":"hide","tokens":{"status_idle":"○","activity":"0000000000003"}}
         ]));

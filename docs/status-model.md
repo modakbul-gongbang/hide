@@ -297,9 +297,9 @@ The workspace inspector uses the canonical representative agent and disconnected
 ## Task identity
 
 The core publishes one `identity_label` per agent, and every surface calls the agent by it: the sidebar row, the pane header, the ⌘K search row, the ⌃Tab Recent Panels row, the lineage chips, and the Overview agent line.
-`sidebar.rs` owns the ladder: the `name` token the label plugin publishes when Herdr refused the session name as an agent name, then the Herdr agent name, then the plugin's rolling `task`, then the workspace label.
-The session name is the plugin's to derive (Claude's `ai-title`, Codex's first human turn) and is written once per session, so the title does not move while the agent works; `task` is a fallback for an agent that has no name yet, not a name.
-There is no `summary` token and no missing-summary notice: an agent without a plugin label is titled by its Herdr name or its workspace, and the row says nothing else.
+`sidebar.rs` owns the ladder: an operator-chosen Herdr agent name, then the plugin's rolling `task`, then the workspace label.
+The plugin publishes no session `name`, does not read Claude's `ai-title` or Codex's first human turn as a separate title, and never renames an agent or tab.
+There is no `summary` token and no missing-summary notice: an agent without a task is titled by its Herdr name or its workspace, and the row says nothing else.
 Truncation belongs to each view and does not shorten tooltip or accessibility text.
 Projection adds bounded-by-metadata strings per agent to the existing snapshot burst, with no extra event, timer, worker, or subprocess.
 
@@ -318,12 +318,12 @@ The sentences come from the plugin's tokens: `expected_reply` is the one action 
 `status_word_visible` is true only when the group wanted a sentence and the tokens carried none: the status word stands in for it, so an emphasized or working row never has an empty second line and a plugin that is absent or has not labelled the pane yet reads as before, title and status word.
 Beside a sentence the word is never drawn; the mark and the group heading already say it.
 A delegated row follows the same table for its own group, which for a child is Working or Seen, so a delegated child that has stopped shows only its title.
-The pane header is one line: `name · sentence`, or `name · word` for a row with no sentence, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
-The accessibility label of a row and of a header always carries the status word, in the order name, agent kind, status word, sentence, so a row whose word left the screen is still read out with it.
+The pane header is one line: `title · sentence`, or `title · word` for a row with no sentence, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
+The accessibility label of a row and of a header always carries the status word, in the order title, agent kind, status word, sentence, so a row whose word left the screen is still read out with it.
 
 ### Search and Recent Panels
 
 The ⌘K sheet's agent row is titled by the identity and subtitled by the second line above; when the state chose no sentence it falls to the rolling `task`, unless that is already the title, and then to the status word.
 The pane id is no longer printed on the row but still matches the query and is read by accessibility.
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
-The core never renames the Herdr tab for this; the plugin does, under its own ownership rule.
+Neither the core nor the plugin renames the Herdr tab for this; the Recent Panels label is projection only.

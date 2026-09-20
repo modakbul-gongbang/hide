@@ -1439,16 +1439,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         _ agent: String,
         _ statusToken: String
     ) -> [String: Any] {
-        [
-            "id": id,
-            "pane_id": "fixture-\(id)",
+        let paneID = "fixture-\(id)"
+        return [
+            "id": paneID,
+            "pane_id": paneID,
             "workspace_label": workspace,
             "agent": agent,
             "agent_status": id == "working" ? "working" : id == "idle" ? "idle" : "unknown",
             "tokens": [
                 statusToken: symbol,
                 "activity": activity,
-                "progress": progress,
+                "task": progress,
                 "elapsed": elapsed,
             ],
         ]

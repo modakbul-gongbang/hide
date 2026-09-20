@@ -91,7 +91,7 @@ struct AgentRowPresentation: Equatable {
     /// The core's short human word. No view builds one out of an axis value.
     let statusLabel: String
     let statusColor: Color
-    /// The stable session name (PRD D-01).
+    /// The operator's Herdr name or the rolling task title (PRD D-01).
     let title: String
     /// The sentence the core chose for this row's state: what the operator is
     /// asked for, or what the agent is doing. `nil` draws none (PRD D-06).
@@ -120,9 +120,9 @@ struct AgentRowPresentation: Equatable {
 }
 
 extension AgentRowPresentation {
-    /// A sidebar row. The session name is the title at both densities; a
-    /// `prominent` row sits outside the project tree, so it names its home in
-    /// the qualifier, where a nested row already has the heading above it.
+    /// A sidebar row. The canonical identity is the title at both densities;
+    /// a `prominent` row sits outside the project tree, so it names its home
+    /// in the qualifier, where a nested row already has the heading above it.
     init(
         agent: SidebarAgent,
         density: AgentRowDensity,
@@ -150,7 +150,7 @@ extension AgentRowPresentation {
     }
 
     /// A pet dashboard row. The dashboard groups by project, so the project
-    /// name is the heading and the agent's name is the title. A server that
+    /// name is the heading and the agent's canonical title is the row title. A server that
     /// stopped answering is a state of the row, not of the agent, so it takes
     /// the disconnected mark and says so in its own word.
     init(row: PetDashboardRow) {

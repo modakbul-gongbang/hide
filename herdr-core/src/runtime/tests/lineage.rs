@@ -343,7 +343,7 @@ fn the_breadcrumb_path_and_each_steps_siblings_come_out_of_the_lineage() {
 }
 
 #[test]
-fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
+fn lineage_identity_uses_tasks_when_no_operator_name_exists() {
     let mut rows = project_agents(
         serde_json::from_value(serde_json::json!({"agents": [
             {
@@ -351,15 +351,14 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
                 "agent_status":"working",
                 "state_change_seq":1,
                 "workspace_label":"Workspace",
-                "tokens":{"name":"Project coordinator"}
+                "tokens":{"task":"Project coordinator"}
             },
             {
-                "id":"qa-lineage-child",
                 "pane_id":"w1:p2",
                 "spawned_from_pane_id":"w1:p1",
                 "agent_status":"working",
                 "state_change_seq":2,
-                "tokens":{"name":"Hide design QA"}
+                "tokens":{"task":"Hide design QA"}
             }
         ]}))
         .unwrap(),

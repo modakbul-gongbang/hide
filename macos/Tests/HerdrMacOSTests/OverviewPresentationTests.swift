@@ -79,11 +79,17 @@ private func checkout(
     return checkout
 }
 
-private func agent(_ id: String, name: String, task: String? = nil, delegated: Bool = false) -> SidebarAgent {
+private func agent(
+    _ id: String,
+    name: String,
+    task: String? = nil,
+    detail: String? = nil,
+    delegated: Bool = false
+) -> SidebarAgent {
     var agent = SidebarAgent(
         id: id, paneID: id, workspaceLabel: "hide", agentKind: "claude", demand: "none", activity: "working",
         unread: false, group: "working", symbol: "\u{25cf}", identityLabel: name, task: task,
-        elapsed: "1m", lastActivity: "0000000000001"
+        detail: detail, elapsed: "1m", lastActivity: "0000000000001"
     )
     agent.delegated = delegated
     return agent
@@ -93,6 +99,22 @@ private let ready = CoreGithubStatus(available: true, loading: false, stale: fal
 
 @Suite("Project Overview")
 struct OverviewPresentationTests {
+    @Test func aTaskUsedAsTheTitleIsNotRepeatedAsRowDetail() {
+        let taskTitle = agent("p1", name: "훅 보고 경로 수정", task: "훅 보고 경로 수정")
+        #expect(OverviewPresentation.rowTask(taskTitle) == nil)
+
+        let operatorNamed = agent("p2", name: "observer", task: "훅 보고 경로 수정")
+        #expect(OverviewPresentation.rowTask(operatorNamed) == "훅 보고 경로 수정")
+
+        let progressing = agent(
+            "p3",
+            name: "훅 보고 경로 수정",
+            task: "훅 보고 경로 수정",
+            detail: "회귀 테스트 추가 중"
+        )
+        #expect(OverviewPresentation.rowTask(progressing) == "회귀 테스트 추가 중")
+    }
+
     @Test func theSubtitleCountsWorkspacesAndNamesInactiveOnesOnlyWhenThereAreSome() {
         #expect(OverviewPresentation.subtitle(workspaceCount: 1, inactiveCount: 0) == "Project · 1 workspace")
         #expect(OverviewPresentation.subtitle(workspaceCount: 6, inactiveCount: 2) == "Project · 6 workspaces · 2 inactive")

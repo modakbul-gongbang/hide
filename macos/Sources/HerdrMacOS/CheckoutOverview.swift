@@ -526,7 +526,7 @@ struct CheckoutOverview: View {
         .accessibilityIdentifier("overview-empty-\(checkout.id)")
     }
 
-    /// One agent row: mark, badge, name, task, and the trailing `↗` that
+    /// One agent row: mark, badge, title, optional detail, and the trailing `↗` that
     /// says what a click does. The whole row is the button (PRD B9).
     private func agentRow(_ entry: OverviewPresentation.AgentEntry) -> some View {
         let agent = entry.agent

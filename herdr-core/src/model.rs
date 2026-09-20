@@ -332,16 +332,12 @@ pub struct SidebarAgentSnapshot {
     /// Derived: the activity evidence is incomplete, so a destructive close
     /// must wait for a fresh status rather than assuming the pane is idle.
     pub requires_close_status_check: bool,
-    /// The stable name every surface calls this agent by; `sidebar.rs` owns
-    /// the ladder that picks it (PRD D-01).
+    /// The title every surface calls this agent by; `sidebar.rs` owns the
+    /// ladder that picks it (PRD D-01).
     pub identity_label: String,
-    /// The session name the label plugin published as a token when Herdr
-    /// refused it as an agent name (PRD D-03).
-    #[serde(skip_serializing)]
-    pub name: Option<String>,
-    /// The label plugin's rolling task title. A fallback name in the row,
-    /// and the search sheet's subtitle when the state chose no sentence
-    /// (PRD D-01, D-15).
+    /// The label plugin's rolling task title. It is the default row title and
+    /// the search sheet's subtitle when the state chose no sentence (PRD D-01,
+    /// D-15).
     pub task: Option<String>,
     /// The label plugin's one-line progress sentence.
     #[serde(skip_serializing)]
@@ -757,8 +753,8 @@ pub struct PaneSnapshot {
     pub requires_close_confirmation: bool,
     /// Whether the core needs a fresh activity status before allowing a close.
     pub requires_close_status_check: bool,
-    /// The agent's stable name, from the same ladder the sidebar row shows,
-    /// so the header and the row cannot call one pane two things (PRD D-09).
+    /// The agent's title, from the same ladder the sidebar row shows, so the
+    /// header and the row cannot call one pane two things (PRD D-09).
     pub identity_label: Option<String>,
     pub activity_at_unix_ms: Option<u64>,
     pub fork: PaneForkSnapshot,
