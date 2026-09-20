@@ -2386,11 +2386,21 @@ impl Runtime {
                 visible_purpose = Some((purpose, token_written));
                 ("ready", None, None)
             }
-            Ok(live::PurposeTaskOutcome::GitFailed { purpose, detail }) => {
-                visible_purpose = Some((purpose, true));
+            Ok(live::PurposeTaskOutcome::GitFailed {
+                purpose,
+                token_written,
+                detail,
+            }) => {
+                if token_written {
+                    visible_purpose = Some((purpose, true));
+                }
                 (
                     "failed",
-                    Some("Saved to Herdr, but git did not record it. Save tries again.".to_owned()),
+                    Some(if token_written {
+                        "Saved to Herdr, but git did not record it. Save tries again.".to_owned()
+                    } else {
+                        "Git did not record it. Your text is kept; Save tries again.".to_owned()
+                    }),
                     Some(("checkout_purpose.git_failed", detail)),
                 )
             }

@@ -161,6 +161,7 @@ pub enum PurposeTaskOutcome {
     },
     GitFailed {
         purpose: String,
+        token_written: bool,
         detail: String,
     },
 }
@@ -701,8 +702,11 @@ fn write_purpose(
             purpose,
             token_written,
         }),
-        Err(detail) if token_written => Ok(PurposeTaskOutcome::GitFailed { purpose, detail }),
-        Err(detail) => Err(detail),
+        Err(detail) => Ok(PurposeTaskOutcome::GitFailed {
+            purpose,
+            token_written,
+            detail,
+        }),
     }
 }
 
@@ -1071,9 +1075,28 @@ mod tests {
             write_purpose(&server, &git, &purpose_request("Visible live")).unwrap(),
             PurposeTaskOutcome::GitFailed {
                 purpose: "Visible live".into(),
+                token_written: true,
                 detail: "injected git lock".into(),
             }
         );
+    }
+
+    #[test]
+    fn git_failure_without_a_live_workspace_reports_no_partial_save() {
+        let server = server(vec![]);
+        let git = ScriptedGit::new(vec![Err("injected git lock")]);
+        let mut request = purpose_request("Keep input");
+        request.session_workspace_id = None;
+
+        assert_eq!(
+            write_purpose(&server, &git, &request).unwrap(),
+            PurposeTaskOutcome::GitFailed {
+                purpose: "Keep input".into(),
+                token_written: false,
+                detail: "injected git lock".into(),
+            }
+        );
+        assert!(server.requests.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1292,6 +1315,7 @@ mod tests {
         run(&["init", "-b", "main"]);
         run(&["config", "user.name", "Fixture"]);
         run(&["config", "user.email", "fixture@example.invalid"]);
+        run(&["config", "commit.gpgsign", "false"]);
         run(&["commit", "--allow-empty", "-m", "seed"]);
         run(&["branch", "existing"]);
 
@@ -1444,6 +1468,7 @@ mod tests {
         run(&["init", "-b", "main"]);
         run(&["config", "user.name", "Fixture"]);
         run(&["config", "user.email", "fixture@example.invalid"]);
+        run(&["config", "commit.gpgsign", "false"]);
         std::fs::write(root.join("ignored.txt"), "base bytes").unwrap();
         run(&["add", "ignored.txt"]);
         run(&["commit", "-m", "base"]);
