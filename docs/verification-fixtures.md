@@ -13,6 +13,7 @@ A test that persists state must allocate its own temporary path.
 
 Swift tests in `macos/Tests/HerdrMacOSTests/` cover bundled theme loading, physical-key shortcut policy, pet placement and gestures, native rendering, and shell state.
 Some renderer tests use AppKit views and bitmap drawing in-process; they do not launch and operate the complete app.
+The debug app's `--verification-ui-fixture --verification-scene pane-selection-failure` launch renders a deterministic unavailable-pane failure over the normal fixture so native QA can verify Retry and Dismiss without touching an operator session.
 
 ```sh
 bash scripts/verify-cargo.sh test
