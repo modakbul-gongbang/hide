@@ -7,6 +7,7 @@ import {spawnSync, execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {layout, serialize} from '../pen-bands.mjs';
 import {requiredVariables} from '../pen-foundations.mjs';
+import {generate} from '../pen-canvas.mjs';
 
 const repository = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t, git = false) {
@@ -51,7 +52,7 @@ function canvas(root, {theme, map, variables} = {}) {
     unmapped: {},
   }, null, 2));
   // The Foundations sheet reads a fixed set of variables, so the fixture carries
-  // each as a design-authored stub; the layout pass draws the labels and the
+  // each as a design-authored stub; the generation pass draws the
   // sheet, which is what the check compares the file against.
   const stubs = Object.fromEntries(requiredVariables().map(name => [name,
     name.startsWith('--color-') ? {type: 'color', value: '#000000'} : name.startsWith('--font-') ? {type: 'string', value: 'Stub'} : {type: 'number', value: 1}]));
@@ -66,7 +67,7 @@ function canvas(root, {theme, map, variables} = {}) {
     })},
   }, mapped);
   fs.mkdirSync(path.join(root, 'design'), {recursive: true});
-  fs.writeFileSync(path.join(root, 'design/hide.pen'), serialize(document));
+  fs.writeFileSync(path.join(root, 'design/hide-ui.lib.pen'), serialize(document));
 }
 function command(root, args) { return execFileSync('git', args, {cwd: root, encoding: 'utf8'}); }
 function run(root, name, args = []) {
@@ -196,4 +197,49 @@ test('the design canvas check catches a drifted value and a token the design nev
     map: {mapped: {'--color-accent': 'accent', '--spacing-md': 'spacingMD'}, unmapped: {radiusMedium: 'Fixture reason'}},
   });
   assert.equal(run(root, 'check-pen.mjs').status, 0);
+});
+
+test('shared library rejects product and scratch boards but preserves authored sheet placement', t => {
+  const root = fixture(t), file = path.join(root, 'design/hide-ui.lib.pen');
+  const document = JSON.parse(fs.readFileSync(file, 'utf8'));
+  document.children[0].x = 451;
+  document.children[0].y = -120;
+  const component = {id: 'control-sheet', type: 'frame', name: 'Component / Control', x: 730, y: 915, children: [
+    {id: 'control-master', type: 'frame', name: 'Control', reusable: true, width: 24, height: 24},
+  ]};
+  document.children.unshift(component);
+  fs.writeFileSync(file, serialize(document));
+  assert.equal(run(root, 'check-pen.mjs').status, 0);
+  const regenerated = JSON.parse(generate(root).after);
+  assert.deepEqual(regenerated.children, document.children);
+  for (const name of ['Screen / Editor', 'Scratch / Candidate', 'Review / Proposal', 'Unclassified']) {
+    document.children[0].name = name;
+    fs.writeFileSync(file, serialize(document));
+    const result = run(root, 'check-pen.mjs');
+    assert.notEqual(result.status, 0);
+    assert.ok(result.stderr.includes(name));
+  }
+});
+
+test('rendered opacity follows theme changes and missing state bindings fail closed', t => {
+  const root = fixture(t), file = path.join(root, 'design/hide-ui.lib.pen');
+  const map = {mapped: {'--opacity-disabled': 'disabled'}, unmapped: {}, renderedOpacity: [
+    {node: 'disabled', variable: '--opacity-disabled'},
+    {node: 'menu', descendant: 'action', variable: '--opacity-disabled'},
+  ]};
+  canvas(root, {theme: 'enum HideTheme {\n static let disabled = 0.45\n}', map});
+  const document = JSON.parse(fs.readFileSync(file, 'utf8'));
+  document.children.push({id: 'disabled', type: 'frame', name: 'Component / Disabled', opacity: 1});
+  document.children.push({id: 'menu', type: 'ref', ref: 'disabled', name: 'Component / Menu', descendants: {action: {opacity: 1}}});
+  fs.writeFileSync(file, serialize(document));
+  assert.notEqual(run(root, 'check-pen.mjs').status, 0);
+  fs.writeFileSync(file, generate(root).after);
+  assert.equal(run(root, 'check-pen.mjs').status, 0);
+  write(root, 'HideTheme.swift', 'enum HideTheme {\n static let disabled = 0.6\n}');
+  const updated = JSON.parse(generate(root).after);
+  assert.equal(updated.children.find(n => n.id === 'disabled').opacity, 0.6);
+  assert.equal(updated.children.find(n => n.id === 'menu').descendants.action.opacity, 0.6);
+  map.renderedOpacity[1].descendant = 'missing';
+  fs.writeFileSync(path.join(root, 'scripts/pen-token-map.json'), JSON.stringify(map));
+  assert.throws(() => generate(root), /Invalid rendered opacity binding/);
 });

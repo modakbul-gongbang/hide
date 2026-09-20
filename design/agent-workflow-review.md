@@ -1,7 +1,7 @@
 # Agent workflow UI contract
 
-This document names the implemented Agent workflow surfaces in `design/hide.pen` and their code owners.
-The canvas contains current `Screen /` boards and reusable `Component /` masters only.
+This document maps the retained Agent workflow components in `design/hide-ui.lib.pen` to their code owners and behavioral contracts.
+Product screens and historical candidates are not library content.
 The former Final, R2, R3, handoff candidates, and the Overview family-only comparison are historical and must not be reconstructed.
 
 ## Product decisions
@@ -9,7 +9,6 @@ The former Final, R2, R3, handoff candidates, and the Overview family-only compa
 - Agents opens in `My Work` for each app session and offers `All` as an explicit scope change.
 - `My Work` excludes rows whose core-final ownership is Delegated, while hard escalations and visible orphans remain operator-owned and visible.
 - Both scopes preserve Needs You, Done, Working, and Seen instead of replacing status groups with a relationship tree.
-- Overview showed the current Project's live task forest across its Workspaces, with Git as a separate mode; the worktree-grouped list of `agents/prd/right-panel-overview/prd.md` replaced both, and the sections below that describe them are historical.
 - Selecting an Overview row changes inspection only.
 - The row's Open control is the only action that shows its pane and changes read state.
 - The pane header distinguishes the pane shown by Hide from the terminal that owns the native keyboard responder.
@@ -20,32 +19,23 @@ The former Final, R2, R3, handoff candidates, and the Overview family-only compa
 No runtime preference, migration, or cross-launch persistence is implied.
 The current Herdr/Sasu dispatch contract may omit parent lineage, so Hide filters only ownership the core can prove and never claims every supervisor-created worker is identifiable.
 
-## Canvas map
+## Library component map
 
 | Board | ID |
 | --- | --- |
-| Screen / Workbench / Parent | `wzrRI` |
-| Screen / Workbench / Delegated child tab | `IhnIO` |
-| Screen / Explorer / Git in workbench | `n2oTPf` |
-| Screen / Overview / Inspect without moving | `AZvEA` |
-| Screen / Agents / My Work status groups | `Snwg0` |
-| Screen / Pane / Relationship modal | `eXxKb` |
-| Screen / Overview / Project task forest | `c3Lf5` |
-| Screen / Overview / Availability states | `m5T3n1` |
-| Component / Spec / Pane header and focus | `mR198` |
-| Component / Spec / Narrow and non-agent headers | `b6Nt3Q` |
-| Component / Spec / Shared agent identity | `ZjPJ6` |
-| Component / Spec / Hierarchy widths | `INj5G` |
-| Component / Spec / Workspace disclosure | `g7trZv` |
-| Component / Spec / Tree interaction states | `m0gZNn` |
-| Component / Spec / Browser file diff toolbars | `p0Do2` |
-| Component / Spec / Relationship node | `d8bYuE` |
-| Component / Spec / Search and Recent Sessions identity | `dexoX` |
-| Component / Spec / Explorer Git states | `BMEZi` |
-| Component / Spec / Relationship action states | `ZEwQt` |
+| Component / Pane header and focus | `mR198` |
+| Component / Narrow and non-agent headers | `b6Nt3Q` |
+| Component / Shared agent identity | `ZjPJ6` |
+| Component / Hierarchy widths | `INj5G` |
+| Component / Workspace disclosure | `g7trZv` |
+| Component / Tree interaction states | `m0gZNn` |
+| Component / Browser file diff toolbars | `p0Do2` |
+| Component / Search and Recent Sessions identity | `dexoX` |
+| Component / Explorer Git states | `BMEZi` |
+| Component / Relationship action states | `ZEwQt` |
 
 The deleted `Review / UI Handoff / 00 Start here` and `90 Shared dependencies` boards were navigation aids, not product masters.
-Their adopted reusable content now lives in the Component band and all changed product compositions live in the Screen band.
+Their adopted reusable content lives in the library; product compositions are reviewed in task-local scratch and implemented in code.
 
 ## Master ownership
 
@@ -55,12 +45,10 @@ Their adopted reusable content now lives in the Component band and all changed p
 | Tree row `n1zn1O`, lineage segment `N6BTh4` | `LineageGuideView.swift`, `SidebarGrouping.swift`, `HideUI.swift` | Disclosure and selection remain separate, and 18pt lineage columns remain aligned through multiline rows. |
 | Workspace row `pPtY6` | `HideUI.swift`, `CheckoutCardPresentation.swift` | Workspace membership and agent delegation stay distinct, and expanding a Workspace changes no pane, tab, or read state. |
 | Focused pane `ZvLjg`, icon header `Z3BnL` | `ShellView.swift`, `PaneLineageHeader.swift` | The 28pt identity row, optional 24pt child row, shown wash, responder outline, zoom, and overflow use existing typed intents. |
-| Named child chip `j0Sji` | `PaneChildRow`, `PaneLineagePresentation` | One direct child is named and remaining direct children fold into an honest `+N`. |
-| Workbench `OwIFR` | `HideMainView`, `HideTabStrip`, `ShellModel.swift` | A delegated child occupies its own tab and returning chooses the authoritative parent placement. |
+| Named child chip within the pane-header sheet | `PaneChildRow`, `PaneLineagePresentation` | One direct child is named and remaining direct children fold into an honest `+N`. |
 | Browser chrome `KUcQU`, address toolbar `eMlZD`, document toolbar `hxdu7` | `BrowserPaneView.swift`, `EditorViewerOverlay.swift` | Browser, file, and diff surfaces keep their own controls and never inherit agent-only actions. |
 | Agent identity `HXWFK` in the Direct children sheet | `PaneRelationshipSheet`, `CorePaneChildren`, `CoreLineageStep` | Row selection inspects, Open navigates, and unavailable lineage stays explicit. |
 | Relationship action `p7Vim` | `ShellModel.swift`, `PaneLineageHeader.swift`, `HideUI.swift`, `CoreBridge.swift`, `runtime.rs` | One request ID carries Ready, Pending, Target unavailable, and Open failed outcomes across the sheet, Return control, direct child chip, and retained canvas. |
-| Project task overview `G4Sj9`, task item `AdQ5R` | `CheckoutOverview.swift`, `OverviewPresentation.swift` | The current Project's authoritative live forest crosses Workspaces without guessing missing parent links. |
 | Explorer Git row `mSu8p`, panel `Wo6qx` | `WorkspaceOutlineView.swift`, `WorkspaceOutlinePresentation.swift`, `changes.rs` | A fixed status slot renders M, A, U, R, conflict, folder-changed, and clean states without changing file-tree interaction. |
 
 ## Agents scope and lineage
@@ -91,7 +79,7 @@ Retry starts a new request after the failed one has settled.
 The result remains visible in the retained canvas when navigation removes the source sheet or header, including direct child-chip navigation.
 The shell does not treat `lastError`, an inactive historical layout, or optimistic remote navigation as success or failure, and it emits no rollback focus event or UI-owned timeout.
 
-The B24 action sheet `ZEwQt` and its state references are adopted in the committed canvas.
+The relationship action sheet `ZEwQt` and its state references are retained in the committed library.
 The sidebar's inactive checkout/project states reuse the adopted row masters and retain the existing Project row as a maintained component.
 
 The header wash marks the pane currently shown by Hide.
@@ -103,23 +91,6 @@ Zoom or Restore stays at the right edge in every state.
 Fork, ports, sibling access, and other secondary capabilities live in the existing overflow menu.
 Close remains separate and preserves the core-owned consequence check.
 At narrow widths the parent name falls back to its icon before current identity or actions are lost.
-
-## Overview task forest (historical)
-
-This section describes the Overview before the worktree-grouped list replaced it; `DESIGN.md` carries the current contract.
-Tasks was the default Overview mode and Git the alternate mode.
-The task forest is built from current Project checkouts and canonical live agents.
-Only authoritative child IDs create edges.
-Unknown parents, visible orphans, and cycles remain visible as roots instead of disappearing.
-Root tasks and children that cross a Workspace show their Workspace location.
-Search retains every matched task and its known ancestors.
-No-results keeps the prior inspector and offers query clearing rather than inventing a new selection.
-
-Row selection and keyboard Return inspect.
-The trailing pane control and the inspector's Open action navigate.
-The inspector shows canonical identity, status, Workspace, orphan or disconnected facts, and Workspace details.
-Workspace changed-file counts are never presented as one agent's output.
-The Git view preserves GitHub, disk, cleanup, ancestry, worktree selection, and existing explicit actions.
 
 ## Explorer Git decorations
 

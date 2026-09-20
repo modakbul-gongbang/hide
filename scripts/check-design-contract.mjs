@@ -24,7 +24,7 @@ try {
     for (const entry of entries) {
       const tab = entry.indexOf('\t'), [mode, object, stage] = entry.slice(0, tab).split(' '), file = entry.slice(tab + 1);
       const input = (file.startsWith('macos/Sources/HerdrMacOS/') && file.endsWith('.swift'))
-        || file === 'design/hide.pen'
+        || file === 'design/hide-ui.lib.pen'
         || [...commands, 'swift-source-tokens.mjs', 'design-control-policy.json', 'pen-tokens.mjs', 'pen-token-map.json', 'pen-bands.mjs', 'pen-foundations.mjs', 'pen-canvas.mjs'].some(name => file === 'scripts/' + name);
       if (!input) continue;
       if (stage !== '0') throw new Error(`Resolve staged conflict before design check: ${file}`);
