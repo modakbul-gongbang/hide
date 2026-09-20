@@ -13,7 +13,7 @@ use crate::{
     PROMPT_ITEM_LIMIT, SESSION_START_ITEM_LIMIT, redact,
 };
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoreMode {
@@ -1130,6 +1130,7 @@ impl MemoryStore {
         transaction.execute("DELETE FROM memory_fts WHERE project_id=?1", [project_id])?;
         transaction.execute("DELETE FROM projects WHERE id=?1", [project_id])?;
         transaction.commit()?;
+        purge_deleted_pages(&self.connection)?;
         Ok(())
     }
 
@@ -1233,18 +1234,21 @@ impl MemoryStore {
 }
 
 fn migrate(connection: &Connection) -> Result<(), MemoryError> {
-    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let mut version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version == 0 {
         connection.execute_batch("BEGIN IMMEDIATE")?;
         if let Err(error) = connection
             .execute_batch(SCHEMA)
+            .and_then(|_| enable_fts_secure_delete(connection))
             .and_then(|_| connection.pragma_update(None, "user_version", SCHEMA_VERSION))
         {
             let _ = connection.execute_batch("ROLLBACK");
             return Err(error.into());
         }
         connection.execute_batch("COMMIT")?;
-    } else if version == 1 {
+        return Ok(());
+    }
+    if version == 1 {
         connection.execute_batch(
             r#"BEGIN IMMEDIATE;
 ALTER TABLE analysis_batches ADD COLUMN analysis_provider TEXT NOT NULL DEFAULT 'unknown';
@@ -1257,12 +1261,90 @@ CREATE TABLE session_topics(project_id TEXT NOT NULL REFERENCES projects(id) ON 
 PRAGMA user_version=2;
 COMMIT;"#,
         )?;
-    } else if version != SCHEMA_VERSION {
+        version = 2;
+    }
+    if version == 2 {
+        migrate_version_two(connection)?;
+        version = SCHEMA_VERSION;
+    }
+    if version != SCHEMA_VERSION {
         return Err(MemoryError::WrongSchema {
             found: version,
             expected: SCHEMA_VERSION,
         });
     }
+    Ok(())
+}
+
+fn enable_fts_secure_delete(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute(
+        "INSERT INTO memory_fts(memory_fts, rank) VALUES('secure-delete', 1)",
+        [],
+    )?;
+    Ok(())
+}
+
+fn migrate_version_two(connection: &Connection) -> Result<(), MemoryError> {
+    let revisions = {
+        let mut statement = connection.prepare("SELECT item_id,body FROM memory_revisions")?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let quarantined = revisions
+        .into_iter()
+        .filter_map(|(item_id, body)| redact(&body).contains_secret_candidate.then_some(item_id))
+        .collect::<HashSet<_>>();
+
+    connection.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| -> Result<(), MemoryError> {
+        enable_fts_secure_delete(connection)?;
+        for item_id in quarantined {
+            connection.execute("DELETE FROM memory_fts WHERE item_id=?1", [&item_id])?;
+            connection.execute("DELETE FROM memory_items WHERE id=?1", [&item_id])?;
+        }
+        rebuild_search_projection(connection)?;
+        connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error);
+    }
+    connection.execute_batch("COMMIT")?;
+    purge_deleted_pages(connection)
+}
+
+fn rebuild_search_projection(connection: &Connection) -> Result<(), MemoryError> {
+    let active = {
+        let mut statement = connection.prepare(
+            "SELECT i.id,i.project_id,r.body FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE i.lifecycle='active'",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    connection.execute("DELETE FROM memory_fts", [])?;
+    for (item_id, project_id, body) in active {
+        connection.execute(
+            "INSERT INTO memory_fts(item_id,project_id,body,normalized_terms) VALUES(?1,?2,?3,?4)",
+            params![item_id, project_id, body, normalize(&body)],
+        )?;
+    }
+    Ok(())
+}
+
+fn purge_deleted_pages(connection: &Connection) -> Result<(), MemoryError> {
+    connection.execute("INSERT INTO memory_fts(memory_fts) VALUES('optimize')", [])?;
+    connection.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
     Ok(())
 }
 
@@ -1549,6 +1631,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn mem0_v2_1_search_scoring_matches_upstream_golden_values() {
@@ -2200,18 +2283,22 @@ mod tests {
     fn version_one_migration_drops_raw_prompt_text_and_adds_provider_provenance_atomically() {
         let connection = Connection::open_in_memory().unwrap();
         connection
-            .execute_batch(
+            .execute_batch(&format!(
                 r#"
-                PRAGMA foreign_keys=ON;
-                CREATE TABLE projects(id TEXT PRIMARY KEY,root TEXT NOT NULL,device_id TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,disclosure_accepted_at_ms INTEGER,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);
+                PRAGMA foreign_keys=OFF;
+                {SCHEMA}
+                ALTER TABLE analysis_batches DROP COLUMN analysis_provider;
+                DROP TABLE session_sources;
                 CREATE TABLE session_sources(id TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,locator TEXT NOT NULL,checkout_path TEXT NOT NULL,first_human_request TEXT,started_at_ms INTEGER,updated_at_ms INTEGER NOT NULL,unavailable_reason TEXT,PRIMARY KEY(project_id,provider,id));
-                CREATE TABLE analysis_batches(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,content_hash TEXT NOT NULL,created_at_ms INTEGER NOT NULL,UNIQUE(project_id,provider,session_id,content_hash));
+                DROP TABLE hook_projection_cursors;
+                DROP TABLE session_topics;
+                PRAGMA foreign_keys=ON;
                 INSERT INTO projects VALUES('p','/fixture','local',0,NULL,1,1);
                 INSERT INTO session_sources VALUES('s','p','codex','/fixture/s.jsonl','/fixture','private first prompt',1,2,NULL);
                 INSERT INTO analysis_batches VALUES('b','p','codex','s','hash',3);
                 PRAGMA user_version=1;
                 "#,
-            )
+            ))
             .unwrap();
 
         migrate(&connection).unwrap();
@@ -2252,5 +2339,108 @@ mod tests {
                 .unwrap(),
             "unknown"
         );
+    }
+
+    #[test]
+    fn version_two_migration_quarantines_secret_revisions_and_secures_fts() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("memory.sqlite3");
+        let secret = "api_key=super-secret-migration-value";
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(&format!(
+                "PRAGMA foreign_keys=ON; {SCHEMA} PRAGMA user_version=2;"
+            ))
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects VALUES('p','/fixture','local',1,1,1,1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO analysis_batches VALUES('b','p','codex','codex','s','h',1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO memory_items VALUES('m','p','active',1,0.9,0.8,NULL,1,1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO memory_revisions VALUES('r','m',1,?1,'rule','active',1,'b')",
+                [secret],
+            )
+            .unwrap();
+        connection.execute("INSERT INTO memory_fts(item_id,project_id,body,normalized_terms) VALUES('m','p',?1,?1)", [secret]).unwrap();
+        drop(connection);
+
+        let store = MemoryStore::open(&path).unwrap();
+        let fts_secure_delete: i64 = store
+            .connection
+            .query_row(
+                "SELECT v FROM memory_fts_config WHERE k='secure-delete'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_secure_delete, 1);
+        assert!(store.list_memories("p", "").unwrap().is_empty());
+        drop(store);
+
+        for candidate in [
+            path.clone(),
+            path.with_extension("sqlite3-wal"),
+            path.with_extension("sqlite3-shm"),
+        ] {
+            if candidate.is_file() {
+                let bytes = fs::read(candidate).unwrap();
+                assert!(
+                    !bytes
+                        .windows(secret.len())
+                        .any(|window| window == secret.as_bytes())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_project_data_purges_database_and_wal_pages() {
+        let (temp, mut store, project) = store();
+        let marker = "project-memory-delete-marker-731948";
+        store
+            .apply_candidates(
+                &batch(&project, "b-delete", "h-delete"),
+                &[candidate(marker, CandidateRelation::New)],
+            )
+            .unwrap();
+
+        store.delete_project_data(&project).unwrap();
+        assert!(matches!(
+            store.project_state(&project),
+            Err(MemoryError::ProjectMissing)
+        ));
+        let path = store.path().to_path_buf();
+        drop(store);
+
+        for candidate in [
+            path.clone(),
+            path.with_extension("sqlite3-wal"),
+            path.with_extension("sqlite3-shm"),
+        ] {
+            if candidate.is_file() {
+                let bytes = fs::read(candidate).unwrap();
+                assert!(
+                    !bytes
+                        .windows(marker.len())
+                        .any(|window| window == marker.as_bytes())
+                );
+            }
+        }
+        drop(temp);
     }
 }
