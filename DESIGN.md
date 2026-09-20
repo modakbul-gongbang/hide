@@ -129,9 +129,26 @@ The library does not generate Swift controls automatically: an approved system c
 
 Keep task-specific screen exploration in `agents/runs/<slug>/design/scratch.pen` inside the task's worktree.
 That namespace is already ignored; scratch and screenshots are not merge deliverables.
-Use the design library through Pen's Library UI after verifying imports in the installed version.
-Do not assume an ordinary `.pen` import shares variables correctly.
-If import support is unavailable, a task-local copy of the library is an explicitly frozen exploration input, never a second shared authority.
+Create it from the task's checkout with `node scripts/design-scratch.mjs <task-slug>`.
+The command checks the verified Pen CLI version, uses headless `--library` to link this checkout's `design/hide-ui.lib.pen`, and prints the absolute scratch path and edit/review commands.
+It requires an existing Pen login, does not run a model prompt, refuses existing scratches and symlinked output directories, and publishes no scratch when the import fails.
+Do not automatically upgrade the CLI or silently fall back to a copied library when creation fails; resolve the reported cause first.
+The script owns the tested version pin; changing it requires repeating import, variable/component rendering, update/reopen and two-worktree isolation checks.
+
+Agents edit with `pen interactive --in <scratch-path> --out <scratch-path>` in an independent headless session per file.
+Do not use the shared desktop MCP or `--app desktop` for agent editing: a supplied MCP path did not reliably select that document in verification.
+Inside the CLI, read `read_skill()` and its schema/execute guides, then confirm `get_app_state()` and `list_libraries()` before editing.
+The latter returns each imported library's ID and status; a component is referenced as `<id>:<component-id>` and a variable as `$<id>:--token-name`.
+Discover the ID in each scratch rather than reusing an alias from another task.
+For an existing document needing a library, use CLI `import_library({path: ...})`; do not handwrite ordinary-file imports or redraw shared masters.
+The CLI 0.3.8 component guide still says cross-file references are unsupported; the library-qualified references described here were verified and take precedence for this workflow.
+
+Human review is a file handoff, not simultaneous editing.
+The agent saves with `save()` and exits with `exit()`, then the user opens the printed scratch path in Pen and gives feedback or edits it.
+Before the agent resumes, the user saves and closes that document; the agent starts a new headless session to load those changes.
+Do not keep a stale desktop editor open and later save over CLI changes.
+Library changes become visible when the importing document is closed and reopened, while per-instance overrides remain.
+Another worktree's library change first has to arrive through Git in this worktree; opening the scratch does not update Git or follow another checkout's library.
 
 Show alternatives in that task's scratch document, let the user choose and revise them, and obtain approval before implementing the selected screen.
 Record the approved behavior and any proposed system additions in the committed PRD, so the decision survives scratch cleanup.

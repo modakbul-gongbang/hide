@@ -139,18 +139,25 @@ Run `node scripts/check-design-contract.mjs` before delivery.
 A component state is a `ref` of its reusable master with descendant overrides, not a redrawn copy.
 Preserve master IDs when editing so existing instances keep their identity.
 
-Use the exact absolute document path when connecting to Pen, and confirm the active document before editing.
+Agents use independent Pen CLI headless sessions, not the shared desktop MCP or `--app desktop`.
+An explicit MCP `filePath` did not isolate the active desktop document in verification; it is not a lock or a routing guarantee.
+Start a task with `node scripts/design-scratch.mjs <task-slug>`; it checks the verified CLI version, imports this worktree's library and refuses an existing scratch.
+Use the exact document path printed by the command and confirm it with `get_app_state()` before editing.
 Only one writer edits a library document at a time; worktree agents explore in their own ignored files.
+Save and exit the CLI before human review; save and close the desktop document before resuming CLI edits of the same file.
 Do not resolve conflicting design edits by line-merging JSON: preserve both versions and reapply the approved change through Pen.
 When invoking Pen's own agent, `--repo .` is required for it to read project instructions:
 
-    pen interactive --in design/hide-ui.lib.pen --out design/hide-ui.lib.pen
-    pen --repo . --in design/hide-ui.lib.pen --out design/hide-ui.lib.pen --prompt "..."
+    pen interactive --in agents/runs/<task-slug>/design/scratch.pen --out agents/runs/<task-slug>/design/scratch.pen
+    pen --repo . --in agents/runs/<task-slug>/design/scratch.pen --out agents/runs/<task-slug>/design/scratch.pen --prompt "..."
 
 The desktop app's built-in agent does not automatically receive these repository rules.
 Inspect its output before promoting anything to the library.
-Use the Library UI for cross-document reuse, not a handwritten ordinary-file `imports` entry.
-The previously tested ordinary-file variable import rendered black; library import behavior must be verified in the target Pen version before relying on it.
+Use CLI `import_library({path: ...})` or `--library` for cross-document reuse, not a handwritten ordinary-file `imports` entry.
+Use the import ID reported by `list_libraries()` to qualify component and variable references; never hardcode another scratch's alias.
+Library imports were verified with CLI 0.3.8; 0.3.7 could reject the newer document format while presenting an empty document.
+Library changes load after the importing document is closed and reopened; instance overrides survive.
+Each worktree reads its own library revision, not a mutable library path in another checkout.
 
 Pen is not CSS: unsupported alignment, margin and percentage properties must not be invented.
 Width and height use numeric literals because variable references have rendered at zero in this toolchain.

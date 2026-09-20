@@ -69,9 +69,11 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 
 The gates that read a running Herdr server, drive the built app, or reach the network are local steps and are not required in CI.
 They are listed under "Local gates" below; every script in `scripts/` is either a required gate above, a local gate there, or a fixture in [verification-fixtures.md](docs/verification-fixtures.md).
-The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs` and `node --test scripts/tests/design-controls.test.mjs`.
+The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs`, `node --test scripts/tests/design-controls.test.mjs`, and `node --test scripts/tests/design-scratch.test.mjs`.
 The shared entrypoint runs the token, component ownership and counted control-policy checks, and the design library check, which compares `design/hide-ui.lib.pen` with tokens from `HideTheme.swift` and the generated Foundations sheet, rejects product-screen or scratch boards in the shared library, and preserves designer-owned sheet placement; it performs static checks, not desktop interaction.
 The tests plant default controls, duplicate owners and style literals in nested files and verify staged/unstaged separation in a private Git fixture.
+Scratch tests exercise the creator against a fake third-party Pen CLI: worktree-local linking, overwrite/path guards, failed imports and process cancellation.
+They do not prove Pen rendering; import, rendering and reopen verification with the real CLI stays a local step.
 
 ### Local design hook
 
@@ -110,6 +112,7 @@ A script that stops earning its place here is deleted rather than left unreferen
 | `python3 scripts/check-worktree-performance-evidence.py [dir]` | A worktree performance run recorded what the guide requires | A completed native run directory |
 | `bash macos/scripts/check_workbench_native_evidence.sh ...` | A native Workbench run used one identified app and an isolated server | A completed native run |
 | `zsh scripts/install-local-runtime.sh --herdr-root PATH` | Not a gate: installs a locally built Herdr for runtime work | A Herdr checkout |
+| `node scripts/design-scratch.mjs <task-slug>` | Not a gate: creates an ignored scratch linked to this worktree's design library; see `DESIGN.md` for editing and human review | The verified Pen CLI version and an existing Pen login |
 
 ## Performance-sensitive changes
 

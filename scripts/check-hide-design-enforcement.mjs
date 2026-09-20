@@ -10,6 +10,7 @@ assert(workflow.includes('pull_request:') && workflow.includes('push:'), 'CI mus
 const workflowCommands = [
   'node scripts/check-design-contract.mjs',
   'node --test scripts/tests/design-controls.test.mjs',
+  'node --test scripts/tests/design-scratch.test.mjs',
 ];
 const workflowLines = workflow.split(/\r?\n/).map(line => line.trim());
 for (const command of workflowCommands) {
@@ -17,4 +18,5 @@ for (const command of workflowCommands) {
 }
 execFileSync(process.execPath, ['scripts/check-design-contract.mjs'], {stdio: 'inherit'});
 execFileSync(process.execPath, ['--test', 'scripts/tests/design-controls.test.mjs'], {stdio: 'inherit'});
+execFileSync(process.execPath, ['--test', 'scripts/tests/design-scratch.test.mjs'], {stdio: 'inherit'});
 console.log('Product enforcement and CI binding PASS');
