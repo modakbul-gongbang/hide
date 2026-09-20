@@ -128,11 +128,6 @@ where
         }
         answer
     }
-
-    #[cfg(test)]
-    pub(crate) fn is_idle(&self) -> bool {
-        self.inflight.is_none()
-    }
 }
 
 #[cfg(test)]

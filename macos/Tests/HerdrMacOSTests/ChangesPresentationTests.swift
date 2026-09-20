@@ -55,7 +55,7 @@ struct ChangesPresentationTests {
 
     @Test func theRightPanelOffersOverviewExplorerAndChanges() {
         #expect(RightPanelSection.allCases == [.overview, .explorer, .changes])
-        #expect(RightPanelSection.allCases.map(\.title) == ["Overview", "Explorer", "Changes"])
+        #expect(RightPanelSection.allCases.map(\.title) == ["Overview", "Explorer", "History"])
     }
 
     @Test func aChangesPayloadDecodesItsEntriesStatusesAndDiff() throws {

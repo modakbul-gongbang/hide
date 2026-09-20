@@ -9,8 +9,7 @@ The former Final, R2, R3, handoff candidates, and the Overview family-only compa
 - Agents opens in `My Work` for each app session and offers `All` as an explicit scope change.
 - `My Work` excludes rows whose core-final ownership is Delegated, while hard escalations and visible orphans remain operator-owned and visible.
 - Both scopes preserve Needs You, Done, Working, and Seen instead of replacing status groups with a relationship tree.
-- Overview opens in Tasks and shows the current Project's live task forest across its Workspaces.
-- Git remains a separate Overview mode because commit ancestry and agent delegation are different relations.
+- Overview showed the current Project's live task forest across its Workspaces, with Git as a separate mode; the worktree-grouped list of `agents/prd/right-panel-overview/prd.md` replaced both, and the sections below that describe them are historical.
 - Selecting an Overview row changes inspection only.
 - The row's Open control is the only action that shows its pane and changes read state.
 - The pane header distinguishes the pane shown by Hide from the terminal that owns the native keyboard responder.
@@ -105,9 +104,10 @@ Fork, ports, sibling access, and other secondary capabilities live in the existi
 Close remains separate and preserves the core-owned consequence check.
 At narrow widths the parent name falls back to its icon before current identity or actions are lost.
 
-## Overview task forest
+## Overview task forest (historical)
 
-Tasks is the default Overview mode and Git is the alternate mode.
+This section describes the Overview before the worktree-grouped list replaced it; `DESIGN.md` carries the current contract.
+Tasks was the default Overview mode and Git the alternate mode.
 The task forest is built from current Project checkouts and canonical live agents.
 Only authoritative child IDs create edges.
 Unknown parents, visible orphans, and cycles remain visible as roots instead of disappearing.

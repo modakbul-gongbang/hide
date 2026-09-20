@@ -8,9 +8,6 @@
 //! with many worktrees costs wall time on that thread and never coordinator
 //! latency.
 
-#[path = "git_history.rs"]
-pub(crate) mod history;
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,7 +22,6 @@ use crate::reader::BackgroundRead;
 /// What to describe: one entry per project the navigator is showing.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WorktreeRequest {
-    pub overview_root: Option<PathBuf>,
     pub projects: Vec<WorktreeProjectRequest>,
     /// Bumped when something invalidates every answer at once - a worktree
     /// removal, most of all. A changed request is always due, so this is how
@@ -60,48 +56,9 @@ pub struct WorktreeReader {
 
 impl WorktreeReader {
     pub fn new() -> Self {
-        let cache =
-            std::sync::Mutex::new(None::<(ObservedRequest, WorktreeCatalogSnapshot, Vec<PathBuf>)>);
         Self {
             inner: BackgroundRead::on_change(Duration::ZERO, move |request: &ObservedRequest| {
-                let mut base_key = request.clone();
-                base_key.0.overview_root = None;
-                let cached = cache.lock().unwrap().clone();
-                let reused = cached.as_ref().is_some_and(|(key, _, _)| *key == base_key);
-                let mut catalog = if reused {
-                    cached.as_ref().unwrap().1.clone()
-                } else {
-                    read(&request.0)
-                };
-                for project in &mut catalog.projects {
-                    if request.0.overview_root.as_deref() == Some(Path::new(&project.root_path)) {
-                        let mut heads: Vec<_> = project
-                            .worktrees
-                            .iter()
-                            .filter_map(|w| w.head_sha.clone())
-                            .collect();
-                        if project.branches.iter().any(|b| b == "main") {
-                            heads.push("refs/heads/main".into());
-                        }
-                        if let Some(base) = &project.base_branch {
-                            if project.branches.contains(base) {
-                                heads.push(format!("refs/heads/{base}"));
-                            } else if project.default_branch.as_ref() == Some(base) {
-                                heads.push(format!("refs/remotes/origin/{base}"));
-                            }
-                        }
-                        heads.sort();
-                        heads.dedup();
-                        project.history = Some(history::read(
-                            Path::new(&project.root_path),
-                            &heads,
-                            project.shared_git_path.as_deref().map(Path::new),
-                        ));
-                    }
-                }
-                if reused {
-                    return (catalog, cached.unwrap().2);
-                }
+                let mut catalog = read(&request.0);
                 let mut paths = Vec::new();
                 for row in catalog.projects.iter_mut().flat_map(|p| &mut p.worktrees) {
                     let root = PathBuf::from(&row.path);
@@ -133,11 +90,6 @@ impl WorktreeReader {
                 }
                 paths.sort();
                 paths.dedup();
-                let mut base_catalog = catalog.clone();
-                for project in &mut base_catalog.projects {
-                    project.history = None;
-                }
-                *cache.lock().unwrap() = Some((base_key, base_catalog, paths.clone()));
                 (catalog, paths)
             }),
             known_paths: Vec::new(),
@@ -200,11 +152,6 @@ impl WorktreeReader {
             }
             catalog
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_idle(&self) -> bool {
-        self.inner.is_idle()
     }
 }
 
@@ -556,11 +503,24 @@ fn describe(
                 _ => None,
             }
         });
-    let (upstream_state, unpushed) = record_failure(
+    let (upstream_state, unpushed, behind_upstream) = record_failure(
         upstream(&listed.path, listed.branch.as_deref()),
         &mut unavailable_reason,
-        ("unavailable".into(), None),
+        ("unavailable".into(), None, None),
     );
+    // A linked worktree is as old as its `.git/worktrees/<name>` entry, which
+    // git writes once at `worktree add` and never touches again. It is read
+    // off the gitfile, not asked of git, so the pass forks nothing extra for
+    // it; the main worktree has no such entry and carries no time.
+    let created_at_unix_ms = if listed.is_main {
+        None
+    } else {
+        crate::git_dir::discover(&listed.path)
+            .and_then(|repository| std::fs::metadata(repository.git_dir).ok())
+            .and_then(|metadata| metadata.created().ok())
+            .and_then(|created| created.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|elapsed| elapsed.as_millis() as u64)
+    };
     let last_commit = git(&listed.path, &["log", "-1", "--format=%ct%x00%s"]).ok();
     let commit_fields = last_commit
         .as_deref()
@@ -590,6 +550,8 @@ fn describe(
         removed_lines,
         unpushed,
         upstream_state,
+        behind_upstream,
+        created_at_unix_ms,
         merged,
         head_sha: listed.head_sha,
         last_commit_unix_seconds,
@@ -750,17 +712,21 @@ fn resolvable_base(path: &Path, base: &str) -> Option<String> {
     None
 }
 
-/// Commits this branch has that its upstream does not, with the remote's name.
+/// Commits this branch has that its upstream does not, with the remote's
+/// name, and the commits the upstream has that this branch does not.
 ///
-/// A branch with no upstream returns `None`: it has nowhere to push, which the
-/// card states by omitting the row rather than by showing a zero that would
-/// read as "fully pushed".
+/// A branch with no upstream returns `None` for both: it has nowhere to push
+/// and nothing to be behind, which the card states by omitting the row rather
+/// than by showing a zero that would read as "fully pushed" or "up to date".
+/// One `rev-list --left-right --count @{u}...HEAD` answers both directions,
+/// the same shape `ahead_behind` already reads against the base, so the
+/// second number costs no second process.
 fn upstream(
     path: &Path,
     branch: Option<&str>,
-) -> Result<(String, Option<UnpushedSnapshot>), String> {
+) -> Result<(String, Option<UnpushedSnapshot>, Option<u32>), String> {
     let Some(branch) = branch else {
-        return Ok(("no_upstream".into(), None));
+        return Ok(("no_upstream".into(), None, None));
     };
     let configured = git(
         path,
@@ -771,15 +737,18 @@ fn upstream(
         ],
     )?;
     if configured.trim().is_empty() {
-        return Ok(("no_upstream".into(), None));
+        return Ok(("no_upstream".into(), None, None));
     }
     if git(path, &["rev-parse", "--verify", "@{u}"]).is_err() {
-        return Ok(("gone".into(), None));
+        return Ok(("gone".into(), None, None));
     }
-    let count = git(path, &["rev-list", "--count", "@{u}..HEAD"])
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok());
-    let Some(count) = count else {
+    let counts = git(
+        path,
+        &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+    )
+    .ok()
+    .and_then(|output| parse_left_right(&output));
+    let Some((behind, count)) = counts else {
         return Err("git rev-list could not determine upstream commit count".into());
     };
     let remote = configured
@@ -792,7 +761,17 @@ fn upstream(
     Ok((
         if count == 0 { "pushed" } else { "unpushed" }.into(),
         Some(UnpushedSnapshot { remote, count }),
+        Some(behind),
     ))
+}
+
+/// `--left-right --count` prints `<left>\t<right>`; both fields have to be
+/// there and numeric, or the answer is no answer rather than a pair of zeros.
+fn parse_left_right(output: &str) -> Option<(u32, u32)> {
+    let mut fields = output.split_whitespace();
+    let left = fields.next()?.parse().ok()?;
+    let right = fields.next()?.parse().ok()?;
+    Some((left, right))
 }
 
 /// The repository's default branch is only what `origin/HEAD` names.
