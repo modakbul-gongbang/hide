@@ -258,25 +258,31 @@ impl PurposeMirror {
                 let Some(branch) = checkout.branch.as_deref() else {
                     continue;
                 };
-                let Some(space) =
-                    workspace::authoritative_session_space(spaces, workspace, &checkout.path)
+                let Some(effective) =
+                    workspace::effective_checkout_purpose(spaces, workspace, &checkout.path)
                 else {
                     continue;
                 };
-                let key = (space.id.clone(), workspace.path.clone(), branch.to_owned());
+                let key = (
+                    workspace::normalized_for_comparison(Path::new(&workspace.path)),
+                    workspace::normalized_for_comparison(Path::new(&checkout.path)),
+                    branch.to_owned(),
+                );
                 current.insert(key.clone());
                 let previous = self.observed.get(&key);
-                let first_live_value = previous.is_none() && space.purpose.is_some();
-                let changed_value = previous.is_some_and(|value| value != &space.purpose);
-                self.observed.insert(key, space.purpose.clone());
+                let purpose = effective.purpose.map(str::to_owned);
+                let first_live_value =
+                    previous.is_none() && (purpose.is_some() || effective.has_shadowed_purpose);
+                let changed_value = previous.is_some_and(|value| value != &purpose);
+                self.observed.insert(key, purpose.clone());
                 if !first_live_value && !changed_value {
                     continue;
                 }
                 let request = PurposeMirrorRequest {
-                    workspace_id: space.id.clone(),
+                    workspace_id: effective.workspace_id.to_owned(),
                     repository_root: workspace.path.clone(),
                     branch: branch.to_owned(),
-                    purpose: space.purpose.clone(),
+                    purpose,
                 };
                 if let Err(error) = self.sender.try_send(PurposeMirrorMessage::Write(request)) {
                     let kind = match error {
@@ -286,7 +292,7 @@ impl PurposeMirror {
                     crate::diagnostic!(serde_json::json!({
                         "component": "checkout_purpose",
                         "kind": kind,
-                        "workspace_id": space.id,
+                        "workspace_id": effective.workspace_id,
                     }));
                 }
             }
@@ -1373,6 +1379,78 @@ mod tests {
         assert_eq!(write.workspace_id, "w-authority");
         assert_eq!(write.purpose.as_deref(), Some("Authoritative purpose"));
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn purpose_mirror_tracks_source_switches_by_checkout_and_restores_the_last_value() {
+        let (mut mirror, receiver) = PurposeMirror::recording();
+        let first = workspace::SessionSpace {
+            id: "w-first".to_owned(),
+            label: "First".to_owned(),
+            cwds: vec!["/fixture/repo/worktrees/topic".to_owned()],
+            purpose: Some("First purpose".to_owned()),
+        };
+        let later_without_token = workspace::SessionSpace {
+            id: "w-later".to_owned(),
+            label: "Later".to_owned(),
+            cwds: vec!["/fixture/repo/worktrees/topic".to_owned()],
+            purpose: None,
+        };
+        let mut project = WorkspaceSnapshot {
+            id: "project".to_owned(),
+            label: "Fixture".to_owned(),
+            path: "/fixture/repo".to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: "repo".to_owned(),
+            is_git: true,
+            default_branch: Some("main".to_owned()),
+            branches: vec!["topic".to_owned()],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec!["w-first".to_owned()],
+            last_activity_unix_ms: None,
+            pinned: false,
+            checkouts: vec![crate::model::CheckoutSnapshot {
+                id: "checkout".to_owned(),
+                workspace_id: "project".to_owned(),
+                label: "topic".to_owned(),
+                path: "/fixture/repo/worktrees/topic".to_owned(),
+                branch: Some("topic".to_owned()),
+                exists: true,
+                is_worktree: true,
+                ..Default::default()
+            }],
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+
+        mirror.sync(std::slice::from_ref(&first), std::slice::from_ref(&project));
+        let PurposeMirrorMessage::Write(initial) = receiver.recv().unwrap() else {
+            panic!("initial purpose is written")
+        };
+        assert_eq!(initial.workspace_id, "w-first");
+        assert_eq!(initial.purpose.as_deref(), Some("First purpose"));
+
+        project.session_workspace_ids.push("w-later".to_owned());
+        mirror.sync(
+            &[first.clone(), later_without_token],
+            std::slice::from_ref(&project),
+        );
+        let PurposeMirrorMessage::Write(cleared) = receiver.recv().unwrap() else {
+            panic!("later explicit absence clears the mirror")
+        };
+        assert_eq!(cleared.workspace_id, "w-later");
+        assert!(cleared.purpose.is_none());
+
+        project.session_workspace_ids.pop();
+        mirror.sync(std::slice::from_ref(&first), std::slice::from_ref(&project));
+        let PurposeMirrorMessage::Write(restored) = receiver.recv().unwrap() else {
+            panic!("removing the later workspace restores the earlier value")
+        };
+        assert_eq!(restored.workspace_id, "w-first");
+        assert_eq!(restored.purpose.as_deref(), Some("First purpose"));
     }
 
     #[test]

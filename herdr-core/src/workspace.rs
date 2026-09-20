@@ -145,25 +145,76 @@ pub struct SessionSpace {
     pub purpose: Option<String>,
 }
 
-/// The Herdr workspace whose token represents this checkout.
+/// The effective live purpose for one checkout.
 ///
-/// A repository can have more than one Herdr workspace. Catalog projection
-/// merges them in session order and the later token wins, so Save and the Git
-/// mirror use that same later occupant. Intersecting with the project's own
+/// `purpose: None` is meaningful: a later workspace with no token clears an
+/// earlier workspace's token and lets the checkout fall back to Git metadata.
+/// `has_shadowed_purpose` lets the Git mirror clear a description on its first
+/// observation when that earlier token is still live in another workspace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EffectiveCheckoutPurpose<'a> {
+    pub workspace_id: &'a str,
+    pub purpose: Option<&'a str>,
+    pub has_shadowed_purpose: bool,
+}
+
+/// The live purpose Herdr currently exposes for this checkout.
+///
+/// A repository can have more than one Herdr workspace. The later occupant
+/// wins even when it has no token. Intersecting with the project's own
 /// workspace ids prevents a pane in a nested repository from claiming its
 /// ancestor checkout merely because its cwd sits below that path.
+pub fn effective_checkout_purpose<'a>(
+    spaces: &'a [SessionSpace],
+    workspace: &WorkspaceSnapshot,
+    checkout_path: &str,
+) -> Option<EffectiveCheckoutPurpose<'a>> {
+    let mut authority = None;
+    let mut has_shadowed_purpose = false;
+    for space in spaces {
+        if !space_occupies_checkout(space, workspace, checkout_path) {
+            continue;
+        }
+        if authority.is_some_and(|previous: &SessionSpace| previous.purpose.is_some()) {
+            has_shadowed_purpose = true;
+        }
+        authority = Some(space);
+    }
+    authority.map(|space| EffectiveCheckoutPurpose {
+        workspace_id: &space.id,
+        purpose: space.purpose.as_deref(),
+        has_shadowed_purpose,
+    })
+}
+
+/// The Herdr workspace a Set purpose operation mutates.
+///
+/// Mutation authority stays separate from effective-value projection so a
+/// later policy cannot silently make Save target a different workspace.
 pub fn authoritative_session_space<'a>(
     spaces: &'a [SessionSpace],
     workspace: &WorkspaceSnapshot,
     checkout_path: &str,
 ) -> Option<&'a SessionSpace> {
-    spaces.iter().rev().find(|space| {
-        workspace.session_workspace_ids.contains(&space.id)
-            && space
-                .cwds
-                .iter()
-                .any(|cwd| Path::new(cwd).starts_with(Path::new(checkout_path)))
-    })
+    spaces
+        .iter()
+        .rev()
+        .find(|space| space_occupies_checkout(space, workspace, checkout_path))
+}
+
+fn space_occupies_checkout(
+    space: &SessionSpace,
+    workspace: &WorkspaceSnapshot,
+    checkout_path: &str,
+) -> bool {
+    if !workspace.session_workspace_ids.contains(&space.id) {
+        return false;
+    }
+    let checkout = PathBuf::from(normalized_for_comparison(Path::new(checkout_path)));
+    space
+        .cwds
+        .iter()
+        .any(|cwd| PathBuf::from(normalized_for_comparison(Path::new(cwd))).starts_with(&checkout))
 }
 
 /// Each pane directory's repository root in comparison form, keyed by the raw
@@ -250,6 +301,7 @@ pub fn build_catalog(
     }
 
     for project in &mut result {
+        apply_session_purposes(project, spaces);
         apply_worktrees(project, worktrees);
     }
 
@@ -281,20 +333,28 @@ fn merge_space(existing: &mut WorkspaceSnapshot, incoming: WorkspaceSnapshot) {
     }
     for checkout in incoming.checkouts {
         let comparison = normalized_for_comparison(Path::new(&checkout.path));
-        if let Some(known) = existing
+        if !existing
             .checkouts
-            .iter_mut()
-            .find(|known| normalized_for_comparison(Path::new(&known.path)) == comparison)
+            .iter()
+            .any(|known| normalized_for_comparison(Path::new(&known.path)) == comparison)
         {
-            if checkout
-                .purpose
-                .as_ref()
-                .is_some_and(|purpose| purpose.origin == CheckoutPurposeOrigin::Token)
-            {
-                known.purpose = checkout.purpose;
-            }
-        } else {
             existing.checkouts.push(checkout);
+        }
+    }
+}
+
+/// Applies the same last-occupant decision used by the Git mirror. A missing
+/// token deliberately leaves the branch-description fallback in place.
+fn apply_session_purposes(project: &mut WorkspaceSnapshot, spaces: &[SessionSpace]) {
+    for index in 0..project.checkouts.len() {
+        let checkout_path = project.checkouts[index].path.clone();
+        let purpose = effective_checkout_purpose(spaces, project, &checkout_path)
+            .and_then(|effective| effective.purpose);
+        if let Some(purpose) = purpose {
+            project.checkouts[index].purpose = Some(CheckoutPurposeSnapshot {
+                text: purpose.to_owned(),
+                origin: CheckoutPurposeOrigin::Token,
+            });
         }
     }
 }
@@ -391,15 +451,14 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
         if !is_worktree {
             projects[index].default_branch = branch.clone();
         }
-        let mut projected_checkout =
-            checkout(&workspace_id, &root, &label, branch, is_worktree, false);
-        if let Some(purpose) = space.purpose.as_deref() {
-            projected_checkout.purpose = Some(CheckoutPurposeSnapshot {
-                text: purpose.to_owned(),
-                origin: CheckoutPurposeOrigin::Token,
-            });
-        }
-        projects[index].checkouts.push(projected_checkout);
+        projects[index].checkouts.push(checkout(
+            &workspace_id,
+            &root,
+            &label,
+            branch,
+            is_worktree,
+            false,
+        ));
     }
     // The main worktree leads, so the primary badge and the project path
     // agree even when a worktree's pane was reported first.
@@ -1084,21 +1143,21 @@ mod tests {
     }
 
     #[test]
-    fn two_spaces_in_one_repository_are_one_project() {
+    fn later_space_without_a_purpose_clears_the_earlier_token_projection() {
         let root = temp_dir("shared-root");
         let cwd = root.to_string_lossy().into_owned();
         let spaces = [
             SessionSpace {
                 id: "w1".to_owned(),
                 label: "first".to_owned(),
-                purpose: None,
+                purpose: Some("Earlier purpose".to_owned()),
                 cwds: vec![cwd.clone()],
             },
             SessionSpace {
                 id: "w2".to_owned(),
                 label: "second".to_owned(),
                 purpose: None,
-                cwds: vec![cwd],
+                cwds: vec![cwd.clone()],
             },
         ];
 
@@ -1109,6 +1168,15 @@ mod tests {
         assert_eq!(
             catalog[0].session_workspace_ids,
             vec!["w1".to_owned(), "w2".to_owned()]
+        );
+        assert_eq!(catalog[0].checkouts[0].purpose, None);
+        assert_eq!(
+            effective_checkout_purpose(&spaces, &catalog[0], &cwd),
+            Some(EffectiveCheckoutPurpose {
+                workspace_id: "w2",
+                purpose: None,
+                has_shadowed_purpose: true,
+            })
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -1161,6 +1229,65 @@ mod tests {
 
         assert_eq!(authority.id, "outer-last");
         assert_eq!(authority.purpose.as_deref(), Some("Last"));
+    }
+
+    #[test]
+    fn purpose_authority_normalizes_symlink_and_dot_segment_cwds() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_dir("purpose-authority-alias");
+        let checkout = root.join("checkout");
+        let nested = checkout.join("nested");
+        let alias = root.join("checkout-alias");
+        fs::create_dir_all(&nested).expect("checkout fixture");
+        symlink(&checkout, &alias).expect("checkout symlink");
+        let spaces = vec![
+            SessionSpace {
+                id: "symlink".to_owned(),
+                label: "Symlink".to_owned(),
+                purpose: Some("Earlier".to_owned()),
+                cwds: vec![alias.to_string_lossy().into_owned()],
+            },
+            SessionSpace {
+                id: "dot-segment".to_owned(),
+                label: "Dot segment".to_owned(),
+                purpose: None,
+                cwds: vec![nested.join("..").to_string_lossy().into_owned()],
+            },
+        ];
+        let project = WorkspaceSnapshot {
+            id: "fixture".to_owned(),
+            label: "Fixture".to_owned(),
+            path: root.to_string_lossy().into_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: LOCAL_DEVICE_ID.to_owned(),
+            repo_name: "fixture".to_owned(),
+            is_git: false,
+            default_branch: None,
+            branches: Vec::new(),
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec!["symlink".to_owned(), "dot-segment".to_owned()],
+            last_activity_unix_ms: None,
+            checkouts: Vec::new(),
+            pinned: false,
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+
+        let authority =
+            authoritative_session_space(&spaces, &project, checkout.to_string_lossy().as_ref())
+                .expect("normalized checkout authority");
+        let effective =
+            effective_checkout_purpose(&spaces, &project, checkout.to_string_lossy().as_ref())
+                .expect("normalized effective purpose");
+
+        assert_eq!(authority.id, "dot-segment");
+        assert_eq!(effective.workspace_id, "dot-segment");
+        assert_eq!(effective.purpose, None);
+        assert!(effective.has_shadowed_purpose);
+        let _ = fs::remove_dir_all(root);
     }
 
     fn listed_worktree(path: &str, branch: &str, is_main: bool) -> WorktreeSnapshot {
