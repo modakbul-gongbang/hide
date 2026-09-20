@@ -73,9 +73,11 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         id: "mini".to_owned(),
         label: "Mac mini".to_owned(),
         kind: "remote".to_owned(),
-        state: "available".to_owned(),
+        state: "unavailable".to_owned(),
+        message: None,
         ssh_alias: Some("mini".to_owned()),
         agent_count: 0,
+        test: None,
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: "mini".to_owned(),
@@ -346,224 +348,6 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
     assert!(runtime.ingest_remote_file_list_result("mini", root_path, 8, Ok(Vec::new())));
     assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
     assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
-}
-
-/// AC4: a scratch pane reaches the Scratch node and nothing else. The
-/// regression this blocks is the one the feature exists to remove: the
-/// unregistered-folder fallback drew scratch panes as an orange temporary
-/// workspace in the middle of the project tree.
-#[test]
-fn a_scratch_pane_is_in_the_scratch_node_and_in_no_project() {
-    let scratch_root = "/private/tmp/hide-scratch-fixture/scratch";
-    let project_path = "/private/tmp/hide-scratch-fixture/project";
-    let mut runtime = runtime_with_scratch(scratch_root);
-    ingest_scratch(
-        &mut runtime,
-        scratch_session(scratch_root, project_path, None),
-    );
-
-    let navigator = &runtime.snapshot().navigator;
-    assert_eq!(navigator.scratch.tabs.len(), 2);
-    assert_eq!(navigator.scratch.session_workspace_ids, ["s1"]);
-    assert_eq!(navigator.scratch.path, scratch_root);
-
-    // One project row, for the project pane, and no temporary row for the
-    // scratch folder.
-    assert_eq!(navigator.workspaces.len(), 1);
-    assert!(
-        navigator
-            .workspaces
-            .iter()
-            .all(|workspace| !workspace.temporary)
-    );
-    assert!(
-        !navigator
-            .workspaces
-            .iter()
-            .any(|workspace| crate::scratch::contains(scratch_root, &workspace.path)),
-        "no project row may point inside the scratch folder"
-    );
-    let project_pane_ids = navigator
-        .workspaces
-        .iter()
-        .flat_map(|workspace| workspace.checkouts.iter())
-        .flat_map(|checkout| checkout.tabs.iter())
-        .flat_map(|tab| tab.panes.iter())
-        .map(|pane| pane.id.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(project_pane_ids, ["w1:p1"]);
-}
-
-/// R7: closing a Scratch tab leaves the operator inside Scratch.
-///
-/// The selection reconciliation is written around checkouts, and Scratch
-/// is in none of them. Before this, closing a Scratch tab left the closed
-/// pane selected: `pane.projection_unavailable` was re-raised on every
-/// tick and ⌘T answered "create or register a workspace" with a Scratch
-/// tab still on screen.
-#[test]
-fn closing_the_selected_scratch_pane_selects_another_scratch_pane() {
-    let scratch_root = "/private/tmp/hide-scratch-close/scratch";
-    let project_path = "/private/tmp/hide-scratch-close/project";
-    let mut runtime = runtime_with_scratch(scratch_root);
-    ingest_scratch(
-        &mut runtime,
-        scratch_session(scratch_root, project_path, None),
-    );
-    runtime.snapshot.terminal.pane_id = Some("s1:p2".to_owned());
-    runtime.snapshot.ui_state.selected_pane_id = Some("s1:p2".to_owned());
-
-    let mut after_close = scratch_session(scratch_root, project_path, None);
-    after_close.panes.retain(|pane| pane.pane_id != "s1:p2");
-    after_close.tabs.retain(|tab| tab.tab_id != "s1:t2");
-    after_close
-        .layouts
-        .retain(|layout| layout.tab_id != "s1:t2");
-    ingest_scratch(&mut runtime, after_close);
-
-    let snapshot = runtime.snapshot();
-    assert_eq!(
-        snapshot.ui_state.selected_pane_id.as_deref(),
-        Some("s1:p1"),
-        "the selection moves to the Scratch pane that is left"
-    );
-    assert_eq!(snapshot.focused.pane_id.as_deref(), Some("s1:p1"));
-    assert!(
-        snapshot.status.last_error.is_none(),
-        "a closed Scratch pane is an expected transition, not a projection failure: {:?}",
-        snapshot.status.last_error
-    );
-}
-
-/// AC4: the same panes twice produce the same answer. A projection that
-/// appended rather than rebuilt would grow the Scratch node on every tick.
-#[test]
-fn projecting_the_same_scratch_panes_twice_gives_the_same_node() {
-    let scratch_root = "/private/tmp/hide-scratch-idempotent/scratch";
-    let project_path = "/private/tmp/hide-scratch-idempotent/project";
-    let mut runtime = runtime_with_scratch(scratch_root);
-    ingest_scratch(
-        &mut runtime,
-        scratch_session(scratch_root, project_path, None),
-    );
-    let first = runtime.snapshot().navigator.scratch.clone();
-    ingest_scratch(
-        &mut runtime,
-        scratch_session(scratch_root, project_path, None),
-    );
-    assert_eq!(first, runtime.snapshot().navigator.scratch);
-}
-
-/// AC5: the row's title is the token when there is one, and the tab label
-/// when there is not. An empty title is the defect this blocks: a row that
-/// shows nothing is worse than one that shows `Tab 1`.
-#[test]
-fn a_scratch_row_titles_itself_from_the_token_and_falls_back_to_the_label() {
-    let scratch_root = "/private/tmp/hide-scratch-title/scratch";
-    let project_path = "/private/tmp/hide-scratch-title/project";
-    let mut runtime = runtime_with_scratch(scratch_root);
-    ingest_scratch(
-        &mut runtime,
-        scratch_session(scratch_root, project_path, Some("build me a parser")),
-    );
-
-    let tabs = &runtime.snapshot().navigator.scratch.tabs;
-    let titled = tabs
-        .iter()
-        .find(|tab| tab.id == "s1:t1")
-        .expect("the agent tab");
-    assert_eq!(titled.title.as_deref(), Some("build me a parser"));
-    // The second tab holds no agent, so it keeps Herdr's own label.
-    let plain = tabs
-        .iter()
-        .find(|tab| tab.id == "s1:t2")
-        .expect("the terminal tab");
-    assert_eq!(plain.title, None);
-    assert!(!plain.label.is_empty());
-}
-
-/// AC5: a pane whose agent never had a title written falls back rather
-/// than showing an empty row.
-#[test]
-fn an_agent_pane_without_a_title_token_shows_its_tab_label() {
-    let scratch_root = "/private/tmp/hide-scratch-untitled/scratch";
-    let project_path = "/private/tmp/hide-scratch-untitled/project";
-    let mut runtime = runtime_with_scratch(scratch_root);
-    ingest_scratch(
-        &mut runtime,
-        scratch_session(scratch_root, project_path, None),
-    );
-    let tab = runtime
-        .snapshot()
-        .navigator
-        .scratch
-        .tabs
-        .iter()
-        .find(|tab| tab.id == "s1:t1")
-        .expect("the agent tab")
-        .clone();
-    assert_eq!(tab.title, None);
-    assert!(!tab.label.is_empty());
-}
-
-/// AC6: the section is collapsed until the operator opens it, and the
-/// choice is what the store carries back.
-#[test]
-fn the_scratch_section_is_collapsed_until_the_operator_opens_it() {
-    let mut runtime = runtime_with_scratch("/private/tmp/hide-scratch-expand/scratch");
-    assert!(!runtime.snapshot().navigator.scratch.expanded);
-    assert!(!runtime.snapshot().ui_state.scratch_expanded);
-
-    let event = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "ui_state_update",
-        "payload": {
-            "expanded_paths": [],
-            "selected_path": null,
-            "selected_pane_id": null,
-            "scratch_expanded": true
-        }
-    }))
-    .expect("ui state event");
-    assert!(runtime.dispatch_json(&event));
-    assert!(runtime.snapshot().ui_state.scratch_expanded);
-    assert!(runtime.snapshot().navigator.scratch.expanded);
-}
-
-/// AC9: the composer's remembered agent and bypass choice survive a save
-/// that did not mention them, so a navigator save cannot reset them.
-#[test]
-fn a_save_that_omits_the_composer_fields_keeps_them() {
-    let mut runtime = runtime_with_scratch("/private/tmp/hide-scratch-remember/scratch");
-    let remember = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "ui_state_update",
-        "payload": {
-            "expanded_paths": [],
-            "selected_path": null,
-            "selected_pane_id": null,
-            "last_agent_kind": "codex",
-            "last_agent_bypass": true
-        }
-    }))
-    .expect("composer save");
-    assert!(runtime.dispatch_json(&remember));
-    assert_eq!(runtime.snapshot().ui_state.last_agent_kind, "codex");
-    assert!(runtime.snapshot().ui_state.last_agent_bypass);
-
-    let unrelated = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "ui_state_update",
-        "payload": {
-            "expanded_paths": ["/private/tmp"],
-            "selected_path": null,
-            "selected_pane_id": null
-        }
-    }))
-    .expect("navigator save");
-    assert!(runtime.dispatch_json(&unrelated));
-    assert_eq!(runtime.snapshot().ui_state.last_agent_kind, "codex");
-    assert!(runtime.snapshot().ui_state.last_agent_bypass);
 }
 
 /// D8: only the pane's detected kind permits an ordinary click report.
@@ -1186,12 +970,14 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             label: "a".to_owned(),
             path: root_a.clone(),
             device_id: "local".to_owned(),
+            pinned: false,
         },
         WorkspaceRegistration {
             id: "workspace:b".to_owned(),
             label: "b".to_owned(),
             path: root_b.clone(),
             device_id: "local".to_owned(),
+            pinned: false,
         },
     ];
     runtime.rebuild_catalog();
@@ -1360,6 +1146,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
         label: "Remote selection leak".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let local_pane = pane("wL:p1", checkout_path);
     let selected_workspace = workspace(
@@ -1594,8 +1381,8 @@ fn read_record_stops_following_a_pane_herdr_moved_focus_away_from() {
 /// from the focus its own server reports, exactly as a local pane earns one
 /// from Hide's focus. The ledger is pruned by pane id namespace, so a local
 /// sync cannot drop a remote record and one target cannot drop another's.
-/// Before this, no record survived for a remote pane and a stopped remote
-/// pane the operator had read still demanded a close confirmation.
+/// Before this, no record survived for a remote pane and the pane tree
+/// could disagree with the agent row about an unresolved close demand.
 #[test]
 fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     let mut runtime = live_runtime();
@@ -1753,8 +1540,8 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     );
     assert_eq!(
         mini["remote:mini:pane:w9:p2"],
-        ("Done".to_owned(), true, "done".to_owned()),
-        "the pane beside it is still unread"
+        ("Done".to_owned(), false, "done".to_owned()),
+        "an unread completion does not create a close prompt"
     );
     // The pane tree is what the remote pane surface reads, so the read
     // axis has to reach it and not only the agent rows.
@@ -1766,8 +1553,8 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     );
     assert_eq!(
         tree["remote:mini:pane:w9:p2"],
-        ("Done".to_owned(), true),
-        "the unread pane beside it still says so"
+        ("Done".to_owned(), false),
+        "the pane tree carries the completion protection decision"
     );
 
     runtime.ingest_session(Ok(working_payload()));
@@ -1832,6 +1619,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         label: "read-record".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id =
@@ -1892,8 +1680,8 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         .collect::<Vec<_>>();
     assert_eq!(
         panes,
-        vec![("plain:p1", "Idle", false), ("plain:p2", "Done", true)],
-        "the read pane is Idle and closes without a prompt; the unread one does not"
+        vec![("plain:p1", "Idle", false), ("plain:p2", "Done", false)],
+        "the read pane and the unread completion both close without a prompt"
     );
 
     for agent in &snapshot.navigator.agents {

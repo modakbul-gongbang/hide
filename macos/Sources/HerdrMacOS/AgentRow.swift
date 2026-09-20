@@ -91,14 +91,21 @@ struct AgentRowPresentation: Equatable {
     /// The core's short human word. No view builds one out of an axis value.
     let statusLabel: String
     let statusColor: Color
+    /// The stable session name (PRD D-01).
     let title: String
-    /// The second line, when the row has room for one.
+    /// The sentence the core chose for this row's state: what the operator is
+    /// asked for, or what the agent is doing. `nil` draws none (PRD D-06).
     let detail: String?
-    /// A small note beside the status word: where the agent lives, or which
-    /// pane it is.
+    /// Whether the status word stands in for a sentence the row does not
+    /// have. Beside a sentence the mark already says it (PRD D-07).
+    let statusWordVisible: Bool
+    /// Whether the sentence is drawn bright. A row that still concerns the
+    /// operator is; a working row's progress is subdued (PRD D-07).
+    let emphasized: Bool
+    /// A small note on its own line under the sentence: where the agent
+    /// lives, or which pane it is.
     let qualifier: String?
     let elapsed: String
-    let ambient: CoreAmbientSignal?
     /// Whether this row is somebody else's work. A delegated row is subdued
     /// so that scanning the sidebar for bright rows finds the operator's own
     /// (PRD B11, D-36).
@@ -113,9 +120,9 @@ struct AgentRowPresentation: Equatable {
 }
 
 extension AgentRowPresentation {
-    /// A sidebar row. At `prominent` the project name is the title and the
-    /// canonical task name sits beneath it; nested under a checkout the task
-    /// name is the title, because the project name is already the heading.
+    /// A sidebar row. The session name is the title at both densities; a
+    /// `prominent` row sits outside the project tree, so it names its home in
+    /// the qualifier, where a nested row already has the heading above it.
     init(
         agent: SidebarAgent,
         density: AgentRowDensity,
@@ -128,11 +135,12 @@ extension AgentRowPresentation {
         symbol = status.symbol
         statusLabel = status.label
         statusColor = status.color
-        title = density == .prominent ? agent.workspaceLabel : agent.identityLabel
-        detail = density == .prominent ? agent.identityLabel : nil
-        qualifier = density == .prominent ? agent.checkoutQualifier : nil
+        title = agent.identityLabel
+        detail = agent.detail
+        statusWordVisible = agent.statusWordVisible
+        emphasized = agent.emphasized
+        qualifier = density == .prominent ? agent.contextLabel : nil
         elapsed = agent.elapsed
-        ambient = agent.ambient
         delegated = agent.delegated
         stallNotice = agent.stallNotice
         if let children, !children.instrumented {
@@ -141,27 +149,10 @@ extension AgentRowPresentation {
         }
     }
 
-    /// A Scratch row. The chat's own title is the line that identifies it -
-    /// there is no project name to stand in for one - and the agent's summary
-    /// sits beneath it.
-    init(agent: SidebarAgent, title: String, connected: Bool) {
-        paneID = agent.paneID
-        agentKind = agent.agentKind
-        let status = AgentStatusPresentation(agent: agent, connected: connected)
-        symbol = status.symbol
-        statusLabel = status.label
-        statusColor = status.color
-        self.title = title
-        detail = agent.summary
-        qualifier = nil
-        elapsed = agent.elapsed
-        ambient = agent.ambient
-    }
-
     /// A pet dashboard row. The dashboard groups by project, so the project
-    /// name is the heading and the summary is the title. A server that stopped
-    /// answering is a state of the row, not of the agent, so it takes the
-    /// disconnected mark and says so in its own word.
+    /// name is the heading and the agent's name is the title. A server that
+    /// stopped answering is a state of the row, not of the agent, so it takes
+    /// the disconnected mark and says so in its own word.
     init(row: PetDashboardRow) {
         paneID = row.paneID
         agentKind = row.agentKind
@@ -172,11 +163,12 @@ extension AgentRowPresentation {
         symbol = status.symbol
         statusLabel = status.label
         statusColor = status.color
-        title = row.summary
-        detail = nil
+        title = row.identityLabel
+        detail = row.detail
+        statusWordVisible = row.statusWordVisible
+        emphasized = row.emphasized
         qualifier = row.paneID
         elapsed = row.elapsed
-        ambient = row.ambient
     }
 }
 
@@ -212,24 +204,6 @@ struct AgentRow: View {
     let action: () -> Void
     @Environment(\.hidePetAppearance) private var petAppearance
 
-    /// Work the agent started that is still running. It is background noise
-    /// next to the agent's own state, so it stays muted.
-    private var ambientLabel: String? {
-        guard let ambient = presentation.ambient else { return nil }
-        var parts: [String] = []
-        if ambient.subagentsActive > 0 { parts.append("\(ambient.subagentsActive) sub") }
-        if ambient.backgroundRunning > 0 { parts.append("\(ambient.backgroundRunning) bg") }
-        return parts.isEmpty ? nil : parts.joined(separator: "  ")
-    }
-
-    /// Work that failed, which is the one ambient signal worth a color. Every
-    /// surface says it once, in the same place and the same hue; the pet
-    /// dashboard used to repeat it in a trailing label of its own.
-    private var failedLabel: String? {
-        guard let failed = presentation.ambient?.backgroundFailed, failed > 0 else { return nil }
-        return "\(failed) failed"
-    }
-
     private var rowContent: some View {
         HStack(alignment: .top, spacing: density.iconSpacing) {
             AgentStatusMark(symbol: presentation.symbol, color: presentation.statusColor)
@@ -257,33 +231,28 @@ struct AgentRow: View {
                         .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                         .foregroundStyle(style.muted)
                 }
-                if let detail = presentation.detail {
-                    Text(detail)
-                        .hideFont(size: HideTheme.Typography.caption)
-                        .foregroundStyle(style.secondary)
-                        .lineLimit(2)
-                }
-                HStack(spacing: style.contentSpacing) {
-                    Text(presentation.statusLabel)
-                        .hideFont(size: HideTheme.Typography.micro, weight: .medium)
-                        .foregroundStyle(presentation.statusColor)
-                    if let qualifier = presentation.qualifier {
-                        Text(qualifier)
-                            .hideFont(size: HideTheme.Typography.micro)
-                            .foregroundStyle(style.muted)
-                            .lineLimit(1)
+                // The second line. The core chose the word or the sentence
+                // from the row's state (PRD D-06); this only draws them. The
+                // word is caption medium in the status colour, the sentence
+                // caption regular in the row's emphasis, one line, cut at the
+                // tail, with the whole of it on the tooltip (PRD D-07).
+                HStack(alignment: .firstTextBaseline, spacing: style.contentSpacing) {
+                    if presentation.statusWordVisible {
+                        Text(presentation.statusLabel)
+                            .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                            .foregroundStyle(presentation.statusColor)
                     }
-                    if let ambientLabel {
-                        Text(ambientLabel)
-                            .hideFont(size: HideTheme.Typography.micro)
-                            .foregroundStyle(style.muted)
+                    if let detail = presentation.detail {
+                        Text(detail)
+                            .hideFont(size: HideTheme.Typography.caption)
+                            .foregroundStyle(
+                                presentation.delegated
+                                    ? style.muted
+                                    : presentation.emphasized ? style.titleColor : style.secondary
+                            )
                             .lineLimit(1)
-                    }
-                    if let failedLabel {
-                        Text(failedLabel)
-                            .hideFont(size: HideTheme.Typography.micro, weight: .medium)
-                            .foregroundStyle(HideTheme.danger)
-                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .hideTooltip(detail)
                     }
                     if let reason = presentation.uninstrumentedReason {
                         // The second of the mark's three positions. A symbol
@@ -294,6 +263,15 @@ struct AgentRow: View {
                             .hideTooltip(reason)
                             .accessibilityLabel(presentation.uninstrumentedLabel ?? reason)
                     }
+                }
+                // The qualifier takes a line of its own: beside the sentence
+                // it took the width the sentence needed, and a prominent row
+                // is the one place the project context has nowhere else to sit.
+                if let qualifier = presentation.qualifier {
+                    Text(qualifier)
+                        .hideFont(size: HideTheme.Typography.micro)
+                        .foregroundStyle(style.muted)
+                        .lineLimit(1)
                 }
                 if let notice = presentation.stallNotice {
                     // The safety net saying so in words, beside the mark that
@@ -324,11 +302,8 @@ struct AgentRow: View {
 
     private var rowAccessibilityValue: String {
         var values = [isFocused ? "Selected" : "Not selected"]
-        if let detail = presentation.detail { values.append(detail) }
         if let qualifier = presentation.qualifier { values.append(qualifier) }
         if !presentation.elapsed.isEmpty { values.append(presentation.elapsed) }
-        if let ambientLabel { values.append(ambientLabel) }
-        if let failedLabel { values.append(failedLabel) }
         if presentation.delegated { values.append("Delegated") }
         if let label = presentation.uninstrumentedLabel { values.append(label) }
         if let notice = presentation.stallNotice { values.append(notice) }
@@ -352,8 +327,12 @@ struct AgentRow: View {
 
     var body: some View {
         rowButton
+        // The status word is read whether or not it is drawn, so a row that
+        // dropped it on screen still says its state (PRD D-10).
         .accessibilityLabel(
-            "\(presentation.title), \(presentation.agentKind), \(presentation.statusLabel)"
+            [presentation.title, presentation.agentKind, presentation.statusLabel, presentation.detail]
+                .compactMap { $0 }
+                .joined(separator: ", ")
         )
         .accessibilityValue(rowAccessibilityValue)
     }

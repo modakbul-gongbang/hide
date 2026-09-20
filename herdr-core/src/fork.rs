@@ -1,10 +1,11 @@
 //! Forking an agent pane into a sibling that carries the parent conversation.
 //!
-//! Herdr already owns every part of this: `agent new` splits a pane, starts the
-//! agent in it, and records the parent in its own lineage, all in one atomic
-//! call. This module decides which panes can be forked and builds that call's
-//! argument list; running it is [`crate::live`]'s job, and reading the lineage
-//! back is the session sync's.
+//! A fork is three Herdr calls: `pane.split` beside the parent, `agent.start`
+//! in the new pane with the agent's own resume arguments, and
+//! `pane.report_metadata` declaring the parent (`wire::PARENT_PANE_TOKEN`),
+//! which is the only lineage Herdr keeps. This module decides which panes can
+//! be forked and spells each agent's resume arguments; running the calls is
+//! [`crate::live`]'s job, and reading the lineage back is the session sync's.
 
 /// The agents whose own fork command this shell knows how to spell.
 ///
@@ -33,10 +34,10 @@ impl ForkableAgent {
         }
     }
 
-    /// The agent's own arguments for resuming a session as a new one. These are
-    /// passed through `herdr agent new`'s `--` separator, so they are the
+    /// The agent's own arguments for resuming a session as a new one. They
+    /// are handed to `agent.start` as the agent's arguments, so they are the
     /// agent's vocabulary rather than Herdr's.
-    fn resume_arguments(self, session_id: &str) -> Vec<String> {
+    pub fn resume_arguments(self, session_id: &str) -> Vec<String> {
         match self {
             Self::Claude => vec![
                 "--resume".to_owned(),
@@ -48,50 +49,17 @@ impl ForkableAgent {
     }
 }
 
-/// Everything the fork command needs, gathered before the runtime mutex is
-/// released so the worker thread carries no reference back into runtime state.
+/// Everything the fork needs, gathered before the runtime mutex is released
+/// so the worker thread carries no reference back into runtime state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForkRequest {
     pub parent_pane_id: String,
     pub agent: ForkableAgent,
     pub session_id: String,
     pub cwd: Option<String>,
+    /// The agent name Herdr will list the fork under, unique per fork and
+    /// already inside Herdr's name rule (`fork_name`).
     pub name: String,
-    pub idempotency_key: String,
-}
-
-/// Builds the `herdr agent new` argument list.
-///
-/// `--from-pane` is what records the parent, so the lineage Herdr reports back
-/// is written by the same call that creates the pane rather than by a second
-/// request that could fail on its own.
-pub fn fork_arguments(request: &ForkRequest) -> Vec<String> {
-    let mut arguments = vec![
-        "agent".to_owned(),
-        "new".to_owned(),
-        request.name.clone(),
-        "--kind".to_owned(),
-        request.agent.kind().to_owned(),
-        "--pane".to_owned(),
-        request.parent_pane_id.clone(),
-        "--from-pane".to_owned(),
-        request.parent_pane_id.clone(),
-        "--direction".to_owned(),
-        "right".to_owned(),
-        "--idempotency-key".to_owned(),
-        request.idempotency_key.clone(),
-        // The operator forked the pane they are reading; taking focus away from
-        // it would undo that. This matches the existing split, which also does
-        // not steal focus.
-        "--no-focus".to_owned(),
-    ];
-    if let Some(cwd) = request.cwd.as_deref().filter(|cwd| !cwd.trim().is_empty()) {
-        arguments.push("--cwd".to_owned());
-        arguments.push(cwd.to_owned());
-    }
-    arguments.push("--".to_owned());
-    arguments.extend(request.agent.resume_arguments(&request.session_id));
-    arguments
 }
 
 /// Herdr's own rule for an agent name, quoted from the error it answers with:
@@ -101,9 +69,9 @@ const MAX_NAME_CHARACTERS: usize = 32;
 
 /// A name no other pane's fork can collide with, that Herdr will accept.
 ///
-/// `herdr agent new` takes the name as a required positional, and two forks of
-/// the same parent are the expected case, so the parent's id alone is not
-/// enough to keep them apart.
+/// `agent.start` takes the name as required, and two forks of the same parent
+/// are the expected case, so the parent's id alone is not enough to keep them
+/// apart.
 ///
 /// Herdr rejects a name that carries a capital or runs past 32 characters, and
 /// a pane id is not required to be lowercase or short: `w2X:p2F` is an
@@ -176,19 +144,14 @@ mod tests {
             session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),
             cwd: Some("/checkout".to_owned()),
             name: "fork-w1-p2-abc".to_owned(),
-            idempotency_key: "key-1".to_owned(),
         }
     }
 
     #[test]
     fn a_claude_fork_resumes_the_parent_session_as_a_new_one() {
-        let arguments = fork_arguments(&request(ForkableAgent::Claude));
-        let separator = arguments
-            .iter()
-            .position(|argument| argument == "--")
-            .unwrap();
+        let request = request(ForkableAgent::Claude);
         assert_eq!(
-            &arguments[separator + 1..],
+            request.agent.resume_arguments(&request.session_id),
             [
                 "--resume",
                 "3f2b1c00-0000-4000-8000-000000000001",
@@ -199,40 +162,10 @@ mod tests {
 
     #[test]
     fn a_codex_fork_uses_that_agents_own_fork_subcommand() {
-        let arguments = fork_arguments(&request(ForkableAgent::Codex));
-        let separator = arguments
-            .iter()
-            .position(|argument| argument == "--")
-            .unwrap();
+        let request = request(ForkableAgent::Codex);
         assert_eq!(
-            &arguments[separator + 1..],
+            request.agent.resume_arguments(&request.session_id),
             ["fork", "3f2b1c00-0000-4000-8000-000000000001"]
-        );
-    }
-
-    #[test]
-    fn the_parent_pane_is_both_the_split_target_and_the_recorded_lineage() {
-        let arguments = fork_arguments(&request(ForkableAgent::Claude));
-        let value_after = |flag: &str| {
-            arguments
-                .iter()
-                .position(|argument| argument == flag)
-                .map(|index| arguments[index + 1].as_str())
-        };
-        assert_eq!(value_after("--pane"), Some("w1:p2"));
-        assert_eq!(value_after("--from-pane"), Some("w1:p2"));
-        assert_eq!(value_after("--direction"), Some("right"));
-        assert!(arguments.iter().any(|argument| argument == "--no-focus"));
-    }
-
-    #[test]
-    fn a_blank_working_directory_is_left_to_herdr_rather_than_passed_empty() {
-        let mut blank = request(ForkableAgent::Claude);
-        blank.cwd = Some("   ".to_owned());
-        assert!(
-            !fork_arguments(&blank)
-                .iter()
-                .any(|argument| argument == "--cwd")
         );
     }
 
@@ -290,9 +223,9 @@ mod tests {
         }
     }
 
-    /// The name is also the idempotency key, so nothing may be added to it
-    /// afterwards: a long pane id and a long nonce have to come back inside
-    /// the rule on their own, and still tell two forks apart.
+    /// Nothing may be added to the name afterwards: a long pane id and a long
+    /// nonce have to come back inside the rule on their own, and still tell
+    /// two forks apart.
     #[test]
     fn a_long_name_is_cut_to_herdrs_limit_and_still_separates_two_forks() {
         let long_pane = "workspace-with-a-very-long-name:pane-42";

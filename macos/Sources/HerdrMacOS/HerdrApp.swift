@@ -10,6 +10,18 @@ enum ReopenShortcutPolicy {
     }
 }
 
+/// Keep Open reaches the model through the same local monitor as Reopen
+/// Closed Tab: the chord is pressed while the editor or a terminal holds the
+/// keyboard, and either responder can consume a key equivalent before the
+/// application menu sees it.
+@MainActor
+enum KeepOpenShortcutPolicy {
+    static func shouldKeepOpen(_ event: NSEvent) -> Bool {
+        event.type == .keyDown
+            && ShellMenuCommand.keepOpen.shortcut.matches(event)
+    }
+}
+
 @MainActor
 enum MainWindowPresentation {
     static func present(_ window: NSWindow, application: NSApplication = .shared, background: Bool = false) {
@@ -253,6 +265,12 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                 }
                 return nil
             }
+            if KeepOpenShortcutPolicy.shouldKeepOpen(event) {
+                MainActor.assumeIsolated {
+                    self.model.keepActiveEditorTabOpen()
+                }
+                return nil
+            }
             return event
         }
         presentMainWindow(window, source: "launch")
@@ -303,9 +321,6 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
         } else if CommandLine.arguments.contains("--verification-browser-refresh") {
             model.browser.refresh()
         }
-        if CommandLine.arguments.contains("--verification-remote-mini") {
-            model.remote.refreshMini()
-        }
         #if DEBUG
         if CommandLine.arguments.contains("--verification-ui-fixture"),
            let scene = LaunchArguments.value("--verification-scene", in: CommandLine.arguments) {
@@ -317,7 +332,6 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                 case "settings-agents":
                     self.model.settingsInitialTab = .agents
                     self.model.showSettings = true
-                case "new-chat": self.model.showComposer = true
                 case "file-search": self.model.showFileSearch = true
                 case "add-device": self.presentVerificationAddDeviceSheet()
                 default:
@@ -576,7 +590,6 @@ struct ShellCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             menuButton(.newTab) { model.addTab() }
-            menuButton(.newChat) { model.openComposer() }
             menuButton(.newWorkspace) { model.openNewWorkspace() }
             menuButton(.search) { model.openSearch() }
             menuButton(.openFile) { model.openFileSearch() }
@@ -584,6 +597,7 @@ struct ShellCommands: Commands {
             Divider()
 
             menuButton(.closeTab) { model.performCloseShortcut() }
+            menuButton(.keepOpen) { model.keepActiveEditorTabOpen() }
         }
 
         CommandMenu("Navigate") {

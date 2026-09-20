@@ -50,7 +50,9 @@ fn pane(id: &str, agent: AgentKind, status: &str) -> Pane {
     Pane {
         id: id.to_owned(),
         agent,
-        agent_session: None,
+        name: None,
+        tab_id: format!("{id}-tab"),
+        agent_session: Some(AgentSession::new("id", &format!("{id}-session"))),
         agent_status: status.to_owned(),
         revision: 1,
         state_change_seq: 1,
@@ -113,12 +115,11 @@ fn watcher_subscribes_to_the_contract_pane_events_only() {
         ]
     );
     let params = hide_herdr_client::subscription_params_for_panes(
-        17,
         &WATCHER_SUBSCRIPTIONS,
         &["w1:p1".to_owned()],
     )
     .unwrap();
-    assert_eq!(params["after_sequence"], 17);
+    assert_eq!(params.get("after_sequence"), None);
     assert_eq!(params["subscriptions"].as_array().unwrap().len(), 7);
     assert!(
         params["subscriptions"]
@@ -139,11 +140,9 @@ fn watcher_subscribes_to_the_contract_pane_events_only() {
 }
 
 #[test]
-fn event_lines_carry_sequence_and_protocol_and_errors_stay_explicit() {
+fn event_lines_carry_their_kind_and_errors_stay_explicit() {
     let event = parse_watcher_subscription_line(
         &json!({
-            "protocol": HERDR_PROTOCOL_REVISION,
-            "sequence": 42,
             "event": "pane_agent_status_changed",
             "data": {"type": "pane_agent_status_changed", "pane_id": "w1:p1"}
         })
@@ -152,21 +151,17 @@ fn event_lines_carry_sequence_and_protocol_and_errors_stay_explicit() {
     .unwrap();
     assert!(matches!(
         event,
-        WatcherSubscriptionLine::Event {
-            protocol: HERDR_PROTOCOL_REVISION,
-            sequence: 42,
-            kind,
-        } if kind == "pane_agent_status_changed"
+        WatcherSubscriptionLine::Event { kind } if kind == "pane_agent_status_changed"
     ));
 
     let error = parse_watcher_subscription_line(
-        r#"{"id":"herdr-core:events.subscribe","error":{"code":"event_gap","message":"sequence is no longer retained"}}"#,
+        r#"{"id":"herdr-core:events.subscribe","error":{"code":"internal","message":"event stream closed"}}"#,
     )
     .unwrap();
     assert!(matches!(
         error,
         WatcherSubscriptionLine::Error { code, message }
-            if code == "event_gap" && message == "sequence is no longer retained"
+            if code == "internal" && message == "event stream closed"
     ));
 }
 
@@ -285,8 +280,30 @@ fn session_path_falls_back_to_the_newest_file_for_the_working_directory() {
     let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Claude, "idle");
     target.cwd = Some("/Users/example".to_owned());
+    // The cwd search serves only a pane Herdr has no session for; a reported
+    // session whose file is not there yet is missing, not the neighbour's.
+    target.agent_session = None;
 
     assert_eq!(reader.session_path(&target).unwrap(), newer);
+}
+
+#[test]
+fn session_path_of_a_reported_session_without_a_file_is_missing() {
+    let root = tempdir().unwrap();
+    let project = root.path().join(".claude/projects/-Users-example");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(
+        project.join("bbbbbbbb-0000-0000-0000-000000000000.jsonl"),
+        "",
+    )
+    .unwrap();
+
+    let mut reader = LocalSessionReader::new(root.path());
+    let mut target = pane("w1:p1", AgentKind::Claude, "idle");
+    target.cwd = Some("/Users/example".to_owned());
+
+    let error = reader.session_path(&target).unwrap_err();
+    assert_eq!(format!("{error:#}"), "session_file_missing");
 }
 
 #[test]
@@ -312,6 +329,7 @@ fn codex_session_falls_back_through_the_recent_day_directories() {
     let mut reader = LocalSessionReader::new(root.path());
     let mut target = pane("w1:p1", AgentKind::Codex, "idle");
     target.cwd = Some("/Users/example/projects/mine".to_owned());
+    target.agent_session = None;
 
     assert_eq!(reader.session_path(&target).unwrap(), mine);
 }
@@ -2090,7 +2108,15 @@ fn persisted_state_records_both_turn_phases_and_no_fingerprint() {
 struct FakeTransport {
     panes: RefCell<Vec<Pane>>,
     reports: RefCell<Vec<Display>>,
+    identity_reports: RefCell<Vec<(String, Identity)>>,
     legacy_summary_clears: RefCell<Vec<String>>,
+    /// `agent.rename` calls as (pane id, name); the fake applies Herdr's
+    /// own name rule so a refused name reads as the server would refuse it.
+    agent_renames: RefCell<Vec<(String, String)>>,
+    /// Tab labels the fake server holds, read by `tab_label` and written by
+    /// `rename_tab`. A tab missing here fails `tab.get`.
+    tab_labels: RefCell<HashMap<String, String>>,
+    tab_renames: RefCell<Vec<(String, String)>>,
 }
 
 impl FakeTransport {
@@ -2098,7 +2124,11 @@ impl FakeTransport {
         Self {
             panes: RefCell::new(panes),
             reports: RefCell::new(Vec::new()),
+            identity_reports: RefCell::new(Vec::new()),
             legacy_summary_clears: RefCell::new(Vec::new()),
+            agent_renames: RefCell::new(Vec::new()),
+            tab_labels: RefCell::new(HashMap::new()),
+            tab_renames: RefCell::new(Vec::new()),
         }
     }
 
@@ -2120,6 +2150,42 @@ impl HerdrTransport for FakeTransport {
         self.reports.borrow_mut().push(display.clone());
         Ok(())
     }
+    fn report_identity(&self, pane: &Pane, identity: &Identity) -> Result<()> {
+        self.identity_reports
+            .borrow_mut()
+            .push((pane.id.clone(), identity.clone()));
+        Ok(())
+    }
+    fn rename_agent(&self, pane: &Pane, name: &str) -> Result<()> {
+        if !herdr_agent_name_acceptable(name) {
+            return Err(anyhow!("agent.rename failed: invalid_agent_name"));
+        }
+        self.agent_renames
+            .borrow_mut()
+            .push((pane.id.clone(), name.to_owned()));
+        for held in self.panes.borrow_mut().iter_mut() {
+            if held.id == pane.id {
+                held.name = Some(name.to_owned());
+            }
+        }
+        Ok(())
+    }
+    fn tab_label(&self, tab_id: &str) -> Result<String> {
+        self.tab_labels
+            .borrow()
+            .get(tab_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("tab.get failed: unknown tab {tab_id}"))
+    }
+    fn rename_tab(&self, tab_id: &str, label: &str) -> Result<()> {
+        self.tab_renames
+            .borrow_mut()
+            .push((tab_id.to_owned(), label.to_owned()));
+        self.tab_labels
+            .borrow_mut()
+            .insert(tab_id.to_owned(), label.to_owned());
+        Ok(())
+    }
 
     fn clear_legacy_summary_token(&self, pane: &Pane) -> Result<()> {
         self.legacy_summary_clears
@@ -2136,6 +2202,18 @@ impl HerdrTransport for BrokenTransport {
         Err(anyhow!("herdr socket is unavailable"))
     }
     fn report(&self, _: &Pane, _: &Display) -> Result<()> {
+        Ok(())
+    }
+    fn report_identity(&self, _: &Pane, _: &Identity) -> Result<()> {
+        Ok(())
+    }
+    fn rename_agent(&self, _: &Pane, _: &str) -> Result<()> {
+        Ok(())
+    }
+    fn tab_label(&self, _: &str) -> Result<String> {
+        Err(anyhow!("herdr socket is unavailable"))
+    }
+    fn rename_tab(&self, _: &str, _: &str) -> Result<()> {
         Ok(())
     }
 }
@@ -2260,16 +2338,10 @@ fn socket_transport_uses_one_client_for_list_metadata_and_subscription() {
         json!({
             "id": "herdr-core:events.subscribe",
             "result": {
-                "type": "subscription_started",
-                "host": {"host_id": "fixture", "session_id": "session"},
-                "sequence": 20,
-                "oldest_available_sequence": 1
+                "type": "subscription_started"
             }
         }),
         json!({
-            "protocol": HERDR_PROTOCOL_REVISION,
-            "host": {"host_id": "fixture", "session_id": "session"},
-            "sequence": 21,
             "event": "pane_focused",
             "data": {"type": "pane_focused", "pane_id": "w1:p1", "workspace_id": "w1"}
         })
@@ -2301,8 +2373,8 @@ fn socket_transport_uses_one_client_for_list_metadata_and_subscription() {
         )
         .unwrap();
     socket.clear_legacy_summary_token(&panes[0]).unwrap();
-    let subscription = socket.subscribe(17, &["w1:p1".to_owned()]).unwrap();
-    assert_eq!(subscription.ack.sequence, 20);
+    let subscription = socket.subscribe(&["w1:p1".to_owned()]).unwrap();
+    assert_eq!(subscription.ack.kind, "subscription_started");
     let (mut reader, _shutdown) = subscription.into_parts();
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
@@ -2328,7 +2400,7 @@ fn socket_transport_uses_one_client_for_list_metadata_and_subscription() {
         Value::Null
     );
     let subscription_request: Value = serde_json::from_slice(&requests[3]).unwrap();
-    assert_eq!(subscription_request["params"]["after_sequence"], 17);
+    assert_eq!(subscription_request["params"].get("after_sequence"), None);
     assert_eq!(
         subscription_request["params"]["subscriptions"]
             .as_array()
@@ -2500,14 +2572,21 @@ fn malformed_backend() -> Arc<ScriptedBackend> {
 /// A transcript the test drives turn by turn, so a scan sees exactly the
 /// conversation state the scenario is about.
 struct ScriptedSessionReader {
+    title: RefCell<Option<String>>,
     events: RefCell<Vec<SessionEvent>>,
 }
 
 impl ScriptedSessionReader {
     fn new() -> Self {
         Self {
+            title: RefCell::new(None),
             events: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Claude's `ai-title` record landing in the transcript.
+    fn titled(&self, title: &str) {
+        *self.title.borrow_mut() = Some(title.to_owned());
     }
 
     fn user(&self, text: &str) {
@@ -2536,6 +2615,7 @@ impl ScriptedSessionReader {
 impl SessionReader for ScriptedSessionReader {
     fn read(&mut self, _: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
+            title: self.title.borrow().clone(),
             events: self.events.borrow().clone(),
             skipped_lines: 0,
             skipped_reasons: Default::default(),
@@ -2549,6 +2629,7 @@ struct FakeSessionReader;
 impl SessionReader for FakeSessionReader {
     fn read(&mut self, _: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
+            title: None,
             events: vec![human_event("작업 요약을 생성하고 표시를 검증해줘")],
             skipped_lines: 0,
             skipped_reasons: Default::default(),
@@ -2742,10 +2823,521 @@ struct StateSequenceReader;
 impl SessionReader for StateSequenceReader {
     fn read(&mut self, pane: &Pane) -> Result<ParsedSession> {
         Ok(ParsedSession {
+            title: None,
             events: vec![human_event(format!("새 요청 {}", pane.state_change_seq))],
             skipped_lines: 0,
             skipped_reasons: Default::default(),
             rescan_reason: None,
         })
     }
+}
+
+// ------------------------------------------------- session identity (PRD D-02..D-05)
+
+fn parsed(title: Option<&str>, events: Vec<SessionEvent>) -> ParsedSession {
+    ParsedSession {
+        title: title.map(str::to_owned),
+        events,
+        skipped_lines: 0,
+        skipped_reasons: Default::default(),
+        rescan_reason: None,
+    }
+}
+
+/// PRD D-02: Claude's own title names the session; without one the first
+/// human turn stands in and says so; Codex always takes the first turn.
+#[test]
+fn session_name_is_the_claude_title_or_the_first_human_turn() {
+    let turns = vec![
+        human_event("결제 멱등키 PR을 리뷰하고 머지 준비해줘"),
+        human_event("두 번째 질문"),
+    ];
+    assert_eq!(
+        session_name(
+            AgentKind::Claude,
+            &parsed(Some("  결제 멱등키\n PR  "), turns.clone())
+        ),
+        (Some("결제 멱등키 PR".to_owned()), false)
+    );
+    let long: String = "가".repeat(120);
+    let (cut, _) = session_name(AgentKind::Claude, &parsed(Some(&long), Vec::new()));
+    assert_eq!(cut.unwrap().chars().count(), MAX_SESSION_NAME_CHARS);
+
+    let (fallback, missing) = session_name(AgentKind::Claude, &parsed(None, turns.clone()));
+    assert!(fallback.unwrap().starts_with("결제 멱등키 PR을"));
+    assert!(missing, "a Claude session without ai-title is logged once");
+
+    let (codex, missing) = session_name(AgentKind::Codex, &parsed(Some("ignored"), turns));
+    assert!(codex.unwrap().starts_with("결제 멱등키 PR을"));
+    assert!(!missing);
+
+    assert_eq!(
+        session_name(AgentKind::Codex, &parsed(None, Vec::new())),
+        (None, false)
+    );
+    assert_eq!(
+        session_name(AgentKind::Claude, &parsed(None, vec![human_event("짧음")])),
+        (None, false),
+        "a turn too short to be a name is no name, not a logged gap"
+    );
+}
+
+#[test]
+fn herdr_takes_only_a_lowercase_identifier_as_an_agent_name() {
+    assert!(herdr_agent_name_acceptable("hook-bug-check"));
+    assert!(herdr_agent_name_acceptable("a_1"));
+    assert!(!herdr_agent_name_acceptable("Hook"));
+    assert!(!herdr_agent_name_acceptable("1st"));
+    assert!(!herdr_agent_name_acceptable("has space"));
+    assert!(!herdr_agent_name_acceptable("결제"));
+    assert!(!herdr_agent_name_acceptable(&"a".repeat(33)));
+    assert!(herdr_agent_name_acceptable(&"a".repeat(32)));
+}
+
+#[test]
+fn a_tab_label_is_owned_when_herdr_or_this_plugin_wrote_it() {
+    assert!(tab_label_owned("3", None));
+    assert!(tab_label_owned("Tab 12", None));
+    assert!(tab_label_owned("결제 멱등키 PR", Some("결제 멱등키 PR")));
+    assert!(!tab_label_owned("Tab", None));
+    assert!(!tab_label_owned("Release", None));
+    assert!(!tab_label_owned("결제 멱등키 PR", Some("다른 이름")));
+}
+
+/// PRD D-03, D-04: a name Herdr can hold becomes the agent name, the tab it
+/// alone occupies takes the same label, and the `name` token stays empty
+/// because the sidebar already reads the agent name.
+#[test]
+fn an_acceptable_title_renames_the_agent_and_its_tab_once() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let reader = ScriptedSessionReader::new();
+    reader.titled("hook-bug-check");
+    reader.user("훅 버그를 확인하고 고쳐줘");
+    let transport = FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "working")]);
+    transport
+        .tab_labels
+        .borrow_mut()
+        .insert("w1:p1-tab".to_owned(), "Tab 1".to_owned());
+    let mut watcher = Watcher::new(transport, router_with(&backend), reader, paths.clone());
+    watcher.settle();
+
+    let renames = watcher.transport.agent_renames.borrow().clone();
+    assert_eq!(
+        renames,
+        vec![("w1:p1".to_owned(), "hook-bug-check".to_owned())]
+    );
+    let tabs = watcher.transport.tab_renames.borrow().clone();
+    assert_eq!(
+        tabs,
+        vec![("w1:p1-tab".to_owned(), "hook-bug-check".to_owned())]
+    );
+    let identity = watcher
+        .transport
+        .identity_reports
+        .borrow()
+        .last()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(identity.name, None, "the agent name carries the identity");
+    assert_eq!(identity.progress.as_deref(), Some("착수"));
+
+    // The same title is not asked about again, and Herdr echoing our name
+    // back as the pane's name still reads as ours.
+    watcher.scan().unwrap();
+    watcher.scan().unwrap();
+    assert_eq!(watcher.transport.agent_renames.borrow().len(), 1);
+    assert_eq!(watcher.transport.tab_renames.borrow().len(), 1);
+    assert_eq!(
+        watcher.transport.panes.borrow()[0].name.as_deref(),
+        Some("hook-bug-check")
+    );
+
+    // A new title from the session moves both names again.
+    watcher.session_reader.titled("hook-bug-fixed");
+    watcher.transport.panes.borrow_mut()[0].revision += 1;
+    watcher.scan().unwrap();
+    assert_eq!(
+        watcher.transport.agent_renames.borrow().last().unwrap().1,
+        "hook-bug-fixed"
+    );
+    assert_eq!(
+        watcher.transport.tab_renames.borrow().last().unwrap().1,
+        "hook-bug-fixed"
+    );
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert!(!log.contains("agent_rename_failed"), "log was: {log}");
+    assert!(!log.contains("session_title_missing"), "log was: {log}");
+}
+
+/// PRD D-03 (amended): a title Herdr refuses as an agent name is not
+/// retried; it travels as the `name` token in the second report, while the
+/// tab, which takes any label, is still renamed.
+#[test]
+fn a_korean_title_becomes_the_name_token_and_the_tab_label() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let reader = ScriptedSessionReader::new();
+    reader.titled("결제 멱등키 PR");
+    reader.user("결제 멱등키 PR을 리뷰해줘");
+    let transport = FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "working")]);
+    transport
+        .tab_labels
+        .borrow_mut()
+        .insert("w1:p1-tab".to_owned(), "1".to_owned());
+    let mut watcher = Watcher::new(transport, router_with(&backend), reader, paths.clone());
+    watcher.settle();
+
+    assert!(watcher.transport.agent_renames.borrow().is_empty());
+    let identity = watcher
+        .transport
+        .identity_reports
+        .borrow()
+        .first()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(identity.name.as_deref(), Some("결제 멱등키 PR"));
+    assert_eq!(
+        watcher.transport.tab_renames.borrow().clone(),
+        vec![("w1:p1-tab".to_owned(), "결제 멱등키 PR".to_owned())]
+    );
+    let state = &watcher.display_states.panes["w1:p1"];
+    assert_eq!(state.plugin_name.as_deref(), Some("결제 멱등키 PR"));
+    assert!(!state.plugin_name_as_agent);
+}
+
+/// PRD B10, D-04: a name the operator gave the agent and a label the
+/// operator typed on the tab are never overwritten, and the `name` token is
+/// left empty so the operator's name is what the sidebar shows.
+#[test]
+fn an_operator_named_agent_and_a_typed_tab_label_are_left_alone() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let reader = ScriptedSessionReader::new();
+    reader.titled("결제 멱등키 PR");
+    reader.user("결제 멱등키 PR을 리뷰해줘");
+    let mut named = pane("w1:p1", AgentKind::Claude, "working");
+    named.name = Some("observer".to_owned());
+    let transport = FakeTransport::new(vec![named]);
+    transport
+        .tab_labels
+        .borrow_mut()
+        .insert("w1:p1-tab".to_owned(), "Release".to_owned());
+    let mut watcher = Watcher::new(transport, router_with(&backend), reader, paths.clone());
+    watcher.settle();
+
+    assert!(watcher.transport.agent_renames.borrow().is_empty());
+    assert!(watcher.transport.tab_renames.borrow().is_empty());
+    let identity = watcher
+        .transport
+        .identity_reports
+        .borrow()
+        .last()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(
+        identity.name, None,
+        "the operator's name wins over the session title"
+    );
+    assert_eq!(identity.progress.as_deref(), Some("착수"));
+    assert_eq!(watcher.display_states.panes["w1:p1"].plugin_name, None);
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert!(!log.contains("tab_rename_failed"), "log was: {log}");
+}
+
+/// PRD D-04: a tab that holds two agents keeps its own label, since neither
+/// agent's name describes it.
+#[test]
+fn a_tab_shared_by_two_agents_keeps_its_label() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let reader = ScriptedSessionReader::new();
+    reader.titled("hook-bug-check");
+    reader.user("훅 버그를 확인하고 고쳐줘");
+    let mut first = pane("w1:p1", AgentKind::Claude, "working");
+    let mut second = pane("w1:p2", AgentKind::Codex, "working");
+    first.tab_id = "w1:t1".to_owned();
+    second.tab_id = "w1:t1".to_owned();
+    let transport = FakeTransport::new(vec![first, second]);
+    transport
+        .tab_labels
+        .borrow_mut()
+        .insert("w1:t1".to_owned(), "1".to_owned());
+    let mut watcher = Watcher::new(transport, router_with(&backend), reader, paths);
+    watcher.settle();
+
+    assert!(watcher.transport.tab_renames.borrow().is_empty());
+    assert_eq!(watcher.transport.tab_labels.borrow()["w1:t1"], "1");
+    // Each agent is still named its own way: the Claude title as the agent
+    // name, the Codex first turn (Korean) as its token.
+    assert_eq!(watcher.transport.agent_renames.borrow().len(), 1);
+    let codex_token = watcher
+        .transport
+        .identity_reports
+        .borrow()
+        .iter()
+        .find(|(id, _)| id == "w1:p2")
+        .map(|(_, identity)| identity.name.clone())
+        .unwrap();
+    assert!(codex_token.is_some());
+}
+
+/// PRD D-02: a pane whose session Herdr has not recorded yet reads the
+/// newest transcript in its cwd, which may be another pane's; no name is
+/// written from that guess, so the tab and agent wait for the pane's own
+/// session.
+#[test]
+fn a_pane_without_its_own_session_is_not_named_from_a_borrowed_transcript() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let reader = ScriptedSessionReader::new();
+    reader.titled("hook-bug-check");
+    reader.user("훅 버그를 확인하고 고쳐줘");
+    let mut unrecorded = pane("w1:p1", AgentKind::Claude, "working");
+    unrecorded.agent_session = None;
+    let transport = FakeTransport::new(vec![unrecorded]);
+    transport
+        .tab_labels
+        .borrow_mut()
+        .insert("w1:p1-tab".to_owned(), "1".to_owned());
+    let mut watcher = Watcher::new(transport, router_with(&backend), reader, paths);
+    watcher.settle();
+
+    assert!(watcher.transport.agent_renames.borrow().is_empty());
+    assert!(watcher.transport.tab_renames.borrow().is_empty());
+    let identity = watcher
+        .transport
+        .identity_reports
+        .borrow()
+        .last()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(identity.name, None);
+    assert_eq!(
+        identity.progress.as_deref(),
+        Some("착수"),
+        "the sentence tokens still flow"
+    );
+}
+
+/// PRD D-11: a rename Herdr refuses or a tab it cannot read is one log line
+/// and no retry; the name that did not land is the visible failure.
+#[test]
+fn a_refused_rename_and_an_unknown_tab_are_logged_once_and_not_retried() {
+    struct RefusingTransport(FakeTransport);
+    impl HerdrTransport for RefusingTransport {
+        fn panes(&self) -> Result<Vec<Pane>> {
+            self.0.panes()
+        }
+        fn report(&self, pane: &Pane, display: &Display) -> Result<()> {
+            self.0.report(pane, display)
+        }
+        fn report_identity(&self, pane: &Pane, identity: &Identity) -> Result<()> {
+            self.0.report_identity(pane, identity)
+        }
+        fn rename_agent(&self, _: &Pane, name: &str) -> Result<()> {
+            Err(anyhow!("agent.rename failed: name {name} is taken"))
+        }
+        fn tab_label(&self, tab_id: &str) -> Result<String> {
+            self.0.tab_label(tab_id)
+        }
+        fn rename_tab(&self, tab_id: &str, label: &str) -> Result<()> {
+            self.0.rename_tab(tab_id, label)
+        }
+    }
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let reader = ScriptedSessionReader::new();
+    reader.titled("hook-bug-check");
+    reader.user("훅 버그를 확인하고 고쳐줘");
+    let transport = RefusingTransport(FakeTransport::new(vec![pane(
+        "w1:p1",
+        AgentKind::Claude,
+        "working",
+    )]));
+    let mut watcher = Watcher::new(transport, router_with(&backend), reader, paths.clone());
+    watcher.settle();
+    watcher.scan().unwrap();
+
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert_eq!(
+        log.matches("agent_rename_failed").count(),
+        1,
+        "log was: {log}"
+    );
+    assert_eq!(
+        log.matches("tab_rename_failed").count(),
+        1,
+        "log was: {log}"
+    );
+    // The refused name still reaches the sidebar, as the token.
+    let identity = watcher
+        .transport
+        .0
+        .identity_reports
+        .borrow()
+        .first()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(identity.name.as_deref(), Some("hook-bug-check"));
+    assert!(watcher.transport.0.tab_renames.borrow().is_empty());
+}
+
+/// PRD D-02: a Claude session that has not written `ai-title` yet is named
+/// by its first turn and logged once, not once per scan.
+#[test]
+fn a_missing_claude_title_is_logged_once() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let backend = task_backend();
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Claude, "working")]),
+        router_with(&backend),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.settle();
+    watcher.transport.panes.borrow_mut()[0].revision += 5;
+    watcher.scan().unwrap();
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert_eq!(
+        log.matches("session_title_missing").count(),
+        1,
+        "log was: {log}"
+    );
+    let identity = watcher
+        .transport
+        .identity_reports
+        .borrow()
+        .first()
+        .cloned()
+        .unwrap()
+        .1;
+    assert!(
+        identity.name.is_some(),
+        "the first turn stands in until the title lands"
+    );
+
+    // Codex has no title record, so its first turn is the name, not a gap.
+    let paths = StatePaths::for_tests(root.path().join("codex").as_path());
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p2", AgentKind::Codex, "working")]),
+        router_with(&backend),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.settle();
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert!(!log.contains("session_title_missing"), "log was: {log}");
+}
+
+/// PRD D-05, B4: the second report carries the sentence tokens, an
+/// `expected_reply` is cut to the forty characters the row can show, a
+/// restart republishes both from the persisted state without a provider
+/// call, and the agent going back to work clears the reply it asked for.
+#[test]
+fn the_second_report_carries_the_sentence_survives_a_restart_and_clears_on_work() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let long_reply = "가".repeat(55);
+    let backend = ScriptedBackend::new(vec![Ok(json!({
+        "task": "음료 소비량 퀴즈 풀이",
+        "task_changed": true,
+        "progress": "선택 대기",
+        "expected_reply": long_reply,
+        "attention": "question"
+    }))]);
+    let mut watcher = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Codex, "blocked")]),
+        router_with(&backend),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    watcher.settle();
+    let identity = watcher
+        .transport
+        .identity_reports
+        .borrow()
+        .last()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(identity.progress.as_deref(), Some("선택 대기"));
+    assert_eq!(
+        identity
+            .expected_reply
+            .as_deref()
+            .map(|reply| reply.chars().count()),
+        Some(MAX_EXPECTED_REPLY_CHARS)
+    );
+    assert_eq!(backend.calls(), 1);
+
+    // A restart: the same tokens go out again from disk, and nothing is asked.
+    let mut restarted = Watcher::new(
+        FakeTransport::new(vec![pane("w1:p1", AgentKind::Codex, "blocked")]),
+        router_with(&backend),
+        FakeSessionReader,
+        paths.clone(),
+    );
+    restarted.scan().unwrap();
+    let republished = restarted
+        .transport
+        .identity_reports
+        .borrow()
+        .first()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(republished, identity);
+    assert_eq!(
+        backend.calls(),
+        1,
+        "the persisted sentence costs no request"
+    );
+
+    // The agent works again: the reply it waited for is no longer asked of anyone.
+    restarted.transport.set_status("working");
+    restarted.scan().unwrap();
+    let working = restarted
+        .transport
+        .identity_reports
+        .borrow()
+        .last()
+        .cloned()
+        .unwrap()
+        .1;
+    assert_eq!(working.expected_reply, None);
+    assert_eq!(
+        working.progress.as_deref(),
+        Some("선택 대기"),
+        "progress stays until the next verdict"
+    );
+}
+
+/// The second report clears a token it no longer holds with an explicit
+/// null, so a stale value cannot survive on the pane.
+#[test]
+fn identity_params_clear_absent_tokens_explicitly() {
+    let identity = Identity {
+        name: Some("결제 멱등키 PR".to_owned()),
+        progress: None,
+        expected_reply: None,
+    };
+    let params = identity_params(&pane("w1:p1", AgentKind::Claude, "idle"), &identity);
+    assert_eq!(params["pane_id"], json!("w1:p1"));
+    assert_eq!(params["source"], json!(PLUGIN_ID));
+    assert_eq!(params["tokens"]["name"], json!("결제 멱등키 PR"));
+    assert_eq!(params["tokens"]["progress"], Value::Null);
+    assert_eq!(params["tokens"]["expected_reply"], Value::Null);
 }

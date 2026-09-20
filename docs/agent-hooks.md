@@ -24,13 +24,19 @@ Four events are registered, because those are the four both runtimes declare her
 
 Every entry carries `--source hide-subagents@<version>` inside its command.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
-Nothing parses the rest of the command.
+Nothing parses the rest of the command, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
 
 ## What the hook reports back
 
 The helper is stateless, as a hook script must be.
-The count lives in `~/.hide/agent-hooks/panes/`, keyed by `$HERDR_PANE_ID`, and is republished after every event through `herdr pane report-metadata`, which Herdr defines as display-only pane metadata.
-The core reads it back out of the pane tokens its ordinary snapshot already carries, so no new request, subscription or timer exists for any of this.
+The count lives in `~/.hide/agent-hooks/panes/`, keyed by `$HERDR_PANE_ID`, and is republished after every event through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata.
+The request goes through `hide-herdr-client`, the same client the context-label plugin reports with, to the socket in `HERDR_SOCKET_PATH` or Herdr's default `~/.config/herdr/herdr.sock`, with a two-second timeout so a Herdr that does not answer costs the agent's turn that long and no more.
+The metadata source is `hide-subagents`, the marker name without its version: Herdr limits a source to ASCII letters, digits, `:`, `.`, `_` and `-`, and refuses the marker's `@` with `invalid_metadata_source`.
+The core reads the tokens back out of the pane tokens its ordinary snapshot already carries, so no subscription or poll exists for any of this.
+
+The first release shelled out to `herdr pane report-metadata` with the pane id after the options and the versioned marker as the source.
+The pinned CLI refuses both, the helper swallowed the exit status, and every pane on the machine read as `session_predates_install` with advice to restart that changed nothing.
+Two things keep that from recurring: `report::tests` sends one report at a fake socket and asserts the exact request, and a report that fails is written down (next section) rather than dropped.
 
 | Token | Meaning |
 | --- | --- |
@@ -48,6 +54,11 @@ A pane Herdr has stopped listing has its record swept on the next session bootst
 The helper always exits zero and drains its standard input.
 A hook that fails must never be what breaks the operator's agent.
 
+Exiting zero is not the same as saying nothing.
+The outcome of every report is recorded in `~/.hide/agent-hooks/last-report-failure.json`: a failure writes the pane, the event, the socket and Herdr's answer, and the next success removes the file, so it describes the hook's current state rather than its history.
+`Diagnosis` reads it back as `last_report_failure`, `doctor` prints it as a `Last report failed:` line, and the Settings group shows it as an error note above the restart advice, because with a refused report on record a restart is not the fix.
+The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Background AI group sets), and reads nothing while it is not.
+
 ## Judging what is installed
 
 `hide_agent_hooks::diagnosis` resolves one reason, in a fixed order, and the first match wins:
@@ -55,7 +66,7 @@ A hook that fails must never be what breaks the operator's agent.
 1. `config_unreadable` - the file could not be read or parsed, so nothing was installed into it.
 2. `remote_host` - the pane is on another machine. Hide does not write to another machine's file system.
 3. `hooks_not_installed` - the runtime is here and carries no hook of Hide's.
-4. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it.
+4. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it. A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
 5. `hook_outdated` - the session is reporting through an older hook than this Hide writes.
 6. `unknown` - genuinely unknown, and said to be.
 

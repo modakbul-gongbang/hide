@@ -8,7 +8,6 @@ private func presentationPane(id: String) -> CorePaneSnapshot {
         id: id,
         cwd: "/tmp/hide",
         statusLabel: "Idle",
-        summary: nil,
         activityAt: nil
     )
 }
@@ -201,6 +200,120 @@ private func presentationWorkspace(
     #expect(state.expandedInactiveProjectDeviceIDs.isEmpty)
 }
 
+/// B2, B3, B4, B6. The `Pinned` section shows the rows the core flagged, in
+/// the core's order, and the activity list counts and draws only the rest;
+/// a pinned project the core kept out of its device fold never appears
+/// there. With no pin the split is the whole list, so the header can go.
+@Test func projectSectionsSplitPinnedRowsFromTheActivityList() throws {
+    let pinnedRemote = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(
+            #"{"id":"remote-pinned","label":"remote","path":"/tmp/remote","device_id":"mini","pinned":true,"checkouts":[]}"#.utf8
+        )
+    )
+    let pinnedLocal = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(
+            #"{"id":"local-pinned","label":"pinned","path":"/tmp/pinned","pinned":true,"checkouts":[]}"#.utf8
+        )
+    )
+    let active = presentationWorkspace(id: "active", checkouts: [])
+    let folded = presentationWorkspace(id: "folded", checkouts: [])
+    let group = try JSONDecoder().decode(
+        CoreInactiveProjectGroupSnapshot.self,
+        from: Data(#"{"device_id":"local","expanded":false,"project_ids":["folded"]}"#.utf8)
+    )
+
+    let sections = SidebarProjectSections(
+        [pinnedLocal, active, folded, pinnedRemote],
+        groups: [group]
+    )
+
+    #expect(sections.pinned.map(\.id) == ["local-pinned", "remote-pinned"])
+    #expect(sections.recent.map(\.id) == ["active", "folded"])
+    #expect(sections.rows.map(\.id) == [
+        "header:Pinned",
+        "workspace:local-pinned",
+        "workspace:remote-pinned",
+        "header:Projects · Recent activity",
+        "workspace:active",
+        "inactive-projects:local",
+    ])
+    guard case .header(_, let pinnedCount) = sections.rows[0],
+          case .header(_, let recentCount) = sections.rows[3] else {
+        Issue.record("the headers are list rows")
+        return
+    }
+    #expect(pinnedCount == 2)
+    #expect(recentCount == 2)
+
+    let unpinned = SidebarProjectSections([active, folded], groups: [group])
+    #expect(unpinned.pinned.isEmpty)
+    #expect(unpinned.recent.count == 2)
+    #expect(unpinned.rows.map(\.id) == [
+        "header:Projects · Recent activity",
+        "workspace:active",
+        "inactive-projects:local",
+    ])
+}
+
+/// B5, B9. A row from a wire without the pin or the removal counts, which is
+/// every remote navigation row, reads as unpinned with nothing to close.
+@Test func pinAndRemovalWireDefaultsAreUnpinnedAndEmpty() throws {
+    let workspace = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(#"{"id":"legacy","label":"legacy","path":"/tmp/legacy","checkouts":[]}"#.utf8)
+    )
+    let counted = try JSONDecoder().decode(
+        CoreWorkspaceSnapshot.self,
+        from: Data(
+            #"{"id":"busy","label":"busy","path":"/tmp/busy","checkouts":[],"removal":{"pane_count":3,"running_agent_count":2}}"#.utf8
+        )
+    )
+    let registration = try JSONDecoder().decode(
+        CoreWorkspaceRegistration.self,
+        from: Data(#"{"id":"workspace:a","label":"a","path":"/tmp/a","device_id":"local"}"#.utf8)
+    )
+
+    #expect(!workspace.pinned)
+    #expect(workspace.removal == .none)
+    #expect(counted.removal == CoreWorkspaceRemovalGateSnapshot(paneCount: 3, runningAgentCount: 2))
+    #expect(!registration.pinned)
+}
+
+/// B11, B13. The confirmation says what confirming closes, from the core's
+/// counts: nothing for a project without panes, the pane and agent counts
+/// otherwise, and the button names the same outcome.
+@Test func removalPromptNamesThePanesAndAgentsItCloses() {
+    let none = WorkspaceRemovalPrompt(label: "hide", removal: .none)
+    #expect(none.title == "Remove hide from Hide?")
+    #expect(none.message.hasPrefix("Hide will remove only its registration."))
+    #expect(none.confirmLabel == "Remove registration")
+
+    let busy = WorkspaceRemovalPrompt(
+        label: "hide",
+        removal: CoreWorkspaceRemovalGateSnapshot(paneCount: 3, runningAgentCount: 2)
+    )
+    #expect(
+        busy.message
+            == "Closes 3 panes (2 running agents). The folder, repository, and worktrees stay on disk."
+    )
+    #expect(busy.confirmLabel == "Close 3 panes and remove")
+
+    let quiet = WorkspaceRemovalPrompt(
+        label: "hide",
+        removal: CoreWorkspaceRemovalGateSnapshot(paneCount: 1, runningAgentCount: 0)
+    )
+    #expect(quiet.message == "Closes 1 pane. The folder, repository, and worktrees stay on disk.")
+    #expect(quiet.confirmLabel == "Close 1 pane and remove")
+
+    let one = WorkspaceRemovalPrompt(
+        label: "hide",
+        removal: CoreWorkspaceRemovalGateSnapshot(paneCount: 1, runningAgentCount: 1)
+    )
+    #expect(one.message.hasPrefix("Closes 1 pane (1 running agent)."))
+}
+
 private func presentationAgent(
     id: String,
     paneID: String,
@@ -218,11 +331,9 @@ private func presentationAgent(
         unread: group == "needs_you" || group == "done",
         group: group,
         symbol: "\u{25cf}",
-        summary: "Agent \(id)",
-        identityLabel: identityLabel,
+        identityLabel: identityLabel ?? "Agent \(id)",
         elapsed: "1m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
 }
 
@@ -257,41 +368,6 @@ private func presentationAgent(
     #expect(SidebarGrouping.visibleAgents(all, scope: .mine).map(\.id) == ["own"])
     #expect(SidebarGrouping.visibleAgents(all, scope: .all).map(\.id) == ["own", "delegated"])
     #expect(SidebarGrouping.sections(SidebarGrouping.visibleAgents(all, scope: .mine)).flatMap(\.agents).map(\.id) == ["own"])
-}
-
-@Test func projectTaskForestCrossesCheckoutsAndSearchKeepsAncestors() {
-    var parent = presentationAgent(id: "parent", paneID: "pane-parent", group: "working")
-    var child = presentationAgent(id: "child", paneID: "pane-child", group: "working")
-    var grandchild = presentationAgent(id: "grandchild", paneID: "pane-grandchild", group: "working", identityLabel: "구성 검토")
-    parent.lineageChildPaneIDs = ["pane-child"]
-    child.lineageDepth = 1
-    child.lineageChildPaneIDs = ["pane-grandchild"]
-    grandchild.lineageDepth = 2
-    let checkouts = [
-        presentationCheckout(id: "main", path: "/tmp/hide", paneIDs: ["pane-parent"]),
-        presentationCheckout(id: "feature", path: "/tmp/hide.feature", paneIDs: ["pane-child", "pane-grandchild"]),
-    ]
-
-    let rows = ProjectTaskForestPresentation.rows(
-        agents: [grandchild, child, parent],
-        checkouts: checkouts
-    )
-    #expect(rows.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
-    #expect(rows.map(\.depth) == [0, 1, 2])
-    #expect(rows.map(\.checkoutLabel) == ["main", "feature", "feature"])
-
-    let search = ProjectTaskForestPresentation.rows(
-        agents: [grandchild, child, parent],
-        checkouts: checkouts,
-        query: "grandchild"
-    )
-    #expect(search.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
-    let titleSearch = ProjectTaskForestPresentation.rows(
-        agents: [grandchild, child, parent],
-        checkouts: checkouts,
-        query: "구성 검토"
-    )
-    #expect(titleSearch.map(\.id) == ["pane-parent", "pane-child", "pane-grandchild"])
 }
 
 @Test func checkoutSummaryFallsBackToPanesAndKeepsMissingExplicit() {
@@ -564,15 +640,77 @@ private func presentationAgent(
     #expect(readError.color == HideTheme.danger.opacity(HideTheme.readStatusOpacity))
 }
 
-@Test func sidebarIdentityUsesTheCanonicalTaskInsteadOfTheActivitySummary() {
+/// PRD B1, D-01: the row's title is the core's identity at both densities;
+/// a raised row names its home in the qualifier instead of the title.
+@Test func sidebarRowTitleIsTheIdentityAtBothDensities() {
     let agent = SidebarAgent(
-        id: "transport-child", paneID: "w1:p2", workspaceLabel: "Project",
-        agentKind: "codex", symbol: "●", summary: "A shorter activity summary",
+        id: "transport-child", paneID: "w1:p2", workspaceLabel: "Project", checkoutLabel: "main",
+        agentKind: "codex", symbol: "●",
         identityLabel: "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름",
-        elapsed: "0s", lastActivity: "", ambient: nil
+        elapsed: "0s", lastActivity: ""
     )
     let compact = AgentRowPresentation(agent: agent, density: .compact, connected: true)
     let prominent = AgentRowPresentation(agent: agent, density: .prominent, connected: true)
     #expect(compact.title == "긴 한국어 작업명과 English가 함께 있는 원래 사용자 작업 이름")
-    #expect(prominent.detail == compact.title)
+    #expect(prominent.title == compact.title)
+    #expect(compact.qualifier == nil)
+    #expect(prominent.qualifier == "Project › main")
+}
+
+/// PRD D-06, D-07: the second line is the core's sentence and word flag,
+/// carried through unchanged, and the emphasis decides the sentence colour.
+@Test func sidebarRowSecondLineCarriesTheCoresChoice() {
+    let working = SidebarAgent(
+        id: "w", paneID: "w1:p1", workspaceLabel: "hide", agentKind: "claude",
+        activity: "working", group: "working", symbol: "●", statusLabel: "Working",
+        identityLabel: "Hook 버그 확인", detail: "hook 보고 경로를 소켓 호출로 교체 중", statusWordVisible: false,
+        elapsed: "2m", lastActivity: ""
+    )
+    let question = SidebarAgent(
+        id: "q", paneID: "w1:p2", workspaceLabel: "hide", agentKind: "claude",
+        demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
+        statusLabel: "Question",
+        identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: false,
+        elapsed: "2m", lastActivity: ""
+    )
+    let seen = SidebarAgent(
+        id: "s", paneID: "w1:p3", workspaceLabel: "hide", agentKind: "codex",
+        activity: "stopped", symbol: "○", statusLabel: "Idle",
+        identityLabel: "컨텍스트 라벨 표시", detail: nil, statusWordVisible: false,
+        elapsed: "1h", lastActivity: ""
+    )
+    let workingRow = AgentRowPresentation(agent: working, density: .compact, connected: true)
+    #expect(workingRow.detail == "hook 보고 경로를 소켓 호출로 교체 중")
+    #expect(!workingRow.statusWordVisible)
+    #expect(!workingRow.emphasized)
+    let questionRow = AgentRowPresentation(agent: question, density: .compact, connected: true)
+    #expect(questionRow.detail == "A/B 선택 후 DB 마이그레이션 승인")
+    #expect(!questionRow.statusWordVisible)
+    #expect(questionRow.emphasized)
+    let seenRow = AgentRowPresentation(agent: seen, density: .compact, connected: true)
+    #expect(seenRow.detail == nil)
+    #expect(!seenRow.statusWordVisible)
+}
+
+/// PRD D-08, B9: the header line reads `name · sentence`, with the word only
+/// when the core chose no sentence, and a shell operation on the pane takes
+/// the slot while it runs. The accessibility label carries the word either way.
+@Test func paneHeaderSentenceFollowsTheRowAndYieldsToAShellOperation() {
+    let question = SidebarAgent(
+        id: "q", paneID: "w1:p2", workspaceLabel: "hide", agentKind: "claude",
+        demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
+        statusLabel: "Question",
+        identityLabel: "결제 멱등키 PR", detail: "A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요",
+        statusWordVisible: false, elapsed: "2m", lastActivity: ""
+    )
+    let sentence = PaneHeaderPresentation.sentence(agent: question, activity: "")
+    #expect(sentence.word == nil)
+    #expect(sentence.text == "A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요")
+    #expect(sentence.emphasized)
+    #expect(PaneHeaderPresentation.sentence(agent: question, activity: " · forking…").isEmpty)
+    #expect(PaneHeaderPresentation.sentence(agent: nil, activity: "").isEmpty)
+    let label = PaneHeaderPresentation.accessibilityLabel(
+        kind: "terminal", title: "결제 멱등키 PR", paneID: "w1:p2", agent: question, activity: "", notice: nil
+    )
+    #expect(label == "Focus terminal pane 결제 멱등키 PR (w1:p2), claude, Question, A/B 중 하나를 선택하고 DB 마이그레이션 실행 승인 여부를 지시하세요")
 }

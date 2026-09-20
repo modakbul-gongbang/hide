@@ -14,7 +14,7 @@ struct HideSidebar: View {
                 AgentScopePicker()
             }
 
-            SidebarList {
+            SidebarList(revealTopRowID: pinnedHeaderRowID, reveal: model.sidebarReveal) {
                 switch model.sidebarContent {
                 case .projects:
                     projectsContent
@@ -37,12 +37,17 @@ struct HideSidebar: View {
         .accessibilityIdentifier("hide-sidebar")
     }
 
+    /// The `Pinned` header's row id while it leads the Projects list, so the
+    /// list shows it when it appears rather than staying scrolled below it.
+    private var pinnedHeaderRowID: String? {
+        guard model.sidebarContent == .projects,
+              case .header(let title, _)? = model.sidebarProjectSections.rows.first,
+              title == SidebarProjectSections.pinnedTitle else { return nil }
+        return SidebarProjectRow.header(title: title, count: 0).id
+    }
+
     @ViewBuilder
     private var projectsContent: some View {
-        // The one thing the operator does most often is at the top, above
-        // everything that is only a place to look.
-        NewChatRow()
-
         // What is waiting, then what finished while the operator was away,
         // come before where things live: they are the only parts that ask for
         // an action. An empty group is not drawn at all.
@@ -53,33 +58,35 @@ struct HideSidebar: View {
             }
         }
 
-        ScratchSection()
-
-        HideSectionLabel(title: "Projects · Recent activity", count: model.workspaces.count)
+        // Pinned projects sit under their own header, drawn only while there
+        // is one; the activity header counts the rest (D-02). Headers are
+        // rows of the same list so a pinned project moves instead of being
+        // reinserted, which kept the list scrolled past the new header.
+        ForEach(model.sidebarProjectSections.rows) { row in
+            switch row {
+            case .header(let title, let count):
+                HideSectionLabel(title: title, count: count)
+            case .workspace(let workspace, let hierarchyLevel):
+                WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
+            case .inactiveProjects(let group, let folded):
+                InactiveFoldRow(
+                    title: "Inactive projects",
+                    count: folded.count,
+                    itemName: "project",
+                    expanded: group.expanded,
+                    accessibilityID: "hide-inactive-projects-\(group.deviceID)",
+                    hierarchyLevel: .root,
+                    action: { model.toggleInactiveProjects(in: group) }
+                )
+                .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
+            }
+        }
         if model.workspaces.isEmpty {
             EmptySidebarRow(
                 systemImage: "square.stack.3d.up",
                 title: "No projects yet",
                 detail: "Add a folder to create your first project."
             )
-        } else {
-            ForEach(model.sidebarProjectRows) { row in
-                switch row {
-                case .workspace(let workspace, let hierarchyLevel):
-                    WorkspaceNavigatorRow(workspace: workspace, hierarchyLevel: hierarchyLevel)
-                case .inactiveProjects(let group, let folded):
-                    InactiveFoldRow(
-                        title: "Inactive projects",
-                        count: folded.count,
-                        itemName: "project",
-                        expanded: group.expanded,
-                        accessibilityID: "hide-inactive-projects-\(group.deviceID)",
-                        hierarchyLevel: .root,
-                        action: { model.toggleInactiveProjects(in: group) }
-                    )
-                    .padding(.bottom, group.expanded ? HideTheme.spacingXXS : HideTheme.spacingSM)
-                }
-            }
         }
     }
 
@@ -164,127 +171,6 @@ private struct AgentScopePicker: View {
     }
 }
 
-/// The row that starts a chat. First in the list, because starting one is
-/// the most frequent thing done here and every other row is a place rather
-/// than an action.
-private struct NewChatRow: View {
-    @EnvironmentObject private var model: ShellModel
-    @Environment(\.hideAccent) private var accent
-
-    var body: some View {
-        Button(action: { model.openComposer() }) {
-            HStack(spacing: HideTheme.spacingSM) {
-                Image(systemName: "plus.bubble")
-                    .hideFont(size: HideTheme.Typography.body, weight: .semibold)
-                    .foregroundStyle(accent)
-                Text("New chat")
-                    .hideFont(size: HideTheme.Typography.body, weight: .medium)
-                    .foregroundStyle(HideTheme.primary)
-                Spacer(minLength: HideTheme.spacingXS)
-                HideKeycap(command: .menu(.newChat), emphasized: model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.command])
-            }
-            .padding(.horizontal, HideTheme.spacingMD)
-            .frame(maxWidth: .infinity, minHeight: HideTheme.IconButton.standardSize.height)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(HideInteractiveButtonStyle())
-        .accessibilityIdentifier("hide-new-chat")
-    }
-}
-
-/// The Scratch section: a header that is always drawn, and the tabs under it
-/// once the operator opens it.
-///
-/// The header stays at a count of zero on purpose. Scratch is a permanent
-/// place, and a section that disappeared when it emptied would make the space
-/// look like something that has to be created.
-private struct ScratchSection: View {
-    @EnvironmentObject private var model: ShellModel
-
-    private var scratch: CoreScratchSnapshot { model.scratch }
-
-    var body: some View {
-        Button(action: model.toggleScratchExpanded) {
-            HStack(spacing: HideTheme.spacingSM) {
-                Image(systemName: scratch.expanded ? "chevron.down" : "chevron.right")
-                    .hideFont(size: HideTheme.Typography.micro, weight: .bold)
-                    .foregroundStyle(HideTheme.muted)
-                Text(scratch.label.uppercased())
-                    .hideFont(size: HideTheme.Typography.body, weight: .semibold)
-                    .foregroundStyle(HideTheme.secondary)
-                Text("\(scratch.tabs.count)")
-                    .hideFont(size: HideTheme.Typography.micro, weight: .medium, design: .monospaced)
-                    .foregroundStyle(HideTheme.muted)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, HideTheme.spacingMD)
-            .padding(.top, HideTheme.spacingMD)
-            .padding(.bottom, HideTheme.spacingSM)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(HideInteractiveButtonStyle())
-        .accessibilityLabel(scratch.expanded ? "Collapse Scratch" : "Expand Scratch")
-        .accessibilityIdentifier("hide-scratch-header")
-
-        if scratch.expanded {
-            if scratch.tabs.isEmpty {
-                EmptySidebarRow(
-                    systemImage: "tray",
-                    title: "Nothing in Scratch",
-                    detail: "\(HideCommand.menu(.newChat).displayString(bindings: model.paneShortcuts)) starts a chat that belongs to no project."
-                )
-            } else {
-                ForEach(model.scratchTabsBelowRaisedSections) { tab in
-                    ScratchRow(tab: tab)
-                }
-            }
-        }
-    }
-}
-
-/// One Scratch row: an agent row when the tab holds an agent, a tab row when
-/// it does not. The agent row is the sidebar's own component, so a Scratch
-/// chat and a project chat read as the same kind of thing.
-private struct ScratchRow: View {
-    @EnvironmentObject private var model: ShellModel
-    let tab: CoreScratchTabSnapshot
-
-    var body: some View {
-        if let agent = model.scratchAgent(for: tab) {
-            AgentRow(
-                presentation: AgentRowPresentation(
-                    agent: agent,
-                    title: tab.displayName,
-                    connected: model.core.snapshot?.status.herdr.state == "connected"
-                ),
-                style: .shell(density: .compact),
-                density: .compact,
-                isFocused: model.focusedPaneID == agent.paneID,
-                action: { model.selectAgent(agent) }
-            )
-            .accessibilityIdentifier("hide-scratch-agent-\(agent.paneID)")
-        } else {
-            Button(action: { model.focusScratchTab(tab) }) {
-                HStack(spacing: HideTheme.spacingSM) {
-                    Image(systemName: "terminal")
-                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                        .foregroundStyle(HideTheme.muted)
-                    Text(tab.displayName)
-                        .hideFont(size: HideTheme.Typography.body)
-                        .foregroundStyle(HideTheme.primary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, HideTheme.spacingMD + HideTheme.spacingSM)
-                .frame(maxWidth: .infinity, minHeight: 28)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(HideInteractiveButtonStyle())
-            .accessibilityIdentifier("hide-scratch-tab-\(tab.id)")
-        }
-    }
-}
-
 private struct SidebarContentPicker: View {
     @EnvironmentObject private var model: ShellModel
 
@@ -338,13 +224,6 @@ private struct SidebarCommandBar: View {
                 accessibilityLabel: "New project",
                 command: .menu(.newWorkspace),
                 action: model.openNewWorkspace
-            )
-            HideIconButton(
-                systemImage: "plus",
-                help: "New chat",
-                accessibilityLabel: "New chat",
-                command: .menu(.newChat),
-                action: { model.openComposer() }
             )
         }
         .padding(.horizontal, HideTheme.spacingMD)
@@ -811,17 +690,7 @@ private struct WorkspaceNavigatorRow: View {
                 .accessibilityLabel(workspace.expanded ? "Collapse \(workspace.label)" : "Expand \(workspace.label)")
                 .accessibilityIdentifier("hide-workspace-disclosure-\(workspace.id)")
                 Menu {
-                    if workspace.isGit && workspace.remoteTargetID == nil {
-                        Button("Refresh GitHub status") { model.requestGithubStatus(workspace, refresh: true) }
-                    }
-                    Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
-                        .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
-                    Divider()
-                    if workspace.registered {
-                        Button(WorktreeMenuPolicy.removeRegistration, role: .destructive) {
-                            model.requestRemoveWorkspace(workspace)
-                        }
-                    }
+                    projectMenuItems
                 } label: {
                     Image(systemName: "ellipsis")
                         .hideFont(size: HideTheme.Typography.body, weight: .bold)
@@ -836,6 +705,9 @@ private struct WorkspaceNavigatorRow: View {
             }
             .padding(.leading, hierarchyLevel.contentLeadingInset)
             .padding(.trailing, HideTheme.spacingSM)
+            // The same items as `⋯`, the way checkout rows already offer
+            // theirs on right-click (D-05).
+            .contextMenu { projectMenuItems }
 
             if workspace.expanded {
                 ForEach(model.activeCheckouts(in: workspace)) { checkout in
@@ -865,6 +737,31 @@ private struct WorkspaceNavigatorRow: View {
         }
         .padding(.bottom, HideTheme.spacingSM)
         .onAppear { model.requestGithubStatus(workspace) }
+    }
+
+    /// Pin and removal exist only for a local registration: a temporary folder
+    /// row has nothing to store the pin in and nothing to unregister (D-06),
+    /// and a remote project is the device's own, projected from its session.
+    @ViewBuilder
+    private var projectMenuItems: some View {
+        let isLocalRegistration = workspace.registered && workspace.remoteTargetID == nil
+        if isLocalRegistration {
+            Button(workspace.pinned ? WorktreeMenuPolicy.unpinProject : WorktreeMenuPolicy.pinProject) {
+                model.setWorkspacePinned(workspace, pinned: !workspace.pinned)
+            }
+            Divider()
+        }
+        if workspace.isGit && workspace.remoteTargetID == nil {
+            Button("Refresh GitHub status") { model.requestGithubStatus(workspace, refresh: true) }
+        }
+        Button(WorktreeMenuPolicy.newWorktree) { model.requestNewWorktree(workspace) }
+            .disabled(!workspace.isGit || workspace.remoteTargetID != nil)
+        if isLocalRegistration {
+            Divider()
+            Button(WorktreeMenuPolicy.removeProject, role: .destructive) {
+                model.requestRemoveWorkspace(workspace)
+            }
+        }
     }
 
     private func checkoutGroup(
@@ -1136,9 +1033,6 @@ private struct CheckoutNavigatorRow: View {
         .frame(height: HideTheme.checkoutRowHeight)
         .contextMenu {
             Button(WorktreeMenuPolicy.newWorktree, systemImage: "plus") { model.requestNewWorktree(workspace) }
-            if checkout.isWorktree {
-                Button(WorktreeMenuPolicy.startAgentHere, systemImage: "terminal") { model.openComposer(checkoutID: checkout.id) }
-            }
             if let branch = checkout.branch {
                 Button(WorktreeMenuPolicy.setBaseBranch, systemImage: "arrow.triangle.branch") { model.setBaseBranch(checkout, in: workspace) }
                     .disabled(branch == model.baseBranch(for: workspace))

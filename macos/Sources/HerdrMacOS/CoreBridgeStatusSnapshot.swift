@@ -9,6 +9,7 @@ struct CoreStatusSnapshot: Decodable {
     let backgroundAI: CoreBackgroundAI
     let diagnostics: [CoreDiagnostic]
     let lastError: CoreLastError?
+    let asyncOperations: [CoreAsyncOperation]
     let paneFocusRequest: CorePaneFocusRequest?
 
     enum CodingKeys: String, CodingKey {
@@ -20,6 +21,7 @@ struct CoreStatusSnapshot: Decodable {
         case backgroundAI = "background_ai"
         case diagnostics
         case lastError = "last_error"
+        case asyncOperations = "async_operations"
         case paneFocusRequest = "pane_focus_request"
     }
 
@@ -35,7 +37,34 @@ struct CoreStatusSnapshot: Decodable {
             ?? CoreBackgroundAI()
         diagnostics = try container.decodeIfPresent([CoreDiagnostic].self, forKey: .diagnostics) ?? []
         lastError = try container.decodeIfPresent(CoreLastError.self, forKey: .lastError)
+        asyncOperations = try container.decodeIfPresent([CoreAsyncOperation].self, forKey: .asyncOperations) ?? []
         paneFocusRequest = try container.decodeIfPresent(CorePaneFocusRequest.self, forKey: .paneFocusRequest)
+    }
+}
+
+struct CoreAsyncOperation: Decodable, Equatable {
+    let id: String
+    let kind: String
+    let targetID: String
+    let scopeID: String
+    let phase: String
+    let stage: String
+    let startedAt: UInt64
+    let deadlineAt: UInt64?
+    let message: String?
+    let retryable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case targetID = "target_id"
+        case scopeID = "scope_id"
+        case phase
+        case stage
+        case startedAt = "started_at_unix_ms"
+        case deadlineAt = "deadline_at_unix_ms"
+        case message
+        case retryable
     }
 }
 

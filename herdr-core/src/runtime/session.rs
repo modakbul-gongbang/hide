@@ -8,46 +8,10 @@ impl Runtime {
     /// Layouts carry the workspace a pane belongs to and `panes` carries its
     /// directory, so the two together give each workspace the set of
     /// repositories it actually occupies without asking git anything.
-    /// Where Scratch lives, for the sync coordinator that builds the catalog
-    /// before it takes this lock.
-    pub fn scratch_root(&self) -> String {
-        self.scratch_root.clone()
-    }
-    /// The Herdr workspaces holding at least one Scratch pane, in Herdr's own
-    /// order.
-    ///
-    /// Two things need this. A tab whose panes have not reported a directory
-    /// yet is placed by its workspace, and a new Scratch tab needs a live
-    /// workspace to be created in - the first entry, or none, which is what
-    /// makes the first submission create the workspace instead.
-    pub(super) fn scratch_workspace_ids(&self, payload: &SessionSnapshotPayload) -> Vec<String> {
-        let mut ids: Vec<String> = Vec::new();
-        for layout in &payload.layouts {
-            if ids.iter().any(|id| id == &layout.workspace_id) {
-                continue;
-            }
-            let holds_scratch = layout.panes.iter().any(|pane| {
-                Self::pane_cwd(payload, &pane.pane_id)
-                    .is_some_and(|cwd| crate::scratch::contains(&self.scratch_root, &cwd))
-            });
-            if holds_scratch {
-                ids.push(layout.workspace_id.clone());
-            }
-        }
-        ids
-    }
     /// The Herdr workspaces and the directories their panes occupy, as the
     /// project catalog sees them.
     ///
-    /// A directory inside Scratch is left out here rather than filtered later.
-    /// This list is what builds the catalog and resolves repository roots, so
-    /// a scratch directory that reached it would earn a project row, a git
-    /// fork, and the unregistered-folder fallback that draws an orange
-    /// temporary workspace - three leaks from one omission.
-    pub fn session_spaces(
-        payload: &SessionSnapshotPayload,
-        scratch_root: &str,
-    ) -> Vec<workspace::SessionSpace> {
+    pub fn session_spaces(payload: &SessionSnapshotPayload) -> Vec<workspace::SessionSpace> {
         let labels: HashMap<&str, &str> = payload
             .workspaces
             .iter()
@@ -79,9 +43,6 @@ impl Runtime {
                 let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) else {
                     continue;
                 };
-                if crate::scratch::contains(scratch_root, &cwd) {
-                    continue;
-                }
                 if !spaces[index].cwds.contains(&cwd) {
                     spaces[index].cwds.push(cwd);
                 }
@@ -118,7 +79,7 @@ impl Runtime {
         payload: &SessionSnapshotPayload,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
-        self.last_session_spaces = Self::session_spaces(payload, &self.scratch_root);
+        self.last_session_spaces = Self::session_spaces(payload);
         // The catalog and the root index shell out to git, so the sync
         // coordinator builds them before taking the runtime lock. A
         // precomputation whose registrations no longer match current state is
@@ -193,12 +154,6 @@ impl Runtime {
         // snapshot's tabs carry the formatted form, so the free number has to
         // be taken here or read back out of display text later.
         let mut raw_tab_labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        // Which Herdr workspaces hold Scratch panes. A tab whose panes report
-        // no directory at all still belongs to Scratch when its workspace
-        // does, which is the state a pane is in for the moment between Herdr
-        // creating it and reporting where it runs.
-        let scratch_workspace_ids = self.scratch_workspace_ids(payload);
-        let mut scratch_tabs: Vec<crate::model::ScratchTabSnapshot> = Vec::new();
         for session_tab in &payload.tabs {
             let Some(layout) = payload
                 .layouts
@@ -229,37 +184,6 @@ impl Runtime {
                             .and_then(|agent| agent.cwd.clone())
                     })
             });
-            // Scratch is decided before a project is looked for, so a
-            // scratch pane never reaches the placement that would give it a
-            // project row or an unregistered-folder fallback.
-            let in_scratch = match context_path.as_deref() {
-                Some(path) => crate::scratch::contains(&self.scratch_root, path),
-                None => scratch_workspace_ids
-                    .iter()
-                    .any(|id| id == &layout.workspace_id),
-            };
-            if in_scratch {
-                let panes = project_layout_panes(
-                    layout,
-                    payload,
-                    &projected_agents,
-                    &listening_ports,
-                    &self.scratch_root,
-                );
-                let title = panes.iter().find_map(|pane| {
-                    projected_agents
-                        .iter()
-                        .find(|agent| agent.pane_id == pane.id)
-                        .and_then(|agent| agent.chat_title.clone())
-                });
-                scratch_tabs.push(crate::model::ScratchTabSnapshot {
-                    id: session_tab.tab_id.clone(),
-                    label: crate::model::display_tab_label(&session_tab.label, &session_tab.tab_id),
-                    title,
-                    panes,
-                });
-                continue;
-            }
             let Some(workspace_snapshot) = find_workspace_for_context(
                 &mut workspaces,
                 context_path.as_deref(),
@@ -405,18 +329,9 @@ impl Runtime {
         );
         crate::project_context::sort_projects(&mut workspaces, &projected_agents);
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.scratch = crate::model::ScratchSnapshot {
-            id: crate::scratch::NODE_ID.to_owned(),
-            label: crate::scratch::LABEL.to_owned(),
-            path: self.scratch_root.clone(),
-            expanded: self.snapshot.ui_state.scratch_expanded,
-            session_workspace_ids: scratch_workspace_ids,
-            tabs: scratch_tabs,
-        };
-        self.snapshot.navigator.devices = workspace::devices(
-            &self.remote_targets,
-            &self.snapshot.ui_state.device_registrations,
-        );
+        self.snapshot.navigator.devices =
+            workspace::devices(&self.snapshot.ui_state.device_registrations);
+        self.refresh_device_snapshots();
         // An agent belongs to the device whose project holds its pane. The
         // project label is no longer Herdr's workspace label once a
         // registration covers the repository, so labels cannot be the key.
@@ -487,6 +402,27 @@ impl Runtime {
             return true;
         };
         let strip = checkout.strip.clone();
+        if self
+            .pending_tab_move
+            .get(&payload.checkout_id)
+            .is_some_and(|pending| {
+                matches!(
+                    pending.phase.as_str(),
+                    "transmitting" | "awaiting_topology" | "unknown"
+                )
+            })
+        {
+            self.set_error(
+                "tab.move_in_progress",
+                format!(
+                    "Tab order for checkout {} is still being confirmed; the new move was not sent",
+                    payload.checkout_id
+                ),
+                true,
+            );
+            self.sync_async_operations();
+            return false;
+        }
         let Some(from) = strip.iter().position(|entry| entry.id == payload.tab_id) else {
             self.set_error(
                 "tab.reorder_unknown",
@@ -531,6 +467,11 @@ impl Runtime {
             self.pending_tab_move.remove(&payload.checkout_id);
             self.checkout_tab_order
                 .insert(payload.checkout_id.clone(), desired_ids);
+            // A preview tab the operator placed by hand is one they mean to
+            // keep (B7); the rebuild below draws the promoted slot.
+            if moved.preview {
+                self.promote_editor_tab(&moved.source_id);
+            }
             self.rebuild_tab_strips();
             return true;
         }
@@ -602,6 +543,7 @@ impl Runtime {
         };
         let generation = self.next_tab_move_generation;
         self.next_tab_move_generation += 1;
+        let now = unix_milliseconds();
         self.pending_tab_move.insert(
             payload.checkout_id.clone(),
             PendingTabMove {
@@ -613,9 +555,18 @@ impl Runtime {
                 // Herdr never reports once a checkout draws tabs from two
                 // workspaces, and the drag would snap back and stay back.
                 herdr_order: desired_owned.clone(),
+                target_id: moved.source_id.clone(),
                 generation,
+                connection_generation: self.live_generation,
+                phase: "transmitting".to_owned(),
+                stage: "request".to_owned(),
+                started_at_unix_ms: now,
+                deadline_at_unix_ms: Some(now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
+                message: Some("Waiting for Herdr to confirm the tab order".to_owned()),
+                retryable: false,
             },
         );
+        self.sync_async_operations();
         self.push_diagnostic(
             "tab.move.requested",
             format!(
@@ -634,9 +585,11 @@ impl Runtime {
                 // subsequence, never the checkout's mixed order.
                 expected_order: desired_owned,
                 generation,
+                connection_generation: self.live_generation,
             },
         ) {
             self.pending_tab_move.remove(&payload.checkout_id);
+            self.sync_async_operations();
             self.set_error("tab.move_worker_failed", message, true);
         }
         true
@@ -647,6 +600,7 @@ impl Runtime {
         &mut self,
         checkout_id: &str,
         generation: u64,
+        connection_generation: u64,
         reason: String,
     ) -> bool {
         // A result from a drag a later drag has replaced must not cancel the
@@ -654,7 +608,10 @@ impl Runtime {
         if self
             .pending_tab_move
             .get(checkout_id)
-            .is_none_or(|pending| pending.generation != generation)
+            .is_none_or(|pending| {
+                pending.generation != generation
+                    || pending.connection_generation != connection_generation
+            })
         {
             return false;
         }
@@ -699,14 +656,7 @@ impl Runtime {
                     .filter(|tab| {
                         tab.workspace_id == checkout.workspace_id && tab.checkout_id == checkout.id
                     })
-                    .map(|tab| match tab.kind {
-                        EditorTabKind::File => {
-                            StripTabSnapshot::file(tab.id.clone(), tab.label.clone())
-                        }
-                        EditorTabKind::Diff => {
-                            StripTabSnapshot::diff(tab.id.clone(), tab.label.clone())
-                        }
-                    })
+                    .map(StripTabSnapshot::editor)
                     .collect::<Vec<_>>();
                 let stored = order.entry(checkout.id.clone()).or_default();
                 // A held reorder lands the moment Herdr reports the order it
@@ -744,6 +694,12 @@ impl Runtime {
         }
         order.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
         pending.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
+        // A rebuilt entry starts without its agent; name it before the strip
+        // is published so a fresh tab never draws as a bare number first.
+        sync_strip_agent_identity(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+        );
         for checkout_id in dropped_moves {
             self.push_diagnostic(
                 "tab.move.dropped",
@@ -752,6 +708,7 @@ impl Runtime {
                 ),
             );
         }
+        self.sync_async_operations();
     }
     /// Reconciles the focused checkout, its owning workspace, root path, and
     /// active tab projection after a catalog replacement. Catalog rebuilds
@@ -1187,12 +1144,12 @@ impl Runtime {
                 self.snapshot.navigator.focused_device_id.as_deref() == Some(target_id),
             )
         });
-        let Some(status) = self
+        let Some(status_index) = self
             .snapshot
             .status
             .remote
-            .iter_mut()
-            .find(|status| status.target_id == target_id)
+            .iter()
+            .position(|status| status.target_id == target_id)
         else {
             self.set_error(
                 "remote.target_unknown",
@@ -1202,7 +1159,24 @@ impl Runtime {
             return true;
         };
 
+        let was_connected = self.snapshot.status.remote[status_index].state == "connected";
+        if (fetched.is_ok() && !was_connected) || (fetched.is_err() && was_connected) {
+            let generation = self
+                .remote_connection_generations
+                .entry(target_id.to_owned())
+                .or_insert(0);
+            *generation = generation.saturating_add(1);
+            self.push_diagnostic(
+                "remote.connection_generation_advanced",
+                format!(
+                    "Advanced remote connection generation for {target_id} after a session state transition"
+                ),
+            );
+        }
+        let status = &mut self.snapshot.status.remote[status_index];
+
         let mut changed = read_changed;
+        let mut observed_session = None;
         match fetched {
             Ok(session) => {
                 if status.state != "connected" || status.message.is_some() {
@@ -1224,6 +1198,7 @@ impl Runtime {
                     status.session = Some(session);
                     changed = true;
                 }
+                observed_session = status.session.clone();
             }
             Err(error) => {
                 if status.state != error.state()
@@ -1248,21 +1223,22 @@ impl Runtime {
             .devices
             .iter_mut()
             .find(|device| device.id == target_id)
+            && device.agent_count != agent_count
         {
-            let device_state = if status.state == "connected" {
-                "ready"
-            } else {
-                "unavailable"
-            };
-            if device.state != device_state || device.agent_count != agent_count {
-                device.state = device_state.to_owned();
-                device.agent_count = agent_count;
-                changed = true;
-            }
+            device.agent_count = agent_count;
+            changed = true;
         }
+        changed |= self.refresh_device_snapshots();
         if let Some((live_pane_ids, active_pane_ids)) = pane_sets {
             changed |=
                 self.reconcile_remote_terminal_panes(target_id, &live_pane_ids, &active_pane_ids);
+        }
+        changed |= self.expire_remote_operations(unix_milliseconds());
+        if let Some(session) = observed_session.as_ref() {
+            changed |= self.observe_remote_operations(session);
+        }
+        if changed {
+            self.sync_async_operations();
         }
         changed
     }
@@ -1327,7 +1303,29 @@ impl Runtime {
         // also where a notification Herdr never answered stops being pending.
         // Doing it first lets this same update be read as an external focus
         // rather than as a late answer to a request that has gone quiet.
-        let timed_out = self.expire_pending_view_focus(unix_milliseconds());
+        let now_unix_ms = unix_milliseconds();
+        let fresh_layout_signatures = fetched.as_ref().ok().map(|payload| {
+            payload
+                .layouts
+                .iter()
+                .map(|layout| {
+                    (
+                        layout.tab_id.clone(),
+                        Self::session_layout_signature(layout),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        });
+        let timed_out = self.expire_pending_view_focus(now_unix_ms);
+        let tab_move_timed_out = self.expire_tab_moves(now_unix_ms);
+        let close_timed_out = self.expire_close_operations(now_unix_ms);
+        let pane_operation_timed_out = self.expire_pane_operations(now_unix_ms);
+        let close_topology_changed = fetched
+            .as_ref()
+            .is_ok_and(|payload| self.observe_close_topology(payload));
+        let pane_topology_changed = fetched
+            .as_ref()
+            .is_ok_and(|payload| self.observe_pane_operations(payload));
         let session_confirms_pending_pane = fetched.as_ref().ok().is_some_and(|payload| {
             let Some(pending) = self.pending_pane_focus.as_ref() else {
                 return false;
@@ -1376,24 +1374,6 @@ impl Runtime {
                             .flat_map(|tab| tab.panes.iter())
                             .any(|pane| pane.id == pane_id)
                     })
-            });
-        // Scratch is in no checkout, so the flag above can never be true for
-        // one of its panes. This is captured here for the same reason that one
-        // is: the catalog reconciliation below replaces the Scratch node, and
-        // after it nothing records which space held a pane that has gone.
-        let previously_selected_in_scratch = self
-            .snapshot
-            .terminal
-            .pane_id
-            .as_deref()
-            .or(self.snapshot.ui_state.selected_pane_id.as_deref())
-            .is_some_and(|pane_id| {
-                self.snapshot
-                    .navigator
-                    .scratch
-                    .tabs
-                    .iter()
-                    .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
             });
         let live_pane_ids = fetched.as_ref().ok().map(|payload| {
             payload
@@ -1486,38 +1466,9 @@ impl Runtime {
                 // inside that checkout, or leave it empty. A pane that was
                 // never rendered is still a pending or invalid selection and
                 // keeps the explicit projection error below.
-                // Scratch belongs to no checkout, so the rule above cannot see
-                // one of its panes leave. Closing a Scratch tab left the
-                // selection on a pane that no longer existed, which raised the
-                // projection error below on every tick and left every later
-                // command reading as though no space were focused: ⌘T answered
-                // "create or register a workspace" while a Scratch tab was on
-                // screen. A Scratch pane that goes is the same expected
-                // transition, and it retargets inside Scratch for the same
-                // reason a checkout's retargets inside itself.
-                let scratch_pane_retired = previously_selected_in_scratch && selected_pane_missing;
-                let selected_pane_retired = scratch_pane_retired
-                    || (selected_was_projected
-                        && (selected_pane_missing || selected_left_focused_checkout));
-                let replacement_pane_id = if scratch_pane_retired {
-                    let scratch_workspaces = self.scratch_workspace_ids(&payload);
-                    let scratch_panes: Vec<&str> = payload
-                        .layouts
-                        .iter()
-                        .filter(|layout| {
-                            scratch_workspaces
-                                .iter()
-                                .any(|id| id == &layout.workspace_id)
-                        })
-                        .flat_map(|layout| layout.panes.iter().map(|pane| pane.pane_id.as_str()))
-                        .collect();
-                    payload
-                        .focused_pane_id
-                        .as_deref()
-                        .filter(|pane_id| scratch_panes.contains(pane_id))
-                        .or_else(|| scratch_panes.first().copied())
-                        .map(str::to_owned)
-                } else {
+                let selected_pane_retired = selected_was_projected
+                    && (selected_pane_missing || selected_left_focused_checkout);
+                let replacement_pane_id = {
                     selected_pane_retired
                         .then(|| {
                             previously_projected_tab
@@ -1736,7 +1687,15 @@ impl Runtime {
             );
         }
 
-        let mut changed = catalog_changed || selection_changed || timed_out || !excluded.is_empty();
+        let mut changed = catalog_changed
+            || selection_changed
+            || timed_out
+            || tab_move_timed_out
+            || close_timed_out
+            || pane_operation_timed_out
+            || close_topology_changed
+            || pane_topology_changed
+            || !excluded.is_empty();
         let (expected_protocol, received_protocol, received_version) = protocol_details
             .map(|(expected, received, version)| (Some(expected), Some(received), version))
             .unwrap_or((None, None, None));
@@ -1791,6 +1750,9 @@ impl Runtime {
             );
         }
         changed |= self.store_pane_layouts(layouts);
+        if let Some(signatures) = fresh_layout_signatures {
+            self.confirmed_pane_layout_signatures = signatures;
+        }
         if let Some(layout) = layout {
             if self.snapshot.terminal.pane_id.is_none() {
                 let pane_id = layout.focused_pane_id.clone();
@@ -1821,6 +1783,14 @@ impl Runtime {
         origin: PaneFocusOrigin,
         request_id: Option<String>,
     ) {
+        if self.close_operation_holds_pane(&pane_id) {
+            self.set_error(
+                "pane.close_pending",
+                format!("Pane {pane_id} is closing; focus was not moved back to it"),
+                true,
+            );
+            return;
+        }
         let request_id = request_id.filter(|value| !value.trim().is_empty());
         if let Some(request_id) = request_id.as_deref() {
             if self
@@ -2297,83 +2267,6 @@ impl Runtime {
         );
         self.operator_focused_pane_id = None;
     }
-    /// Opens a terminal tab in Scratch.
-    ///
-    /// Nothing about it waits for a project: the folder and the workspace are
-    /// both created on demand by the worker, so the first `⌘T` in Scratch
-    /// works with no earlier setup.
-    pub(super) fn create_scratch_tab(&mut self, label: &str) -> bool {
-        if label.is_empty() {
-            self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
-            return true;
-        }
-        let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "tab.control_unavailable",
-                "Tab creation requires a live Herdr connection",
-                true,
-            );
-            return true;
-        };
-        let request = live::ScratchTabRequest {
-            root: self.scratch_root.clone(),
-            workspace_id: self
-                .snapshot
-                .navigator
-                .scratch
-                .session_workspace_ids
-                .first()
-                .cloned(),
-            label: label.to_owned(),
-        };
-        self.push_diagnostic(
-            "scratch.tab.requested",
-            format!(
-                "Creating a Scratch tab in {}",
-                request
-                    .workspace_id
-                    .as_deref()
-                    .unwrap_or("a new Herdr workspace")
-            ),
-        );
-        if let Err(message) = live::spawn_scratch_tab_creation(context, request) {
-            self.set_error("scratch.tab_worker_failed", message, true);
-        }
-        true
-    }
-    /// What the Scratch tab worker found.
-    ///
-    /// A failure carries the step that failed, because "the folder could not
-    /// be created" and "Herdr refused the tab" are different problems with
-    /// different fixes and one message for both would hide which happened.
-    pub fn ingest_scratch_tab_result(
-        &mut self,
-        result: Result<String, String>,
-        elapsed_ms: u128,
-    ) -> bool {
-        match result {
-            Ok(pane_id) => {
-                self.snapshot.terminal.pane_id = Some(pane_id.clone());
-                self.snapshot.focused.surface = Surface::Terminal;
-                self.snapshot.focused.pane_id = Some(pane_id.clone());
-                self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
-                self.deactivate_editor_tab();
-                self.persist_current_ui_state();
-                self.push_diagnostic(
-                    "scratch.tab.ready",
-                    format!("Scratch tab created in {elapsed_ms} ms as pane {pane_id}"),
-                );
-            }
-            Err(message) => {
-                self.set_error(
-                    "scratch.tab.failed",
-                    format!("Scratch tab failed: {message}"),
-                    true,
-                );
-            }
-        }
-        true
-    }
     pub(super) fn begin_task_operation(
         &mut self,
         kind: &str,
@@ -2405,45 +2298,6 @@ impl Runtime {
             message: None,
         });
         Ok(id)
-    }
-    pub(super) fn create_scratch_chat_tab(&mut self, label: String) -> bool {
-        let label = label.trim();
-        if label.is_empty() {
-            self.set_error(
-                "scratch_chat.invalid_label",
-                "Tab label cannot be empty",
-                false,
-            );
-            return true;
-        }
-        let id = match self.begin_task_operation("scratch_chat_tab", None, None, None, None) {
-            Ok(id) => id,
-            Err(message) => {
-                self.set_error("task_operation.busy", message, true);
-                return true;
-            }
-        };
-        let Some(context) = self.live.as_ref().cloned() else {
-            return self.ingest_task_operation_result(
-                id,
-                Err("create tab: a live Herdr connection is required".into()),
-            );
-        };
-        let request = live::ScratchTabRequest {
-            root: self.scratch_root.clone(),
-            workspace_id: self
-                .snapshot
-                .navigator
-                .scratch
-                .session_workspace_ids
-                .first()
-                .cloned(),
-            label: label.to_owned(),
-        };
-        if let Err(message) = live::spawn_scratch_chat_tab_creation(context, id, request) {
-            return self.ingest_task_operation_result(id, Err(message));
-        }
-        true
     }
     pub fn ingest_task_operation_result(
         &mut self,
@@ -2642,9 +2496,13 @@ impl Runtime {
                         .map(|(workspace, checkout)| (workspace.id.clone(), checkout.id.clone()))
                 {
                     match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
-                        Ok(prepared) => {
-                            self.show_file_tab(prepared, &workspace_id, &checkout_id, &destination)
-                        }
+                        Ok(prepared) => self.show_file_tab(
+                            prepared,
+                            &workspace_id,
+                            &checkout_id,
+                            &destination,
+                            false,
+                        ),
                         Err(message) => {
                             if let Some(slot) = self.snapshot.explorer_operation.as_mut() {
                                 slot.message = Some(message.clone());
@@ -2688,22 +2546,48 @@ impl Runtime {
         result: Result<RemoteControlOutcome, String>,
         elapsed_ms: u128,
     ) -> bool {
+        self.ingest_local_control_result_with_failure(
+            action,
+            result.map_err(live::ControlFailure::Definite),
+            elapsed_ms,
+        )
+    }
+
+    pub(crate) fn ingest_local_control_failure(
+        &mut self,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, live::ControlFailure>,
+        elapsed_ms: u128,
+    ) -> bool {
+        self.ingest_local_control_result_with_failure(action, result, elapsed_ms)
+    }
+
+    fn ingest_local_control_result_with_failure(
+        &mut self,
+        action: RemoteControlAction,
+        result: Result<RemoteControlOutcome, live::ControlFailure>,
+        elapsed_ms: u128,
+    ) -> bool {
         let action_kind = action.kind();
         if let RemoteControlAction::MoveTab {
             checkout_id,
             tab_id,
             expected_order,
             generation,
+            connection_generation,
             ..
         } = &action
         {
             return self.ingest_tab_move_result(
-                checkout_id,
-                tab_id,
-                expected_order,
-                *generation,
+                TabMoveResultContext {
+                    checkout_id,
+                    tab_id,
+                    expected_order,
+                    generation: *generation,
+                    connection_generation: *connection_generation,
+                    elapsed_ms,
+                },
                 result,
-                elapsed_ms,
             );
         }
         match result {
@@ -2754,7 +2638,8 @@ impl Runtime {
                     "duration_ms": elapsed_ms,
                 }));
             }
-            Err(message) => {
+            Err(error) => {
+                let message = error.message().to_owned();
                 // Hide keeps the tab it made visible. The refusal is reported
                 // and the wait ends, so the next Herdr event naming another
                 // tab is read as an external focus rather than a late answer.
@@ -2796,19 +2681,55 @@ impl Runtime {
     /// stayed where it was.
     pub(super) fn ingest_tab_move_result(
         &mut self,
-        checkout_id: &str,
-        tab_id: &str,
-        expected_order: &[String],
-        generation: u64,
-        result: Result<RemoteControlOutcome, String>,
-        elapsed_ms: u128,
+        context: TabMoveResultContext<'_>,
+        result: Result<RemoteControlOutcome, live::ControlFailure>,
     ) -> bool {
+        let TabMoveResultContext {
+            checkout_id,
+            tab_id,
+            expected_order,
+            generation,
+            connection_generation,
+            elapsed_ms,
+        } = context;
+        if self
+            .pending_tab_move
+            .get(checkout_id)
+            .is_none_or(|pending| {
+                pending.generation != generation
+                    || pending.connection_generation != connection_generation
+            })
+        {
+            // The result belongs to an older drag. It is consumed without
+            // touching the newer operation or publishing a refusal for it.
+            return true;
+        }
+        let Some(pending) = self.pending_tab_move.get(checkout_id).cloned() else {
+            return true;
+        };
+        if pending.phase != "transmitting" {
+            // Once the answer has been accepted, timed out, or settled, the
+            // ordered session projection is the only authority left for this
+            // request. A duplicate or late answer cannot move the held strip.
+            return true;
+        }
+        if pending
+            .deadline_at_unix_ms
+            .is_some_and(|deadline| deadline <= unix_milliseconds())
+        {
+            return self.mark_tab_move_unknown(
+                checkout_id,
+                generation,
+                connection_generation,
+                "the response arrived after its deadline".to_owned(),
+            );
+        }
         let outcome = match result {
             Ok(RemoteControlOutcome::TabsOrdered { tab_ids }) => Ok(tab_ids),
-            Ok(RemoteControlOutcome::Acknowledged { .. }) => {
-                Err("tab.move did not report the resulting tab order".to_owned())
-            }
-            Err(message) => Err(message),
+            Ok(RemoteControlOutcome::Acknowledged { .. }) => Err(live::ControlFailure::Ambiguous(
+                "tab.move did not report the resulting tab order".to_owned(),
+            )),
+            Err(error) => Err(error),
         };
         match outcome {
             Ok(tab_ids) => {
@@ -2821,6 +2742,18 @@ impl Runtime {
                     .cloned()
                     .collect::<Vec<_>>();
                 if placed == expected_order {
+                    if let Some(pending) = self.pending_tab_move.get_mut(checkout_id)
+                        && pending.generation == generation
+                        && pending.connection_generation == connection_generation
+                    {
+                        pending.phase = "awaiting_topology".to_owned();
+                        pending.stage = "topology".to_owned();
+                        pending.message = Some(
+                            "Request accepted; waiting for the ordered Herdr event".to_owned(),
+                        );
+                        pending.retryable = false;
+                    }
+                    self.sync_async_operations();
                     self.push_diagnostic(
                         "tab.move.ready",
                         format!(
@@ -2849,11 +2782,27 @@ impl Runtime {
                 self.abandon_tab_move(
                     checkout_id,
                     generation,
+                    connection_generation,
                     format!("Herdr put tab {tab_id} somewhere else; the strip follows Herdr"),
                 );
                 true
             }
-            Err(message) => {
+            Err(error) if error.is_ambiguous() => {
+                let message = error.message().to_owned();
+                crate::diagnostic!(serde_json::json!({
+                    "component": "tab_control",
+                    "kind": "tab.move.unknown",
+                    "checkout_id": checkout_id,
+                    "tab_id": tab_id,
+                    "requested": expected_order,
+                    "message": message,
+                    "duration_ms": elapsed_ms,
+                }));
+                self.mark_tab_move_unknown(checkout_id, generation, connection_generation, message);
+                true
+            }
+            Err(error) => {
+                let message = error.message().to_owned();
                 crate::diagnostic!(serde_json::json!({
                     "component": "tab_control",
                     "kind": "tab.move.failed",
@@ -2866,6 +2815,7 @@ impl Runtime {
                 self.abandon_tab_move(
                     checkout_id,
                     generation,
+                    connection_generation,
                     format!("Herdr refused to move tab {tab_id}: {message}"),
                 );
                 true
@@ -2889,10 +2839,9 @@ impl Runtime {
             &self.snapshot.navigator.agents,
         );
         self.snapshot.navigator.workspaces = workspaces;
-        self.snapshot.navigator.devices = workspace::devices(
-            &self.remote_targets,
-            &self.snapshot.ui_state.device_registrations,
-        );
+        self.snapshot.navigator.devices =
+            workspace::devices(&self.snapshot.ui_state.device_registrations);
+        self.refresh_device_snapshots();
         self.resync_navigator_focus();
     }
     pub(super) fn apply_workspace_expansion(
@@ -2978,11 +2927,14 @@ impl Runtime {
         }
         self.snapshot.ui_state.selected_path = Some(payload.path.clone());
         if let Some(prepared) = prepared {
+            // A revealed path was named on purpose: a terminal link or a
+            // Markdown link opens an ordinary tab, not the preview (D-09).
             self.show_file_tab(
                 prepared,
                 &payload.workspace_id,
                 &payload.checkout_id,
                 &payload.path,
+                false,
             );
         }
         self.push_diagnostic(
@@ -3117,6 +3069,25 @@ impl Runtime {
                 return true;
             }
         };
+        // A path the front-door check could not match (a symlink, a
+        // different spelling) can still land on an id whose removal is
+        // closing panes. The worker has already opened this project's first
+        // pane, so the removal is the request that gives way: dropping it
+        // from the in-flight set makes the close's late answer authorize
+        // nothing, and the banner says which request won.
+        if self
+            .workspace_removals_in_flight
+            .remove(&outcome.registration.id)
+        {
+            self.set_error(
+                "workspace.remove_cancelled",
+                format!(
+                    "{} was added again while its removal was closing panes; the project stays registered",
+                    outcome.registration.label
+                ),
+                false,
+            );
+        }
         let catalog_inputs_match =
             self.snapshot.ui_state.workspace_registrations == outcome.base_registrations;
         if catalog_inputs_match {

@@ -7,18 +7,24 @@ struct CoreAgentHooks: Decodable, Equatable {
     /// Panes running a session that started before the hook was installed.
     /// These are the ones a restart would fix.
     let sessionsPredatingInstall: [CoreAgentHookPane]
+    /// The last hook report Herdr did not take, when the most recent one
+    /// failed. While this is set a restart is not the fix.
+    let lastReportFailure: String?
 
     enum CodingKeys: String, CodingKey {
         case runtimes
         case sessionsPredatingInstall = "sessions_predating_install"
+        case lastReportFailure = "last_report_failure"
     }
 
     init(
         runtimes: [CoreAgentHookRuntime] = [],
-        sessionsPredatingInstall: [CoreAgentHookPane] = []
+        sessionsPredatingInstall: [CoreAgentHookPane] = [],
+        lastReportFailure: String? = nil
     ) {
         self.runtimes = runtimes
         self.sessionsPredatingInstall = sessionsPredatingInstall
+        self.lastReportFailure = lastReportFailure
     }
 
     init(from decoder: any Decoder) throws {
@@ -26,6 +32,7 @@ struct CoreAgentHooks: Decodable, Equatable {
         runtimes = try container.decodeIfPresent([CoreAgentHookRuntime].self, forKey: .runtimes) ?? []
         sessionsPredatingInstall =
             try container.decodeIfPresent([CoreAgentHookPane].self, forKey: .sessionsPredatingInstall) ?? []
+        lastReportFailure = try container.decodeIfPresent(String.self, forKey: .lastReportFailure)
     }
 }
 struct CoreAgentHookRuntime: Decodable, Equatable, Identifiable {

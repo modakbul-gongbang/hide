@@ -54,7 +54,7 @@ struct HideHintTarget: Hashable {
         return Set(targets.filter { target in
             switch target.command {
             case .menu(let command):
-                guard [.search, .newChat, .newWorkspace, .toggleSidebarView,
+                guard [.search, .newWorkspace, .toggleSidebarView,
                        .toggleLeftSidebar, .closeTab, .newTab, .toggleRightPanel].contains(command)
                 else { return false }
                 if command == .closeTab {

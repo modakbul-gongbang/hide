@@ -7,6 +7,8 @@ struct BrowserPaneView: View {
     let isFocused: Bool
     let isKeyboardFocused: Bool
     let isZoomed: Bool
+    let activity: String
+    let notice: String?
     let onFocus: () -> Void
     let onToggleZoom: () -> Void
     let onClose: () -> Void
@@ -33,6 +35,8 @@ struct BrowserPaneView: View {
             isFocused: isFocused,
             isKeyboardFocused: isKeyboardFocused,
             isZoomed: isZoomed,
+            activity: activity,
+            notice: notice,
             onFocus: onFocus,
             onReconnect: { reconnect += 1 },
             onClose: onClose,

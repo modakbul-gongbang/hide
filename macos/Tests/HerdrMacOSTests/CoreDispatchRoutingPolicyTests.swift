@@ -52,7 +52,6 @@ struct CoreDispatchRoutingPolicyTests {
             "close_tab",
             "close_pane",
             "create_pane",
-            "create_scratch_chat_tab",
             "create_tab",
             "create_worktree",
             "create_workspace",
@@ -105,7 +104,6 @@ struct LocalHerdrMutationDispatchPolicyTests {
             "close_pane",
             "close_tab",
             "create_pane",
-            "create_scratch_chat_tab",
             "create_tab",
             "create_worktree",
             "create_workspace",
@@ -132,8 +130,38 @@ struct LocalHerdrMutationDispatchPolicyTests {
             #expect(bridge.dispatch(kind: kind, payload: [:]) == .rejected(expectedMessage))
         }
 
-        #expect(rejectedReadiness.count == localMutationKinds.count)
+        // The two geometry reports are refused like the rest but never
+        // presented; see the test below.
+        #expect(rejectedReadiness.count == localMutationKinds.count - 2)
         #expect(rejectedReadiness.allSatisfy { $0 == .initializing(expectedMessage) })
+    }
+
+    /// A terminal view lays itself out before the first Herdr connection and
+    /// reports its grid on its own. That report is refused, and the host
+    /// replays it once connected, but it is not an operator action: showing
+    /// its refusal put "Waiting for the first herdr connection attempt" in a
+    /// modal on every launch.
+    @Test @MainActor func aRefusedGeometryReportIsNotPresentedAsARefusedAction() {
+        let bridge = CoreBridge(arguments: [
+            "HerdrMacOS",
+            "--state-path",
+            "/tmp/hide-local-herdr-geometry-report-test-state.json",
+        ])
+        var presented = 0
+        bridge.localHerdrMutationRejectionHandler = { _ in presented += 1 }
+        let expectedMessage = HideStartupDiagnostic.initializing
+
+        for kind in ["terminal_viewport", "terminal_resize"] {
+            #expect(LocalHerdrMutationDispatchPolicy.requiresConnectedHerdr(kind: kind))
+            #expect(!LocalHerdrMutationDispatchPolicy.presentsRejection(kind: kind))
+            #expect(bridge.dispatch(kind: kind, payload: [:]) == .rejected(expectedMessage))
+        }
+        #expect(presented == 0)
+
+        // An operator's action before the connection is still presented.
+        #expect(LocalHerdrMutationDispatchPolicy.presentsRejection(kind: "create_tab"))
+        #expect(bridge.dispatch(kind: "create_tab", payload: [:]) == .rejected(expectedMessage))
+        #expect(presented == 1)
     }
 
     @Test func localOnlyAndRemoteEventsRemainAvailableDuringRecovery() {

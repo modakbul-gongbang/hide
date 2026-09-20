@@ -144,14 +144,19 @@ fn analyze_once(router: &AiRouter, subject: &str, context: &str) -> Result<Strin
         .execute(&request, &CancelToken::new())
         .map_err(|error| anyhow!("{error}"))?;
     let analysis = context_label::parse(value)?;
+    // Every field the provider answered, because an evaluation that shows
+    // the task alone cannot judge the reply the sidebar would ask for.
     Ok(format!(
-        "provider={provider} attention={} task={}",
+        "provider={provider} attention={} task_changed={} task={} progress={} expected_reply={}",
         if analysis.attention.is_some() {
             "question"
         } else {
             "none"
         },
-        analysis.task
+        analysis.task_changed,
+        analysis.task,
+        analysis.progress,
+        analysis.expected_reply
     ))
 }
 

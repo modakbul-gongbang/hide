@@ -148,6 +148,12 @@ pub(super) struct RemoveWorkspacePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct WorkspacePinSetPayload {
+    pub(super) workspace_id: String,
+    pub(super) pinned: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct RegisterDevicePayload {
     pub(super) id: String,
     pub(super) label: String,
@@ -200,6 +206,11 @@ pub(super) struct ConfirmedTabPayload {
 pub(super) struct ConfirmedPanePayload {
     pub(super) pane_id: String,
     pub(super) confirmed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CheckCloseStatusPayload {
+    pub(super) key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,6 +293,19 @@ impl RemoteControlRequest {
             }
         )
     }
+
+    pub(super) fn mutation_kind(&self) -> Option<&'static str> {
+        match self {
+            Self::SplitPane { .. } => Some("pane.split"),
+            Self::TogglePaneZoom { .. } => Some("pane.zoom"),
+            Self::ClosePane { .. } => Some("pane.close"),
+            Self::CloseTab { .. } => Some("tab.close"),
+            Self::FocusPane { .. }
+            | Self::FocusWorkspace { .. }
+            | Self::FocusTab { .. }
+            | Self::CreateTab { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -289,6 +313,10 @@ pub(super) struct FileOpenPayload {
     pub(super) path: String,
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
+    /// Whether the open wants the checkout's preview slot: an Explorer single
+    /// click does, a double-click, Cmd+P and every other entry point do not.
+    #[serde(default)]
+    pub(super) preview: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -377,7 +405,7 @@ pub(super) struct PathTrashPayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct FileViewPayload {
     pub(super) tab_id: String,
-    pub(super) markdown_preview: bool,
+    pub(super) markdown_live: bool,
     pub(super) wrap: bool,
 }
 
@@ -422,16 +450,6 @@ pub(super) struct UiStateUpdatePayload {
     pub(super) accent_hex: Option<String>,
     #[serde(default)]
     pub(super) font_size: Option<f32>,
-    /// The composer's remembered agent and bypass choice, and whether the
-    /// Scratch section is open. Each is `None` on a save that did not touch
-    /// it, so a navigator save cannot reset the composer and a composer
-    /// submission cannot close the Scratch section.
-    #[serde(default)]
-    pub(super) last_agent_kind: Option<String>,
-    #[serde(default)]
-    pub(super) last_agent_bypass: Option<bool>,
-    #[serde(default)]
-    pub(super) scratch_expanded: Option<bool>,
     /// Ephemeral observation hints for the core-owned provider usage timer.
     /// They ride the existing UI-state event but are never persisted.
     #[serde(default)]
@@ -450,6 +468,10 @@ pub(super) struct ChangesSelectPayload {
     pub(super) committed: bool,
     #[serde(default)]
     pub(super) path: Option<String>,
+    /// Whether the diff opens in the checkout's preview slot, which a single
+    /// click on a Changes row asks for.
+    #[serde(default)]
+    pub(super) preview: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -463,15 +485,29 @@ pub(super) struct GitWorktreeOpenPayload {
     pub(super) checkout_path: String,
 }
 
+/// `overview_open_section`: one checkout brought forward and the right
+/// panel moved to `section` in the same event, so the screen never shows
+/// the half of the move a refusal would leave (AGENTS.md, "a user action is
+/// one event").
+#[derive(Debug, Deserialize)]
+pub(super) struct OverviewOpenSectionPayload {
+    pub(super) checkout_path: String,
+    pub(super) section: String,
+}
+
+/// `agent_start_in_checkout`: a new tab in the checkout's Herdr workspace
+/// with the checkout as its cwd, and the provider the shell then starts in
+/// it. `terminal` means the tab alone.
+#[derive(Debug, Deserialize)]
+pub(super) struct AgentStartInCheckoutPayload {
+    pub(super) checkout_path: String,
+    pub(super) provider: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct GitWorktreeSetBasePayload {
     pub(super) repository_root: String,
     pub(super) branch: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct CreateScratchChatTabPayload {
-    pub(super) label: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -637,6 +673,7 @@ pub(super) enum Event {
     Key(KeyPayload),
     TerminalOutput(TerminalOutputPayload),
     SessionSnapshot(SessionSnapshotPayload),
+    RefreshStatus,
     Click(ClickPayload),
     FocusPane(FocusPaneRequestPayload),
     OpenBrowser(OpenBrowserPayload),
@@ -649,6 +686,7 @@ pub(super) enum Event {
     FocusDevice(FocusDevicePayload),
     InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
     InactiveProjectsToggle(InactiveProjectsTogglePayload),
+    WorkspacePinSet(WorkspacePinSetPayload),
     RemoveWorkspace(RemoveWorkspacePayload),
     RegisterDevice(RegisterDevicePayload),
     RemoveDevice(RemoveDevicePayload),
@@ -660,6 +698,7 @@ pub(super) enum Event {
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
+    CheckCloseStatus(CheckCloseStatusPayload),
     ReopenClosed,
     ForkPane(PaneTargetPayload),
     AgentTreeToggle(PaneTargetPayload),
@@ -668,6 +707,8 @@ pub(super) enum Event {
     FileOpen(FileOpenPayload),
     RevealPath(RevealPathPayload),
     FileFocus(FileTabPayload),
+    /// Keep Open: the preview tab becomes an ordinary tab in the same slot.
+    FileKeepOpen(FileTabPayload),
     FileClose(FileClosePayload),
     FileDraft(FileDraftPayload),
     FileView(FileViewPayload),
@@ -692,7 +733,6 @@ pub(super) enum Event {
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
-    CreateScratchChatTab(CreateScratchChatTabPayload),
     CreateWorktree(CreateWorktreePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
     TaskOperationAck(TaskOperationAckPayload),
@@ -703,8 +743,8 @@ pub(super) enum Event {
     /// completed worktree removal. All three say "read again now" about a
     /// different set of readers, and none needs a target: the card is always
     /// the selected checkout, and a removal changes the whole worktree list.
-    OverviewSelect(GitWorktreeOpenPayload),
-    OverviewChanges(GitWorktreeOpenPayload),
+    OverviewOpenSection(OverviewOpenSectionPayload),
+    AgentStartInCheckout(AgentStartInCheckoutPayload),
     CleanupReview,
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
@@ -763,6 +803,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "key" => decode!(KeyPayload, Key),
         "terminal_output" => decode!(TerminalOutputPayload, TerminalOutput),
         "session_snapshot" => decode!(SessionSnapshotPayload, SessionSnapshot),
+        "refresh_status" => Ok(Event::RefreshStatus),
         "click" => decode!(ClickPayload, Click),
         "focus_pane" => decode!(FocusPaneRequestPayload, FocusPane),
         "open_browser" => decode!(OpenBrowserPayload, OpenBrowser),
@@ -779,6 +820,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "inactive_projects_toggle" => {
             decode!(InactiveProjectsTogglePayload, InactiveProjectsToggle)
         }
+        "workspace_pin_set" => decode!(WorkspacePinSetPayload, WorkspacePinSet),
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
         "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
         "remove_device" => decode!(RemoveDevicePayload, RemoveDevice),
@@ -790,6 +832,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
+        "check_close_status" => decode!(CheckCloseStatusPayload, CheckCloseStatus),
         "reopen_closed" => Ok(Event::ReopenClosed),
         "fork_pane" => decode!(PaneTargetPayload, ForkPane),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
@@ -798,6 +841,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "file_open" => decode!(FileOpenPayload, FileOpen),
         "reveal_path" => decode!(RevealPathPayload, RevealPath),
         "file_focus" => decode!(FileTabPayload, FileFocus),
+        "file_keep_open" => decode!(FileTabPayload, FileKeepOpen),
         "file_close" => decode!(FileClosePayload, FileClose),
         "file_draft" => decode!(FileDraftPayload, FileDraft),
         "file_view" => decode!(FileViewPayload, FileView),
@@ -822,9 +866,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
-        "create_scratch_chat_tab" => {
-            decode!(CreateScratchChatTabPayload, CreateScratchChatTab)
-        }
         "create_worktree" => decode!(CreateWorktreePayload, CreateWorktree),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
         "task_operation_ack" => decode!(TaskOperationAckPayload, TaskOperationAck),
@@ -836,8 +877,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "cleanup_review" => Ok(Event::CleanupReview),
         "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
         "cleanup_dismiss" => Ok(Event::CleanupDismiss),
-        "overview_changes" => decode!(GitWorktreeOpenPayload, OverviewChanges),
-        "overview_select" => decode!(GitWorktreeOpenPayload, OverviewSelect),
+        "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
+        "agent_start_in_checkout" => decode!(AgentStartInCheckoutPayload, AgentStartInCheckout),
         "card_refresh" => Ok(Event::CardRefresh),
         "card_measure_disk" => Ok(Event::CardMeasureDisk),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
@@ -891,6 +932,7 @@ impl Runtime {
                 true
             }
             Event::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
+            Event::RefreshStatus => self.request_status_refresh(),
             Event::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
             Event::PetToggleVisible => {
                 let visible = !self.snapshot.ui_state.pet_visible;
@@ -1034,6 +1076,27 @@ impl Runtime {
             }
             Event::CreateWorkspace(payload) => {
                 if let Some(context) = self.live.as_ref().cloned() {
+                    // A folder whose removal is still closing panes keeps the
+                    // registration id it is about to lose; adding it now would
+                    // open a pane in that workspace and then watch the retire
+                    // delete the registration under it, with nothing to say
+                    // the add did not stick.
+                    if let Some(workspace_id) = self.workspace_removal_in_flight_for(&payload.path)
+                    {
+                        self.set_error(
+                            "workspace.remove_in_flight",
+                            format!(
+                                "{} is still being removed; wait for its panes to close, then add it again",
+                                payload.path
+                            ),
+                            false,
+                        );
+                        self.push_diagnostic(
+                            "workspace.create.refused_during_removal",
+                            format!("Workspace {workspace_id} removal is closing panes"),
+                        );
+                        return true;
+                    }
                     if !self
                         .workspace_creations_in_flight
                         .insert(payload.path.clone())
@@ -1071,11 +1134,6 @@ impl Runtime {
                 true
             }
             Event::CreateTab(payload) => {
-                // Scratch is not a project, so it is answered before the
-                // project lookup rather than by pretending to be one.
-                if payload.workspace_id == crate::scratch::NODE_ID {
-                    return self.create_scratch_tab(payload.label.trim());
-                }
                 let Some(workspace_snapshot) = self
                     .snapshot
                     .navigator
@@ -1389,60 +1447,8 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
-            Event::RemoveWorkspace(payload) => {
-                // Removing a registration never closes Herdr workspaces. An
-                // occupied project would immediately return through discovery.
-                if self.snapshot.navigator.workspaces.iter().any(|workspace| {
-                    workspace.id == payload.workspace_id
-                        && (!workspace.session_workspace_ids.is_empty()
-                            || workspace
-                                .checkouts
-                                .iter()
-                                .any(|checkout| checkout.has_panes))
-                }) {
-                    self.set_error(
-                        "workspace.registration_in_use",
-                        "This project is still open in Herdr. Close or move its panes and workspaces, then remove the registration again. Files and worktrees are kept.",
-                        true,
-                    );
-                    crate::diagnostic!(serde_json::json!({
-                        "component": "registration", "kind": "remove.in_use",
-                        "workspace_id": payload.workspace_id,
-                    }));
-                    return true;
-                }
-                let before = self.snapshot.ui_state.workspace_registrations.len();
-                self.snapshot
-                    .ui_state
-                    .workspace_registrations
-                    .retain(|registration| registration.id != payload.workspace_id);
-                if before == self.snapshot.ui_state.workspace_registrations.len() {
-                    return false;
-                }
-                // Retire the accepted projection directly. Rebuilding the
-                // filesystem catalog here ran git while holding the mutex.
-                self.snapshot
-                    .navigator
-                    .workspaces
-                    .retain(|workspace| workspace.id != payload.workspace_id);
-                if let Some(catalog) = &mut self.last_accepted_catalog {
-                    catalog.retain(|workspace| workspace.id != payload.workspace_id);
-                }
-                self.snapshot
-                    .ui_state
-                    .collapsed_workspace_ids
-                    .retain(|id| id != &payload.workspace_id);
-                self.resync_navigator_focus();
-                self.persist_current_ui_state();
-                self.push_diagnostic(
-                    "workspace.unregistered",
-                    format!(
-                        "Unregistered workspace {} without touching its files",
-                        payload.workspace_id
-                    ),
-                );
-                true
-            }
+            Event::WorkspacePinSet(payload) => self.set_workspace_pinned(payload),
+            Event::RemoveWorkspace(payload) => self.remove_workspace(payload),
             Event::RegisterDevice(payload) => {
                 let id = payload.id.trim().to_owned();
                 let label = payload.label.trim().to_owned();
@@ -1456,7 +1462,6 @@ impl Runtime {
                     return true;
                 }
                 if id == workspace::LOCAL_DEVICE_ID
-                    || self.remote_targets.iter().any(|target| target.id == id)
                     || self
                         .snapshot
                         .ui_state
@@ -1471,19 +1476,22 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.snapshot.ui_state.device_registrations.push(
-                    crate::model::DeviceRegistration {
-                        id: id.clone(),
-                        label,
-                        ssh_alias: Some(ssh_alias.clone()),
-                    },
-                );
+                let registration = crate::model::DeviceRegistration {
+                    id: id.clone(),
+                    label,
+                    ssh_alias: Some(ssh_alias.clone()),
+                };
+                self.snapshot
+                    .ui_state
+                    .device_registrations
+                    .push(registration.clone());
                 self.rebuild_catalog();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.registered",
                     format!("Registered SSH device {id} ({ssh_alias})"),
                 );
+                self.connect_remote_device(&registration);
                 true
             }
             Event::RemoveDevice(payload) => {
@@ -1508,6 +1516,7 @@ impl Runtime {
                     );
                     return true;
                 }
+                self.disconnect_remote_device(&payload.device_id);
                 self.rebuild_catalog();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
@@ -1525,32 +1534,19 @@ impl Runtime {
                     .navigator
                     .devices
                     .iter()
-                    .any(|device| device.id == payload.device_id);
+                    .any(|device| device.id == payload.device_id && device.kind == "remote");
                 if !known {
                     self.set_error(
                         "device.unknown",
-                        format!("Device {} is not registered", payload.device_id),
+                        format!(
+                            "Device {} is not a registered SSH device",
+                            payload.device_id
+                        ),
                         false,
                     );
                     return true;
                 }
-                self.push_diagnostic(
-                    "device.connection_test_requested",
-                    format!(
-                        "Connection test requested for {}; SSH credentials remain outside hide",
-                        payload.device_id
-                    ),
-                );
-                if let Some(device) = self
-                    .snapshot
-                    .navigator
-                    .devices
-                    .iter_mut()
-                    .find(|device| device.id == payload.device_id)
-                {
-                    device.state = "test_requested".to_owned();
-                }
-                true
+                self.start_device_test(&payload.device_id)
             }
             Event::CreatePane(payload) => {
                 if payload.command.is_some() {
@@ -1589,9 +1585,7 @@ impl Runtime {
                     format!("pane.split.{}.requested", direction.as_str()),
                     format!("Splitting pane {pane_id} {}", direction.as_str()),
                 );
-                if let Err(message) = live::spawn_pane_control(context, action) {
-                    self.set_error("pane.split_worker_failed", message, true);
-                }
+                self.begin_pane_operation(context, action);
                 true
             }
             Event::ResizePane(payload) => {
@@ -1617,16 +1611,14 @@ impl Runtime {
                     "pane.resize.requested",
                     format!("Resizing pane {pane_id} {}", direction.as_str()),
                 );
-                if let Err(message) = live::spawn_pane_control(
+                self.begin_pane_operation(
                     context,
                     PaneControlAction::Resize {
                         pane_id,
                         direction,
                         amount: payload.amount,
                     },
-                ) {
-                    self.set_error("pane.resize_worker_failed", message, true);
-                }
+                );
                 true
             }
             Event::ToggleZoom(payload) => {
@@ -1644,11 +1636,7 @@ impl Runtime {
                     "pane.zoom.requested",
                     format!("Toggling zoom for pane {pane_id}"),
                 );
-                if let Err(message) =
-                    live::spawn_pane_control(context, PaneControlAction::ToggleZoom { pane_id })
-                {
-                    self.set_error("pane.zoom_worker_failed", message, true);
-                }
+                self.begin_pane_operation(context, PaneControlAction::ToggleZoom { pane_id });
                 true
             }
             Event::ToggleConversation(payload) => {
@@ -1666,14 +1654,9 @@ impl Runtime {
                     );
                     return true;
                 }
-                let ui_state = &mut self.snapshot.ui_state;
-                if ui_state.terminal_pane_ids.insert(payload.pane_id.clone()) {
-                    ui_state.conversation_pane_ids.remove(&payload.pane_id);
-                } else {
-                    ui_state.terminal_pane_ids.remove(&payload.pane_id);
-                    ui_state
-                        .conversation_pane_ids
-                        .insert(payload.pane_id.clone());
+                let conversation = &mut self.snapshot.ui_state.conversation_pane_ids;
+                if !conversation.remove(&payload.pane_id) {
+                    conversation.insert(payload.pane_id.clone());
                 }
                 true
             }
@@ -1704,6 +1687,20 @@ impl Runtime {
                     .iter()
                     .map(|pane| pane.id.as_str())
                     .collect::<HashSet<_>>();
+                let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
+                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
+                });
+                if status_unknown {
+                    self.set_error(
+                        "tab.close_status_unknown",
+                        format!(
+                            "Tab {} has a pane whose activity status is unknown; refresh status before closing",
+                            payload.tab_id
+                        ),
+                        true,
+                    );
+                    return true;
+                }
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
                 });
@@ -1723,6 +1720,20 @@ impl Runtime {
                 self.start_close_capture(live::CloseCaptureTarget::Tab { tab_id }, tab)
             }
             Event::ClosePane(payload) => {
+                let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
+                    agent.pane_id == payload.pane_id && agent.requires_close_status_check
+                });
+                if status_unknown {
+                    self.set_error(
+                        "pane.close_status_unknown",
+                        format!(
+                            "Pane {} has an unknown activity status; refresh status before closing",
+                            payload.pane_id
+                        ),
+                        true,
+                    );
+                    return true;
+                }
                 let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
                     agent.pane_id == payload.pane_id && agent.requires_close_confirmation
                 });
@@ -1738,35 +1749,6 @@ impl Runtime {
                     return true;
                 }
                 let pane_id = payload.pane_id;
-                if self
-                    .snapshot
-                    .navigator
-                    .scratch
-                    .tabs
-                    .iter()
-                    .flat_map(|tab| tab.panes.iter())
-                    .any(|pane| pane.id == pane_id)
-                {
-                    let Some(context) = self.live.as_ref().cloned() else {
-                        self.set_error(
-                            "pane.control_unavailable",
-                            "Pane close requires a live Herdr connection",
-                            true,
-                        );
-                        return true;
-                    };
-                    self.panes_closing.insert(pane_id.clone());
-                    if let Err(message) = live::spawn_pane_control(
-                        context,
-                        PaneControlAction::Close {
-                            pane_id: pane_id.clone(),
-                        },
-                    ) {
-                        self.panes_closing.remove(&pane_id);
-                        self.set_error("pane.close_worker_failed", message, true);
-                    }
-                    return true;
-                }
                 if self.live.is_none() {
                     self.set_error(
                         "pane.control_unavailable",
@@ -1793,10 +1775,10 @@ impl Runtime {
                     return true;
                 };
                 self.retain_project_before_last_pane_closes(&pane_id);
-                self.panes_closing.insert(pane_id.clone());
                 self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
                 self.start_close_capture(live::CloseCaptureTarget::Pane { pane_id }, tab)
             }
+            Event::CheckCloseStatus(payload) => self.check_close_status(&payload.key),
             Event::ReopenClosed => self.reopen_closed(),
             Event::ForkPane(payload) => {
                 let pane_id = payload.pane_id;
@@ -1859,13 +1841,6 @@ impl Runtime {
                     .find(|pane| pane.id == pane_id)
                     .map(|pane| pane.cwd.clone());
                 self.fork_sequence += 1;
-                // The name is already unique and already sanitized, so it is
-                // also the retry identity rather than a second thing to keep
-                // unique. It is used as the idempotency key unchanged: a
-                // `hide-` prefix on the key used to make a second string that
-                // nothing kept inside Herdr's name rule, and the key is what
-                // the CLI puts in its request id, so a key that broke the rule
-                // was the value the operator saw refused.
                 let name = fork_name(
                     &pane_id,
                     &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
@@ -1875,7 +1850,6 @@ impl Runtime {
                     agent: agent_kind,
                     session_id,
                     cwd,
-                    idempotency_key: name.clone(),
                     name,
                 };
                 self.push_diagnostic("pane.fork.requested", format!("Forking pane {pane_id}"));
@@ -1909,10 +1883,16 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.open_file_tab(&payload.workspace_id, &payload.checkout_id, &payload.path);
+                self.open_file_tab(
+                    &payload.workspace_id,
+                    &payload.checkout_id,
+                    &payload.path,
+                    payload.preview,
+                );
                 self.persist_current_ui_state();
                 true
             }
+            Event::FileKeepOpen(payload) => self.promote_editor_tab(&payload.tab_id),
             Event::RevealPath(payload) => self.reveal_path(payload),
             Event::FileFocus(payload) => {
                 let Some(tab) = self
@@ -1994,10 +1974,10 @@ impl Runtime {
                     );
                     return true;
                 };
-                if tab.markdown_preview == payload.markdown_preview && tab.wrap == payload.wrap {
+                if tab.markdown_live == payload.markdown_live && tab.wrap == payload.wrap {
                     return false;
                 }
-                tab.markdown_preview = payload.markdown_preview;
+                tab.markdown_live = payload.markdown_live;
                 tab.wrap = payload.wrap;
                 true
             }
@@ -2016,8 +1996,14 @@ impl Runtime {
                 };
                 match files::update_draft(document, payload.contents_utf8) {
                     Ok(()) => {
+                        let edited = document.dirty;
                         self.sync_file_tab_dirty(&tab_id);
                         self.sync_active_editor_document();
+                        // The first edit keeps a preview tab (B5); an echo of
+                        // the same contents is not an edit.
+                        if edited {
+                            self.promote_editor_tab(&tab_id);
+                        }
                     }
                     Err(message) => self.set_error("file.draft_rejected", message, false),
                 }
@@ -2454,31 +2440,8 @@ impl Runtime {
                 self.refresh_worktree_projection();
                 true
             }
-            Event::OverviewChanges(payload) => {
-                if self
-                    .focused_local_checkout()
-                    .is_none_or(|(_, checkout)| checkout.path != payload.checkout_path)
-                {
-                    return false;
-                }
-                self.snapshot.ui_state.right_panel_visible = true;
-                self.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
-                self.persist_ui_state();
-                true
-            }
-            Event::OverviewSelect(payload) => {
-                let valid = self.focused_local_checkout().is_some_and(|(project, _)| {
-                    project
-                        .checkouts
-                        .iter()
-                        .any(|c| c.path == payload.checkout_path)
-                });
-                if !valid || self.overview_selection.as_deref() == Some(&payload.checkout_path) {
-                    return false;
-                }
-                self.overview_selection = Some(payload.checkout_path);
-                self.refresh_card()
-            }
+            Event::OverviewOpenSection(payload) => self.overview_open_section(payload),
+            Event::AgentStartInCheckout(payload) => self.agent_start_in_checkout(payload),
             Event::CardRefresh => {
                 // The card's one refresh button re-reads both the remote
                 // answer and the local counts, because the operator pressing
@@ -2502,7 +2465,6 @@ impl Runtime {
             Event::GitWorktreeSetBase(payload) => {
                 self.set_git_worktree_base(payload.repository_root, payload.branch)
             }
-            Event::CreateScratchChatTab(payload) => self.create_scratch_chat_tab(payload.label),
             Event::CreateWorktree(payload) => self.create_project_worktree(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),
@@ -2564,7 +2526,13 @@ impl Runtime {
                 if self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id.as_str()) {
                     return false;
                 }
-                self.show_diff_tab(&workspace_id, &checkout_id, &path, payload.committed);
+                self.show_diff_tab(
+                    &workspace_id,
+                    &checkout_id,
+                    &path,
+                    payload.committed,
+                    payload.preview,
+                );
                 self.persist_current_ui_state();
                 true
             }
@@ -2675,13 +2643,7 @@ impl Runtime {
                     pane_text_scales: current.pane_text_scales,
                     editor_text_scale: current.editor_text_scale,
                     conversation_pane_ids: current.conversation_pane_ids,
-                    terminal_pane_ids: current.terminal_pane_ids,
                     pane_read_records: current.pane_read_records,
-                    last_agent_kind: payload.last_agent_kind.unwrap_or(current.last_agent_kind),
-                    last_agent_bypass: payload
-                        .last_agent_bypass
-                        .unwrap_or(current.last_agent_bypass),
-                    scratch_expanded: payload.scratch_expanded.unwrap_or(current.scratch_expanded),
                 };
                 // Visibility and popover activity wake the provider reader,
                 // but they are not durable preferences. The shell sends the
@@ -2691,7 +2653,6 @@ impl Runtime {
                 if self.snapshot.ui_state == previous_ui_state {
                     return true;
                 }
-                self.snapshot.navigator.scratch.expanded = self.snapshot.ui_state.scratch_expanded;
                 self.apply_selected_pane_anchor(self.snapshot.ui_state.selected_pane_id.clone());
                 self.snapshot.navigator.focused_device_id =
                     self.snapshot.ui_state.focused_device_id.clone();

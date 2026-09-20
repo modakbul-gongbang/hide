@@ -7,6 +7,7 @@ struct CoreEditorSnapshot: Decodable {
 
     var path: String? { document?.path }
     var language: String? { document?.language }
+    var documentKind: CoreDocumentKind? { document?.documentKind }
     var contentsUTF8: String? { document?.contentsUTF8 }
     var openedModifiedAt: UInt64? { document?.openedModifiedAt }
     var dirty: Bool { document?.dirty ?? false }
@@ -33,9 +34,11 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
     let label: String
     let kind: CoreEditorTabKind
     let diffCommitted: Bool?
-    var markdownPreview: Bool? = nil
+    var markdownLive: Bool? = nil
     var wrap: Bool? = nil
     let dirty: Bool
+    /// The checkout's replaceable preview tab (PRD editor-preview-tab D-07).
+    var preview: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -44,16 +47,28 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
         case path
         case label
         case kind
-        case markdownPreview = "markdown_preview"
+        case markdownLive = "markdown_live"
         case wrap
         case diffCommitted = "diff_committed"
         case dirty
+        case preview
     }
+}
+
+/// The core's verdict on what an open file is. The shell draws one view per
+/// case and decides nothing from the file's name or bytes itself.
+enum CoreDocumentKind: String, Decodable, Equatable {
+    case text
+    case markdown
+    case image
+    case pdf
+    case binary
 }
 
 struct CoreEditorDocumentSnapshot: Decodable {
     let path: String
     let language: String?
+    let documentKind: CoreDocumentKind
     let contentsUTF8: String?
     let openedModifiedAt: UInt64?
     let dirty: Bool
@@ -63,6 +78,7 @@ struct CoreEditorDocumentSnapshot: Decodable {
     enum CodingKeys: String, CodingKey {
         case path
         case language
+        case documentKind = "document_kind"
         case contentsUTF8 = "contents_utf8"
         case openedModifiedAt = "opened_modified_at_unix_ms"
         case dirty

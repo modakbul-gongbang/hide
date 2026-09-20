@@ -12,6 +12,7 @@ name = "hide-agent-hooks"
 path = "src/bin/hide-agent-hooks.rs"
 
 [dependencies]
+hide-herdr-client = { path = "../hide-herdr-client" }
 serde = { version = "=1.0.229", features = ["derive"] }
 # `preserve_order` keeps the operator's own keys in the order their editor
 # wrote them. Without it, appending one hook rewrites the whole settings file

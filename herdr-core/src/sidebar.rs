@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{AmbientSignal, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
+use crate::model::{PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
@@ -46,7 +46,7 @@ pub struct SessionTabPayload {
     pub label: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SessionLayoutPayload {
     pub workspace_id: String,
     pub tab_id: String,
@@ -65,23 +65,28 @@ pub struct SessionLayoutRect {
     pub height: u16,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SessionLayoutPanePayload {
     pub pane_id: String,
     pub rect: SessionLayoutRect,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SessionLayoutSplitPayload {
     pub direction: PaneLayoutDirection,
     pub ratio: f32,
     pub rect: SessionLayoutRect,
 }
 
-/// What the sidebar shows for an agent whose context-label plugin reported
-/// no summary. It is a prompt to the user, not a name, so surfaces that name
-/// a pane must not adopt it.
-pub const MISSING_SUMMARY: &str = "Check agent-context-labels settings";
+/// The most a name or sentence read off a pane token may run to. Herdr caps
+/// a token value at 80 characters; the row draws one line, so anything past
+/// this is the tooltip's.
+const MAX_TOKEN_TEXT_CHARS: usize = 80;
+
+/// The longest `expected_reply` the label plugin publishes (PRD D-05). The
+/// core cuts at the same length so a plugin that outran its own rule cannot
+/// push the row past one line.
+pub const MAX_EXPECTED_REPLY_CHARS: usize = 40;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionAgentPayload {
@@ -110,10 +115,6 @@ pub struct SessionAgentPayload {
     pub state_change_seq: Option<u64>,
     #[serde(default)]
     pub tokens: BTreeMap<String, Value>,
-    /// Passed through verbatim; the strict shape check lives in
-    /// [`parse_ambient`] so a broken record can never partially survive.
-    #[serde(default)]
-    pub ambient: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -381,6 +382,39 @@ pub fn sync_checkout_agent_summaries(
             changed = true;
         }
     }
+    // The removal confirmation's counts ride the same pass, so the dialog
+    // names the panes the close will send and the agents still working in
+    // them as of the same projection (D-10). "Running" is the deletion
+    // gate's definition: the agent's activity axis says working. Only a
+    // local registration offers `Remove project…`, so only one carries the
+    // gate: a remote tree arrives freshly projected on every sync, and a
+    // count written into it would read as a change on every tick.
+    let running = agents
+        .iter()
+        .filter(|agent| agent.activity == AgentActivity::Working.name())
+        .map(|agent| agent.pane_id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for workspace in workspaces
+        .iter_mut()
+        .filter(|workspace| workspace.registered && workspace.remote_target_id.is_none())
+    {
+        let panes = workspace
+            .checkouts
+            .iter()
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes);
+        let mut removal = crate::model::WorkspaceRemovalGateSnapshot::default();
+        for pane in panes {
+            removal.pane_count += 1;
+            if running.contains(pane.id.as_str()) {
+                removal.running_agent_count += 1;
+            }
+        }
+        if workspace.removal != removal {
+            workspace.removal = removal;
+            changed = true;
+        }
+    }
     changed
 }
 
@@ -401,10 +435,25 @@ fn agent_status_label(demand: AgentDemand, activity: AgentActivity, unread: bool
     }
 }
 
-/// Closing this pane would interrupt running work or throw away a result the
-/// operator has not read yet.
-fn agent_requires_close_confirmation(activity: AgentActivity, group: AgentGroup) -> bool {
-    activity == AgentActivity::Working || matches!(group, AgentGroup::NeedsYou | AgentGroup::Done)
+/// Closing this pane would interrupt running work or discard an unresolved
+/// demand. Read state remains a presentation axis, so an unread completion or
+/// an ordinary stopped pane cannot create a close prompt by itself.
+fn agent_requires_close_confirmation(
+    activity: AgentActivity,
+    demand: AgentDemand,
+    blocked: bool,
+) -> bool {
+    activity == AgentActivity::Working || demand != AgentDemand::None || blocked
+}
+
+/// An activity-less pane cannot safely be described as idle in a destructive
+/// confirmation. The caller must obtain a fresh status before it can close.
+fn agent_requires_close_status_check(
+    activity: AgentActivity,
+    demand: AgentDemand,
+    blocked: bool,
+) -> bool {
+    activity == AgentActivity::Unknown && demand == AgentDemand::None && !blocked
 }
 
 /// One agent that could not be read out of an otherwise valid snapshot.
@@ -623,12 +672,9 @@ pub fn apply_lineage(
 pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapshot {
     crate::model::AgentChipSnapshot {
         pane_id: agent.pane_id.clone(),
-        label: agent_identity_label(agent),
-        detail: if agent.summary == MISSING_SUMMARY {
-            agent.status_label.clone()
-        } else {
-            agent.summary.clone()
-        },
+        label: agent.identity_label.clone(),
+        detail: agent.detail.clone(),
+        status_word_visible: agent.status_word_visible,
         agent_kind: agent.agent_kind.clone(),
         demand: agent.demand.clone(),
         activity: agent.activity.clone(),
@@ -641,20 +687,52 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
 
 /// The stable, user-facing identity shared by lineage surfaces.
 ///
-/// A pane id is a transport handle, not a name. Some report-only panes have
-/// no Herdr agent name, so their `id` falls back to that handle even while a
-/// chat title or useful task summary is available. Prefer those authoritative
-/// labels and use the workspace only when no task identity exists.
+/// The ladder is `name token → Herdr agent name → task → workspace label`
+/// (PRD D-01, D-03). The `name` token is the session name the label plugin
+/// read off the agent's own session file when Herdr refused it as an agent
+/// name; the Herdr agent name is the one the operator or the plugin gave. `task` is the
+/// plugin's rolling title, which moves between turns, so it stands in only
+/// when no name exists at all. A pane id is a transport handle, never a
+/// name: a report-only pane whose `id` is its pane id falls through to the
+/// workspace label.
 fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
     agent
-        .chat_title
+        .name
         .clone()
-        .or_else(|| {
-            (agent.summary != MISSING_SUMMARY && !agent.summary.trim().is_empty())
-                .then(|| agent.summary.clone())
-        })
         .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
+        .or_else(|| agent.task.clone())
         .unwrap_or_else(|| agent.workspace_label.clone())
+}
+
+/// What a row's second line says, decided by the row's group (PRD D-06).
+///
+/// Rows that still concern the operator - the Needs You group and an unread
+/// Done - keep their status word and add what the operator is being asked
+/// for (`expected_reply`), or what happened (`progress`) when nothing is
+/// asked. A working row shows only its progress: the mark already says it is
+/// working. A row the operator has read, and a row whose activity is unknown,
+/// say nothing more than their name. With no sentence at all, a row that
+/// would have shown one keeps the status word alone, so a pane with no label
+/// plugin behind it still reads as it did before (PRD B6, B13).
+///
+/// Returns whether the status word is drawn and the sentence beside it.
+fn agent_second_line(
+    group: AgentGroup,
+    expected_reply: Option<&str>,
+    progress: Option<&str>,
+) -> (bool, Option<String>) {
+    let sentence = match group {
+        AgentGroup::NeedsYou | AgentGroup::Done => expected_reply.or(progress),
+        AgentGroup::Working => progress,
+        AgentGroup::Seen => return (false, None),
+    };
+    // The word is the sentence's stand-in, never its prefix: the mark and the
+    // group heading already say Question or Done, and the word beside a
+    // sentence took the width the sentence needed (2026-09-18).
+    match sentence {
+        Some(sentence) => (false, Some(sentence.to_owned())),
+        None => (true, None),
+    }
 }
 
 /// What one pane's header says about the work its agent delegated.
@@ -854,7 +932,17 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
     agent.status_label = agent_status_label(demand, activity, unread).to_owned();
-    agent.requires_close_confirmation = agent_requires_close_confirmation(activity, group);
+    let (status_word_visible, detail) = agent_second_line(
+        group,
+        agent.expected_reply.as_deref(),
+        agent.progress.as_deref(),
+    );
+    agent.status_word_visible = status_word_visible;
+    agent.detail = detail;
+    agent.requires_close_confirmation =
+        agent_requires_close_confirmation(activity, demand, agent.blocked);
+    agent.requires_close_status_check =
+        agent_requires_close_status_check(activity, demand, agent.blocked);
 }
 
 fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
@@ -865,10 +953,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let demand = agent_demand(&agent);
     let activity = agent_activity(&agent);
     let blocked = agent.agent_status.as_deref() == Some("blocked");
-    let ambient = match agent.ambient.as_ref() {
-        Some(raw) => parse_ambient(raw)?,
-        None => None,
-    };
     let workspace_label = non_empty(agent.workspace_label.as_deref())
         .or_else(|| {
             agent
@@ -878,19 +962,16 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         })
         .unwrap_or("workspace")
         .to_owned();
-    let summary = token_string(&agent.tokens, "summary")
-        .map(collapse_whitespace)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.chars().take(30).collect())
-        .unwrap_or_else(|| MISSING_SUMMARY.to_owned());
+    // The three label-plugin sentences, each one line. The plugin already
+    // bounds them; the cut here is the same bound applied once more so a
+    // value that outran it cannot reach a row.
+    let name = token_text(&agent.tokens, "name", MAX_TOKEN_TEXT_CHARS);
+    let task = token_text(&agent.tokens, "task", MAX_TOKEN_TEXT_CHARS);
+    let progress = token_text(&agent.tokens, "progress", MAX_TOKEN_TEXT_CHARS);
+    let expected_reply = token_text(&agent.tokens, "expected_reply", MAX_EXPECTED_REPLY_CHARS);
     let elapsed = token_string(&agent.tokens, "elapsed")
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
-    // The title the composer wrote onto this pane when it started the chat.
-    // Herdr holds it, so it survives a Hide restart the way the pane does.
-    let chat_title = token_string(&agent.tokens, crate::scratch::TITLE_TOKEN)
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
 
     let mut projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
@@ -912,12 +993,17 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         emphasized: false,
         status_label: String::new(),
         requires_close_confirmation: false,
+        requires_close_status_check: false,
         identity_label: String::new(),
-        summary,
+        name,
+        task,
+        progress,
+        expected_reply,
+        detail: None,
+        status_word_visible: true,
         elapsed,
         last_activity,
         state_change_seq: agent.state_change_seq,
-        ambient,
         session_id: agent
             .agent_session
             .as_ref()
@@ -925,7 +1011,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
-        chat_title,
         delegated: false,
         stall_level: String::new(),
         stall_notice: None,
@@ -1086,35 +1171,6 @@ fn derive_read_state(
     sort_agents(agents);
 }
 
-/// Reads a pane's optional `ambient` object.
-///
-/// `null` means the server sent nothing for this pane. Any other unreadable
-/// shape excludes the whole record rather than partially extracting it, and
-/// unknown keys are dropped so nothing but the three counts can ever reach
-/// app state (see docs/status-model.md, Ambient signals).
-fn parse_ambient(raw: &Value) -> Result<Option<AmbientSignal>, String> {
-    if raw.is_null() {
-        return Ok(None);
-    }
-    let object = raw
-        .as_object()
-        .ok_or_else(|| "ambient signal is not an object".to_owned())?;
-    let count = |key: &str| -> Result<u32, String> {
-        match object.get(key) {
-            None => Ok(0),
-            Some(value) => value
-                .as_u64()
-                .and_then(|number| u32::try_from(number).ok())
-                .ok_or_else(|| format!("ambient signal {key} is not a count")),
-        }
-    };
-    Ok(Some(AmbientSignal {
-        subagents_active: count("subagents_active")?,
-        background_running: count("background_running")?,
-        background_failed: count("background_failed")?,
-    }))
-}
-
 /// The demand axis. Error outranks question, which outranks approval, so the
 /// worst thing waiting is the one the row names.
 fn agent_demand(agent: &SessionAgentPayload) -> AgentDemand {
@@ -1192,6 +1248,15 @@ fn token_string(tokens: &BTreeMap<String, Value>, name: &str) -> Option<String> 
         .map(str::to_owned)
 }
 
+/// One line of text off a token: whitespace collapsed, empty dropped, cut
+/// at `max_chars`.
+fn token_text(tokens: &BTreeMap<String, Value>, name: &str, max_chars: usize) -> Option<String> {
+    token_string(tokens, name)
+        .map(collapse_whitespace)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(max_chars).collect())
+}
+
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -1232,7 +1297,8 @@ mod tests {
                         cwd: "/fixture".to_owned(),
                         status_label: "Unknown".to_owned(),
                         requires_close_confirmation: false,
-                        summary: None,
+                        requires_close_status_check: false,
+                        identity_label: None,
                         activity_at_unix_ms: None,
                         fork: Default::default(),
                         ports: vec![],
@@ -1274,7 +1340,9 @@ mod tests {
             temporary: false,
             session_workspace_ids: vec![],
             last_activity_unix_ms: None,
+            pinned: false,
             inactive_checkouts: Default::default(),
+            removal: Default::default(),
         }];
         let mut agents = project_agents(payload(json!([
             {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},
@@ -1480,10 +1548,11 @@ mod tests {
         );
     }
 
-    /// AC10. Closing a pane needs confirmation exactly where the PRD says:
-    /// working, or in Needs You or Done. A read idle pane closes without one.
+    /// AC10. Closing a pane needs confirmation for running work or unresolved
+    /// demand. An unknown activity is a separate status-check outcome, not a
+    /// confirmation that guesses whether work is running.
     #[test]
-    fn axes_require_close_confirmation_for_working_needs_you_and_done() {
+    fn axes_require_close_confirmation_or_status_check_from_work_and_demand() {
         let cases = [
             (
                 AgentDemand::None,
@@ -1491,6 +1560,7 @@ mod tests {
                 false,
                 false,
                 true,
+                false,
             ),
             (
                 AgentDemand::Question,
@@ -1498,6 +1568,7 @@ mod tests {
                 true,
                 false,
                 true,
+                false,
             ),
             (
                 AgentDemand::Approval,
@@ -1505,11 +1576,20 @@ mod tests {
                 false,
                 true,
                 true,
+                false,
             ),
-            (AgentDemand::None, AgentActivity::Stopped, true, false, true),
             (
                 AgentDemand::None,
                 AgentActivity::Stopped,
+                true,
+                false,
+                false,
+                false,
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Stopped,
+                false,
                 false,
                 false,
                 false,
@@ -1519,6 +1599,7 @@ mod tests {
                 AgentActivity::Stopped,
                 false,
                 false,
+                true,
                 false,
             ),
             (
@@ -1527,14 +1608,20 @@ mod tests {
                 true,
                 false,
                 false,
+                true,
             ),
         ];
-        for (demand, activity, unread, blocked, expected) in cases {
-            let group = agent_group_for(demand, activity, unread, blocked, Ownership::Operator);
+        for (demand, activity, unread, blocked, expected, status_check) in cases {
+            let _group = agent_group_for(demand, activity, unread, blocked, Ownership::Operator);
             assert_eq!(
-                agent_requires_close_confirmation(activity, group),
+                agent_requires_close_confirmation(activity, demand, blocked),
                 expected,
                 "{demand:?} {activity:?} unread={unread} blocked={blocked}"
+            );
+            assert_eq!(
+                agent_requires_close_status_check(activity, demand, blocked),
+                status_check,
+                "status check: {demand:?} {activity:?} unread={unread} blocked={blocked}"
             );
         }
     }
@@ -1690,16 +1777,120 @@ mod tests {
         );
     }
 
+    /// PRD D-01, D-03: the name ladder, one rung at a time, top to bottom.
     #[test]
-    fn summary_is_compact_and_missing_summary_has_an_actionable_label() {
-        let projected = project_agents(payload(json!([
-            {"pane_id":"long","tokens":{"status_idle":"○","activity":"0000000000001","summary":"  one   two three four five six seven eight nine ten  ","elapsed":"4m"}},
-            {"pane_id":"missing","tokens":{"status_idle":"○","activity":"0000000000000"}}
-        ]))).agents;
-        assert!(projected[0].summary.chars().count() <= 30);
-        assert_eq!(projected[0].elapsed, "4m");
-        assert_eq!(projected[1].summary, "Check agent-context-labels settings");
-        assert_eq!(projected[1].elapsed, "0s");
+    fn identity_ladder_prefers_name_then_herdr_name_then_task() {
+        let projected = projected(json!([
+            {"pane_id":"p2","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p3","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}},
+            {"pane_id":"p5","id":"p5","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000005"}}
+        ]));
+        let labels = projected
+            .iter()
+            .map(|agent| agent.identity_label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            ["Hook 버그 확인", "impl-x", "hook 보고 경로 수정", "hide"]
+        );
+    }
+
+    /// The old `summary` token is not read: a plugin still publishing it
+    /// names nothing and prompts nothing (PRD B13).
+    #[test]
+    fn a_legacy_summary_token_is_ignored() {
+        let projected = projected(json!([
+            {"pane_id":"p1","id":"p1","workspace_label":"task-factory","tokens":{"status_idle":"○","activity":"0000000000001","summary":"Check agent-context-labels settings"}}
+        ]));
+        assert_eq!(projected[0].identity_label, "task-factory");
+        assert_eq!(projected[0].detail, None);
+    }
+
+    /// PRD D-05: the sentences are one line each and `expected_reply` is cut
+    /// at the plugin's own 40-character rule.
+    #[test]
+    fn sentences_are_collapsed_and_expected_reply_is_cut_at_forty() {
+        let long_reply = "가".repeat(60);
+        let projected = projected(json!([
+            {"pane_id":"p1","id":"p1","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000001","progress":"  hook   보고\n경로 교체 중  ","expected_reply":long_reply}}
+        ]));
+        assert_eq!(
+            projected[0].progress.as_deref(),
+            Some("hook 보고 경로 교체 중")
+        );
+        assert_eq!(
+            projected[0]
+                .expected_reply
+                .as_deref()
+                .map(|value| value.chars().count()),
+            Some(MAX_EXPECTED_REPLY_CHARS)
+        );
+    }
+
+    /// PRD D-06: the second line by group. `agent_second_line` is what
+    /// `derive_from_axes` writes into `detail` and `status_word_visible`.
+    #[test]
+    fn second_line_is_chosen_by_group() {
+        let reply = Some("A/B 선택 후 승인");
+        let progress = Some("푸시 완료, 승인 대기 중");
+        assert_eq!(
+            agent_second_line(AgentGroup::NeedsYou, reply, progress),
+            (false, Some("A/B 선택 후 승인".to_owned()))
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::NeedsYou, None, progress),
+            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::NeedsYou, None, None),
+            (true, None)
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::Done, None, progress),
+            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::Working, reply, progress),
+            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::Working, None, None),
+            (true, None)
+        );
+        assert_eq!(
+            agent_second_line(AgentGroup::Seen, reply, progress),
+            (false, None)
+        );
+    }
+
+    /// The projected row carries the second line: a working row shows its
+    /// progress without the word, and the chip every lineage surface draws
+    /// says the same thing (PRD B4, D-06).
+    #[test]
+    fn projected_rows_carry_the_second_line_and_the_chip_repeats_it() {
+        let projected = projected(json!([
+            {"pane_id":"p1","id":"p1","workspace_label":"hide","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000001","name":"Hook 버그 확인","progress":"hook 보고 경로를 소켓 호출로 교체 중","expected_reply":"무시됨"}},
+            {"pane_id":"p2","id":"p2","workspace_label":"hide","tokens":{"status_question_new":"?","activity":"0000000000002","progress":"푸시 완료","expected_reply":"A/B 선택"}},
+            {"pane_id":"p3","id":"p3","workspace_label":"hide","tokens":{"status_idle":"○","activity":"0000000000003"}}
+        ]));
+        assert_eq!(
+            projected[0].detail.as_deref(),
+            Some("hook 보고 경로를 소켓 호출로 교체 중")
+        );
+        assert!(!projected[0].status_word_visible);
+        assert_eq!(projected[1].detail.as_deref(), Some("A/B 선택"));
+        assert!(!projected[1].status_word_visible);
+        // An unread stopped row with no demand is Done: word kept, no sentence.
+        assert_eq!(projected[2].detail, None);
+        assert!(projected[2].status_word_visible);
+        let chip = agent_chip(&projected[0]);
+        assert_eq!(chip.label, "Hook 버그 확인");
+        assert_eq!(
+            chip.detail.as_deref(),
+            Some("hook 보고 경로를 소켓 호출로 교체 중")
+        );
+        assert!(!chip.status_word_visible);
     }
 
     #[test]
@@ -1736,7 +1927,7 @@ mod tests {
                 "pane_id":"remote",
                 "state_change_seq":218,
                 "agent_status":"done",
-                "tokens":{"status_done":"●","summary":"finished"}
+                "tokens":{"status_done":"●","task":"finished up"}
             },
             {
                 "pane_id":"malformed",
@@ -1921,60 +2112,5 @@ mod tests {
         ])));
         assert_eq!(projection.agents[0].last_activity, "00000000000000000001");
         assert_eq!(projection.agents[0].state_change_seq, Some(1));
-    }
-
-    #[test]
-    fn ambient_counts_parse_and_unknown_keys_never_survive() {
-        let projection = project_agents(payload(json!([
-            {"pane_id":"legacy","tokens":{"status_idle":"○","activity":"0000000000001"}},
-            {"pane_id":"counted","tokens":{"status_working":"●","activity":"0000000000002"},
-             "ambient":{"subagents_active":2,"background_running":1,"background_failed":0,
-                        "task_name":"SENTINEL-do-not-leak","command":"SENTINEL-rm -rf /"}}
-        ])));
-
-        assert_eq!(projection.excluded, []);
-        let counted = projection
-            .agents
-            .iter()
-            .find(|agent| agent.pane_id == "counted")
-            .expect("counted agent");
-        let ambient = counted.ambient.expect("ambient present");
-        assert_eq!(ambient.subagents_active, 2);
-        assert_eq!(ambient.background_running, 1);
-        assert_eq!(
-            projection
-                .agents
-                .iter()
-                .find(|agent| agent.pane_id == "legacy")
-                .and_then(|agent| agent.ambient),
-            None,
-            "a snapshot without the key stays on the legacy path"
-        );
-        let serialized = serde_json::to_string(&projection.agents).expect("serialize agents");
-        assert!(
-            !serialized.contains("SENTINEL"),
-            "unknown ambient keys must never reach the projected agent: {serialized}"
-        );
-    }
-
-    #[test]
-    fn a_malformed_ambient_record_excludes_only_that_agent() {
-        let projection = project_agents(payload(json!([
-            {"pane_id":"broken","tokens":{"status_working":"●","activity":"0000000000002"},
-             "ambient":{"subagents_active":"not-a-number"}},
-            {"pane_id":"intact","tokens":{"status_idle":"○","activity":"0000000000001"}}
-        ])));
-
-        assert_eq!(
-            projection
-                .agents
-                .iter()
-                .map(|agent| agent.pane_id.as_str())
-                .collect::<Vec<_>>(),
-            ["intact"]
-        );
-        assert_eq!(projection.excluded.len(), 1);
-        assert_eq!(projection.excluded[0].pane_id.as_deref(), Some("broken"));
-        assert!(projection.excluded[0].reason.contains("subagents_active"));
     }
 }

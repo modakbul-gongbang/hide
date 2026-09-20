@@ -11,6 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::install::{HookStatus, InstallFailure, status};
+use crate::report::{ReportFailure, last_failure};
 use crate::runtime::{AgentRuntime, HOOK_VERSION};
 
 /// Why Hide cannot say what a pane's agent has spawned.
@@ -222,6 +223,12 @@ impl RuntimeDiagnosis {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Diagnosis {
     pub runtimes: Vec<RuntimeDiagnosis>,
+    /// The last hook report that did not reach Herdr, if the most recent
+    /// one failed. An installed hook whose reports are refused looks exactly
+    /// like a session that predates the install, and this is what tells the
+    /// two apart.
+    #[serde(default)]
+    pub last_report_failure: Option<ReportFailure>,
 }
 
 impl Diagnosis {
@@ -239,6 +246,7 @@ impl Diagnosis {
                     current_version: HOOK_VERSION,
                 })
                 .collect(),
+            last_report_failure: last_failure(home),
         }
     }
 
@@ -257,7 +265,8 @@ impl Diagnosis {
             .map(|row| row.label.chars().count())
             .max()
             .unwrap_or(0);
-        self.runtimes
+        let mut lines = self
+            .runtimes
             .iter()
             .map(|row| {
                 format!(
@@ -269,8 +278,11 @@ impl Diagnosis {
                     width = width
                 )
             })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .collect::<Vec<_>>();
+        if let Some(failure) = &self.last_report_failure {
+            lines.push(format!("Last report failed: {}", failure.message()));
+        }
+        lines.join("\n")
     }
 }
 

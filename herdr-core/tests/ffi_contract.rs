@@ -35,7 +35,6 @@ fn options_with_state(state_path: &std::path::Path) -> Vec<u8> {
     serde_json::to_vec(&json!({
         "schema_version": 2,
         "herdr_socket_path": null,
-        "remote_targets": [],
         "app_state_path": state_path
     }))
     .expect("options serialize")
@@ -46,7 +45,6 @@ fn slow_live_options(state_path: &std::path::Path, herdr_bin_path: &std::path::P
         "schema_version": 2,
         "herdr_socket_path": "/tmp/herdr-core-dispatch-latency.sock",
         "herdr_bin_path": herdr_bin_path,
-        "remote_targets": [],
         "app_state_path": state_path
     }))
     .expect("slow live options serialize")
@@ -75,7 +73,6 @@ fn live_key_without_control_session_surfaces_an_explicit_error() {
     let options = serde_json::to_vec(&json!({
         "schema_version": 2,
         "herdr_socket_path": "/tmp/herdr-core-ffi-test-missing.sock",
-        "remote_targets": [],
         "app_state_path": missing_state
     }))
     .expect("options serialize");
@@ -297,7 +294,6 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "SSH_AUTH_SOCK",
             "PATH",
             "HERDR_SOCKET_PATH",
-            "CLAUDE_CONFIG_DIR",
             "CODEX_HOME",
         ]
     );
@@ -801,7 +797,7 @@ fn close_pane_requires_confirmation_only_while_working_or_unread() {
     let seen = snapshot(core);
     assert_eq!(
         seen["status"]["last_error"]["kind"],
-        "pane.control_unavailable"
+        "pane.close_status_unknown"
     );
 
     dispatch(
@@ -1230,7 +1226,6 @@ fn create_rejects_invalid_options_and_snapshot_buffers_can_repeat() {
     let invalid = serde_json::to_vec(&json!({
         "schema_version": 99,
         "herdr_socket_path": null,
-        "remote_targets": [],
         "app_state_path": "/tmp/herdr-state.json"
     }))
     .expect("invalid options serialize");
@@ -1310,6 +1305,7 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
     );
     let opened = snapshot(core);
     assert_eq!(opened["editor"]["document"]["language"], "swift");
+    assert_eq!(opened["editor"]["document"]["document_kind"], "text");
     assert_eq!(opened["editor"]["document"]["dirty"], false);
     let contents = opened["editor"]["document"]["contents_utf8"]
         .as_str()

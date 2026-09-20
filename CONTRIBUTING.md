@@ -12,11 +12,9 @@ Run the same three lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
 
 ```sh
-cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace                   # herdr-core, hide-ai and the context-label plugin
-cargo build --release --locked -p herdr-core      # the shell links target/release/libherdr_core.a
-swift test --package-path macos
+bash scripts/verify-cargo.sh lint                # cargo fmt --check, then clippy over every target
+bash scripts/verify-cargo.sh test                # herdr-core, hide-ai and the context-label plugin
+bash scripts/verify-swift.sh test                # builds target/release/libherdr_core.a, then the shell
 bash scripts/check-right-panel-sections.sh
 bash scripts/check-shortcut-contract.sh
 bash scripts/check-harness-ignore-anchor.sh
@@ -50,7 +48,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | `cargo clippy` | Every Rust target in the workspace is warning-free, including tests and generated-contract consumers | `bash scripts/verify-cargo.sh lint` (`cargo clippy --locked --workspace --all-targets -- -D warnings`) | Fix a warning when that clarifies the code; use a narrow, explained allowance when the alternative would obscure a generated or performance-sensitive boundary. |
 | `cargo test` | The core's behavior including its Herdr fixtures, the `hide-ai` router and codex backend against a fake app server, the context-label plugin, and the agent-hook crate's configuration rules | `bash scripts/verify-cargo.sh test` | Fix the test or the code. A fixture that no longer matches Herdr means the pin moved; see `AGENTS.md`, Herdr API Contract. |
 | `swift test` | The shell's rendering and event contracts | `bash scripts/verify-swift.sh test`, which builds the release core first | Same. `--filter <TestName>` after the mode narrows a run. |
-| right panel sections | The Workbench name never returns to a user-facing string | `bash scripts/check-right-panel-sections.sh` | The panel presents exactly Overview, Explorer, and Changes; rename, do not reintroduce. |
+| right panel sections | The Workbench name never returns to a user-facing string | `bash scripts/check-right-panel-sections.sh` | The panel presents exactly Overview, Explorer, and History; rename, do not reintroduce. |
 | shortcut contract | The right panel toggle is `⇧⌘B` and `⌘⌥B` is advertised nowhere | `bash scripts/check-shortcut-contract.sh` | Update the catalog and every label together. |
 | harness ignore anchor | `/agents/` is ignored and `.claude/agents/` is not | `bash scripts/check-harness-ignore-anchor.sh` | Keep the leading slash on the ignore rule. |
 | agent asset committed | The simplification subagent stays a tracked file | `bash scripts/check-agent-asset-committed.sh` | `git add` it; it once became uncommittable through an unanchored ignore rule. |
@@ -62,9 +60,9 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | script suite | Measurement semantics stay honest, and no gate a workflow runs calls a tool the runner lacks or a script that is untracked or absent | `python3 -m unittest discover -s scripts/tests -p 'test_*.py'` | Fix the measurement semantics; do not trim inconvenient observations. For a portability failure, reach for `git grep` rather than installing the tool on the runner. |
 | toolchain reuse | Every script that runs cargo sources `scripts/toolchain-env.sh`, so a runner HOME reuses the machine's toolchain instead of installing a private copy | `python3 -m unittest discover -s scripts/tests -p 'test_*.py'` | Source the resolver rather than recovering the toolchain yourself. rustup auto-installs into an empty `$HOME/.rustup` and still exits 0, which is what made the two earlier failure-guarded workarounds dead code. |
 | git worktree presentation | Overview Git documentation and its view keep using shared theme tokens, with no inline color, spacing or font size | `bash scripts/check-git-worktree-presentation.sh` | Add the token to `HideTheme` and `DESIGN.md`, then use it; do not write the value in the view. |
-| git worktree states | The worktree section keeps an explicit loading, refresh, comparison and unavailable-repository state | `bash scripts/check-git-worktree-states.sh` | Keep the state visible in `CheckoutOverview.swift`; update the assertion in the same change when the wording moves. |
+| git worktree states | Overview keeps an explicit loading, local-only, refresh, disconnected and unreadable state, and reads an unreadable value as `?` and a pending one as `…`, never as zero | `bash scripts/check-git-worktree-states.sh` | Keep the state visible in `CheckoutOverview.swift`; update the assertion in the same change when the wording moves. |
 | worktree base policy | The worktree row still offers base selection and still excludes detached rows | `bash scripts/check-worktree-base-policy.sh` | Restore the control, or move the assertion with it. |
-| worktree catalog presentation | Overview keeps the main-checkout identity and empty Git-history state | `bash scripts/check-worktree-catalog-presentation.sh` | Same. |
+| worktree catalog presentation | Overview keeps the main-checkout identity, the empty-group row and the no-match state | `bash scripts/check-worktree-catalog-presentation.sh` | Same. |
 | worktree removal boundary | Branch deletion during worktree removal is `-d` and never `-D` | `bash scripts/check-worktree-removal-boundary.sh` | Never force-delete; an unmerged branch must fail and surface the reason. |
 | herdr pin single source | The Herdr version and digest live only in `herdr-bundle.json` | `zsh scripts/check-herdr-pin-single-source.sh` | Derive from the manifest; never restate the value. Bump with `scripts/bump-herdr.sh <version>`. |
 | herdr schema contract | The pinned Herdr CLI's API schema equals `contracts/herdr-api.schema.json` byte for byte | `zsh scripts/check-herdr-contract.sh --schema-only` | The schema moved with a Herdr release; update the contract and every call site it names, then the fixtures. |

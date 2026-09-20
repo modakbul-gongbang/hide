@@ -140,7 +140,6 @@ fn lineage_collapse_persists_without_attention_expanding_it_and_prunes_on_disapp
         schema_version: SCHEMA_VERSION,
         herdr_socket_path: None,
         herdr_bin_path: None,
-        remote_targets: vec![],
         app_state_path: runtime.state_path.to_string_lossy().into_owned(),
     };
     let restarted = Runtime::new(
@@ -151,7 +150,6 @@ fn lineage_collapse_persists_without_attention_expanding_it_and_prunes_on_disapp
             chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: None,
-            claude_config_dir: None,
             codex_home: None,
         },
     );
@@ -353,7 +351,7 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
                 "agent_status":"working",
                 "state_change_seq":1,
                 "workspace_label":"Workspace",
-                "tokens":{"hide_chat_title":"Project coordinator"}
+                "tokens":{"name":"Project coordinator"}
             },
             {
                 "id":"qa-lineage-child",
@@ -361,7 +359,7 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
                 "spawned_from_pane_id":"w1:p1",
                 "agent_status":"working",
                 "state_change_seq":2,
-                "tokens":{"summary":"Hide design QA"}
+                "tokens":{"name":"Hide design QA"}
             }
         ]}))
         .unwrap(),
@@ -687,6 +685,78 @@ fn a_tab_holding_only_delegated_children_is_kept_off_the_strip() {
             .iter()
             .any(|tab| tab.id.as_deref() == Some("t2")),
         "and still in the checkout, so the sidebar and breadcrumb reach it"
+    );
+}
+
+/// PRD D-16: a strip entry is named after its one agent, and a tab with two
+/// agents or none keeps the Herdr label alone.
+#[test]
+fn a_strip_entry_carries_its_one_agents_identity_and_mark() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(split_lineage_payload()));
+
+    let entry = |runtime: &Runtime, tab_id: &str| {
+        runtime.snapshot.navigator.workspaces[0].checkouts[0]
+            .strip
+            .iter()
+            .find(|entry| entry.source_id == tab_id)
+            .cloned()
+    };
+    // Two agents share the tab: the label stays what Herdr said.
+    assert_eq!(
+        entry(&runtime, "t1")
+            .expect("the tab is on the strip")
+            .agent_identity,
+        None
+    );
+
+    // Move the child to its own tab: the parent's tab now holds one agent.
+    for workspace in &mut runtime.snapshot.navigator.workspaces {
+        for checkout in &mut workspace.checkouts {
+            let child = checkout.tabs[0]
+                .panes
+                .iter()
+                .position(|pane| pane.id == "w1:p2")
+                .map(|index| checkout.tabs[0].panes.remove(index));
+            if let Some(child) = child {
+                let mut moved = checkout.tabs[0].clone();
+                moved.id = Some("t2".to_owned());
+                moved.panes = vec![child];
+                checkout.tabs.push(moved);
+            }
+        }
+    }
+    runtime.sync_pane_lineage();
+    let identity = entry(&runtime, "t1")
+        .expect("the parent's tab")
+        .agent_identity
+        .expect("one agent names the tab");
+    assert_eq!(identity.label, "Observer");
+    assert_eq!(identity.pane_id, "w1:p1");
+    assert_eq!(identity.symbol, "\u{25cf}");
+    assert_eq!(identity.activity, "working");
+
+    // A tab with no agent pane at all says nothing about agents.
+    for workspace in &mut runtime.snapshot.navigator.workspaces {
+        for checkout in &mut workspace.checkouts {
+            let mut shell = checkout.tabs[0].clone();
+            shell.id = Some("t3".to_owned());
+            shell.panes = vec![];
+            checkout.tabs.push(shell);
+        }
+    }
+    runtime.rebuild_tab_strips();
+    assert_eq!(
+        entry(&runtime, "t3").expect("the shell tab").agent_identity,
+        None
+    );
+    assert_eq!(
+        entry(&runtime, "t1")
+            .unwrap()
+            .agent_identity
+            .map(|chip| chip.label),
+        Some("Observer".to_owned()),
+        "a rebuilt strip is named again before it is published"
     );
 }
 
@@ -1063,6 +1133,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
                 current_version: hide_agent_hooks::HOOK_VERSION,
             },
         ],
+        last_report_failure: None,
     }));
 
     let hooks = &runtime.snapshot.status.agent_hooks;
@@ -1099,6 +1170,39 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
         hooks.sessions_predating_install[0].message
     );
     assert_eq!(hooks.sessions_predating_install[0].label, "Older");
+    assert_eq!(
+        hooks.last_report_failure, None,
+        "a hook whose last report landed has no failure to show"
+    );
+
+    // A hook that ran and was refused by Herdr looks, pane by pane, exactly
+    // like a session that started first. The recorded failure is what the
+    // Settings screen shows instead of the restart advice.
+    let mut refused = runtime
+        .hook_diagnosis
+        .clone()
+        .expect("diagnosis was ingested");
+    refused.last_report_failure = Some(hide_agent_hooks::report::ReportFailure {
+        pane_id: "w1:p2".to_owned(),
+        event: "SessionStart".to_owned(),
+        socket_path: "/fixture/herdr.sock".to_owned(),
+        error: "invalid_metadata_source: metadata source may contain only ASCII letters".to_owned(),
+        at_unix_ms: 1,
+    });
+    assert!(runtime.ingest_hook_diagnosis(refused));
+    let message = runtime
+        .snapshot
+        .status
+        .agent_hooks
+        .last_report_failure
+        .clone()
+        .expect("the refusal reaches the snapshot");
+    assert!(
+        message.contains("/fixture/herdr.sock")
+            && message.contains("w1:p2")
+            && message.contains("invalid_metadata_source"),
+        "got {message:?}"
+    );
 }
 
 // PRD B28, D-31: Hide installs on approval, never on its own initiative, and
@@ -1270,20 +1374,20 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         "agents": [
             {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
              "state_change_seq":1,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"summary":"delegating the orchestrator work"}},
+             "tokens":{"progress":"delegating the orchestrator work"}},
             {"id":"Implementor","pane_id":"w1:p2","agent":"claude","agent_status":"working",
              "state_change_seq":2,"cwd":"/fixture","workspace_label":"hide",
-             "spawned_from_pane_id":"w1:p1","tokens":{"summary":"구현 중: 계보 투영과 위임 표시"}},
+             "spawned_from_pane_id":"w1:p1","tokens":{"progress":"구현 중: 계보 투영과 위임 표시"}},
             {"id":"Reviewer","pane_id":"w1:p3","agent":"claude","agent_status":"idle",
              "state_change_seq":3,"cwd":"/fixture","workspace_label":"hide",
              "spawned_from_pane_id":"w1:p1",
-             "tokens":{"status_question_new":"?","summary":"정체 임계값을 물어보는 중"}},
+             "tokens":{"status_question_new":"?","progress":"정체 임계값을 물어보는 중"}},
             {"id":"Uninstrumented","pane_id":"w1:p4","agent":"claude","agent_status":"working",
              "state_change_seq":4,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"summary":"started before the hook was installed"}},
+             "tokens":{"progress":"started before the hook was installed"}},
             {"id":"Alone","pane_id":"w1:p5","agent":"claude","agent_status":"working",
              "state_change_seq":5,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"summary":"working with no children"}}
+             "tokens":{"progress":"working with no children"}}
         ],
         "panes": [
             {"pane_id":"w1:p1","cwd":"/fixture",
@@ -1370,6 +1474,7 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
                 current_version: hide_agent_hooks::HOOK_VERSION,
             },
         ],
+        last_report_failure: None,
     });
 
     let pane = |id: &str| {
@@ -1396,16 +1501,19 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
             .iter()
             .map(|chip| chip.label.as_str())
             .collect::<Vec<_>>(),
-        [
-            "정체 임계값을 물어보는 중",
-            "구현 중: 계보 투영과 위임 표시"
-        ],
-        "chips follow the lineage's own child order"
+        ["Reviewer", "Implementor"],
+        "chips follow the lineage's own child order and carry the Herdr name (PRD D-01)"
     );
     assert_eq!(
-        parent.representative.as_ref().unwrap().label,
-        "정체 임계값을 물어보는 중"
+        parent
+            .chips
+            .iter()
+            .map(|chip| chip.detail.as_deref())
+            .collect::<Vec<_>>(),
+        [None, Some("구현 중: 계보 투영과 위임 표시")],
+        "a delegated question is Seen and says nothing more; a delegated worker keeps its progress (PRD D-06)"
     );
+    assert_eq!(parent.representative.as_ref().unwrap().label, "Reviewer");
     assert_eq!(
         (parent.subagents.working, parent.subagents.done),
         (Some(2), Some(4))
@@ -1414,7 +1522,7 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         pane("w1:p2")
             .lineage_path
             .iter()
-            .any(|step| step.label == "delegating the orchestrator wo")
+            .any(|step| step.label == "Observer")
     );
 
     // A pane Hide cannot see into, and the reason a restart would fix it.

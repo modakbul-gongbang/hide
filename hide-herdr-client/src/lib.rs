@@ -8,7 +8,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The canonical schema copied from the pinned Herdr binary.
@@ -174,12 +174,6 @@ impl ApiStream for UnixStream {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct HostScope {
-    pub host_id: String,
-    pub session_id: String,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ApiError {
     Transport(String),
@@ -220,13 +214,14 @@ struct ResponseEnvelope {
     error: Option<ApiErrorBody>,
 }
 
+/// The acknowledgement of `events.subscribe`. Herdr's stable release carries
+/// nothing in it beyond its type: there is no event journal to resume from,
+/// so a subscription always starts at "now" and a consumer that needs the
+/// state before that reads a snapshot after subscribing.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct SubscriptionStarted {
     #[serde(rename = "type")]
     pub kind: String,
-    pub host: HostScope,
-    pub sequence: u64,
-    pub oldest_available_sequence: u64,
 }
 
 pub struct Subscription {
@@ -298,13 +293,11 @@ pub fn request_with_correlation_id(
 
 pub fn subscribe(
     socket_path: &Path,
-    after_sequence: u64,
     subscriptions: &[&str],
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
     subscribe_with_connector(
         &UnixSocketConnector::new(socket_path),
-        after_sequence,
         subscriptions,
         timeout,
     )
@@ -312,11 +305,10 @@ pub fn subscribe(
 
 pub fn subscribe_with_connector(
     connector: &dyn ApiConnector,
-    after_sequence: u64,
     subscriptions: &[&str],
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
-    subscribe_with_connector_for_panes(connector, after_sequence, subscriptions, &[], timeout)
+    subscribe_with_connector_for_panes(connector, subscriptions, &[], timeout)
 }
 
 /// Open an event subscription whose filters may include the pane-scoped
@@ -326,7 +318,6 @@ pub fn subscribe_with_connector(
 /// unparameterized.
 pub fn subscribe_with_connector_for_panes(
     connector: &dyn ApiConnector,
-    after_sequence: u64,
     subscriptions: &[&str],
     pane_ids: &[String],
     timeout: Duration,
@@ -338,8 +329,7 @@ pub fn subscribe_with_connector_for_panes(
         stream.as_mut(),
         request_id,
         "events.subscribe",
-        subscription_params_for_panes(after_sequence, subscriptions, pane_ids)
-            .map_err(ApiError::Malformed)?,
+        subscription_params_for_panes(subscriptions, pane_ids).map_err(ApiError::Malformed)?,
     )?;
 
     let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;
@@ -365,22 +355,20 @@ pub fn subscribe_with_connector_for_panes(
 }
 
 /// Encode a contract-checked `events.subscribe` parameter object.
-pub fn subscription_params(after_sequence: u64, subscriptions: &[&str]) -> Result<Value, String> {
-    encode_subscription_params(after_sequence, subscriptions, &[], false)
+pub fn subscription_params(subscriptions: &[&str]) -> Result<Value, String> {
+    encode_subscription_params(subscriptions, &[], false)
 }
 
 /// Encode a contract-checked `events.subscribe` parameter object, expanding
 /// pane-scoped status filters once per known pane.
 pub fn subscription_params_for_panes(
-    after_sequence: u64,
     subscriptions: &[&str],
     pane_ids: &[String],
 ) -> Result<Value, String> {
-    encode_subscription_params(after_sequence, subscriptions, pane_ids, true)
+    encode_subscription_params(subscriptions, pane_ids, true)
 }
 
 fn encode_subscription_params(
-    after_sequence: u64,
     subscriptions: &[&str],
     pane_ids: &[String],
     skip_empty_status_filter: bool,
@@ -414,7 +402,6 @@ fn encode_subscription_params(
         }
     }
     serde_json::to_value(wire::request::EventsSubscribeParams {
-        after_sequence,
         subscriptions: encoded,
     })
     .map_err(|error| format!("subscription parameters could not be encoded: {error}"))
@@ -627,7 +614,7 @@ mod tests {
                 .expect("read request");
             let request: Value = serde_json::from_str(&request_line).expect("request JSON");
             assert_eq!(request["method"], "events.subscribe");
-            assert_eq!(request["params"]["after_sequence"], 40);
+            assert_eq!(request["params"].get("after_sequence"), None);
             assert_eq!(
                 request["params"]["subscriptions"],
                 json!([{"type": "pane.focused"}])
@@ -638,10 +625,7 @@ mod tests {
                 json!({
                     "id": "herdr-core:events.subscribe",
                     "result": {
-                        "type": "subscription_started",
-                        "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                        "sequence": 41,
-                        "oldest_available_sequence": 1
+                        "type": "subscription_started"
                     }
                 })
             )
@@ -650,9 +634,6 @@ mod tests {
                 stream,
                 "{}",
                 json!({
-                    "protocol": HERDR_PROTOCOL_REVISION,
-                    "host": {"host_id": "fixture-host", "session_id": "fixture"},
-                    "sequence": 41,
                     "event": "pane_focused",
                     "data": {
                         "type": "pane_focused",
@@ -664,14 +645,13 @@ mod tests {
             .expect("write replay");
         });
 
-        let subscription = subscribe(&socket_path, 40, &["pane.focused"], Duration::from_secs(1))
-            .expect("subscribe");
-        assert_eq!(subscription.ack.sequence, 41);
+        let subscription =
+            subscribe(&socket_path, &["pane.focused"], Duration::from_secs(1)).expect("subscribe");
+        assert_eq!(subscription.ack.kind, "subscription_started");
         let (mut reader, shutdown) = subscription.into_parts();
         let mut replay = String::new();
         reader.read_line(&mut replay).expect("read replay");
         let replay: Value = serde_json::from_str(&replay).expect("replay JSON");
-        assert_eq!(replay["sequence"], 41);
         assert_eq!(replay["event"], "pane_focused");
         drop(shutdown);
 
@@ -683,7 +663,6 @@ mod tests {
     #[test]
     fn parameterized_status_subscriptions_are_expanded_for_known_panes() {
         let params = subscription_params_for_panes(
-            17,
             &["pane.focused", "pane.agent_status_changed"],
             &["w1:p1".to_owned(), "w1:p2".to_owned()],
         )
@@ -691,7 +670,6 @@ mod tests {
         assert_eq!(
             params,
             json!({
-                "after_sequence": 17,
                 "subscriptions": [
                     {"type": "pane.focused"},
                     {"type": "pane.agent_status_changed", "pane_id": "w1:p1"},
@@ -699,6 +677,6 @@ mod tests {
                 ]
             })
         );
-        assert!(subscription_params(17, &["pane.agent_status_changed"]).is_err());
+        assert!(subscription_params(&["pane.agent_status_changed"]).is_err());
     }
 }

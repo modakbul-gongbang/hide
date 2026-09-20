@@ -15,9 +15,9 @@ pub fn spawn_worktree_close(
     thread::Builder::new()
         .name("herdr-core-worktree-close".into())
         .spawn(move || {
-            let result = close_worktree_panes(
+            let result = close_checkout_panes(
                 context.api_connector.as_ref(),
-                &checkout_path,
+                std::slice::from_ref(&checkout_path),
                 &pane_ids,
                 CONFIRM_TIMEOUT,
             );
@@ -41,6 +41,46 @@ pub fn spawn_worktree_close(
         })
         .map(|_| ())
         .map_err(|error| format!("worktree close worker could not be started: {error}"))
+}
+
+/// `Remove project…`: closes every pane in the project's checkouts and waits
+/// for Herdr to confirm, the same handshake a worktree deletion uses, then
+/// hands the answer to the runtime, which alone removes the registration.
+pub fn spawn_workspace_close(
+    context: LiveContext,
+    workspace_id: String,
+    checkout_paths: Vec<String>,
+    pane_ids: Vec<String>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-workspace-close".into())
+        .spawn(move || {
+            let result = close_checkout_panes(
+                context.api_connector.as_ref(),
+                &checkout_paths,
+                &pane_ids,
+                CONFIRM_TIMEOUT,
+            );
+            if let Some(runtime) = context.runtime.upgrade() {
+                match runtime.lock() {
+                    Ok(mut guard) => {
+                        guard.ingest_workspace_close_result(&workspace_id, result);
+                    }
+                    Err(error) => {
+                        trace(
+                            &checkout_paths.join(","),
+                            &pane_ids,
+                            "publish_failed",
+                            Some(&error.to_string()),
+                        );
+                        return;
+                    }
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("workspace close worker could not be started: {error}"))
 }
 
 pub fn spawn_worktree_open(
@@ -117,6 +157,70 @@ pub fn spawn_worktree_create(
         })
         .map(|_| ())
         .map_err(|error| format!("worktree create worker could not be started: {error}"))
+}
+
+/// `New agent here`: one new tab whose cwd is the checkout, in the Herdr
+/// workspace that already holds the checkout's panes, or a new workspace on
+/// the checkout when Herdr holds none (Herdr drops a workspace with its last
+/// pane, so a listed checkout can have no workspace behind it). The result
+/// lands in the same task operation slot the worktree sheet uses, and the
+/// shell starts the provider in the returned pane exactly as it does there.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckoutTabRequest {
+    pub id: u64,
+    pub checkout_path: String,
+    pub label: String,
+    /// The Herdr workspace to open the tab in; `None` creates a workspace.
+    pub session_workspace_id: Option<String>,
+}
+
+pub fn spawn_checkout_tab_create(
+    context: LiveContext,
+    request: CheckoutTabRequest,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-checkout-tab-create".into())
+        .spawn(move || {
+            let result = create_checkout_tab(context.api_connector.as_ref(), &request);
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_task_operation_result(request.id, result);
+                } else {
+                    return;
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("checkout tab worker could not be started: {error}"))
+}
+
+fn create_checkout_tab(
+    connector: &dyn ApiConnector,
+    request: &CheckoutTabRequest,
+) -> Result<WorktreeTaskOutcome, String> {
+    let pane_id = match &request.session_workspace_id {
+        Some(workspace_id) => {
+            let result = control_request(
+                connector,
+                "tab.create",
+                wire::tab_create_params(workspace_id, &request.checkout_path, &request.label)?,
+            )?;
+            wire::created_tab(result)?.1
+        }
+        None => {
+            let result = control_request(
+                connector,
+                "workspace.create",
+                wire::workspace_create_params(&request.checkout_path, &request.label)?,
+            )?;
+            wire::created_workspace_pane(result)?
+        }
+    };
+    Ok(WorktreeTaskOutcome {
+        path: request.checkout_path.clone(),
+        pane_id,
+    })
 }
 
 pub fn spawn_branch_migration(
@@ -374,12 +478,17 @@ fn trace(path: &str, pane_ids: &[String], stage: &str, error: Option<&str>) {
     );
 }
 
-fn close_worktree_panes(
+/// Closes `pane_ids` and waits until Herdr's snapshot lists none of them and
+/// no pane at any of `paths`, so the caller's next step cannot run beside a
+/// pane that is still there.
+fn close_checkout_panes(
     connector: &dyn ApiConnector,
-    path: &str,
+    paths: &[String],
     pane_ids: &[String],
     timeout: Duration,
 ) -> Result<(), String> {
+    let path = paths.join(",");
+    let path = path.as_str();
     let result = (|| {
         for pane_id in pane_ids {
             trace(path, std::slice::from_ref(pane_id), "close_requested", None);
@@ -411,7 +520,7 @@ fn close_worktree_panes(
                 .pointer("/snapshot/panes")
                 .and_then(Value::as_array)
                 .ok_or("Herdr close confirmation is missing snapshot.panes")?;
-            let (present, pane_at_checkout) = confirmation_state(panes, path)?;
+            let (present, pane_at_checkout) = confirmation_state(panes, paths)?;
             if pane_ids.iter().all(|id| !present.contains(id)) && !pane_at_checkout {
                 return Ok(());
             }
@@ -431,7 +540,7 @@ fn close_worktree_panes(
     result
 }
 
-fn confirmation_state(panes: &[Value], path: &str) -> Result<(Vec<String>, bool), String> {
+fn confirmation_state(panes: &[Value], paths: &[String]) -> Result<(Vec<String>, bool), String> {
     let present = panes
         .iter()
         .map(|pane| {
@@ -443,9 +552,11 @@ fn confirmation_state(panes: &[Value], path: &str) -> Result<(Vec<String>, bool)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let pane_at_checkout = panes.iter().any(|pane| {
-        ["cwd", "foreground_cwd"]
-            .into_iter()
-            .any(|key| pane.get(key).and_then(Value::as_str) == Some(path))
+        ["cwd", "foreground_cwd"].into_iter().any(|key| {
+            pane.get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|cwd| paths.iter().any(|path| path == cwd))
+        })
     });
     Ok((present, pane_at_checkout))
 }
@@ -528,17 +639,10 @@ mod tests {
     fn workspace_created(path: &str, workspace_id: &str, pane_id: &str) -> Value {
         json!({"result":{
             "type":"workspace_created",
-            "workspace":{"workspace_id":workspace_id,"label":"Scratch","number":1,"focused":true,"pane_count":1,"tab_count":1,"active_tab_id":format!("{workspace_id}:t1"),"agent_status":"unknown"},
+            "workspace":{"workspace_id":workspace_id,"label":"hide","number":1,"focused":true,"pane_count":1,"tab_count":1,"active_tab_id":format!("{workspace_id}:t1"),"agent_status":"unknown"},
             "tab":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"label":"hide codex","number":1,"focused":true,"pane_count":1,"agent_status":"unknown"},
-            "root_pane":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"pane_id":pane_id,"cwd":path,"foreground_cwd":path,"focused":true,"agent_status":"unknown","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40},"surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"protocol":21,"terminal_id":"term","transport":"herdr_client"}}}
+            "root_pane":{"workspace_id":workspace_id,"tab_id":format!("{workspace_id}:t1"),"pane_id":pane_id, "terminal_id": "fixture-terminal","cwd":path,"foreground_cwd":path,"focused":true,"agent_status":"unknown","revision":0,"scroll":{"max_offset_from_bottom":0,"offset_from_bottom":0,"viewport_rows":40}}
         }})
-    }
-    fn tab_created(path: &str, workspace_id: &str, pane_id: &str) -> Value {
-        let mut value = workspace_created(path, workspace_id, pane_id);
-        let result = value["result"].as_object_mut().unwrap();
-        result.insert("type".into(), json!("tab_created"));
-        result.remove("workspace");
-        value
     }
     fn worktree_created(path: &str, branch: &str) -> Value {
         let mut value = workspace_created(path, "w2", "w2:p1");
@@ -610,9 +714,9 @@ mod tests {
         let server = server(vec![
             json!({"error":{"code":"confirmation_required","message":"close refused"}}),
         ]);
-        let result = close_worktree_panes(
+        let result = close_checkout_panes(
             &server,
-            "/fixture/topic",
+            &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             CONFIRM_TIMEOUT,
         );
@@ -627,9 +731,9 @@ mod tests {
             snapshot(&["w1:p2", "w2:p1"]),
             snapshot(&["w2:p1"]),
         ]);
-        close_worktree_panes(
+        close_checkout_panes(
             &server,
-            "/fixture/topic",
+            &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             CONFIRM_TIMEOUT,
         )
@@ -647,7 +751,7 @@ mod tests {
             "cwd":"/fixture/topic",
             "foreground_cwd":"/fixture/topic"
         })];
-        let (ids, at_checkout) = confirmation_state(&panes, "/fixture/topic").unwrap();
+        let (ids, at_checkout) = confirmation_state(&panes, &["/fixture/topic".into()]).unwrap();
         assert_eq!(ids, vec!["w2:p1"]);
         assert!(at_checkout);
     }
@@ -663,9 +767,9 @@ mod tests {
                 json!({"result":invalid}),
             ]);
             assert!(
-                close_worktree_panes(
+                close_checkout_panes(
                     &server,
-                    "/fixture/topic",
+                    &["/fixture/topic".into()],
                     &["w1:p1".into()],
                     CONFIRM_TIMEOUT
                 )
@@ -677,9 +781,9 @@ mod tests {
     fn confirmation_timeout_cannot_authorize_removal() {
         let server = server(vec![json!({"result":{"type":"ok"}}), snapshot(&["w1:p1"])]);
         assert!(
-            close_worktree_panes(
+            close_checkout_panes(
                 &server,
-                "/fixture/topic",
+                &["/fixture/topic".into()],
                 &["w1:p1".into()],
                 Duration::from_millis(20)
             )
@@ -714,92 +818,6 @@ mod tests {
                 .unwrap_err()
                 .contains("checkout no longer exists")
         );
-    }
-
-    #[test]
-    fn scratch_chat_creates_folder() {
-        let root = std::env::temp_dir().join(format!("hide-scratch-create-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let server = server(vec![workspace_created(
-            root.to_str().unwrap(),
-            "s1",
-            "s1:p1",
-        )]);
-        let pane = create_scratch_tab(
-            &server,
-            &ScratchTabRequest {
-                root: root.to_string_lossy().into_owned(),
-                workspace_id: None,
-                label: "hide codex".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(pane, "s1:p1");
-        assert!(root.is_dir());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn scratch_chat_reuses_workspace() {
-        let root = std::env::temp_dir().join(format!("hide-scratch-reuse-{}", std::process::id()));
-        let server = server(vec![tab_created(root.to_str().unwrap(), "s1", "s1:p2")]);
-        let pane = create_scratch_tab(
-            &server,
-            &ScratchTabRequest {
-                root: root.to_string_lossy().into_owned(),
-                workspace_id: Some("s1".into()),
-                label: "hide codex".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(pane, "s1:p2");
-        assert_eq!(server.requests.lock().unwrap()[0]["method"], "tab.create");
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn scratch_chat_cleanup_on_early_failure() {
-        let root = std::env::temp_dir().join(format!("hide-scratch-file-{}", std::process::id()));
-        std::fs::write(&root, "not a directory").unwrap();
-        let server = server(vec![]);
-        let result = create_scratch_tab(
-            &server,
-            &ScratchTabRequest {
-                root: root.join("child").to_string_lossy().into_owned(),
-                workspace_id: None,
-                label: "hide codex".into(),
-            },
-        );
-        assert!(result.unwrap_err().contains("scratch folder"));
-        assert!(server.requests.lock().unwrap().is_empty());
-        std::fs::remove_file(root).unwrap();
-    }
-
-    #[test]
-    fn scratch_chat_late_failure_keeps_tab() {
-        let root = std::env::temp_dir().join(format!("hide-scratch-late-{}", std::process::id()));
-        let server = server(vec![workspace_created(
-            root.to_str().unwrap(),
-            "s1",
-            "s1:p3",
-        )]);
-        let created = create_scratch_tab(
-            &server,
-            &ScratchTabRequest {
-                root: root.to_string_lossy().into_owned(),
-                workspace_id: None,
-                label: "hide codex".into(),
-            },
-        )
-        .unwrap();
-        assert_eq!(created, "s1:p3");
-        assert_eq!(
-            server.requests.lock().unwrap().len(),
-            1,
-            "a later agent failure has no core cleanup call"
-        );
-        assert!(root.is_dir());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

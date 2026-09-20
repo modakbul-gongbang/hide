@@ -6,11 +6,11 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-use crate::wire::{self, parse_subscription_line, protocol_mismatch};
+use crate::wire::{self, parse_subscription_line};
 
 use crate::ffi::ChangeNotifier;
 use crate::live::{LiveContext, SessionFetchError};
@@ -24,10 +24,28 @@ use crate::sidebar::{
     SessionTabPayload, SessionWorkspacePayload,
 };
 use crate::workspace;
-use hide_herdr_client::{self, ApiConnector, ApiError, HERDR_PROTOCOL_REVISION, HostScope};
+use hide_herdr_client::{self, ApiConnector, ApiError};
 
 const SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long after the bootstrap snapshot arrives an event read off the
+/// stream is still reconciled against it rather than applied strictly
+/// (`ApplyMode`). A line the reader thread had already pulled off the
+/// socket before the snapshot answered is stamped earlier than this, so
+/// the grace only has to cover the reader being scheduled late.
+const RECONCILE_GRACE: Duration = Duration::from_secs(1);
 const AGENT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const ASYNC_OPERATION_TICK_INTERVAL: Duration = Duration::from_millis(250);
+/// How many `workspace.get` reads a workspace waiting for its replacement
+/// active tab gets, one per event that leaves it waiting and one per
+/// operation tick, before the replica is declared stale and rebuilt from a
+/// fresh snapshot. Eight ticks is two seconds, longer than any event the
+/// read can have run ahead of takes to arrive.
+const ACTIVE_TAB_READ_ATTEMPT_LIMIT: u32 = 8;
+/// How often the hook diagnosis is read back while the Settings agents tab
+/// is on screen. A hook report that failed is written by the hook helper,
+/// in another process, and this is the only way the screen the tooltip
+/// sends the operator to can learn of it.
+const HOOK_DIAGNOSIS_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
@@ -159,8 +177,17 @@ impl Drop for SessionSyncHandle {
 
 pub(crate) enum CoordinatorMessage {
     Stop,
-    SubscriptionLine { generation: u64, line: String },
-    SubscriptionEnded { generation: u64, message: String },
+    SubscriptionLine {
+        generation: u64,
+        line: String,
+        /// When the reader pulled the line off the socket, which is what
+        /// places it before or after the bootstrap snapshot.
+        received_at: Instant,
+    },
+    SubscriptionEnded {
+        generation: u64,
+        message: String,
+    },
 }
 
 pub(crate) struct ActiveSubscription {
@@ -172,15 +199,13 @@ pub(crate) struct ActiveSubscription {
 impl ActiveSubscription {
     fn stop(mut self) {
         self.shutdown.shutdown();
-        if let Some(worker) = self.worker.take()
-            && worker.join().is_err()
-        {
-            crate::diagnostic!(json!({
-                "component": "session_sync",
-                "kind": "subscription_reader.join_failed",
-                "generation": self.generation,
-            }));
-        }
+        // A reader is blocked in its socket read. Waiting for it here made a
+        // disconnect hold the coordinator until the peer happened to close
+        // its copy, so the reconnect deadline was no longer meaningful.
+        // Shutdown wakes the socket; the detached reader's next message is
+        // ignored by its generation check, and its weak runtime reference
+        // keeps the stop path independent of the old connection.
+        let _ = self.worker.take();
     }
 }
 
@@ -198,13 +223,12 @@ pub(crate) use projection::{
     ProjectedAgent, ProjectedPane, ProjectedTab, ProjectedWorkspace, ProjectedWorktree,
     ProjectionState, non_blank, project_snapshot,
 };
-pub(crate) use replica::{
-    PaneMove, ReplicaEnvelope, ReplicaEvent, SessionReplica, SubscriptionLine,
-};
+pub(crate) use replica::{ApplyMode, PaneMove, ReplicaEvent, SessionReplica, SubscriptionLine};
 #[cfg(test)]
 pub(crate) use replica::{SNAPSHOT_FIELDS_THE_REPLICA_READS, remote_tab_id};
 #[cfg(test)]
 pub(crate) use subscription::connect_failure_from_api;
 pub(crate) use subscription::{
-    connect_from_cursor, connect_from_snapshot, fetch_agents, log_sync_failure, stop_subscription,
+    Connected, connect, fetch_agents, fetch_workspace_active_tab, log_sync_failure,
+    stop_subscription,
 };

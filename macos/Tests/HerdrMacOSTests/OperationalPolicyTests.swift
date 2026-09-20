@@ -223,7 +223,6 @@ import Testing
         herdrLabel: "terminal",
         cwd: "/tmp/hide-existing-checkout",
         statusLabel: "Attached",
-        summary: nil,
         activityAt: nil
     )
     let checkout = CoreCheckoutSnapshot(

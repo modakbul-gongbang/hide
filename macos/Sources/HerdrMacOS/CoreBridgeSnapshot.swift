@@ -170,19 +170,88 @@ struct CoreRecentClosedSnapshot: Decodable, Equatable {
     let topLabel: String?
     let restoring: Bool
     let notices: [CoreRecentClosedNotice]
+    let pending: [CoreRecentClosedPending]
+    let canReopen: Bool
+    let reopenBlockedReason: String?
 
     static let empty = CoreRecentClosedSnapshot(
         count: 0,
         topLabel: nil,
         restoring: false,
-        notices: []
+        notices: [],
+        pending: [],
+        canReopen: false,
+        reopenBlockedReason: nil
     )
+
+    init(
+        count: Int,
+        topLabel: String?,
+        restoring: Bool,
+        notices: [CoreRecentClosedNotice],
+        pending: [CoreRecentClosedPending],
+        canReopen: Bool,
+        reopenBlockedReason: String?
+    ) {
+        self.count = count
+        self.topLabel = topLabel
+        self.restoring = restoring
+        self.notices = notices
+        self.pending = pending
+        self.canReopen = canReopen
+        self.reopenBlockedReason = reopenBlockedReason
+    }
 
     enum CodingKeys: String, CodingKey {
         case count
         case topLabel = "top_label"
         case restoring
         case notices
+        case pending
+        case canReopen = "can_reopen"
+        case reopenBlockedReason = "reopen_blocked_reason"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        count = try container.decodeIfPresent(Int.self, forKey: .count) ?? 0
+        topLabel = try container.decodeIfPresent(String.self, forKey: .topLabel)
+        restoring = try container.decodeIfPresent(Bool.self, forKey: .restoring) ?? false
+        notices = try container.decodeIfPresent([CoreRecentClosedNotice].self, forKey: .notices) ?? []
+        pending = try container.decodeIfPresent([CoreRecentClosedPending].self, forKey: .pending) ?? []
+        canReopen = try container.decodeIfPresent(Bool.self, forKey: .canReopen) ?? (count > 0 && !restoring && pending.isEmpty)
+        reopenBlockedReason = try container.decodeIfPresent(String.self, forKey: .reopenBlockedReason)
+    }
+}
+
+struct CoreRecentClosedPending: Decodable, Equatable {
+    let key: String
+    let targetID: String
+    let label: String
+    let phase: String
+    let checking: Bool
+    let message: String?
+    let retryable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case key
+        case targetID = "target_id"
+        case label
+        case phase
+        case checking
+        case message
+        case retryable
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        targetID = try container.decode(String.self, forKey: .targetID)
+        label = try container.decode(String.self, forKey: .label)
+        phase = try container.decode(String.self, forKey: .phase)
+        checking = try container.decodeIfPresent(Bool.self, forKey: .checking) ?? false
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+        retryable = try container.decodeIfPresent(Bool.self, forKey: .retryable) ?? false
     }
 }
 
@@ -271,8 +340,6 @@ struct CorePetBadges: Decodable, Equatable {
     let seen: Int
     let disconnected: Int
     let subagentsActive: UInt32
-    let backgroundRunning: UInt32
-    let backgroundFailed: UInt32
 
     enum CodingKeys: String, CodingKey {
         case needsYou = "needs_you"
@@ -281,8 +348,6 @@ struct CorePetBadges: Decodable, Equatable {
         case seen
         case disconnected
         case subagentsActive = "subagents_active"
-        case backgroundRunning = "background_running"
-        case backgroundFailed = "background_failed"
     }
 
     static let none = CorePetBadges(
@@ -291,9 +356,7 @@ struct CorePetBadges: Decodable, Equatable {
         working: 0,
         seen: 0,
         disconnected: 0,
-        subagentsActive: 0,
-        backgroundRunning: 0,
-        backgroundFailed: 0
+        subagentsActive: 0
     )
 }
 
@@ -330,19 +393,11 @@ struct CoreUIStateSnapshot: Decodable {
     /// per document, and it is not a pane, so it carries a scale of its own
     /// instead of a row in the pane-keyed map.
     let editorTextScale: Double
-    /// The composer's defaults for the next chat, and whether the Scratch
-    /// section is open. Written by those surfaces only.
-    let lastAgentKind: String
-    let lastAgentBypass: Bool
-    let scratchExpanded: Bool
 
     var collapsedAgentPaneIDs: [String] = []
     var projectBaseBranches: [String: String] = [:]
 
     enum CodingKeys: String, CodingKey {
-        case lastAgentKind = "last_agent_kind"
-        case lastAgentBypass = "last_agent_bypass"
-        case scratchExpanded = "scratch_expanded"
         case collapsedAgentPaneIDs = "collapsed_agent_pane_ids"
         case projectBaseBranches = "project_base_branches"
         case leftSidebarVisible = "left_sidebar_visible"
@@ -396,10 +451,6 @@ struct CoreUIStateSnapshot: Decodable {
         ) ?? []
         selectedPath = try container.decodeIfPresent(String.self, forKey: .selectedPath)
         selectedPaneID = try container.decodeIfPresent(String.self, forKey: .selectedPaneID)
-        lastAgentKind = try container.decodeIfPresent(String.self, forKey: .lastAgentKind)
-            ?? AgentProvider.claude.rawValue
-        lastAgentBypass = try container.decodeIfPresent(Bool.self, forKey: .lastAgentBypass) ?? false
-        scratchExpanded = try container.decodeIfPresent(Bool.self, forKey: .scratchExpanded) ?? false
         shortcutBindings = try container.decodeIfPresent(
             [String: String].self,
             forKey: .shortcutBindings
@@ -430,12 +481,23 @@ struct CoreWorkspaceRegistration: Decodable, Identifiable {
     let label: String
     let path: String
     let deviceID: String
+    let pinned: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
         case label
         case path
         case deviceID = "device_id"
+        case pinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        path = try container.decode(String.self, forKey: .path)
+        deviceID = try container.decode(String.self, forKey: .deviceID)
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
     }
 }
 
@@ -475,7 +537,9 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         switch self {
         case .overview: "Overview"
         case .explorer: "Explorer"
-        case .changes: "Changes"
+        // The section keeps its `changes` identity for the saved state; the
+        // panel calls it History (right-panel-overview D-16, PR 2 fills it).
+        case .changes: "History"
         }
     }
 

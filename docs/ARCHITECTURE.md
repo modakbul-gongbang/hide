@@ -9,7 +9,11 @@ The code is the executable authority: `herdr-core/src/` for the core, `macos/Sou
 
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in (`herdr_core_dispatch`) and pulls state out (`herdr_core_snapshot`) when the change notifier announces.
-The event sync coordinator (`session_sync/coordinator.rs`) delegates Herdr snapshot and subscription lifecycle to `session_sync/subscription.rs`, bootstraps from `session.snapshot`, resumes ordered topology updates through `events.subscribe`, and refreshes agent telemetry with `agent.list` once per second.
+The event sync coordinator (`session_sync/coordinator.rs`) delegates Herdr snapshot and subscription lifecycle to `session_sync/subscription.rs`, opens `events.subscribe` first and reads `session.snapshot` second, applies the topology events that follow, and refreshes agent telemetry with `agent.list` once per second.
+Herdr's stream carries no sequence and cannot be resumed from a position, so subscribing before the snapshot is the only way not to lose an event between the two, and every reconnect is a fresh subscription followed by a fresh snapshot.
+The price of that order is that an event emitted just before the snapshot was taken arrives as well; for one second after the snapshot the replica reconciles (`ApplyMode::Reconcile`), dropping with a diagnostic an event the snapshot already accounts for, and after that window an event the replica cannot apply is a real divergence that rebuilds it.
+`wire.rs` names the day Herdr sequences its stream: a test fails when the event schema declares `sequence` or the subscribe params take `after_sequence`, because a resume cursor would then be worth building back.
+A separate 250 ms coordinator tick advances every bounded asynchronous operation, so an acknowledgement or topology wait reaches its deadline even when Herdr emits no event.
 A tick whose `agent.list` is unchanged publishes nothing, so an idle session recomputes no projection; the catalog's own refresh window still publishes, because the rebuild can only happen inside `publish_replica`.
 The Git context refreshes local worktree state only when repository metadata, tracked paths, or Herdr worktree topology changes; disk usage refreshes when the section opens or its header refresh is pressed, and all three layers run outside the runtime mutex.
 Pull requests also load once when a local Git project first appears in the sidebar and refresh from that project's menu or PR popover; these scoped requests reuse the same background reader, cache and generation coalescing.
@@ -21,15 +25,23 @@ Everything the shell renders comes from that one snapshot pull.
 The agent-context-labels plugin is a separate headless consumer of the same Herdr socket contract.
 It opens one long-lived `events.subscribe` stream for pane lifecycle events, bootstraps pane state with `agent.list`, and reports metadata only after a display transition.
 Its event loop also receives hook and refresh wakes through a short-lived Unix socket in the plugin state directory.
-When the stream ends, the plugin resumes from its sequence cursor with bounded exponential backoff and performs a fresh pane bootstrap when the retained journal cannot cover the gap.
+When the stream ends, the plugin reconnects with bounded exponential backoff and always starts from a fresh pane list; an event is only a prompt to list again, and nothing is read off it but its kind.
 
 The shell holds no authority, but the core does not hand all of it to Herdr either.
 Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
+The core also owns which Claude and Codex panes show their conversation ledger in place of the terminal (`ui_state.conversation_pane_ids`): a pane opens on its terminal, enters the set only through `toggle_conversation`, and leaves it with the pane, so a refresh never turns a pane back into a conversation the operator did not ask for.
 A core-owned value changes on the event that asked for it and Herdr is told afterwards, so the canvas and the focus ring never wait for a round trip.
-While that notification is pending, the Herdr workspace that owns the target showing it is read as its confirmation, whichever workspace holds Herdr's keyboard, because a checkout is keyed by path and can hold tabs from several Herdr workspaces; with nothing pending, a move of Herdr's focused tab or pane to another value is followed and a diagnostic records the ids and the origin; a refusal or a timeout keeps the core's value and says so.
+While that notification is pending, the Herdr workspace that owns the target showing it is read as its confirmation, whichever workspace holds Herdr's keyboard, because a checkout is keyed by path and can hold tabs from several Herdr workspaces; with nothing pending, a move of Herdr's focused tab or pane to another value is followed and a diagnostic records the ids and the origin; a refusal or a timeout keeps the core's value and records a diagnostic, and nothing is presented to the operator.
 A non-focused workspace's active tab is that workspace's memory, never a focus to follow: folding every workspace's active tab into one value per checkout let the last one overwrite the rest, and every tab focus on the other workspace timed out and snapped back.
+Herdr moves that memory silently: a close that removes a workspace's active tab is followed by `tab_focused` only when the workspace holds Herdr's keyboard focus, and by nothing at all otherwise.
+The replica therefore asks `workspace.get` for the replacement the moment such a close is applied and on each operation tick while the answer names a tab the stream has not delivered yet; a workspace still waiting after a bounded number of reads is a replica that cannot converge, and it is rebuilt from a fresh snapshot.
+Waiting for the focus event alone froze the whole workspace's projection, so a closed pane stayed drawn as `closing…` for three to five seconds, until the operator's next tab focus or the close deadline's status check.
 The focused checkout always draws the tab that holds the selected pane: a tab action moves the pane into the tab, and a pane action, a restore, or a retirement moves the tab to the pane (`align_visible_tab_with_selected_pane`).
 The pending model covers the visible tab and the focused pane and nothing else: zoom, splits, closes and resizes still wait for Herdr, because their geometry decides the PTY size (commit 9570a2a).
+Every Herdr-owned mutation has one core-owned operation record with a host connection generation, target and conflict-scope IDs, phase, stage, start time, absolute deadline, caller-visible message, and retry policy; the records are exported as `status.async_operations`.
+Transport success is not topology truth: split, zoom, resize, move, and close remain pending until an authoritative session event or fresh snapshot identifies the exact created, changed, or absent topology.
+An expired or otherwise unconfirmed mutation becomes unknown and is never resent when doing so could repeat a destructive effect; same-scope requests are rejected while independent scopes continue.
+Resize intents on one pane and axis coalesce to the latest signed delta, so a fast gesture cannot create an unbounded queue.
 
 The notifier announces once per burst rather than once per change.
 `herdr_core_snapshot` clears the announcement flag **before** it takes the lock; clearing it after the read would swallow a change that landed during the read.
@@ -52,12 +64,17 @@ Ownership is the fourth derived status axis and it is read off the lineage, neve
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; a per-child stall clock is what brings work back when it stops being anybody's problem.
 `docs/status-model.md` owns both rules.
 The Agents `My Work` view filters only the core-final Delegated answer and leaves hard escalations and visible orphans in operator-owned groups; `All` changes only the shell's session-local visibility projection.
-Overview builds the current Project's task forest from the same canonical agents and authoritative child IDs.
-Missing parents and cycles remain visible roots, and selecting a task is shell-local inspection until an explicit Open dispatches the existing pane-selection event.
+Overview groups the same canonical agents by the checkout their pane is in and nests a child under its parent only from authoritative child IDs; a parent in another worktree is named in a caption, never inferred.
+The Overview has no selection of its own: a row click dispatches the existing pane-selection event, a header click the checkout-focus event, and the `N files` chip one `overview_open_section` event that focuses the checkout and switches the panel to History together, so a refusal cannot leave the screen half moved.
+`agent_start_in_checkout` creates a tab in the checkout's workspace through the task-operation slot that `create_worktree` already uses, and the shell starts the chosen provider in the created pane on the same path.
 
 What an agent has spawned in-process is not on Herdr's wire at all.
-The hook helper reports it through `herdr pane report-metadata`, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.
+The hook helper reports it through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.
 A count Hide cannot read is reported as unknown, never as zero.
+
+A pane's parent travels the same channel, and it is the only lineage there is: Herdr records none.
+Whoever creates a child pane declares its parent as the pane token `parent_pane` through `pane.report_metadata`; Hide's own fork does (`fork.rs`, three socket calls: `pane.split`, `agent.start`, then the declaration under source `hide`), and so does an orchestrator that starts its child with `agent.start` (sasu's dispatch, under its own source).
+`wire.rs::lineage_parent` reads that token into the one `spawned_from_pane_id` the sidebar's lineage is built from; `docs/status-model.md` owns the contract.
 
 An attach lives only while its tab is in the last five shown.
 Herdr renders a pane for every attached client, so an attach nobody is looking at costs a child process here and a render there for the life of the process; visiting eight tabs used to leave eight attaches alive.
@@ -77,10 +94,14 @@ A close Hide asked for, or a pane Herdr has already stopped listing, projects `c
 ### Reopening locally closed work
 
 The core owns one session-local, twenty-item LIFO stack for file tabs and local Herdr pane or tab closes initiated through Hide.
-Scratch panes, Browser-only panes, remote closes, and topology changes reported by another Herdr client never enter it.
-Before sending a Herdr close, background workers export the tab layout and the core drains their results in user-event order, reserves each captured item on the LIFO stack, and only then starts the corresponding external close effect.
-A definitive Herdr refusal removes only that reservation; a transport failure or malformed acknowledgement cannot prove whether the close happened, so the reservation stays available for reconciliation and an inline notice reports the uncertainty.
-The snapshot exposes only the count, top label, in-flight state, and inline notices; the Swift shell routes the menu and shortcut and renders those values without keeping a second stack.
+Browser-only panes, remote closes, and topology changes reported by another Herdr client never enter it.
+Before sending a Herdr close, a background worker exports immutable layout facts and the core records the close intent in its target scope; it enters `closing` immediately, moves selection only to a confirmed surviving item, and starts the external effect after capture succeeds.
+The captured item is a reservation separate from the twenty confirmed entries, so a failed or unknown close cannot evict older undo history.
+A definitive Herdr refusal releases only that reservation; a transport failure or malformed acknowledgement keeps it available, starts one read-only status check, and reports the uncertainty inline.
+The status check applies its fresh session snapshot to the navigator before classifying the reservation, so a target confirmed absent cannot remain drawn until another unrelated event arrives.
+Only an authoritative absence promotes a reservation into the confirmed LIFO stack, in original user request order; the newest unresolved reservation blocks reopen from silently selecting an older item.
+The snapshot exposes the count, top label, pending reservations, in-flight state, async operation records, and inline notices; the Swift shell routes the menu and shortcut and renders those values without keeping a second stack.
+Unknown agent activity is a separate close guard: the core refuses local and remote destructive close until a fresh status is available, while ordinary working or unresolved demand uses the existing one-time confirmation.
 
 Recreation also runs outside `Mutex<Runtime>`.
 Pane restore uses the captured parent path, direct neighbor, split direction, original first-child ratio, and cwd, falling back to the tab's current pane and then the checkout root when the original facts no longer exist.
@@ -103,11 +124,11 @@ The bundled Herdr release is pinned in one place, `macos/Sources/HerdrMacOS/Reso
 `hide-herdr-client/build.rs` turns the five sub-schemas into Rust modules under `hide_herdr_client::wire` at build time; generated source stays in `OUT_DIR` and is never committed.
 `herdr-core/src/wire.rs` is the only core boundary that converts generated values into the core's projection and event inputs; shared request and subscription encoding lives in `hide-herdr-client`.
 Do not write new wire deserialization structs in `session_sync/{projection,replica}.rs` or import generated types into domain, runtime or sidebar code.
-The pinned event schema currently omits protocol, host and sequence: only the boundary's minimal metadata envelope is handwritten, and its schema-gap test requires deletion when the fork declares those fields.
+The event envelope is consumed as generated (`event` and `data`); the stream carries no protocol, host or sequence, and the snapshot names no host, so a remote snapshot's identity is the host Hide reached the socket through, stamped by the caller of `wire::remote_snapshot`.
 Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them.
 The envelope `id` is request correlation, never retry identity; mutation convergence must use an operation context on a method whose pinned schema actually carries one, or reconcile the resulting topology before retrying a method that does not.
 `live.rs` and `remote.rs` also use this boundary for response decoding and generated request parameters.
-The boundary preserves remote protocol diagnostics before decoding the complete generated snapshot, and the isolated pinned-server probe checks the control responses and CLI-created agent envelope.
+The boundary preserves remote protocol diagnostics before decoding the complete generated snapshot, and the isolated pinned-server probe checks the control responses.
 Terminal input, scroll, resize and release messages and the parameterless snapshot request remain boundary-owned schema gaps, with tests that require migration when their parameter types appear.
 
 

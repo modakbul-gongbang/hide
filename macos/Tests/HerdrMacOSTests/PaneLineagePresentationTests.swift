@@ -282,10 +282,9 @@ private func row(
         symbol: "\u{25cf}",
         emphasized: !delegated,
         statusLabel: "Working",
-        summary: "running tests",
+        identityLabel: "running tests",
         elapsed: "2m",
-        lastActivity: "1",
-        ambient: nil
+        lastActivity: "1"
     )
     agent.delegated = delegated
     agent.stallNotice = stallNotice

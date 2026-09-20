@@ -12,10 +12,11 @@
 //! lock as the render snapshot and drag the FFI boundary into the tests that
 //! matter most here (PRD D-47).
 //!
-//! Nothing in this crate talks to Herdr's socket. The hook helper reports a
-//! pane's subagent counts through the `herdr` CLI, which Herdr defines as
-//! display-only metadata, and the core reads them back out of the pane tokens
-//! its ordinary snapshot already carries (PRD D-08, D-27, D-33).
+//! The only Herdr traffic here is the hook helper's `pane.report_metadata`
+//! request, sent through `hide-herdr-client` (see `report`), which Herdr
+//! defines as display-only metadata; the core reads the tokens back out of
+//! the pane tokens its ordinary snapshot already carries. Nothing subscribes
+//! or polls.
 
 pub mod counters;
 pub mod diagnosis;

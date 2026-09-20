@@ -4,13 +4,36 @@ use super::*;
 
 #[derive(Clone)]
 pub(crate) struct SessionReplica {
-    pub(crate) host: HostScope,
-    pub(crate) cursor: u64,
     pub(crate) state: ProjectionState,
+    /// The last projection whose dependency ranges were confirmed. Pending
+    /// topology is kept in `state`, while this copy is what the runtime is
+    /// allowed to see. That lets an independent workspace move forward while
+    /// a different workspace still waits for its layout or replacement focus.
+    pub(crate) published_state: ProjectionState,
     pub(crate) pending_layouts: BTreeSet<String>,
     pub(crate) pending_workspace_closures: BTreeSet<String>,
     pub(crate) pending_active_tab_focuses: BTreeSet<String>,
-    pub(crate) last_event: Option<(u64, String)>,
+    /// How many events this replica has applied since its snapshot. Herdr's
+    /// stream carries no sequence, so this is the only position a diagnostic
+    /// can name.
+    pub(crate) applied_events: u64,
+}
+
+/// How an event that disagrees with the replica is treated.
+///
+/// A subscription is opened before the snapshot it starts from, so the
+/// stream cannot miss an event; the price is that an event emitted before
+/// the snapshot was taken arrives as well, and it describes a change the
+/// snapshot already holds. For a short window after the snapshot the
+/// snapshot therefore wins: an event it contradicts (a pane created that it
+/// already lists, a pane closed that it no longer lists) is dropped with a
+/// diagnostic rather than declared malformed. After the window an event
+/// that contradicts the replica is a real divergence, and the replica is
+/// rebuilt from a fresh snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApplyMode {
+    Strict,
+    Reconcile,
 }
 
 #[derive(Debug)]
@@ -23,9 +46,9 @@ pub(crate) struct ApplyOutcome {
 /// Every top-level `session.snapshot` field the replica reads. The contract
 /// test asserts the pinned Herdr declares each one required, so a pin whose
 /// snapshot cannot feed the replica fails in CI rather than at the user's
-/// first launch with "snapshot is missing lineage".
+/// first launch with "snapshot is missing agents".
 #[cfg(test)]
-pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 10] = [
+pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 7] = [
     "version",
     "protocol",
     "workspaces",
@@ -33,9 +56,6 @@ pub(crate) const SNAPSHOT_FIELDS_THE_REPLICA_READS: [&str; 10] = [
     "panes",
     "layouts",
     "agents",
-    "lineage",
-    "host",
-    "event_sequence",
 ];
 
 impl SessionReplica {
@@ -44,17 +64,14 @@ impl SessionReplica {
         Self::from_decoded(wire::snapshot(snapshot.clone())?)
     }
 
-    pub(crate) fn from_decoded(
-        (host, cursor, state): (HostScope, u64, ProjectionState),
-    ) -> Result<Self, SessionFetchError> {
+    pub(crate) fn from_decoded(state: ProjectionState) -> Result<Self, SessionFetchError> {
         let replica = Self {
-            host,
-            cursor,
+            published_state: state.clone(),
             state,
             pending_layouts: BTreeSet::new(),
             pending_workspace_closures: BTreeSet::new(),
             pending_active_tab_focuses: BTreeSet::new(),
-            last_event: None,
+            applied_events: 0,
         };
         replica.validate()?;
         replica.validate_active_tabs()?;
@@ -62,7 +79,145 @@ impl SessionReplica {
     }
 
     pub(crate) fn project(&self) -> SessionSnapshotPayload {
-        self.state.project()
+        self.published_state.project()
+    }
+
+    fn pending_workspace_ids(&self) -> HashSet<String> {
+        let mut blocked = HashSet::new();
+        for workspace_id in self
+            .pending_workspace_closures
+            .iter()
+            .chain(self.pending_active_tab_focuses.iter())
+        {
+            blocked.insert(workspace_id.clone());
+        }
+        for tab_id in &self.pending_layouts {
+            self.state
+                .tabs
+                .iter()
+                .find(|tab| &tab.tab_id == tab_id)
+                .or_else(|| {
+                    self.published_state
+                        .tabs
+                        .iter()
+                        .find(|tab| &tab.tab_id == tab_id)
+                })
+                .map(|tab| blocked.insert(tab.workspace_id.clone()));
+        }
+        blocked
+    }
+
+    fn merge_by_workspace<T: Clone>(
+        current: &[T],
+        published: &[T],
+        blocked: &HashSet<String>,
+        workspace_id: impl Fn(&T) -> &str,
+    ) -> Vec<T> {
+        let mut merged = Vec::with_capacity(current.len() + published.len());
+        for item in current {
+            if blocked.contains(workspace_id(item)) {
+                continue;
+            } else {
+                merged.push(item.clone());
+            }
+        }
+        for item in published {
+            if blocked.contains(workspace_id(item)) {
+                merged.push(item.clone());
+            }
+        }
+        merged
+    }
+
+    fn workspace_for_pane<'a>(state: &'a ProjectionState, pane_id: &str) -> Option<&'a str> {
+        state
+            .panes
+            .iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .map(|pane| pane.workspace_id.as_str())
+    }
+
+    fn focused_pane_for_partial_publish(&self, blocked: &HashSet<String>) -> Option<String> {
+        match self.state.focused_pane_id.as_deref() {
+            Some(pane_id) => match Self::workspace_for_pane(&self.state, pane_id) {
+                Some(workspace_id) if !blocked.contains(workspace_id) => Some(pane_id.to_owned()),
+                Some(_) => self.published_state.focused_pane_id.clone(),
+                None => None,
+            },
+            None => self
+                .published_state
+                .focused_pane_id
+                .as_deref()
+                .filter(|pane_id| {
+                    Self::workspace_for_pane(&self.published_state, pane_id)
+                        .is_some_and(|workspace_id| blocked.contains(workspace_id))
+                })
+                .map(str::to_owned),
+        }
+    }
+
+    fn focused_workspace_for_partial_publish(&self, blocked: &HashSet<String>) -> Option<String> {
+        match self.state.focused_workspace_id.as_deref() {
+            Some(workspace_id) if !blocked.contains(workspace_id) => Some(workspace_id.to_owned()),
+            Some(_) => self.published_state.focused_workspace_id.clone(),
+            None => self
+                .published_state
+                .focused_workspace_id
+                .as_deref()
+                .filter(|workspace_id| blocked.contains(*workspace_id))
+                .map(str::to_owned),
+        }
+    }
+
+    fn partial_published_state(&self) -> ProjectionState {
+        let blocked = self.pending_workspace_ids();
+        ProjectionState {
+            focused_pane_id: self.focused_pane_for_partial_publish(&blocked),
+            focused_workspace_id: self.focused_workspace_for_partial_publish(&blocked),
+            workspaces: Self::merge_by_workspace(
+                &self.state.workspaces,
+                &self.published_state.workspaces,
+                &blocked,
+                |workspace| workspace.workspace_id.as_str(),
+            ),
+            tabs: Self::merge_by_workspace(
+                &self.state.tabs,
+                &self.published_state.tabs,
+                &blocked,
+                |tab| tab.workspace_id.as_str(),
+            ),
+            panes: Self::merge_by_workspace(
+                &self.state.panes,
+                &self.published_state.panes,
+                &blocked,
+                |pane| pane.workspace_id.as_str(),
+            ),
+            layouts: Self::merge_by_workspace(
+                &self.state.layouts,
+                &self.published_state.layouts,
+                &blocked,
+                |layout| layout.workspace_id.as_str(),
+            ),
+            agents: Self::merge_by_workspace(
+                &self.state.agents,
+                &self.published_state.agents,
+                &blocked,
+                |agent| agent.workspace_id.as_str(),
+            ),
+        }
+    }
+
+    pub(crate) fn refresh_published_state(&mut self) -> Result<bool, SessionFetchError> {
+        if self.ready_to_publish() {
+            self.validate()?;
+            let changed = self.published_state != self.state;
+            self.published_state = self.state.clone();
+            return Ok(changed);
+        }
+        let next = self.partial_published_state();
+        let changed = next != self.published_state;
+        self.published_state = next;
+        Ok(changed)
     }
 
     pub(crate) fn project_remote(
@@ -73,8 +228,9 @@ impl SessionReplica {
         let agent_projection = crate::sidebar::project_agents(self.project());
         let mut agents = agent_projection.agents;
 
-        let mut pane_layouts = Vec::with_capacity(self.state.layouts.len());
-        for layout in &self.state.layouts {
+        let state = &self.published_state;
+        let mut pane_layouts = Vec::with_capacity(state.layouts.len());
+        for layout in &state.layouts {
             let area_width = f64::from(layout.area.width);
             let area_height = f64::from(layout.area.height);
             if area_width <= 0.0 || area_height <= 0.0 {
@@ -121,15 +277,13 @@ impl SessionReplica {
             });
         }
 
-        let mut workspaces = self
-            .state
+        let mut workspaces = state
             .workspaces
             .iter()
             .map(|workspace| {
                 let workspace_id = remote_workspace_id(target_id, &workspace.workspace_id);
                 let checkout_id = remote_checkout_id(target_id, &workspace.workspace_id);
-                let workspace_panes = self
-                    .state
+                let workspace_panes = state
                     .panes
                     .iter()
                     .filter(|pane| pane.workspace_id == workspace.workspace_id)
@@ -150,14 +304,13 @@ impl SessionReplica {
                     .map(|worktree| worktree.repo_name.clone())
                     .unwrap_or_else(|| workspace.label.clone());
                 let next_tab_label = crate::model::next_tab_label(
-                    self.state
+                    state
                         .tabs
                         .iter()
                         .filter(|tab| tab.workspace_id == workspace.workspace_id)
                         .map(|tab| tab.label.as_str()),
                 );
-                let tabs = self
-                    .state
+                let tabs = state
                     .tabs
                     .iter()
                     .filter(|tab| tab.workspace_id == workspace.workspace_id)
@@ -187,9 +340,10 @@ impl SessionReplica {
                                         .unwrap_or_else(|| "Attached".to_owned()),
                                     requires_close_confirmation: agent
                                         .is_some_and(|agent| agent.requires_close_confirmation),
-                                    summary: agent.map(|agent| agent.summary.clone()),
-                                    activity_at_unix_ms: self
-                                        .state
+                                    requires_close_status_check: agent
+                                        .is_some_and(|agent| agent.requires_close_status_check),
+                                    identity_label: agent.map(|agent| agent.identity_label.clone()),
+                                    activity_at_unix_ms: state
                                         .agents
                                         .iter()
                                         .find(|source| source.pane_id == pane.pane_id)
@@ -263,7 +417,9 @@ impl SessionReplica {
                         next_tab_label,
                         ..CheckoutSnapshot::default()
                     }],
+                    pinned: false,
                     inactive_checkouts: Default::default(),
+                    removal: Default::default(),
                 }
             })
             .collect::<Vec<_>>();
@@ -279,8 +435,7 @@ impl SessionReplica {
         // projected panes by id, and the projection carries the remote form.
         crate::project_context::sort_projects(&mut workspaces, &agents);
 
-        let active_tab_ids = self
-            .state
+        let active_tab_ids = state
             .workspaces
             .iter()
             .map(|workspace| {
@@ -291,11 +446,10 @@ impl SessionReplica {
             })
             .collect();
 
-        let focused = self
-            .state
+        let focused = state
             .focused_pane_id
             .as_deref()
-            .and_then(|pane_id| self.state.panes.iter().find(|pane| pane.pane_id == pane_id));
+            .and_then(|pane_id| state.panes.iter().find(|pane| pane.pane_id == pane_id));
         let focused_workspace_id =
             focused.map(|pane| remote_workspace_id(target_id, &pane.workspace_id));
         let focused_checkout_id =
@@ -310,8 +464,7 @@ impl SessionReplica {
                 focused_workspace_id,
                 focused_checkout_id,
                 focused_tab_id,
-                focused_pane_id: self
-                    .state
+                focused_pane_id: state
                     .focused_pane_id
                     .as_deref()
                     .map(|pane_id| remote_pane_id(target_id, pane_id)),
@@ -319,6 +472,46 @@ impl SessionReplica {
             },
             agent_projection.excluded,
         ))
+    }
+
+    /// Workspaces whose active tab a close removed and whose replacement Herdr
+    /// has not named. Herdr emits `tab_focused` for the replacement only when
+    /// that workspace holds its keyboard focus; in every other workspace the
+    /// new active tab is that workspace's memory and reaches Hide only through
+    /// a `workspace.get` read, which the coordinator issues for each of these.
+    pub(crate) fn workspaces_awaiting_active_tab(&self) -> Vec<String> {
+        self.pending_active_tab_focuses.iter().cloned().collect()
+    }
+
+    /// Applies a `workspace.get` answer to a workspace waiting for its
+    /// replacement active tab, and reports whether that wait ended. A
+    /// workspace a focus event already settled changes nothing. A tab the
+    /// event stream has not delivered yet means the read ran ahead of the
+    /// cursor, so the wait stays and the coordinator reads again on its
+    /// bounded tick once the stream catches up.
+    pub(crate) fn settle_active_tab(&mut self, workspace_id: &str, active_tab_id: &str) -> bool {
+        if !self.pending_active_tab_focuses.contains(workspace_id) {
+            return false;
+        }
+        let tab_known = self
+            .state
+            .tabs
+            .iter()
+            .any(|tab| tab.tab_id == active_tab_id && tab.workspace_id == workspace_id);
+        if !tab_known {
+            return false;
+        }
+        let Some(workspace) = self
+            .state
+            .workspaces
+            .iter_mut()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+        else {
+            return false;
+        };
+        workspace.active_tab_id = active_tab_id.to_owned();
+        self.pending_active_tab_focuses.remove(workspace_id);
+        true
     }
 
     pub(crate) fn ready_to_publish(&self) -> bool {
@@ -358,59 +551,35 @@ impl SessionReplica {
 
     pub(crate) fn apply(
         &mut self,
-        event: ReplicaEnvelope,
+        event: ReplicaEvent,
+        mode: ApplyMode,
     ) -> Result<ApplyOutcome, SessionFetchError> {
-        if event.protocol != HERDR_PROTOCOL_REVISION {
-            return Err(protocol_mismatch(event.protocol, None));
-        }
-        if event.host != self.host {
-            return Err(SessionFetchError::Stale(format!(
-                "Herdr event host {:?} does not match snapshot host {:?}",
-                event.host, self.host
-            )));
-        }
-        let fingerprint = event.fingerprint;
-        if event.sequence < self.cursor {
-            return Ok(ApplyOutcome {
-                publish: false,
-                refresh_agents: false,
-                refresh_worktrees: false,
-            });
-        }
-        if event.sequence == self.cursor {
-            if self
-                .last_event
-                .as_ref()
-                .is_some_and(|(sequence, previous)| {
-                    *sequence == event.sequence && previous == &fingerprint
-                })
-            {
+        let mut candidate = self.clone();
+        let refresh_worktrees = matches!(
+            event,
+            ReplicaEvent::WorktreeCreated { .. }
+                | ReplicaEvent::WorktreeOpened { .. }
+                | ReplicaEvent::WorktreeRemoved { .. }
+        );
+        let refresh_agents = match (candidate.apply_new_event(event), mode) {
+            (Ok(refresh_agents), _) => refresh_agents,
+            (Err(SessionFetchError::Malformed(detail)), ApplyMode::Reconcile) => {
+                crate::diagnostic!(json!({
+                    "component": "session_sync",
+                    "kind": "event.reconciled",
+                    "applied_events": self.applied_events,
+                    "message": detail,
+                }));
                 return Ok(ApplyOutcome {
                     publish: false,
                     refresh_agents: false,
                     refresh_worktrees: false,
                 });
             }
-            return Err(SessionFetchError::Malformed(format!(
-                "Herdr event sequence {} was reused with different content",
-                event.sequence
-            )));
-        }
-
-        let mut candidate = self.clone();
-        let refresh_worktrees = matches!(
-            event.data,
-            ReplicaEvent::WorktreeCreated { .. }
-                | ReplicaEvent::WorktreeOpened { .. }
-                | ReplicaEvent::WorktreeRemoved { .. }
-        );
-        let refresh_agents = candidate.apply_new_event(event.data)?;
-        candidate.cursor = event.sequence;
-        candidate.last_event = Some((event.sequence, fingerprint));
-        let publish = candidate.ready_to_publish();
-        if publish {
-            candidate.validate()?;
-        }
+            (Err(error), _) => return Err(error),
+        };
+        candidate.applied_events = candidate.applied_events.saturating_add(1);
+        let publish = candidate.refresh_published_state()?;
         *self = candidate;
         Ok(ApplyOutcome {
             publish,
@@ -1411,20 +1580,11 @@ pub(crate) struct PaneMove {
     pub(crate) closed_tab_id: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct ReplicaEnvelope {
-    pub(crate) protocol: u64,
-    pub(crate) host: HostScope,
-    pub(crate) sequence: u64,
-    pub(crate) data: ReplicaEvent,
-    pub(crate) fingerprint: String,
-}
-
 // Boxing Event would add an allocation to every subscription line merely to
 // shrink the uncommon error variant's stack footprint.
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum SubscriptionLine {
-    Event(ReplicaEnvelope),
+    Event(ReplicaEvent),
     Error { code: String, message: String },
 }
 

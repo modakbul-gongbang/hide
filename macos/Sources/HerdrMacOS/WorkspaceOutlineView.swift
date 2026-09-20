@@ -138,6 +138,11 @@ struct WorkspaceFileOperations {
     var rename: (_ path: URL, _ name: String) -> Void
     var move: (_ path: URL, _ destination: URL) -> Void
     var requestTrash: (WorkspaceOutlineTrashPrompt) -> Void
+    var openWithDefaultApp: (_ file: URL) -> Void
+    var openInBrowserPane: (_ file: URL) -> Void
+    /// Asked when the menu is built, so the item is enabled or carries its
+    /// reason for the moment it is shown (D-08).
+    var browserPaneAvailability: (_ file: URL) -> BrowserPaneOpenAvailability
 }
 
 /// A row draws hover, but it does not decide it.
@@ -363,7 +368,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
     let fontScale: CGFloat
     let operation: CoreExplorerOperation?
     let gitDecorations: WorkspaceGitDecorations?
-    let openFile: (URL) -> Void
+    /// Opens a file; the flag says whether as the checkout's preview tab (a
+    /// single click) or as an ordinary tab (a double-click or Return).
+    let openFile: (URL, _ preview: Bool) -> Void
     let updateExpandedPaths: ([String]) -> Void
     let fileOperations: WorkspaceFileOperations
 
@@ -405,6 +412,10 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         outline.dataSource = coordinator
         outline.target = coordinator
         outline.action = #selector(Coordinator.activateClickedRow)
+        // AppKit sends `action` for the first click of a double-click too, so
+        // a double-click on a file is a preview open followed by a promotion
+        // of the same tab, the order VS Code shows as well (PRD Risks).
+        outline.doubleAction = #selector(Coordinator.keepClickedRowOpen)
         outline.onActivate = { [weak coordinator] in
             coordinator?.activateSelection()
         }
@@ -468,7 +479,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTextFieldDelegate {
-        var openFile: (URL) -> Void
+        var openFile: (URL, _ preview: Bool) -> Void
         var updateExpandedPaths: ([String]) -> Void
         var fileOperations: WorkspaceFileOperations
         private weak var outline: WorkspaceNSOutlineView?
@@ -497,7 +508,7 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         private var suppressExpansionPersistence = false
 
         init(
-            openFile: @escaping (URL) -> Void,
+            openFile: @escaping (URL, _ preview: Bool) -> Void,
             updateExpandedPaths: @escaping ([String]) -> Void,
             fileOperations: WorkspaceFileOperations
         ) {
@@ -659,24 +670,37 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             guard let outline, outline.clickedRow >= 0,
                   let node = outline.item(atRow: outline.clickedRow) as? WorkspaceOutlineNode
             else { return }
-            activate(node)
+            activate(node, preview: true)
+        }
+
+        /// The second click of a double-click: the file the first click
+        /// previewed is kept open. A folder's double-click changes nothing
+        /// beyond what its first click already toggled.
+        @objc func keepClickedRowOpen() {
+            guard let outline, outline.clickedRow >= 0,
+                  let node = outline.item(atRow: outline.clickedRow) as? WorkspaceOutlineNode,
+                  WorkspaceOutlineActivationPolicy.activation(
+                      isDirectory: node.isDirectory, isPlaceholder: node.isPlaceholder
+                  ) == .open
+            else { return }
+            openFile(node.url, false)
         }
 
         @objc func activateSelection() {
             guard let outline, outline.selectedRow >= 0,
                   let node = outline.item(atRow: outline.selectedRow) as? WorkspaceOutlineNode
             else { return }
-            activate(node)
+            activate(node, preview: false)
         }
 
-        private func activate(_ node: WorkspaceOutlineNode) {
+        private func activate(_ node: WorkspaceOutlineNode, preview: Bool) {
             guard let outline else { return }
             switch WorkspaceOutlineActivationPolicy.activation(
                 isDirectory: node.isDirectory,
                 isPlaceholder: node.isPlaceholder
             ) {
             case .open:
-                openFile(node.url)
+                openFile(node.url, preview)
             case .toggle:
                 if outline.isItemExpanded(node) {
                     outline.collapseItem(node)
@@ -948,6 +972,9 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             }
             let subject = node ?? rootNode
             let menu = NSMenu()
+            // The presentation decides enablement; AppKit's automatic
+            // validation would re-enable every item that has a target.
+            menu.autoenablesItems = false
             for item in WorkspaceOutlineMenuPresentation.items(for: target, isRemote: false) {
                 switch item {
                 case .separator:
@@ -960,6 +987,10 @@ struct WorkspaceOutlineView: NSViewRepresentable {
                         entry.keyEquivalent = command.shortcut.menuKeyEquivalent
                         entry.keyEquivalentModifierMask = command.shortcut.modifierFlags
                     }
+                    if item == .openInBrowserPane, let reason = fileOperations.browserPaneAvailability(subject.url).reason {
+                        entry.isEnabled = false
+                        entry.toolTip = reason
+                    }
                     menu.addItem(entry)
                 }
             }
@@ -970,6 +1001,8 @@ struct WorkspaceOutlineView: NSViewRepresentable {
             switch item {
             case .newFile: #selector(menuNewFile(_:))
             case .newFolder: #selector(menuNewFolder(_:))
+            case .openWithDefaultApp: #selector(menuOpenWithDefaultApp(_:))
+            case .openInBrowserPane: #selector(menuOpenInBrowserPane(_:))
             case .revealInFinder: #selector(menuReveal(_:))
             case .copyPath: #selector(menuCopyPath(_:))
             case .copyRelativePath: #selector(menuCopyRelativePath(_:))
@@ -998,6 +1031,16 @@ struct WorkspaceOutlineView: NSViewRepresentable {
         @objc private func menuNewFolder(_ sender: Any?) {
             guard let node = subject(of: sender), let parent = creationParent(for: node) else { return }
             beginCreate(kind: .folder, in: parent)
+        }
+
+        @objc private func menuOpenWithDefaultApp(_ sender: Any?) {
+            guard let node = subject(of: sender), !node.isDirectory else { return }
+            fileOperations.openWithDefaultApp(node.url)
+        }
+
+        @objc private func menuOpenInBrowserPane(_ sender: Any?) {
+            guard let node = subject(of: sender), !node.isDirectory else { return }
+            fileOperations.openInBrowserPane(node.url)
         }
 
         @objc private func menuReveal(_ sender: Any?) {

@@ -5,8 +5,10 @@ use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
+mod devices;
 mod editor;
 mod events;
+mod operations;
 mod projects;
 mod session;
 mod snapshot_delta;
@@ -15,6 +17,7 @@ mod terminal;
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use events::*;
+use operations::*;
 
 use crate::ffi::ChangeNotifier;
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
@@ -29,10 +32,11 @@ use crate::model::{
     CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
     EditorTabKind, EditorTabSnapshot, ExplorerOperationSnapshot, LastErrorSnapshot,
     PANE_TEXT_SCALE_STEP, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
-    PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot,
-    RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection,
-    SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface, TabSnapshot, TerminalChunk,
-    TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
+    PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
+    PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
+    RightPanelSection, SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface,
+    TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot,
+    clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
@@ -123,7 +127,15 @@ struct PendingTabMove {
     /// the operator asked for. That workspace reporting exactly this order is
     /// what commits the arrangement.
     herdr_order: Vec<String>,
+    target_id: String,
     generation: u64,
+    connection_generation: u64,
+    phase: String,
+    stage: String,
+    started_at_unix_ms: u64,
+    deadline_at_unix_ms: Option<u64>,
+    message: Option<String>,
+    retryable: bool,
 }
 
 /// Translates a wanted Herdr tab order into the index `tab.move` takes.
@@ -210,6 +222,11 @@ fn reveal_expansion_paths(checkout_path: &str, path: &str, is_directory: bool) -
 
 /// How long the pet plays its waking pose after activity interrupts sleep.
 const PET_WAKING_MS: u64 = 1_200;
+
+/// The absolute lifetime of one stage of a Herdr-owned mutation: restore
+/// capture, the request itself, and the topology wait each get this long
+/// before the operation becomes a caller-visible unknown result (PRD D-08).
+const CLOSE_STAGE_TIMEOUT_MS: u64 = 5_000;
 
 /// How long a view-state notification may stay unconfirmed before Hide stops
 /// treating Herdr's answer as pending.
@@ -505,6 +522,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
                 (
                     agent.status_label.as_str(),
                     agent.requires_close_confirmation,
+                    agent.requires_close_status_check,
                 ),
             )
         })
@@ -516,7 +534,7 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
         .flat_map(|checkout| checkout.tabs.iter_mut())
         .flat_map(|tab| tab.panes.iter_mut())
     {
-        let Some((status_label, requires_close_confirmation)) =
+        let Some((status_label, requires_close_confirmation, requires_close_status_check)) =
             by_pane.get(pane.id.as_str()).copied()
         else {
             continue;
@@ -529,9 +547,55 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
             pane.requires_close_confirmation = requires_close_confirmation;
             changed = true;
         }
+        if pane.requires_close_status_check != requires_close_status_check {
+            pane.requires_close_status_check = requires_close_status_check;
+            changed = true;
+        }
     }
     changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
+    changed |= sync_strip_agent_identity(workspaces, agents);
     changed |= crate::project_context::sort_projects(workspaces, agents);
+    changed
+}
+
+/// Names each Herdr strip entry after the one agent its tab holds.
+///
+/// Runs on the same passes as the pane status, so the entry's mark and
+/// emphasis follow the read axis, and again whenever a strip is rebuilt, so
+/// a fresh entry never reaches the shell without its identity (PRD D-16).
+fn sync_strip_agent_identity(
+    workspaces: &mut [WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+) -> bool {
+    let mut changed = false;
+    for checkout in workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+    {
+        for entry in checkout
+            .strip
+            .iter_mut()
+            .filter(|entry| entry.kind == crate::model::StripTabKind::Herdr)
+        {
+            let identity = checkout
+                .tabs
+                .iter()
+                .find(|tab| tab.id.as_deref() == Some(entry.source_id.as_str()))
+                .and_then(|tab| {
+                    let mut held = agents
+                        .iter()
+                        .filter(|agent| tab.panes.iter().any(|pane| pane.id == agent.pane_id));
+                    let first = held.next()?;
+                    held.next()
+                        .is_none()
+                        .then(|| crate::sidebar::agent_chip(first))
+                });
+            if entry.agent_identity != identity {
+                entry.agent_identity = identity;
+                changed = true;
+            }
+        }
+    }
     changed
 }
 
@@ -669,12 +733,35 @@ pub struct Runtime {
     state_save_pending: bool,
     state_save_active: bool,
     state_save_worker: Option<thread::JoinHandle<()>>,
-    remote_targets: Vec<crate::model::RemoteTarget>,
+    /// Where the SSH config that names each registered device's host lives;
+    /// `None` when the process has no usable HOME, which every connect then
+    /// reports rather than guessing a path.
+    home_path: Option<PathBuf>,
+    /// False when the SSH agent socket is unavailable at launch, which every
+    /// registered device reports as `disabled` instead of attempting SSH.
+    remote_enabled: bool,
+    /// The SSH client and coordinator of each registered device that is
+    /// connected or connecting, keyed by device id. Removing a device drops
+    /// its entry; the coordinator handle moves to `retired_remote_syncs`.
+    remote_connections: HashMap<String, devices::RemoteDeviceConnection>,
+    /// Coordinators of removed devices, waiting for the FFI layer to join
+    /// them off the runtime lock: a join under the lock would wait for a
+    /// worker that is itself waiting for the lock.
+    retired_remote_syncs: Vec<session_sync::SessionSyncHandle>,
+    /// The last connection test of each device, kept apart from the device
+    /// rows because those are rebuilt with every catalog.
+    remote_device_tests: HashMap<String, crate::model::DeviceTestSnapshot>,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
     remote_file_transports: HashMap<String, RusshSftpTransport>,
     remote_control_requests: VecDeque<(String, String)>,
+    /// Remote mutations waiting for a transport answer or fresh topology,
+    /// keyed by target and request id.
+    remote_operations: HashMap<(String, String), PendingRemoteOperation>,
+    /// Advances when a remote target's session connects or drops, so a late
+    /// answer from an older connection cannot settle a newer request.
+    remote_connection_generations: HashMap<String, u64>,
     remote_tab_creations_in_flight: HashSet<(String, String, String, String)>,
     terminal_sessions: HashMap<String, TerminalSession>,
     terminal_session_generations: HashMap<String, u64>,
@@ -744,17 +831,28 @@ pub struct Runtime {
     panes_closing: HashSet<String>,
     /// User-initiated local closes, newest last. Memory only by contract.
     recent_closed: VecDeque<ClosedItem>,
-    close_captures_in_flight: HashSet<String>,
+    /// User closes in request order. A close is promoted onto
+    /// `recent_closed` only from the front of this queue and only once its
+    /// topology is confirmed, so the confirmed stack keeps the order the
+    /// operator closed things in (PRD D-11).
     close_capture_order: VecDeque<String>,
-    close_capture_results: HashMap<
-        String,
-        (
-            live::CloseCaptureRequest,
-            Result<live::CloseCaptureOutcome, String>,
-        ),
-    >,
+    close_operations: HashMap<String, PendingClose>,
+    close_status_checks_in_flight: HashSet<String>,
+    pane_operations: HashMap<String, PendingPaneOperation>,
+    /// The last complete raw layout Herdr confirmed for each tab. Mutation
+    /// operations compare fresh geometry with this value, because a model
+    /// layout has pane ids and split ratios but no PTY rectangle to confirm a
+    /// resize against.
+    confirmed_pane_layout_signatures: HashMap<String, PaneTopologySignature>,
     recent_closed_sequence: u64,
     reopen_in_flight: Option<String>,
+    /// Advances on every `set_live`, so a worker started against an earlier
+    /// local Herdr connection cannot settle an operation on the current one.
+    live_generation: u64,
+    /// A shell-requested read-only `agent.list` refresh, drained by the
+    /// coordinator on its next pass.
+    status_refresh_requested: bool,
+    next_async_operation_id: u64,
     /// Panes that were scrolled before any view reported their size. One
     /// diagnostic answers for the whole wait; a wheel burst against a pane
     /// with no size would otherwise fill the bounded diagnostics list with the
@@ -825,13 +923,6 @@ pub struct Runtime {
     /// reconcile never rebuilds under the runtime lock.
     last_accepted_catalog: Option<Vec<WorkspaceSnapshot>>,
     catalog_roots: workspace::RootIndex,
-    /// Where Scratch lives, resolved once when the core is created.
-    ///
-    /// Held rather than recomputed because every pane in every reconcile is
-    /// compared against it, and because one answer per process is what keeps
-    /// the projection, the snapshot and the shell's launcher from disagreeing
-    /// about which folder is Scratch.
-    scratch_root: String,
     /// The strip order each local checkout has, as strip entry ids. It is
     /// memory only by decision: Herdr persists its own tab order and file tabs
     /// do not survive a restart, so there is nothing here worth writing to
@@ -886,7 +977,6 @@ pub struct Runtime {
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
     disk_generation: u64,
-    overview_selection: Option<String>,
     cleanup: Option<live::cleanup::CleanupSnapshot>,
     next_cleanup_id: u64,
     /// Bumped when the worktree list itself is known to have changed through a
@@ -895,6 +985,11 @@ pub struct Runtime {
     /// Identifies one delete handshake across core, Herdr and the shell.
     /// A repeated callback for an older request cannot authorize a newer one.
     next_worktree_removal_id: u64,
+    /// Registered projects whose panes a `Remove project…` is closing on a
+    /// worker thread. The registration is only removed once the worker
+    /// reports Herdr's confirmation, so a repeat for the same project while
+    /// that runs is a quiet no-op rather than a second round of closes.
+    workspace_removals_in_flight: HashSet<String>,
     next_task_operation_id: u64,
     next_explorer_operation_id: u64,
     delta: snapshot_delta::DeltaState,
@@ -909,22 +1004,11 @@ struct RuntimeWorkerContext {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
-        let remote_targets = options.remote_targets.clone();
         let mut snapshot = Snapshot::initial(&options);
         snapshot.status.environment = environment.statuses;
-        if !environment.remote_enabled {
-            for remote in &mut snapshot.status.remote {
-                remote.state = "disabled".to_owned();
-                remote.message = Some(
-                    "Remote features are disabled because the SSH agent socket is unavailable"
-                        .to_owned(),
-                );
-            }
-        }
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         snapshot.ui_state = ui_state;
-        snapshot.navigator.devices =
-            workspace::devices(&remote_targets, &snapshot.ui_state.device_registrations);
+        snapshot.navigator.devices = workspace::devices(&snapshot.ui_state.device_registrations);
         snapshot.navigator.focused_device_id = Some(
             snapshot
                 .ui_state
@@ -965,12 +1049,18 @@ impl Runtime {
         let mut runtime = Self {
             snapshot,
             state_path,
-            remote_targets,
+            home_path: environment.home_path,
+            remote_enabled: environment.remote_enabled,
+            remote_connections: HashMap::new(),
+            retired_remote_syncs: Vec::new(),
+            remote_device_tests: HashMap::new(),
             live: None,
             remote_controls: HashMap::new(),
             remote_terminals: HashMap::new(),
             remote_file_transports: HashMap::new(),
             remote_control_requests: VecDeque::new(),
+            remote_operations: HashMap::new(),
+            remote_connection_generations: HashMap::new(),
             remote_tab_creations_in_flight: HashSet::new(),
             terminal_sessions: HashMap::new(),
             terminal_session_generations: HashMap::new(),
@@ -999,11 +1089,16 @@ impl Runtime {
             recent_visible_tabs: Vec::new(),
             panes_closing: HashSet::new(),
             recent_closed: VecDeque::new(),
-            close_captures_in_flight: HashSet::new(),
             close_capture_order: VecDeque::new(),
-            close_capture_results: HashMap::new(),
+            close_operations: HashMap::new(),
+            close_status_checks_in_flight: HashSet::new(),
+            pane_operations: HashMap::new(),
+            confirmed_pane_layout_signatures: HashMap::new(),
             recent_closed_sequence: 0,
             reopen_in_flight: None,
+            live_generation: 0,
+            status_refresh_requested: false,
+            next_async_operation_id: 0,
             #[cfg(test)]
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
@@ -1027,7 +1122,6 @@ impl Runtime {
             last_session_spaces: Vec::new(),
             last_accepted_catalog: None,
             catalog_roots: workspace::RootIndex::new(),
-            scratch_root: crate::scratch::root().to_string_lossy().into_owned(),
             checkout_tab_order: BTreeMap::new(),
             herdr_workspace_tab_order: BTreeMap::new(),
             pending_tab_move: BTreeMap::new(),
@@ -1042,11 +1136,11 @@ impl Runtime {
             github_generations: HashMap::new(),
             sidebar_github_projects: HashSet::new(),
             disk_generation: 0,
-            overview_selection: None,
             cleanup: None,
             next_cleanup_id: 0,
             worktree_generation: 0,
             next_worktree_removal_id: 0,
+            workspace_removals_in_flight: HashSet::new(),
             next_task_operation_id: 0,
             next_explorer_operation_id: 0,
             delta: snapshot_delta::DeltaState::default(),
@@ -1074,6 +1168,7 @@ impl Runtime {
     }
 
     pub fn set_live(&mut self, context: LiveContext) {
+        self.live_generation = self.live_generation.saturating_add(1);
         self.live = Some(context);
     }
 
@@ -1178,9 +1273,9 @@ impl Runtime {
 
 /// One tab's panes, as the navigator draws them.
 ///
-/// Lifted out of the placement loop so a Scratch tab and a project tab are
-/// projected by the same code: a pane row that differed between the two
-/// sections would be a second definition of what a pane is.
+/// Lifted out of the placement loop so every section projects a pane row
+/// through the same code: a row that differed between sections would be a
+/// second definition of what a pane is.
 fn project_layout_panes(
     layout: &crate::sidebar::SessionLayoutPayload,
     payload: &SessionSnapshotPayload,
@@ -1233,9 +1328,9 @@ fn project_layout_panes(
                     .unwrap_or_else(|| "Unknown".to_owned()),
                 requires_close_confirmation: agent
                     .is_some_and(|agent| agent.requires_close_confirmation),
-                summary: agent
-                    .map(|agent| agent.summary.clone())
-                    .filter(|summary| summary != crate::sidebar::MISSING_SUMMARY),
+                requires_close_status_check: agent
+                    .is_some_and(|agent| agent.requires_close_status_check),
+                identity_label: agent.map(|agent| agent.identity_label.clone()),
                 activity_at_unix_ms: agent.and_then(|agent| agent.last_activity.parse().ok()),
                 fork: pane_fork_snapshot(agent),
                 ports,
@@ -1367,31 +1462,6 @@ pub fn validate_options(options: &CoreOptions) -> Result<(), &'static str> {
         .is_some_and(|path| path.trim().is_empty())
     {
         return Err("herdr_bin_path must be null or non-empty");
-    }
-    for target in &options.remote_targets {
-        if target.id.trim().is_empty()
-            || target.label.trim().is_empty()
-            || target.ssh_alias.trim().is_empty()
-            || target.herdr_socket_path.trim().is_empty()
-        {
-            return Err("remote target fields must not be empty");
-        }
-        if !Path::new(&target.herdr_socket_path).is_absolute()
-            || target
-                .herdr_socket_path
-                .bytes()
-                .any(|byte| byte.is_ascii_control())
-        {
-            return Err("remote target herdr_socket_path must be absolute and single-line");
-        }
-    }
-    for (index, target) in options.remote_targets.iter().enumerate() {
-        if options.remote_targets[index + 1..]
-            .iter()
-            .any(|candidate| candidate.id == target.id)
-        {
-            return Err("remote target ids must be unique");
-        }
     }
     Ok(())
 }

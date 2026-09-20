@@ -2,6 +2,9 @@ import SwiftUI
 
 struct ShellView: View {
     @EnvironmentObject private var model: ShellModel
+    /// The window's content height, read for the Settings sheet, which sizes
+    /// itself to the window it is presented over.
+    @State private var contentHeight: CGFloat?
 
     var body: some View {
         ZStack {
@@ -41,16 +44,19 @@ struct ShellView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(HideTheme.background)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { contentHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, height in contentHeight = height }
+            }
+        )
         .hideOverlayHost()
         .preferredColorScheme(.dark)
         .environment(\.colorScheme, .dark)
         .environment(\.hideAccent, HideTheme.color(for: model.core.snapshot?.uiState.accentHex ?? "#B9FF66"))
         .environment(\.hideFontScale, CGFloat((model.core.snapshot?.uiState.fontSize ?? 13) / 13))
         .tint(HideTheme.color(for: model.core.snapshot?.uiState.accentHex ?? "#B9FF66"))
-        .sheet(isPresented: $model.showComposer) {
-            ChatComposerSheet().hideOverlayHost()
-                .environmentObject(model)
-        }
         .sheet(isPresented: $model.showSearch) {
             HideSearchSheet().hideOverlayHost()
                 .environmentObject(model)
@@ -63,7 +69,8 @@ struct ShellView: View {
             HideSettingsView(
                 model: model,
                 showsCloseButton: true,
-                initialTab: model.settingsInitialTab
+                initialTab: model.settingsInitialTab,
+                availableHeight: contentHeight
             )
             .hideOverlayHost()
         }
@@ -98,10 +105,14 @@ struct ShellView: View {
             .background(HideTheme.panel)
         }
         .alert(item: $model.workspaceToRemove) { workspace in
-            Alert(
-                title: Text("Remove \(workspace.label) from Hide?"),
-                message: Text("Hide will remove only its registration. The folder, repository, worktrees, and running processes stay untouched."),
-                primaryButton: .destructive(Text("Remove registration"), action: model.confirmRemoveWorkspace),
+            // The counts are read at presentation from the current row, so a
+            // pane that opened or closed since the menu click is counted.
+            let current = model.workspaces.first { $0.id == workspace.id } ?? workspace
+            let prompt = WorkspaceRemovalPrompt(label: current.label, removal: current.removal)
+            return Alert(
+                title: Text(prompt.title),
+                message: Text(prompt.message),
+                primaryButton: .destructive(Text(prompt.confirmLabel), action: model.confirmRemoveWorkspace),
                 secondaryButton: .cancel()
             )
         }
@@ -174,6 +185,11 @@ struct ShellView: View {
                 set: { if !$0 { model.clearInteractionNotice() } }
             )
         ) {
+            if model.interactionStatusRefreshAvailable {
+                Button("Check status", action: model.refreshInteractionStatus)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("hide-refresh-activity-status")
+            }
             Button("OK", action: model.clearInteractionNotice)
         } message: {
             Text(model.interactionNotice ?? "")
@@ -181,8 +197,8 @@ struct ShellView: View {
         // A close with a consequence - a browser pane, whose Chromium tab goes
         // with it, or a working agent - waits here for the operator's answer.
         // The model holds the pending target, so the header X and ⌘W share
-        // one prompt. Return closes and Esc cancels, as in the trash prompt
-        // above; dismissing by any other route cancels through the binding.
+        // one prompt. The destructive action is explicit, while Escape and
+        // the cancel action keep the pane open.
         .alert(
             model.consequenceNotice?.title ?? "",
             isPresented: Binding(
@@ -191,9 +207,9 @@ struct ShellView: View {
             ),
             presenting: model.consequenceNotice
         ) { _ in
-            Button("Close", role: .destructive, action: model.confirmConsequencePreview)
+            Button("Keep open", role: .cancel, action: model.cancelConsequencePreview)
                 .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel, action: model.cancelConsequencePreview)
+            Button("Stop work and close", role: .destructive, action: model.confirmConsequencePreview)
         } message: { notice in
             Text(notice.message)
         }

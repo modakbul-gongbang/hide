@@ -109,7 +109,6 @@ impl ChangeNotifier {
 pub struct HerdrCore {
     _terminal_maintenance: Option<crate::terminal_recovery::Maintenance>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
-    _remote_session_sync: Vec<crate::session_sync::SessionSyncHandle>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     owner_thread: ThreadId,
@@ -119,7 +118,10 @@ impl Drop for HerdrCore {
     fn drop(&mut self) {
         self._terminal_maintenance.take();
         self._session_sync.take();
-        self._remote_session_sync.clear();
+        // Taken under the lock, joined outside it: a coordinator's last act is
+        // to lock the runtime, so a join under the lock never returns.
+        let remote_syncs = { lock_recover(&self.runtime).take_remote_syncs() };
+        drop(remote_syncs);
         let worker = { lock_recover(&self.runtime).take_state_save_worker() };
         if let Some(worker) = worker
             && worker.join().is_err()
@@ -207,13 +209,14 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
             return ptr::null_mut();
         }
         let environment = environment::read_and_validate();
-        let home_path = environment.home_path.clone();
         let usage_paths = crate::usage::UsagePaths {
-            home: home_path.clone(),
-            claude_config_dir: environment.claude_config_dir.clone(),
+            home: environment.home_path.clone(),
+            claude_cwd: std::path::Path::new(&options.app_state_path)
+                .parent()
+                .filter(|directory| !directory.as_os_str().is_empty())
+                .map(std::path::Path::to_path_buf),
             codex_home: environment.codex_home.clone(),
         };
-        let remote_enabled = environment.remote_enabled;
         if options.herdr_socket_path.is_some()
             && let Some(path) = environment.herdr_socket_path_override.as_ref()
         {
@@ -242,75 +245,8 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         } else {
             None
         };
-        let mut remote_session_sync = Vec::new();
-        if remote_enabled {
-            for target in &options.remote_targets {
-                let result = (|| {
-                    let home_path = home_path.as_ref().ok_or_else(|| {
-                        "HOME is unavailable, so the SSH config cannot be resolved".to_owned()
-                    })?;
-                    let alias = crate::remote::SshAlias::from_config_file(
-                        &home_path.join(".ssh/config"),
-                        &target.ssh_alias,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    let client = Arc::new(
-                        crate::remote::RusshRemoteClient::new(alias)
-                            .map_err(|error| error.to_string())?,
-                    );
-                    let connector = client
-                        .herdr_api_connector(target.herdr_socket_path.clone())
-                        .map_err(|error| error.to_string())?;
-                    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(connector);
-                    lock_recover(&runtime).install_remote_control(
-                        crate::live::RemoteControlContext::new(
-                            target.id.clone(),
-                            Arc::clone(&connector),
-                            Arc::downgrade(&runtime),
-                            notifier.clone(),
-                        ),
-                    );
-                    lock_recover(&runtime).install_remote_terminal(
-                        crate::live::RemoteTerminalContext::new(
-                            target.id.clone(),
-                            Arc::clone(&client),
-                            target.herdr_socket_path.clone(),
-                            Arc::downgrade(&runtime),
-                            notifier.clone(),
-                        ),
-                    );
-                    lock_recover(&runtime).install_remote_file_transport(
-                        target.id.clone(),
-                        crate::remote::RusshSftpTransport::new(Arc::clone(&client)),
-                    );
-                    let context = crate::session_sync::SessionSyncContext::remote(
-                        target.id.clone(),
-                        target.label.clone(),
-                        connector,
-                        Arc::downgrade(&runtime),
-                        notifier.clone(),
-                    );
-                    crate::session_sync::spawn(context, None)
-                })();
-                match result {
-                    Ok(handle) => remote_session_sync.push(handle),
-                    Err(message) => {
-                        crate::diagnostic!(serde_json::json!({
-                            "component": "remote_session_sync",
-                            "kind": "coordinator.spawn_failed",
-                            "target": target.id,
-                            "message": message,
-                        }));
-                        let changed = lock_recover(&runtime).ingest_remote_session(
-                            &target.id,
-                            Err(crate::live::SessionFetchError::Unreachable(message)),
-                        );
-                        if changed {
-                            notifier.notify();
-                        }
-                    }
-                }
-            }
+        if lock_recover(&runtime).connect_registered_devices() {
+            notifier.notify();
         }
         let maintenance = match crate::terminal_recovery::Maintenance::spawn(
             Arc::downgrade(&runtime),
@@ -329,7 +265,6 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
         Box::into_raw(Box::new(HerdrCore {
             _terminal_maintenance: maintenance,
             _session_sync: session_sync,
-            _remote_session_sync: remote_session_sync,
             runtime,
             notifier,
             owner_thread: thread::current().id(),
@@ -357,7 +292,14 @@ pub extern "C" fn herdr_core_dispatch(core: *mut HerdrCore, event_json: *const u
             notify_change(core);
             return;
         };
-        let changed = lock_recover(&core.runtime).dispatch_json(bytes);
+        let (changed, retired_syncs) = {
+            let mut runtime = lock_recover(&core.runtime);
+            let changed = runtime.dispatch_json(bytes);
+            (changed, runtime.take_retired_remote_syncs())
+        };
+        // A removed device's coordinator is joined here, off the lock it
+        // needs to finish.
+        drop(retired_syncs);
         if changed {
             notify_change(core);
         }

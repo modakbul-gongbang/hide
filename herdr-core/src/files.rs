@@ -1,11 +1,19 @@
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use crate::model::{EditorConflictSnapshot, EditorDocumentSnapshot};
+use crate::model::{DocumentKind, EditorConflictSnapshot, EditorDocumentSnapshot};
 
 const MAX_EDITABLE_BYTES: u64 = 2 * 1024 * 1024;
+
+/// The first bytes of every PDF, whatever the file is called.
+const PDF_SIGNATURE: &[u8] = b"%PDF-";
+
+/// The image kinds the shell decodes with the platform image loader. The core
+/// does not decode images, so the extension is the decision; the loader
+/// reports a file that is not what its name says.
+const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "tiff", "heic", "avif"];
 
 pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
     let metadata =
@@ -15,39 +23,82 @@ pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
     }
     let modified = modified_milliseconds(&metadata)?;
     let language = language_for(path);
-    let (contents_utf8, readonly_reason) = if metadata.len() > MAX_EDITABLE_BYTES {
-        (
-            None,
-            Some("Files larger than 2 MB are preview-only".to_owned()),
-        )
-    } else {
-        match fs::read(path) {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(contents) => {
-                    let reason = metadata
-                        .permissions()
-                        .readonly()
-                        .then(|| "The file is read-only on disk; editing is disabled".to_owned());
-                    (Some(contents), reason)
-                }
-                Err(_) => (None, Some("Binary files are preview-only".to_owned())),
-            },
-            Err(_) => return Err("The selected file contents could not be read".to_owned()),
-        }
-    };
-
-    Ok(EditorDocumentSnapshot {
+    let document = |document_kind, contents_utf8, readonly_reason| EditorDocumentSnapshot {
         path: path.to_string_lossy().into_owned(),
-        language,
+        language: language.clone(),
+        document_kind,
         contents_utf8,
         opened_modified_at_unix_ms: Some(modified),
         dirty: false,
         readonly_reason,
         conflict: None,
-    })
+    };
+
+    // An image or a PDF is drawn from disk by the shell, so its size is not
+    // the editor's concern and its bytes are never carried in the snapshot.
+    if has_image_extension(path) {
+        return Ok(document(DocumentKind::Image, None, None));
+    }
+    if starts_with_pdf_signature(path)? {
+        return Ok(document(DocumentKind::Pdf, None, None));
+    }
+    if metadata.len() > MAX_EDITABLE_BYTES {
+        return Ok(document(
+            DocumentKind::Text,
+            None,
+            Some("Files larger than 2 MB are preview-only".to_owned()),
+        ));
+    }
+    let bytes =
+        fs::read(path).map_err(|_| "The selected file contents could not be read".to_owned())?;
+    let Ok(contents) = String::from_utf8(bytes) else {
+        return Ok(document(DocumentKind::Binary, None, None));
+    };
+    let kind = if language.as_deref() == Some("markdown") {
+        DocumentKind::Markdown
+    } else {
+        DocumentKind::Text
+    };
+    let reason = metadata
+        .permissions()
+        .readonly()
+        .then(|| "The file is read-only on disk; editing is disabled".to_owned());
+    Ok(document(kind, Some(contents), reason))
+}
+
+fn has_image_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            IMAGE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+        })
+}
+
+/// Reads only the signature's worth of bytes: a PDF is recognised by its
+/// content so that a file with no extension opens as one, and a large PDF is
+/// not read whole to find that out.
+fn starts_with_pdf_signature(path: &Path) -> Result<bool, String> {
+    let mut file =
+        File::open(path).map_err(|_| "The selected file contents could not be read".to_owned())?;
+    let mut header = [0u8; PDF_SIGNATURE.len()];
+    let mut filled = 0;
+    while filled < header.len() {
+        match file.read(&mut header[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => return Err("The selected file contents could not be read".to_owned()),
+        }
+    }
+    Ok(&header[..filled] == PDF_SIGNATURE)
 }
 
 pub fn update_draft(editor: &mut EditorDocumentSnapshot, contents: String) -> Result<(), String> {
+    if !editor.document_kind.is_editable() {
+        return Err(
+            "The current file is not a text document; the draft was not changed".to_owned(),
+        );
+    }
     if editor.readonly_reason.is_some() {
         return Err("The current file is read-only; the draft was not changed".to_owned());
     }
@@ -64,6 +115,9 @@ pub fn save(
 ) -> Result<(), String> {
     if editor.path != path.to_string_lossy() {
         return Err("The save target does not match the open document".to_owned());
+    }
+    if !editor.document_kind.is_editable() {
+        return Err("The current file is not a text document; the draft was preserved".to_owned());
     }
     if editor.readonly_reason.is_some() {
         return Err("The current file is read-only; the draft was preserved".to_owned());
@@ -507,7 +561,7 @@ fn language_for(path: &Path) -> Option<String> {
         "js" | "mjs" | "cjs" | "jsx" => "javascript",
         "ts" | "tsx" => "typescript",
         "json" | "jsonc" | "jsonl" => "json",
-        "md" | "markdown" => "markdown",
+        "md" | "markdown" | "mdown" => "markdown",
         "sh" | "bash" | "zsh" | "fish" => "bash",
         "toml" | "ini" | "cfg" => "ini",
         "py" | "pyw" => "python",
@@ -530,6 +584,7 @@ pub(crate) mod tests {
         let mut editor = EditorDocumentSnapshot {
             path: "/tmp/existing.txt".to_owned(),
             language: Some("txt".to_owned()),
+            document_kind: DocumentKind::Text,
             contents_utf8: Some("old".to_owned()),
             opened_modified_at_unix_ms: Some(1),
             dirty: false,
@@ -539,6 +594,86 @@ pub(crate) mod tests {
         update_draft(&mut editor, "new".to_owned()).unwrap();
         assert!(editor.dirty);
         assert_eq!(editor.contents_utf8.as_deref(), Some("new"));
+    }
+
+    fn kind_fixture(name: &str, bytes: &[u8]) -> PathBuf {
+        let root = explorer_fixture();
+        let path = root.join(name);
+        fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    /// D-02: a PDF is its signature, not its name, so it opens as one with
+    /// any extension or none; the snapshot carries no bytes for it and no
+    /// read-only reason, because the kind already says it takes no edits.
+    #[test]
+    fn a_pdf_is_recognised_by_its_signature_whatever_it_is_called() {
+        for name in ["report.pdf", "report", "report.txt"] {
+            let path = kind_fixture(name, b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n");
+            let document = open(&path).unwrap();
+            assert_eq!(document.document_kind, DocumentKind::Pdf, "{name}");
+            assert_eq!(document.contents_utf8, None, "{name}");
+            assert_eq!(document.readonly_reason, None, "{name}");
+            fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        }
+    }
+
+    /// B3 has a file called `.pdf` that is not one: the kind follows the
+    /// bytes, so the shell draws it as what it is rather than failing a
+    /// PDF decode it was never going to pass.
+    #[test]
+    fn a_file_named_pdf_without_the_signature_is_not_a_pdf() {
+        let text = kind_fixture("notes.pdf", b"just text");
+        assert_eq!(open(&text).unwrap().document_kind, DocumentKind::Text);
+        let binary = kind_fixture("blob.pdf", &[0xFF, 0xFE, 0x00, 0x80]);
+        let document = open(&binary).unwrap();
+        assert_eq!(document.document_kind, DocumentKind::Binary);
+        assert_eq!(document.contents_utf8, None);
+        assert_eq!(document.readonly_reason, None);
+        for path in [text, binary] {
+            fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        }
+    }
+
+    /// D-02: images keep the extension decision the shell used to make, and
+    /// the empty-signature case (a zero-byte file) is plain text.
+    #[test]
+    fn images_markdown_text_and_empty_files_take_their_kinds() {
+        let cases: [(&str, &[u8], DocumentKind); 6] = [
+            ("shot.PNG", &[0x89, b'P', b'N', b'G'], DocumentKind::Image),
+            ("photo.heic", b"", DocumentKind::Image),
+            ("README.md", b"# hi", DocumentKind::Markdown),
+            ("notes.mdown", b"# hi", DocumentKind::Markdown),
+            ("main.rs", b"fn main() {}", DocumentKind::Text),
+            ("empty", b"", DocumentKind::Text),
+        ];
+        for (name, bytes, expected) in cases {
+            let path = kind_fixture(name, bytes);
+            let document = open(&path).unwrap();
+            assert_eq!(document.document_kind, expected, "{name}");
+            assert_eq!(
+                document.contents_utf8.is_some(),
+                expected.is_editable(),
+                "{name}"
+            );
+            fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        }
+    }
+
+    /// D-01: the size reason stays on a text document; a non-text kind
+    /// refuses a draft on its own, before the read-only reason is asked.
+    #[test]
+    fn non_text_kinds_refuse_drafts_and_saves() {
+        let path = kind_fixture("report.pdf", b"%PDF-1.4");
+        let mut document = open(&path).unwrap();
+        let refused = update_draft(&mut document, "edited".to_owned()).unwrap_err();
+        assert!(refused.contains("not a text document"), "{refused}");
+        assert_eq!(document.contents_utf8, None);
+        assert!(!document.dirty);
+        let refused = save(&mut document, &path, "edited".to_owned(), None).unwrap_err();
+        assert!(refused.contains("not a text document"), "{refused}");
+        assert_eq!(fs::read(&path).unwrap(), b"%PDF-1.4");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]

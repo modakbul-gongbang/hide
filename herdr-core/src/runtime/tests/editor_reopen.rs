@@ -114,7 +114,7 @@ fn tab_order_is_unchanged_by_a_tab_switch() {
 }
 
 #[test]
-fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
+fn file_view_mode_is_per_open_tab_and_reopen_starts_live() {
     let (mut runtime, checkout_id, directory) = strip_checkout("file-view-mode");
     let first = directory.join("notes.md");
     let second = directory.join("second.md");
@@ -124,7 +124,7 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
     let first_id = runtime.snapshot.editor.active_tab_id.clone().unwrap();
     let event = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION, "kind": "file_view",
-        "payload": {"tab_id": first_id, "markdown_preview": false, "wrap": true}
+        "payload": {"tab_id": first_id, "markdown_live": false, "wrap": true}
     }))
     .unwrap();
     assert!(runtime.dispatch_json(&event));
@@ -133,15 +133,7 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
         "repeated selection publishes no change"
     );
     open_file(&mut runtime, &checkout_id, &second);
-    assert!(
-        runtime
-            .snapshot
-            .editor
-            .tabs
-            .last()
-            .unwrap()
-            .markdown_preview
-    );
+    assert!(runtime.snapshot.editor.tabs.last().unwrap().markdown_live);
     open_file(&mut runtime, &checkout_id, &first);
     let tab = runtime
         .snapshot
@@ -150,7 +142,7 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
         .iter()
         .find(|tab| tab.id == first_id)
         .unwrap();
-    assert!(!tab.markdown_preview);
+    assert!(!tab.markdown_live);
     assert!(tab.wrap);
     let close = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION, "kind": "file_close", "payload": {"tab_id": first_id}
@@ -158,15 +150,7 @@ fn file_view_mode_is_per_open_tab_and_reopen_starts_preview() {
     .unwrap();
     runtime.dispatch_json(&close);
     open_file(&mut runtime, &checkout_id, &first);
-    assert!(
-        runtime
-            .snapshot
-            .editor
-            .tabs
-            .last()
-            .unwrap()
-            .markdown_preview
-    );
+    assert!(runtime.snapshot.editor.tabs.last().unwrap().markdown_live);
 }
 
 #[test]
@@ -179,6 +163,7 @@ fn recent_navigation_restores_file_and_diff_across_projects_atomically() {
                 "workspace:order",
                 &checkout_id,
                 &file.to_string_lossy(),
+                false,
                 false,
             );
         } else {
@@ -482,6 +467,7 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
         label: "Closed pane".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let previous_workspace = workspace(
         &workspace_id,
@@ -910,7 +896,12 @@ fn selecting_a_change_opens_one_diff_tab_and_keeps_its_reader_alive() {
     );
 
     std::fs::write(&path, "{}\n").expect("file fixture");
-    runtime.open_file_tab("workspace:0", &checkout_id, path.to_string_lossy().as_ref());
+    runtime.open_file_tab(
+        "workspace:0",
+        &checkout_id,
+        path.to_string_lossy().as_ref(),
+        false,
+    );
     assert_eq!(runtime.snapshot().editor.tabs.len(), 2);
     assert_eq!(
         runtime
@@ -999,9 +990,10 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         label: "lib.rs".to_owned(),
         kind: EditorTabKind::File,
         diff_committed: None,
-        markdown_preview: false,
+        markdown_live: false,
         wrap: false,
         dirty: false,
+        preview: false,
     });
     runtime.editor_documents.insert(
         "file:w:c:lib".to_owned(),
@@ -1120,9 +1112,10 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
         label: file_name.clone(),
         kind: EditorTabKind::File,
         diff_committed: None,
-        markdown_preview: false,
+        markdown_live: false,
         wrap: false,
         dirty: false,
+        preview: false,
     });
 
     assert!(runtime.dispatch_json(&explorer_event(
@@ -1358,6 +1351,7 @@ fn explorer_file_create_opens_the_created_file_as_a_tab_and_others_do_not() {
         label: "workspace 0".to_owned(),
         path: root.to_string_lossy().into_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id = workspace::checkout_id_for_path("workspace:0", &root);
@@ -1459,6 +1453,7 @@ fn close_capture_completion_cannot_invert_user_close_order() {
     let mut runtime = runtime();
     let first = close_capture_request("first");
     let second = close_capture_request("second");
+    runtime.ensure_pending_close_from_request(&first);
     runtime.close_capture_order = VecDeque::from([first.key.clone(), second.key.clone()]);
 
     let (_, early_effects) = runtime.ingest_close_capture_result(
@@ -1467,8 +1462,15 @@ fn close_capture_completion_cannot_invert_user_close_order() {
             item: Some(closed_file("second", "/repo/second.rs")),
         }),
     );
-    assert!(early_effects.is_empty());
+    assert_eq!(
+        early_effects
+            .iter()
+            .map(|effect| effect.key.as_str())
+            .collect::<Vec<_>>(),
+        ["second"]
+    );
     assert_eq!(runtime.snapshot().recent_closed.count, 0);
+    assert_eq!(runtime.snapshot().recent_closed.pending.len(), 2);
 
     let (_, ordered_effects) = runtime.ingest_close_capture_result(
         &first,
@@ -1481,8 +1483,22 @@ fn close_capture_completion_cannot_invert_user_close_order() {
             .iter()
             .map(|effect| effect.key.as_str())
             .collect::<Vec<_>>(),
-        ["first", "second"]
+        ["first"]
     );
+    assert_eq!(runtime.snapshot().recent_closed.count, 0);
+    assert_eq!(runtime.snapshot().recent_closed.pending.len(), 2);
+
+    runtime.ingest_close_effect_result(&early_effects[0], Ok(()));
+    runtime.ingest_close_effect_result(&ordered_effects[0], Ok(()));
+    assert!(runtime.mark_close_topology_confirmed("first"));
+    assert!(runtime.promote_close_reservations());
+    assert_eq!(runtime.snapshot().recent_closed.count, 1);
+    assert_eq!(
+        runtime.snapshot().recent_closed.top_label.as_deref(),
+        Some("first.rs")
+    );
+    assert!(runtime.mark_close_topology_confirmed("second"));
+    assert!(runtime.promote_close_reservations());
     assert_eq!(runtime.snapshot().recent_closed.count, 2);
     assert_eq!(
         runtime.snapshot().recent_closed.top_label.as_deref(),
@@ -1499,6 +1515,7 @@ fn rejected_close_removes_only_its_reserved_item() {
     runtime.ingest_close_effect_result(
         &live::CloseEffectRequest {
             key: "first".to_owned(),
+            connection_generation: 0,
             target: live::CloseCaptureTarget::Tab {
                 tab_id: "tab:first".to_owned(),
             },
@@ -1527,6 +1544,7 @@ fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
         runtime.ingest_close_effect_result(
             &live::CloseEffectRequest {
                 key: "first".to_owned(),
+                connection_generation: 0,
                 target: live::CloseCaptureTarget::Tab {
                     tab_id: "tab:first".to_owned(),
                 },
@@ -1534,15 +1552,14 @@ fn ambiguous_close_result_keeps_the_reserved_item_for_reconciliation() {
             Err(error),
         );
 
-        assert_eq!(runtime.snapshot().recent_closed.count, 1);
-        assert_eq!(
-            runtime.snapshot().recent_closed.top_label.as_deref(),
-            Some("first.rs")
-        );
+        assert_eq!(runtime.snapshot().recent_closed.count, 0);
+        assert_eq!(runtime.snapshot().recent_closed.pending.len(), 1);
+        assert_eq!(runtime.snapshot().recent_closed.pending[0].phase, "unknown");
+        assert!(!runtime.snapshot().recent_closed.can_reopen);
         assert!(
             runtime.snapshot().recent_closed.notices[0]
                 .message
-                .contains("could not confirm")
+                .contains("unknown")
         );
     }
 }
@@ -1565,9 +1582,10 @@ fn recent_closed_tracks_file_tabs_but_not_diff_tabs() {
             label: format!("{id}.rs"),
             kind,
             diff_committed: (kind == EditorTabKind::Diff).then_some(false),
-            markdown_preview: false,
+            markdown_live: false,
             wrap: false,
             dirty: false,
+            preview: false,
         });
     }
     assert!(runtime.dispatch_json(&explorer_event(

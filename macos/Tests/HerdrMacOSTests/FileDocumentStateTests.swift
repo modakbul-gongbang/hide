@@ -43,7 +43,7 @@ struct FileDocumentStateTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("typing.txt")
         try "START ".write(to: file, atomically: true, encoding: .utf8)
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually { model.focusedCheckout != nil }
@@ -66,9 +66,9 @@ struct FileDocumentStateTests {
             view.insertText(String(character), replacementRange: view.selectedRange())
             try await Task.sleep(for: .milliseconds(3))
         }
-        try await Task.sleep(for: .milliseconds(700))
         #expect(view.string == "START " + input)
-        #expect(try String(contentsOf: file, encoding: .utf8) == "START " + input)
+        // The autosave debounce is 450 ms; a fixed wait races it on a loaded machine.
+        try await eventually { (try? String(contentsOf: file, encoding: .utf8)) == "START " + input }
 
     }
 
@@ -80,7 +80,7 @@ struct FileDocumentStateTests {
         let second = root.appendingPathComponent("second.md")
         try "First original".write(to: first, atomically: true, encoding: .utf8)
         try "Second original".write(to: second, atomically: true, encoding: .utf8)
-        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture", "--verification-no-remote",
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually { model.focusedCheckout != nil }
@@ -89,7 +89,7 @@ struct FileDocumentStateTests {
         let firstID = try #require(bridge.snapshot?.editor.activeTabID)
         bridge.updateDraft("First changed")
         bridge.scheduleFileSave("First changed")
-        bridge.setFileView(tabID: firstID, preview: true, wrap: true)
+        bridge.setFileView(tabID: firstID, live: true, wrap: true)
         model.openFile(second)
         try await eventually { bridge.snapshot?.editor.path == second.path }
         // Let the first save complete after a different file is visibly active.

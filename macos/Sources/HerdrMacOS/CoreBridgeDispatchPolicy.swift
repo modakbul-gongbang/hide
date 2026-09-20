@@ -182,7 +182,6 @@ struct LocalHerdrMutationDispatchPolicy {
         "close_pane",
         "close_tab",
         "create_pane",
-        "create_scratch_chat_tab",
         "create_tab",
         "create_worktree",
         "create_workspace",
@@ -205,11 +204,28 @@ struct LocalHerdrMutationDispatchPolicy {
         "toggle_zoom",
     ]
 
+    /// Events the shell sends on its own as a terminal view lays out, never
+    /// on an operator's action. A terminal measures itself before the first
+    /// Herdr connection, and the boundary still rejects that geometry (the
+    /// terminal host replays it once the session is connected), but a
+    /// rejected report is the shell's own bookkeeping: presenting it as a
+    /// refused action put a modal on every launch.
+    private static let shellReportKinds: Set<String> = [
+        "terminal_resize",
+        "terminal_viewport",
+    ]
+
     static func requiresConnectedHerdr(
         kind: String,
         whenDeviceIsRemote: Bool = false
     ) -> Bool {
         !whenDeviceIsRemote && isMutation(kind: kind)
+    }
+
+    /// Whether a rejection of this event is shown to the operator. Every
+    /// rejection is still refused at the boundary and recorded in the trace.
+    static func presentsRejection(kind: String) -> Bool {
+        !shellReportKinds.contains(kind)
     }
 
     static func isMutation(kind: String) -> Bool {

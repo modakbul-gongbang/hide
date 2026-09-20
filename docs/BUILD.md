@@ -49,6 +49,8 @@ A check script calls the same two scripts rather than cargo or swift directly, s
 
 `verify-swift.sh` first invokes `verify-cargo.sh build`, so a Swift run never links a stale core.
 Cargo checks freshness each time; a warm cycle does not recompile the release archive.
+Cargo decides freshness by mtime, which a fresh CI checkout always fails, so the `swift shell` lane caches the archive itself, keyed by the rustc version and a content hash of every source the archive is built from, and sets `HIDE_CORE_ARCHIVE_PREBUILT=1` on a hit; the wrapper then links the restored archive without a Cargo run and treats a missing archive as an error rather than a rebuild.
+On a miss the lane builds through `verify-cargo.sh build` and saves the result, so a Swift-only change restores main's archive.
 SwiftPM's `-L`/`-l` linkage does not declare the Rust archive as a build input, so, like `build_dev_app.sh`, the wrapper passes the archive's SHA-256 digest as a Swift compilation condition: a changed archive rebuilds the Swift targets, an identical one keeps the cache hot.
 Arguments after the mode reach swift unchanged, so `verify-swift.sh test --filter <TestName>` runs one suite.
 Neither wrapper assembles, signs or verifies an application bundle; that remains the responsibility of `build_dev_app.sh` and `build-app.sh`.

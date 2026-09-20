@@ -5,7 +5,7 @@ import Testing
 @Test func tabTitlePreservesStripIdentityWhileItsContextFollowsTheFocusedPane() throws {
     let tab = try JSONDecoder().decode(CoreTabSnapshot.self, from: Data(#"{"id":"w1:t1","workspace_id":"w1","checkout_id":"main","label":"Review","empty":false,"panes":[{"id":"w1:p1","herdr_label":"Build output","cwd":"/tmp/repo","status_label":"Idle","requires_close_confirmation":false},{"id":"w1:p2","terminal_title":"Terminal title","cwd":"/tmp/repo","status_label":"Working","requires_close_confirmation":false}]}"#.utf8))
     let agent = SidebarAgent(id: "a2", paneID: "w1:p2", workspaceLabel: "Repo", agentKind: "terminal",
-        symbol: "~", summary: "Review sidebar changes", elapsed: "", lastActivity: "", ambient: nil)
+        symbol: "~", identityLabel: "Review sidebar changes", elapsed: "", lastActivity: "")
     func item(_ paneID: String?) -> ShellTabItem? {
         ShellTabStrip.items(
             strip: [CoreStripTabSnapshot(id: "herdr:w1:t1", kind: .herdr, sourceID: "w1:t1", label: "Review")],

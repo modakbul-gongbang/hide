@@ -5,6 +5,10 @@ use crate::fake_herdr::FakeHerdr;
 
 #[path = "tests/agents_settings_remote.rs"]
 mod agents_settings_remote;
+#[path = "tests/devices.rs"]
+mod devices;
+#[path = "tests/editor_preview.rs"]
+mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
 mod editor_reopen;
 #[path = "tests/lineage.rs"]
@@ -242,90 +246,6 @@ fn assert_owner_conflict_observes_and_reconnects(owner_conflict: &str) {
     );
 }
 
-/// The Scratch projection's fixture: one Herdr workspace whose panes sit
-/// in the scratch folder, plus a project pane in another directory, so
-/// every assertion about separation has both sides present.
-fn scratch_session(
-    scratch_root: &str,
-    project_path: &str,
-    title_token: Option<&str>,
-) -> SessionSnapshotPayload {
-    let agent = match title_token {
-        Some(title) => serde_json::json!({
-            "pane_id": "s1:p1",
-            "cwd": scratch_root,
-            "agent": "claude",
-            "agent_status": "idle",
-            "tokens": {"activity": "0000000000001", "hide_chat_title": title}
-        }),
-        None => serde_json::json!({
-            "pane_id": "s1:p1",
-            "cwd": scratch_root,
-            "agent": "claude",
-            "agent_status": "idle",
-            "tokens": {"activity": "0000000000001"}
-        }),
-    };
-    serde_json::from_value(serde_json::json!({
-        "agents": [agent],
-        "workspaces": [
-            {"workspace_id": "s1", "label": "hide scratch"},
-            {"workspace_id": "w1", "label": "project"}
-        ],
-        "panes": [
-            {"pane_id": "s1:p1", "cwd": scratch_root},
-            {"pane_id": "s1:p2", "cwd": scratch_root},
-            {"pane_id": "w1:p1", "cwd": project_path}
-        ],
-        "tabs": [
-            {"workspace_id": "s1", "tab_id": "s1:t1", "label": ""},
-            {"workspace_id": "s1", "tab_id": "s1:t2", "label": ""},
-            {"workspace_id": "w1", "tab_id": "w1:t1", "label": ""}
-        ],
-        "layouts": [
-            {
-                "workspace_id": "s1", "tab_id": "s1:t1", "zoomed": false,
-                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
-                "focused_pane_id": "s1:p1",
-                "panes": [{"pane_id": "s1:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
-                "splits": []
-            },
-            {
-                "workspace_id": "s1", "tab_id": "s1:t2", "zoomed": false,
-                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
-                "focused_pane_id": "s1:p2",
-                "panes": [{"pane_id": "s1:p2", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
-                "splits": []
-            },
-            {
-                "workspace_id": "w1", "tab_id": "w1:t1", "zoomed": false,
-                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
-                "focused_pane_id": "w1:p1",
-                "panes": [{"pane_id": "w1:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
-                "splits": []
-            }
-        ]
-    }))
-    .expect("scratch session payload")
-}
-
-fn runtime_with_scratch(scratch_root: &str) -> Runtime {
-    let mut runtime = runtime();
-    runtime.scratch_root = scratch_root.to_owned();
-    runtime.snapshot.navigator.scratch.path = scratch_root.to_owned();
-    runtime
-}
-
-fn ingest_scratch(runtime: &mut Runtime, payload: SessionSnapshotPayload) {
-    let spaces = Runtime::session_spaces(&payload, &runtime.scratch_root);
-    let catalog = session_sync::PrecomputedCatalog {
-        registrations: Vec::new(),
-        workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),
-        roots: workspace::root_index(&spaces),
-    };
-    runtime.ingest_session_with_catalog(Ok(payload), Some(catalog));
-}
-
 fn context_payload() -> SessionSnapshotPayload {
     serde_json::from_value(serde_json::json!({
         "agents": [
@@ -353,7 +273,6 @@ fn runtime() -> Runtime {
         schema_version: SCHEMA_VERSION,
         herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
         herdr_bin_path: None,
-        remote_targets: Vec::new(),
         app_state_path: std::env::temp_dir()
             .join(format!(
                 "herdr-core-pet-runtime-{}-{}.json",
@@ -371,7 +290,6 @@ fn runtime() -> Runtime {
             chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: None,
-            claude_config_dir: None,
             codex_home: None,
         },
     )
@@ -518,7 +436,8 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
         cwd: cwd.to_owned(),
         status_label: "Attached".to_owned(),
         requires_close_confirmation: false,
-        summary: None,
+        requires_close_status_check: false,
+        identity_label: None,
         activity_at_unix_ms: None,
         fork: PaneForkSnapshot::default(),
         ports: Vec::new(),
@@ -588,7 +507,9 @@ fn workspace(
         session_workspace_ids: Vec::new(),
         last_activity_unix_ms: None,
         checkouts,
+        pinned: false,
         inactive_checkouts: Default::default(),
+        removal: Default::default(),
     }
 }
 
@@ -716,6 +637,7 @@ fn tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
         label: "order".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id = workspace::checkout_id_for_path("workspace:order", Path::new(checkout_path));
@@ -1068,6 +990,7 @@ fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
             label: format!("workspace {index}"),
             path: path.to_string_lossy().into_owned(),
             device_id: "local".to_owned(),
+            pinned: false,
         })
         .collect();
     runtime.rebuild_catalog();
@@ -1143,6 +1066,7 @@ fn closed_file(key: &str, path: &str) -> ClosedItem {
 fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
     live::CloseCaptureRequest {
         key: key.to_owned(),
+        connection_generation: 0,
         context: ClosedContext {
             workspace_id: "workspace:0".to_owned(),
             workspace_label: "Fixture".to_owned(),

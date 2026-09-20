@@ -49,7 +49,7 @@ fn reconciling_with_a_precomputed_catalog_runs_no_git() {
         "layouts": layouts,
     }))
     .expect("three-tab payload");
-    let spaces = Runtime::session_spaces(&payload, "");
+    let spaces = Runtime::session_spaces(&payload);
     let catalog = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),
@@ -120,7 +120,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
         }))
         .expect("one-tab payload")
     };
-    let spaces = Runtime::session_spaces(&payload(), "");
+    let spaces = Runtime::session_spaces(&payload());
     let fresh = session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(&[], &spaces, &no_worktrees()),
@@ -137,6 +137,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
             label: "stale".to_owned(),
             path: cwd.clone(),
             device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+            pinned: false,
         }],
         workspaces: Vec::new(),
         roots: workspace::RootIndex::new(),
@@ -494,6 +495,7 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
         label: "Partial".to_owned(),
         path: partial_path.to_owned(),
         device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
+        pinned: false,
     };
     runtime
         .workspace_creations_in_flight
@@ -534,33 +536,324 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
     assert!(error.message.contains("git init failed explicitly"));
 }
 
-#[test]
-fn removing_registration_in_use_preserves_it_and_explains_recovery() {
-    let mut runtime = runtime();
-    let path = std::env::temp_dir().join(format!("hide-registration-busy-{}", std::process::id()));
-    std::fs::create_dir_all(&path).unwrap();
+/// A registered project with panes, as `Remove project…` sees it: the
+/// session that `context_payload` describes, with its Alpha workspace
+/// registered so the row is a registration rather than a temporary folder.
+fn registered_context_runtime() -> (Runtime, WorkspaceRegistration) {
+    let mut runtime = live_runtime();
     let registration =
-        workspace::registration(path.to_str().unwrap(), "Busy project", "local").unwrap();
+        workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
     runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
-    runtime.last_session_spaces = vec![workspace::SessionSpace {
-        id: "w1".into(),
-        label: "Busy project".into(),
-        cwds: vec![registration.path.clone()],
-    }];
-    runtime.rebuild_catalog();
-    runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({
-        "schema_version": 2, "kind": "remove_workspace", "payload": {"workspace_id": registration.id}
-    })).unwrap());
+    runtime.ingest_session(Ok(context_payload()));
+    (runtime, registration)
+}
+
+fn remove_event(workspace_id: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "remove_workspace",
+        "payload": {"workspace_id": workspace_id}
+    }))
+    .unwrap()
+}
+
+/// B11, B12, B14. A project with panes is not refused: the confirmation
+/// counts come from the snapshot, the registration survives until Herdr
+/// confirms the closes, a timeout keeps it with the reason visible, and a
+/// repeat while the close runs starts nothing. Only the confirmation removes
+/// the row, and files are never touched.
+#[test]
+fn removing_a_registration_with_panes_closes_them_and_removes_only_on_confirmation() {
+    let (mut runtime, registration) = registered_context_runtime();
+    let alpha = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == registration.id)
+        .expect("the registered project row");
+    assert_eq!(alpha.removal.pane_count, 1);
+    assert_eq!(alpha.removal.running_agent_count, 1);
+
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration.clone()],
+        "the registration waits for Herdr's confirmation"
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+    assert!(
+        !runtime.dispatch_json(&remove_event(&registration.id)),
+        "a repeat while the close is in flight is a no-op"
+    );
+
+    assert!(runtime.ingest_workspace_close_result(
+        &registration.id,
+        Err("Timed out waiting for Herdr to confirm closed panes: w1:p1".to_owned())
+    ));
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration.clone()],
+        "a timeout leaves the project registered"
+    );
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_failed");
+    assert!(error.message.contains("Timed out"));
+    assert!(
+        !runtime.ingest_workspace_close_result(&registration.id, Ok(())),
+        "a late answer for a request that already failed authorizes nothing"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration.clone()]
+    );
+
+    // Retry: the same event starts over from the panes that remain.
+    runtime.snapshot.status.last_error = None;
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    assert!(runtime.ingest_workspace_close_result(&registration.id, Ok(())));
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+    assert!(
+        !runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == registration.id)
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+    assert!(
+        !runtime.dispatch_json(&remove_event(&registration.id)),
+        "the completed removal repeats quietly"
+    );
+}
+
+/// B12. Removing the project the operator is looking at takes its focus and
+/// pane selection with it: the next project comes forward and no sync tick
+/// reports the closed pane as "not available for the selected checkout".
+#[test]
+fn removing_the_focused_project_moves_focus_off_its_closed_panes() {
+    let (mut runtime, registration) = registered_context_runtime();
+    let alpha_checkout_id = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == registration.id)
+        .and_then(|workspace| workspace.checkouts.first())
+        .map(|checkout| checkout.id.clone())
+        .expect("alpha checkout");
+    runtime.snapshot.ui_state.focused_checkout_id = Some(alpha_checkout_id.clone());
+    runtime.snapshot.navigator.focused_checkout_id = Some(alpha_checkout_id.clone());
+    runtime.snapshot.ui_state.selected_pane_id = Some("w1:p1".to_owned());
+    runtime.snapshot.terminal.pane_id = Some("w1:p1".to_owned());
+    runtime.snapshot.focused.pane_id = Some("w1:p1".to_owned());
+
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    assert!(runtime.ingest_workspace_close_result(&registration.id, Ok(())));
+
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+    assert_ne!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(alpha_checkout_id.as_str()),
+        "focus does not stay on a checkout no catalog carries"
+    );
+    assert_ne!(
+        runtime.snapshot.ui_state.focused_checkout_id.as_deref(),
+        Some(alpha_checkout_id.as_str())
+    );
+    assert_ne!(runtime.snapshot.terminal.pane_id.as_deref(), Some("w1:p1"));
+    assert_ne!(
+        runtime.snapshot.ui_state.selected_pane_id.as_deref(),
+        Some("w1:p1")
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+}
+
+/// A registration id is keyed by its path, so adding the folder back while
+/// its removal is still closing panes would name the entry the retire is
+/// about to delete. Each side refuses the other with a visible reason, and a
+/// creation that lands anyway cancels the removal rather than losing the
+/// project it just opened a pane in.
+#[test]
+fn adding_a_folder_while_its_removal_closes_panes_is_refused_and_a_landed_add_cancels_it() {
+    let (mut runtime, registration) = registered_context_runtime();
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    assert!(
+        runtime
+            .workspace_removals_in_flight
+            .contains(&registration.id)
+    );
+
+    let create = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "create_workspace",
+        "payload": {"path": registration.path, "label": "Alpha again", "initialize_git": false}
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&create));
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_in_flight");
+    assert!(
+        !runtime
+            .workspace_creations_in_flight
+            .contains(&registration.path),
+        "the refused add starts no worker"
+    );
+
+    // The back-stop: a creation for the same id that got past the front
+    // door (another spelling of the path) lands while the close is pending.
+    runtime.snapshot.status.last_error = None;
+    runtime
+        .workspace_creations_in_flight
+        .insert("/tmp/./hide-context-alpha".to_owned());
+    assert!(runtime.ingest_workspace_creation(
+        "/tmp/./hide-context-alpha",
+        Ok(live::WorkspaceCreationOutcome {
+            registration: registration.clone(),
+            base_registrations: vec![registration.clone()],
+            registrations: vec![registration.clone()],
+            workspaces: Vec::new(),
+            session: context_payload(),
+            created_pane_id: Some("w1:p1".to_owned()),
+            git_init_error: None,
+        }),
+        3,
+    ));
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_cancelled");
+    assert!(
+        !runtime
+            .workspace_removals_in_flight
+            .contains(&registration.id)
+    );
+    assert!(
+        !runtime.ingest_workspace_close_result(&registration.id, Ok(())),
+        "the close's late answer authorizes nothing"
+    );
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration.clone()],
+        "the project stays registered"
+    );
+}
+
+/// The mirror: removing a project whose creation is still opening its first
+/// pane would be undone when that creation lands, so it is refused.
+#[test]
+fn removing_a_project_whose_creation_is_in_flight_is_refused() {
+    let (mut runtime, registration) = registered_context_runtime();
+    runtime
+        .workspace_creations_in_flight
+        .insert(registration.path.clone());
+
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.create_in_flight");
+    assert!(
+        !runtime
+            .workspace_removals_in_flight
+            .contains(&registration.id)
+    );
     assert_eq!(
         runtime.snapshot.ui_state.workspace_registrations,
         vec![registration]
     );
+}
+
+/// B14. Without a live Herdr connection the panes cannot be closed, so the
+/// registration stays and the banner says why instead of a half-removed row.
+#[test]
+fn removing_a_registration_with_panes_needs_a_live_connection() {
+    let mut runtime = runtime();
+    let registration =
+        workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
+    runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+    runtime.ingest_session(Ok(context_payload()));
+
+    assert!(runtime.dispatch_json(&remove_event(&registration.id)));
+
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![registration]
+    );
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_failed");
+    assert!(error.message.contains("live Herdr connection"));
+}
+
+/// B2, B4, B5, B10. Pinning moves the registered row ahead of its device's
+/// activity order, carries the flag on both the row and the registration
+/// that persists it, and unpinning puts it back. The same value again
+/// changes nothing; an id with no registration is refused, not ignored.
+#[test]
+fn pinning_a_registration_reorders_the_row_and_persists_the_flag() {
+    let mut runtime = runtime();
+    let alpha = workspace::registration("/tmp/hide-context-alpha", "Alpha", "local").unwrap();
+    let zeta = workspace::registration("/tmp/hide-context-zeta", "Zeta", "local").unwrap();
+    runtime.snapshot.ui_state.workspace_registrations = vec![alpha.clone(), zeta.clone()];
+    runtime.ingest_session(Ok(context_payload()));
+    let ids = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&runtime), [zeta.id.clone(), alpha.id.clone()]);
+    let pin = |workspace_id: &str, pinned: bool| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "workspace_pin_set",
+            "payload": {"workspace_id": workspace_id, "pinned": pinned}
+        }))
+        .unwrap()
+    };
+
+    assert!(runtime.dispatch_json(&pin(&alpha.id, true)));
+    assert_eq!(ids(&runtime), [alpha.id.clone(), zeta.id.clone()]);
+    assert!(runtime.snapshot.navigator.workspaces[0].pinned);
+    assert!(!runtime.snapshot.navigator.workspaces[1].pinned);
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations[0],
+        WorkspaceRegistration {
+            pinned: true,
+            ..alpha.clone()
+        }
+    );
+    let saved = std::fs::read_to_string(&runtime.state_path).unwrap();
+    let saved: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(saved["workspace_registrations"][0]["pinned"], true);
+    assert_eq!(saved["workspace_registrations"][1]["pinned"], false);
+
+    assert!(
+        !runtime.dispatch_json(&pin(&alpha.id, true)),
+        "the same value is a no-op"
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+
+    // The next session publish carries the pin through the catalog too.
+    runtime.ingest_session(Ok(context_payload()));
+    assert_eq!(ids(&runtime), [alpha.id.clone(), zeta.id.clone()]);
+    assert!(runtime.snapshot.navigator.workspaces[0].pinned);
+
+    assert!(runtime.dispatch_json(&pin(&alpha.id, false)));
+    assert_eq!(ids(&runtime), [zeta.id.clone(), alpha.id.clone()]);
+    assert!(!runtime.snapshot.navigator.workspaces[1].pinned);
+    assert!(!runtime.snapshot.ui_state.workspace_registrations[0].pinned);
+
+    assert!(runtime.dispatch_json(&pin("workspace:missing", true)));
     assert_eq!(
         runtime.snapshot.status.last_error.as_ref().unwrap().kind,
-        "workspace.registration_in_use"
+        "workspace.pin_unregistered"
     );
-    assert!(path.is_dir(), "Registration removal must not delete files");
-    std::fs::remove_dir(path).unwrap();
+    assert!(
+        runtime
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .all(|registration| !registration.pinned)
+    );
 }
 
 #[test]
@@ -617,63 +910,97 @@ fn cleanup_review_without_live_state_is_visible_and_never_deletes() {
     );
 }
 
+/// B11, D-12. `Open in History` on another checkout's header is one event:
+/// the checkout comes forward and the panel is on History afterwards, and
+/// the same event on the focused checkout only moves the section. A path
+/// the navigator does not list moves nothing and records the error.
 #[test]
-fn overview_inspection_does_not_focus_or_repeat_publish() {
-    struct CountConnections(std::sync::mpsc::Sender<()>);
-    impl hide_herdr_client::ApiConnector for CountConnections {
-        fn connect(
-            &self,
-        ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError> {
-            let _ = self.0.send(());
-            Err(hide_herdr_client::ApiError::Transport(
-                "fixture refused".into(),
-            ))
-        }
-    }
-    let mut runtime = live_runtime();
+fn overview_open_section_focuses_the_checkout_and_switches_the_panel_in_one_event() {
+    let mut runtime = runtime();
     runtime.ingest_session(Ok(context_payload()));
-    let mut target = runtime.snapshot.navigator.workspaces[1].checkouts[0].clone();
-    target.workspace_id = runtime.snapshot.navigator.workspaces[0].id.clone();
-    runtime.snapshot.navigator.workspaces[0]
-        .checkouts
-        .push(target.clone());
-    let project = runtime.snapshot.navigator.workspaces[0].clone();
-    runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+    let alpha = runtime.snapshot.navigator.workspaces[1].clone();
+    let zeta = runtime.snapshot.navigator.workspaces[0].clone();
+    runtime.focus_checkout(&zeta.id, &zeta.checkouts[0].id);
+    runtime.snapshot.ui_state.right_panel_visible = false;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Overview;
+    let event = |path: &str, section: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "overview_open_section",
+            "payload": {"checkout_path": path, "section": section}
+        }))
+        .unwrap()
+    };
+    assert!(runtime.dispatch_json(&event(&alpha.checkouts[0].path, "changes")));
+    assert_eq!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(alpha.checkouts[0].id.as_str())
+    );
+    assert!(runtime.snapshot.ui_state.right_panel_visible);
+    assert_eq!(
+        runtime.snapshot.ui_state.right_panel_section,
+        RightPanelSection::Changes
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+
     let focused = runtime.snapshot.focused.clone();
     let navigator = runtime.snapshot.navigator.clone();
     let ui = runtime.snapshot.ui_state.clone();
-    let (send, receive) = std::sync::mpsc::channel();
-    runtime.live.as_mut().unwrap().api_connector = Arc::new(CountConnections(send));
-    let event = serde_json::to_vec(&serde_json::json!({
-        "schema_version": 2, "kind": "overview_select", "payload": {"checkout_path": target.path}
-    }))
-    .unwrap();
-    runtime.dispatch_json(&event);
+    assert!(runtime.dispatch_json(&event("/tmp/hide-context-nowhere", "changes")));
     assert_eq!(
-        runtime.snapshot.card.inspected_checkout_path,
-        Some(target.path)
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("overview.unknown_checkout")
     );
     assert_eq!(runtime.snapshot.focused, focused);
     assert_eq!(runtime.snapshot.navigator, navigator);
     assert_eq!(runtime.snapshot.ui_state, ui);
-    assert!(
-        !runtime.dispatch_json(&event),
-        "Repeating an inspection has no effects"
+}
+
+/// B13, D-11. `New agent here` is one task operation in the slot the
+/// worktree sheet uses: the provider rides on it for the shell to start,
+/// a provider Hide has no launcher for is refused before anything is
+/// requested, and without a live Herdr the operation fails in place rather
+/// than hanging in `working`.
+#[test]
+fn agent_start_in_checkout_reports_through_the_task_operation_slot() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let checkout = runtime.snapshot.navigator.workspaces[0].checkouts[0].clone();
+    let event = |path: &str, provider: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "agent_start_in_checkout",
+            "payload": {"checkout_path": path, "provider": provider}
+        }))
+        .unwrap()
+    };
+    assert!(runtime.dispatch_json(&event(&checkout.path, "gemini")));
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("agent_start.unknown_provider")
     );
+    assert!(runtime.snapshot.task_operation.is_none());
+
+    assert!(runtime.dispatch_json(&event(&checkout.path, "claude")));
+    let operation = runtime.snapshot.task_operation.clone().expect("operation");
+    assert_eq!(operation.kind, "agent_start");
+    assert_eq!(operation.agent_kind.as_deref(), Some("claude"));
+    assert_eq!(operation.phase, "failed");
     assert!(
-        receive
-            .recv_timeout(std::time::Duration::from_millis(30))
-            .is_err(),
-        "Inspection sent a Herdr request"
+        operation
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("live Herdr connection"))
     );
-    let pane = &target.tabs[0].panes[0].id;
-    runtime.dispatch_json(&operator_focus_event(pane));
-    assert!(
-        receive
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .is_ok(),
-        "Explicit Open must notify Herdr"
-    );
+    assert_eq!(operation.pane_id, None);
 }
 
 #[test]
@@ -1026,6 +1353,7 @@ fn a_registration_herdr_already_has_a_workspace_for_is_listed_once() {
         label: "Duplicate".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
 
     let catalog = workspace::build_catalog(&registrations, &spaces, &no_worktrees());
@@ -1131,6 +1459,7 @@ fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
         label: "Last pane".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let previous_workspace = workspace(
         &workspace_id,
@@ -1208,6 +1537,7 @@ fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
         label: "Focused checkout".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let previous_workspace = workspace(
         &workspace_id,

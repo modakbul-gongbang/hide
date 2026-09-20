@@ -27,8 +27,5 @@ tokio = { version = "=1.53.1", features = ["io-util", "net", "rt-multi-thread", 
 trash = { version = "=5.2.8", default-features = false }
 ureq = { version = "=3.4.1", default-features = false, features = ["rustls"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "=3.7.0"
-
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

@@ -1,10 +1,10 @@
 ---
 version: alpha
-name: Raycast-design-analysis
+name: Hide-native-shell
 essence: |
-  A dark-canvas developer-tools system that treats the marketing page like an extended product screenshot — pure-near-black background, command-palette mockups as the hero, Inter typography with the ss03 stylistic set turned on, and a single white CTA pill that doesn't break the inky atmosphere. The chrome reads like Raycast's own command-palette UI scaled up to a marketing page: monochrome dark surfaces with a faint surface ladder (#07080a → #0d0d0d → #101111), tight 6–10px radius on cards, hairline 1px borders in #242728, and rare splashes of saturated accent (Hacker News yellow, Slack red, Mac green, info blue) reserved for product-tile category illustrations. The signature visual moment is a red gradient hero wordmark — three diagonal red stripes laid across the very top of the home page like a launch-banner — paired with full-bleed product UI screenshots that show Raycast's actual command palette, store, and AI chat surfaces.
+  A dark, compact macOS shell for coding agents: one near-black surface ladder (background, sidebar, panel, elevated, balloon), hairline dividers instead of shadows, Inter with the ss03 stylistic set at small sizes, neutral controls, and color reserved for semantic state marks. Every value the shell draws is a HideTheme token, and this document is what those tokens mean.
 description: |
-  Raycast's marketing system reads like an extended product screenshot. The chrome IS the in-product chrome at marketing scale: pure-near-black canvas, hairline 1px borders, command-palette-style cards, Inter typography with the ss03 stylistic set enabled site-wide, white CTA pill, and a small set of saturated category accent colors (yellow / red / green / blue) reserved for extension and feature illustrations. Section rhythm is generous (~96px) but the page never breaks tonal continuity — the whole site sits in one continuous dark mode.
+  The design contract for Hide's native surfaces: sidebar, checkout cards, tab strip, pane headers, right panel, status bar, Search, New Agent, Settings, file search and editor overlays. Raycast's launcher was the visual reference for the surface ladder and the typography; that analysis is no longer carried here, and these tokens govern the application.
 
 colors:
   background: "#101112"
@@ -17,37 +17,8 @@ colors:
   secondary: "#A4A5A8"
   muted: "#92959A"
   accent: "#D3D3D4"
-  marketing-primary: "#ffffff"
-  primary-pressed: "#e8e8e8"
-  on-primary: "#000000"
-  ink: "#f4f4f6"
-  body: "#cdcdcd"
-  charcoal: "#d3d3d4"
-  mute: "#9c9c9d"
-  ash: "#6a6b6c"
-  stone: "#434345"
-  on-dark: "#ffffff"
-  on-dark-mute: "rgba(255,255,255,0.72)"
-  canvas: "#07080a"
-  surface: "#0d0d0d"
-  surface-elevated: "#101111"
-  surface-card: "#121212"
-  button-fg: "#18191a"
-  hairline: "#242728"
-  hairline-soft: "rgba(255,255,255,0.08)"
-  hairline-strong: "rgba(255,255,255,0.16)"
-  accent-blue: "#57c1ff"
-  accent-blue-soft: "#182831"
-  accent-red: "#ff6161"
-  accent-red-soft: "rgba(255,97,97,0.15)"
-  accent-green: "#59d499"
-  accent-green-soft: "rgba(89,212,153,0.15)"
-  accent-yellow: "#ffc533"
-  accent-yellow-soft: "rgba(255,197,51,0.15)"
-  hero-stripe-start: "#ff5757"
-  hero-stripe-end: "#a1131a"
-  key-bg-start: "#121212"
-  key-bg-end: "#0d0d0d"
+  file-icon-neutral: "#9C9C9D"
+  file-icon-document: "#D3D3D4"
 
 typography:
   micro:
@@ -92,111 +63,6 @@ typography:
     fontWeight: 400
     lineHeight: 1.4
     fontFeature: '"ss03"'
-  display-xl:
-    fontFamily: Inter
-    fontSize: 64px
-    fontWeight: 600
-    lineHeight: 1.1
-    letterSpacing: 0
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  display-lg:
-    fontFamily: Inter
-    fontSize: 56px
-    fontWeight: 500
-    lineHeight: 1.17
-    letterSpacing: 0.2px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  heading-xl:
-    fontFamily: Inter
-    fontSize: 24px
-    fontWeight: 500
-    lineHeight: 1.6
-    letterSpacing: 0.2px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  heading-lg:
-    fontFamily: Inter
-    fontSize: 22px
-    fontWeight: 500
-    lineHeight: 1.15
-    letterSpacing: 0
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  heading-md:
-    fontFamily: Inter
-    fontSize: 20px
-    fontWeight: 500
-    lineHeight: 1.4
-    letterSpacing: 0.2px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  heading-sm:
-    fontFamily: Inter
-    fontSize: 18px
-    fontWeight: 500
-    lineHeight: 1.4
-    letterSpacing: 0.2px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  body-lg:
-    fontFamily: Inter
-    fontSize: 18px
-    fontWeight: 400
-    lineHeight: 1.6
-    letterSpacing: 0
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  body-md:
-    fontFamily: Inter
-    fontSize: 16px
-    fontWeight: 400
-    lineHeight: 1.6
-    letterSpacing: 0
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  body-strong:
-    fontFamily: Inter
-    fontSize: 16px
-    fontWeight: 500
-    lineHeight: 1.4
-    letterSpacing: 0.2px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  body-sm:
-    fontFamily: Inter
-    fontSize: 14px
-    fontWeight: 400
-    lineHeight: 1.6
-    letterSpacing: 0
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  body-sm-strong:
-    fontFamily: Inter
-    fontSize: 14px
-    fontWeight: 500
-    lineHeight: 1.6
-    letterSpacing: 0.2px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  caption-md:
-    fontFamily: Inter
-    fontSize: 13px
-    fontWeight: 400
-    lineHeight: 1.4
-    letterSpacing: 0.1px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  caption-sm:
-    fontFamily: Inter
-    fontSize: 12px
-    fontWeight: 400
-    lineHeight: 1.5
-    letterSpacing: 0.4px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  link-md:
-    fontFamily: Inter
-    fontSize: 16px
-    fontWeight: 500
-    lineHeight: 1.4
-    letterSpacing: 0.3px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
-  button-md:
-    fontFamily: Inter
-    fontSize: 14px
-    fontWeight: 500
-    lineHeight: 1.6
-    letterSpacing: 0.2px
-    fontFeature: '"calt", "kern", "liga", "ss03"'
 
 rounded:
   radiusExtraSmall: 4px
@@ -204,13 +70,6 @@ rounded:
   radiusMedium: 8px
   radiusLarge: 10px
   radiusExtraLarge: 16px
-  none: 0px
-  xs: 4px
-  sm: 6px
-  md: 8px
-  lg: 10px
-  xl: 16px
-  full: 9999px
 
 spacing:
   spacingNone: 0px
@@ -222,55 +81,18 @@ spacing:
   spacingXL: 24px
   spacingXXL: 32px
   spacingXXXL: 40px
-  xxs: 2px
-  xs: 4px
-  sm: 8px
-  md: 12px
-  lg: 16px
-  xl: 24px
-  xxl: 32px
-  section: 96px
 
 components:
   shell-hairline:
     backgroundColor: "{colors.divider}"
-  marketing-card-hairline:
-    backgroundColor: "{colors.hairline}"
-  marketing-soft-hairline:
-    backgroundColor: "{colors.hairline-soft}"
-  marketing-focus-hairline:
-    backgroundColor: "{colors.hairline-strong}"
-  marketing-inner-card:
-    backgroundColor: "{colors.button-fg}"
-  marketing-illustration-outline:
-    backgroundColor: "{colors.stone}"
-  marketing-red-illustration:
-    backgroundColor: "{colors.accent-red}"
-  marketing-red-wash:
-    backgroundColor: "{colors.accent-red-soft}"
-  marketing-green-illustration:
-    backgroundColor: "{colors.accent-green}"
-  marketing-green-wash:
-    backgroundColor: "{colors.accent-green-soft}"
-  marketing-yellow-illustration:
-    backgroundColor: "{colors.accent-yellow}"
-  marketing-yellow-wash:
-    backgroundColor: "{colors.accent-yellow-soft}"
-  hero-stripe-light-layer:
-    backgroundColor: "{colors.hero-stripe-start}"
-  hero-stripe-dark-layer:
-    backgroundColor: "{colors.hero-stripe-end}"
-  keycap-top-layer:
-    backgroundColor: "{colors.key-bg-start}"
-  keycap-bottom-layer:
-    backgroundColor: "{colors.key-bg-end}"
   shell-metadata:
     textColor: "{colors.muted}"
   shell-supporting-copy:
     textColor: "{colors.secondary}"
-  marketing-disabled-icon:
-    textColor: "{colors.ash}"
-
+  shell-file-icon-neutral:
+    textColor: "{colors.file-icon-neutral}"
+  shell-file-icon-document:
+    textColor: "{colors.file-icon-document}"
   shell-sidebar:
     backgroundColor: "{colors.sidebar}"
     textColor: "{colors.primary}"
@@ -296,526 +118,12 @@ components:
     textColor: "{colors.background}"
     typography: "{typography.body}"
     rounded: "{rounded.radiusSmall}"
-  marketing-heading:
-    textColor: "{colors.ink}"
-    typography: "{typography.heading-xl}"
-  marketing-supporting-copy:
-    textColor: "{colors.charcoal}"
-    typography: "{typography.body-md}"
-  marketing-category-illustration:
-    backgroundColor: "{colors.surface-card}"
-  button-primary:
-    backgroundColor: "{colors.marketing-primary}"
-    textColor: "{colors.on-primary}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.md}"
-    padding: 8px 16px
-    height: 36px
-  button-primary-pressed:
-    backgroundColor: "{colors.primary-pressed}"
-    textColor: "{colors.on-primary}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.md}"
-  button-secondary:
-    backgroundColor: "transparent"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.md}"
-    padding: 8px 16px
-    height: 36px
-  button-tertiary:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.md}"
-    padding: 8px 16px
-    height: 36px
-  button-disabled:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.mute}"
-    rounded: "{rounded.md}"
-  install-button:
-    backgroundColor: "transparent"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.button-md}"
-    rounded: "{rounded.md}"
-    padding: 6px 14px
-  text-input:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.md}"
-    padding: 8px 12px
-    height: 36px
-  text-input-focused:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.on-dark}"
-    rounded: "{rounded.md}"
-  store-search-bar:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.md}"
-    padding: 10px 16px
-    height: 44px
-  command-palette-row:
-    backgroundColor: "transparent"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.sm}"
-    padding: 6px 10px
-  command-palette-row-active:
-    backgroundColor: "{colors.surface-card}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.sm}"
-  pill-tab:
-    backgroundColor: "transparent"
-    textColor: "{colors.body}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.full}"
-    padding: 4px 10px
-  pill-tab-active:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.full}"
-  badge-pro:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.on-dark-mute}"
-    typography: "{typography.caption-sm}"
-    rounded: "{rounded.xs}"
-    padding: 2px 6px
-  badge-info-soft:
-    backgroundColor: "{colors.accent-blue-soft}"
-    textColor: "{colors.accent-blue}"
-    typography: "{typography.caption-sm}"
-    rounded: "{rounded.xs}"
-    padding: 2px 8px
-  keycap:
-    backgroundColor: "{colors.surface-card}"
-    textColor: "{colors.body}"
-    typography: "{typography.caption-md}"
-    rounded: "{rounded.xs}"
-    padding: 1px 6px
-    height: 20px
-  command-palette-card:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 0px
-  feature-card-dark:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 24px
-  feature-card-elevated:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 24px
-  store-extension-card:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.md}"
-    padding: 16px
-  pricing-tier-card:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 24px
-  pricing-tier-card-featured:
-    backgroundColor: "{colors.surface-elevated}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-md}"
-    rounded: "{rounded.lg}"
-    padding: 24px
-  hero-stripe-band:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.display-xl}"
-    rounded: "{rounded.none}"
-    padding: 96px 48px
-  app-icon-tile:
-    backgroundColor: "{colors.surface-card}"
-    rounded: "{rounded.md}"
-    size: 48px
-  app-icon-tile-large:
-    backgroundColor: "{colors.surface-card}"
-    rounded: "{rounded.md}"
-    size: 64px
-  primary-nav:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.on-dark}"
-    typography: "{typography.body-sm-strong}"
-    rounded: "{rounded.none}"
-    height: 56px
-  footer-section:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.body}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.none}"
-    padding: 64px 48px
-  link-inline:
-    textColor: "{colors.on-dark}"
-    typography: "{typography.link-md}"
 ---
-
-## Overview
-
-Raycast's marketing site reads like an extended product screenshot. The chrome IS the in-product command palette at marketing scale: pure near-black canvas (`{colors.canvas}` — `#07080a`), hairline 1px borders (`{colors.hairline}` — `#242728`), command-palette-style cards with rounded corners between 6 and 16px, Inter typography with the **ss03 stylistic set enabled site-wide** (a single character — the alternate `g` — that gives Raycast's typography its signature subtle distinction), a single white CTA pill that anchors every primary action, and small splashes of saturated accent reserved for category illustrations.
-
-The system has effectively one surface mode — dark — with a faint three-step surface ladder (`{colors.canvas}` → `{colors.surface}` → `{colors.surface-elevated}` → `{colors.surface-card}`) carrying cards, in-card panels, and key-cap glyph backgrounds. The signature decorative moment is a **red diagonal-stripe gradient band** across the very top of the home page hero, used as a launch-banner motif behind the headline (the only time saturated red appears on chrome). Beyond that single moment, color in the chrome is reserved for category accents inside extension and feature illustrations: Hacker News yellow, Slack red, Linear green, info blue.
-
-The design philosophy is "the marketing page is the product." Section rhythm is generous (`{spacing.section}` 96px) but the page never breaks tonal continuity — the whole site sits in one continuous dark mode, full-bleed product UI screenshots show Raycast's actual command palette / store / AI chat surfaces, and the typography ligature settings (`ss03`) are inherited from the in-product app's text rendering.
-
-**Key Characteristics:**
-- Single dark surface mode with a 4-step surface ladder: `{colors.canvas}` (#07080a) → `{colors.surface}` (#0d0d0d) → `{colors.surface-elevated}` (#101111) → `{colors.surface-card}` (#121212)
-- White CTA pill (`{colors.marketing-primary}` — #ffffff) is the universal primary action; everything else is monochrome dark
-- Inter typography with `font-feature-settings: "calt", "kern", "liga", "ss03"` enabled site-wide — the ss03 alternate `g` is part of the brand voice
-- Hairline 1px borders (`{colors.hairline}` — #242728) carry every card edge; there are no drop shadows in the system
-- Multi-radius card vocabulary: `{rounded.sm}` (6px) for keycaps, `{rounded.md}` (8px) for buttons and small cards, `{rounded.lg}` (10px) for feature cards, `{rounded.xl}` (16px) for hero command-palette mockup containers
-- Saturated category accents (`{colors.accent-yellow}` for Hacker News, `{colors.accent-red}` for Slack/Apple, `{colors.accent-green}` for productivity tools, `{colors.accent-blue}` for info) appear only inside extension tile imagery — never on chrome
-- Signature red diagonal-stripe gradient band at the very top of the hero — three angled stripes in `{colors.hero-stripe-start}` → `{colors.hero-stripe-end}`, used once per page maximum
-
-## Colors
-
-> **Source pages:** `/` (home), `/store` (extension marketplace), `/core-features/ai` (feature page), `/pricing` (plan tiers), `/thomas/hacker-news` (single extension detail). The chrome palette is identical across all five pages — the dark surface ladder, hairline borders, white CTA, and ss03-enabled typography are the same on every page.
-
-### Brand & Accent
-- **White** (`{colors.marketing-primary}` — `#ffffff`): the universal primary CTA pill background. "Download" / "Install Extension" / "Get Pro" — every primary action carries it.
-- **White Pressed** (`{colors.primary-pressed}` — `#e8e8e8`): pressed-state for the primary pill — a single notch dimmer.
-- **On Primary** (`{colors.on-primary}` — `#000000`): pure black text on the white CTA — the only place black appears as text in the system.
-
-### Surface
-- **Canvas** (`{colors.canvas}` — `#07080a`): pure-near-black page background. The dominant surface across every page.
-- **Surface** (`{colors.surface}` — `#0d0d0d`): card and elevated panel background — one notch lighter than canvas.
-- **Surface Elevated** (`{colors.surface-elevated}` — `#101111`): button-tertiary fill, text-input fill, store-search-bar fill, pill-tab-active fill.
-- **Surface Card** (`{colors.surface-card}` — `#121212`): app-icon-tile background, keycap fill, command-palette row hover.
-- **Button FG (in-card)** (`{colors.button-fg}` — `#18191a`): rare deep-card variant used inside featured pricing tier card backgrounds.
-- **Hairline** (`{colors.hairline}` — `#242728`): the universal 1px card border. Carries every card edge across every page.
-- **Hairline Soft** (`{colors.hairline-soft}` — `rgba(255,255,255,0.08)`): even fainter border on translucent over-image overlays.
-- **Hairline Strong** (`{colors.hairline-strong}` — `rgba(255,255,255,0.16)`): stronger 1px divider where a regular hairline reads as too soft.
-
-### Text
-- **Ink** (`{colors.ink}` — `#f4f4f6`): primary headlines on dark canvas. Slightly off-white for tonal coherence with the near-black background.
-- **Body** (`{colors.body}` — `#cdcdcd`): default paragraph text and inline-link color.
-- **Charcoal** (`{colors.charcoal}` — `#d3d3d4`): subtly brighter body where ink reads too soft.
-- **Mute** (`{colors.mute}` — `#9c9c9d`): metadata, footer link text, secondary captions.
-- **Ash** (`{colors.ash}` — `#6a6b6c`): disabled-state text, lowest-emphasis utility.
-- **Stone** (`{colors.stone}` — `#434345`): least-emphasis caption text and disabled icon color.
-- **On Dark** (`{colors.on-dark}` — `#ffffff`): interactive-state primary text (button label, focused tab).
-- **On Dark Mute** (`{colors.on-dark-mute}` — `rgba(255,255,255,0.72)`): translucent secondary text on dark surfaces.
-
-### Semantic
-- **Accent Blue** (`{colors.accent-blue}` — `#57c1ff`) + **Soft** (`{colors.accent-blue-soft}` — `the 15% blue overlay composited on the dark surface (#182831)`): info and informational badge — used inside feature illustrations and the rare "New" pill.
-- **Accent Red** (`{colors.accent-red}` — `#ff6161`) + **Soft** (`{colors.accent-red-soft}` — `rgba(255,97,97,0.15)`): destructive/error indicator + Slack/Apple category accent in extension illustrations.
-- **Accent Green** (`{colors.accent-green}` — `#59d499`) + **Soft** (`{colors.accent-green-soft}` — `rgba(89,212,153,0.15)`): success state + productivity category accent in extension illustrations.
-- **Accent Yellow** (`{colors.accent-yellow}` — `#ffc533`) + **Soft** (`{colors.accent-yellow-soft}` — `rgba(255,197,51,0.15)`): "warning" semantic + the Hacker News orange-yellow that appears as the most prominent accent illustration on the home page hero.
-
-### Brand Gradient
-- **Hero Stripe Gradient** — three diagonal red stripes layered across the very top of the home page hero, fading from `{colors.hero-stripe-start}` (`#ff5757`) to `{colors.hero-stripe-end}` (`#a1131a`). The system's only chromatic gradient on chrome — used once per page maximum and reserved for hero launch-banner moments.
-- **Keycap Gradient** — the small key-glyph background uses a subtle linear-gradient from `{colors.key-bg-start}` (`#121212`) to `{colors.key-bg-end}` (`#0d0d0d`) that gives Raycast's keycap UI its slight 3D-key feel.
-
-## Typography
-
-### Font Family
-**Inter** is the system's primary face, loaded with the `Inter Fallback` system fallback variant. Critically, Raycast enables `font-feature-settings: "calt", "kern", "liga", "ss03"` site-wide — the **ss03 stylistic set** swaps in Inter's alternate `g` glyph (single-story open `g`), which is the brand's signature typographic detail. Standard ligatures (`liga`), kerning (`kern`), and contextual alternates (`calt`) are also active. The display tier additionally enables `ss02` and `ss08` and disables standard `liga` to render the hero "Raycast Pro" wordmark with its distinctive geometric construction.
-
-There is no monospace face used outside of inline `<code>` chips in documentation; the marketing pages use Inter for everything.
-
-### Hierarchy
-
-| Token | Size | Weight | Line Height | Letter Spacing | Use |
-|---|---|---|---|---|---|
-| `{typography.display-xl}` | 64px | 600 | 1.1 | 0 | Hero "Built for the perfect tools" / "The new way to..." headline (with `liga: 0`, `ss02`, `ss08`) |
-| `{typography.display-lg}` | 56px | 500 | 1.17 | 0.2px | Section headline ("Explore", "Pricing", store hero "Store") |
-| `{typography.heading-xl}` | 24px | 500 | 1.6 | 0.2px | Sub-section heading, pricing-tier name |
-| `{typography.heading-lg}` | 22px | 500 | 1.15 | 0 | Mid-section feature heading |
-| `{typography.heading-md}` | 20px | 500 | 1.4 | 0.2px | Card group title, in-card heading |
-| `{typography.heading-sm}` | 18px | 500 | 1.4 | 0.2px | Small heading, extension card title |
-| `{typography.body-lg}` | 18px | 400 | 1.6 | 0 | Pricing tier description, hero subtitle |
-| `{typography.body-md}` | 16px | 400 | 1.6 | 0 | Default body, paragraph text |
-| `{typography.body-strong}` | 16px | 500 | 1.4 | 0.2px | Inline emphasis, primary nav link |
-| `{typography.body-sm}` | 14px | 400 | 1.6 | 0 | Card description, secondary copy |
-| `{typography.body-sm-strong}` | 14px | 500 | 1.6 | 0.2px | In-card label, table-header text |
-| `{typography.caption-md}` | 13px | 400 | 1.4 | 0.1px | Caption, metadata |
-| `{typography.caption-sm}` | 12px | 400 | 1.5 | 0.4px | Smallest utility text, badge label |
-| `{typography.link-md}` | 16px | 500 | 1.4 | 0.3px | Inline body anchor link |
-| `{typography.button-md}` | 14px | 500 | 1.6 | 0.2px | Standard button label |
-
-### Principles
-The hierarchy works on a 1.6-line-height ladder for body and a 1.1–1.4 ladder for display/heading. Letter-spacing is consistently positive (0.1–0.4px) — slightly opening the type — which gives Raycast's chrome an airy quality at body sizes despite the dark canvas. The `ss03` stylistic set is the brand's most distinctive typographic detail; without it, the body face renders identically to plain Inter and loses Raycast's signature rendering.
-
-### Note on Font Substitutes
-Inter is open-source and Google-Fonts-hosted; load it directly. To preserve the brand's signature look, you must enable `font-feature-settings: "calt", "kern", "liga", "ss03"` on the body element. Without `ss03`, the typography is recognizably "Inter default" rather than "Raycast." On systems where Inter cannot be loaded, the documented fallback is `Inter Fallback` (a self-hosted variant) → `system-ui`. **JetBrains Mono** or **Geist Mono** are acceptable substitutes for inline code chips when needed, though Raycast's marketing chrome rarely uses code-styled text.
-
-## Layout
-
-### Spacing System
-- **Base unit:** 8px (with 2/4/12px steps for tight inline gaps).
-- **Tokens (front matter):** `{spacing.xxs}` (2px) · `{spacing.xs}` (4px) · `{spacing.sm}` (8px) · `{spacing.md}` (12px) · `{spacing.lg}` (16px) · `{spacing.xl}` (24px) · `{spacing.xxl}` (32px) · `{spacing.section}` (96px).
-- **Universal section rhythm:** every page in the set uses `{spacing.section}` (96px) as the vertical gap between major content blocks. Card grids use `{spacing.lg}` (16px) gutters; in-card padding sits at `{spacing.xl}` (24px) for feature cards and `{spacing.lg}` (16px) for store extension cards.
-
-### Grid & Container
-- **Max width:** ~1240px content area at desktop with 24px gutters (~48px at ultrawide). Hero command-palette mockups run wider (~1080px) with the page background extending to full bleed.
-- **Store extension grid:** 2-up at desktop with rows of 2 cards stacked, collapsing to 1-up at mobile. Each card is a horizontal layout with a large square app icon at the left and copy + Install button at the right.
-- **Pricing tier grid:** 3-up at desktop (Free / Pro / Pro+Advanced AI), collapsing to 1-up stacked at mobile.
-- **Featured extension card grid:** 3-up at desktop in the "Featured" row at the top of the store page.
-- **Comparison table:** full-width on the pricing page below the tier cards — 5-column table (Free / Pro / Advanced AI / Custom for Teams / Enterprise) with feature rows.
-- **Footer:** 6-column horizontal link grid at desktop, collapsing to 2-up at tablet and 1-up at mobile.
-
-### Whitespace Philosophy
-Whitespace is generous and the canvas is uninterrupted. Sections sit 96px apart with no decorative dividers between them — the dark canvas continues edge-to-edge from hero to footer. Inside a section, content is left-aligned in a tight column, with command-palette mockup imagery occupying the right 50–60% of the band on home-page feature rows. The signature decorative element — the red diagonal-stripe gradient band — only appears in the very first hero band; from the second section down, the page is monochrome dark.
-
-## Elevation & Depth
-
-| Level | Treatment | Use |
-|---|---|---|
-| 0 — Flat | No border, no shadow | Default for canvas-on-canvas blocks, hero text, footer body |
-| 1 — Hairline border | 1px solid `{colors.hairline}` (#242728) | Every card on `{colors.surface}`, store extension card, pricing tier card |
-| 2 — Hairline strong | 1px solid `{colors.hairline-strong}` | Stronger inline divider, table-row separator on the comparison table |
-| 3 — Surface ladder elevation | `{colors.canvas}` → `{colors.surface}` → `{colors.surface-elevated}` → `{colors.surface-card}` | Multi-step background-color ladder used to create elevation without shadows |
-
-The system has no drop-shadow elevation at all. Depth is built entirely from the surface-color ladder: each notch lighter on the dark scale reads as one step closer to the viewer.
-
-### Decorative Depth
-Depth comes from product imagery and a single stripe-gradient band:
-- **Hero stripe gradient** — three diagonal red stripes (`{colors.hero-stripe-start}` → `{colors.hero-stripe-end}`) layered across the home-page hero band, evoking a launch-banner / motion-blur effect. The system's signature decorative moment.
-- **Command-palette mockups** — full-fidelity Raycast in-product UI screenshots (the actual Spotlight-style overlay with rounded keycaps, command rows, and accent-color glyphs) sitting inside the home-page hero and feature rows. These ARE the brand decoration.
-- **App icon tiles** — small 48–64px rounded-corner tiles displaying real app icons (Slack, Spotify, Figma, Notion, Linear, Hacker News) inside store and feature illustrations.
-- **Keycap glyphs** — subtle gradient-filled rounded keycap glyphs used inline to indicate keyboard shortcuts (e.g., `⌘ K`), with a faint `{colors.key-bg-start}` → `{colors.key-bg-end}` linear gradient suggesting a physical key surface.
-
-## Shapes
-
-### Border Radius Scale
-
-| Token | Value | Use |
-|---|---|---|
-| `{rounded.none}` | 0px | Hero band, primary nav, footer, full-bleed structural surfaces |
-| `{rounded.xs}` | 4px | Keycap glyphs, badge-pro chips, small inline tags |
-| `{rounded.sm}` | 6px | Command-palette row, inline buttons, micro chips |
-| `{rounded.md}` | 8px | Standard buttons, text inputs, store search bar, app-icon tiles, store extension card |
-| `{rounded.lg}` | 10px | Feature card, command-palette mockup card, pricing tier card |
-| `{rounded.xl}` | 16px | Large hero command-palette mockup container, oversized feature panel |
-| `{rounded.full}` | 9999px | Pill-tab chips, avatar circles |
-
-The radius vocabulary clusters tightly between 4 and 16px, with most chrome at 6–10px. The system never goes flat (0px) on cards and never above 16px except for fully-rounded pills.
-
-### Photography Geometry
-There is no traditional photography. Visual elements are limited to:
-- **Command-palette mockups** — full-fidelity Raycast UI screenshots at 16:9 or 4:3 aspect inside `{rounded.xl}` (16px) containers.
-- **App icon tiles** — 48–64px square at `{rounded.md}` (8px), displaying real app icons.
-- **Avatar circles** — 32–40px at `{rounded.full}` for in-extension author attribution.
-- **Hero stripe gradient** — full-bleed wash with no aspect ratio.
-
-## Components
-
-> The marketing reference below covers Default and Active/Pressed.
-> Native shell hover, tooltip, and held-key states are specified in In-Product Components.
-
-### Buttons
-
-**`button-primary`** — the universal Raycast CTA
-- Background `{colors.marketing-primary}` (white), text `{colors.on-primary}` (black), type `{typography.button-md}`, padding `8px 16px`, height ~36px, rounded `{rounded.md}`.
-- Used for "Download" (sticky top-nav CTA), "Get Pro", "Install" — every primary action across every surface.
-- Pressed state lives in `button-primary-pressed` — background dims to `{colors.primary-pressed}`.
-
-**`button-secondary`** — transparent text button
-- Background transparent, text `{colors.on-dark}`, type `{typography.button-md}`, padding `8px 16px`, height ~36px, rounded `{rounded.md}`.
-- Lower-emphasis action: "Sign in" (top nav), "Learn more →", "View on GitHub".
-
-**`button-tertiary`** — soft surface button
-- Background `{colors.surface-elevated}`, text `{colors.on-dark}`, type `{typography.button-md}`, padding `8px 16px`, height ~36px, rounded `{rounded.md}`.
-- Mid-emphasis: "Watch demo", "View extension", "Manage" buttons inside cards.
-
-**`button-disabled`**
-- Background `{colors.surface-elevated}`, text `{colors.mute}`; the disabled icon retains `{colors.ash}`.
-
-**`install-button`** — the store-page install pill
-- Background transparent with 1px solid `{colors.hairline-strong}` border, text `{colors.on-dark}`, type `{typography.button-md}`, padding `6px 14px`, rounded `{rounded.md}`.
-- Sits at the right edge of every store extension card with the label "Install Extension".
-
-### Filter & Tab Chips
-
-**`pill-tab`** + **`pill-tab-active`** — small filter chip strip
-- Default: transparent background, text `{colors.body}`, type `{typography.body-sm}`, padding `4px 10px`, rounded `{rounded.full}`.
-- Active: background flips to `{colors.surface-elevated}`, text `{colors.on-dark}` — the chip "lifts" by one surface notch.
-- Used in the store filter row ("All Extensions", "Recently Added", "Most Popular") and similar segmented controls.
-
-**`badge-pro`** — small Pro/Plan label
-- Background `{colors.surface-elevated}`, text `{colors.on-dark-mute}`, type `{typography.caption-sm}`, padding `2px 6px`, rounded `{rounded.xs}`.
-- Inline "Pro" / "Pro+" / "Free" tier indicators on pricing tier cards.
-
-**`badge-info-soft`** — translucent info chip
-- Background `{colors.accent-blue-soft}`, text `{colors.accent-blue}`, type `{typography.caption-sm}`, padding `2px 8px`, rounded `{rounded.xs}`.
-- Rare "New" / "Beta" inline tag.
-
-### Inputs & Forms
-
-**`text-input`** + **`text-input-focused`**
-- Default: background `{colors.surface-elevated}`, text `{colors.on-dark}`, 1px solid `{colors.hairline}`, type `{typography.body-md}`, padding `8px 12px`, height ~36px, rounded `{rounded.md}`.
-- Focused: same surface; 1px border becomes `{colors.hairline-strong}` — a subtle brightening rather than a colored ring.
-
-**`store-search-bar`** — the store-page search field
-- Background `{colors.surface-elevated}`, text `{colors.on-dark}`, type `{typography.body-md}`, padding `10px 16px`, height ~44px, rounded `{rounded.md}`.
-- Sits at the top of the store page hero with a magnifier icon at the left and "Search the store..." placeholder. Slightly taller than the standard `text-input`.
-
-### Cards & Containers
-
-**`command-palette-card`** — the home-page hero command-palette mockup
-- Container: background `{colors.surface}`, 1px solid `{colors.hairline}`, padding 0 (the mockup contents fill the card), rounded `{rounded.lg}` or `{rounded.xl}` depending on hero size.
-- Layout: top header strip with macOS traffic-light dots + a search input row, body with a vertical stack of `{component.command-palette-row}` items, bottom-right keycap hint cluster.
-
-**`command-palette-row`** + **`command-palette-row-active`** — single row inside the command palette
-- Default: transparent background, text `{colors.on-dark}` in `{typography.body-md}`, padding `6px 10px`, rounded `{rounded.sm}`.
-- Active: background `{colors.surface-card}` (one notch lighter than the surrounding palette card) — the selection state.
-- Each row contains a small app-icon tile + label + optional keycap shortcut at the right edge.
-
-**`feature-card-dark`** — standard product feature card
-- Container: background `{colors.surface}`, 1px solid `{colors.hairline}`, padding `{spacing.xl}` (24px), rounded `{rounded.lg}`.
-- Used in 2- or 3-up grids on home and feature pages — pairs a small product mockup or app-icon row with body copy and a "Learn more →" `{component.button-secondary}`.
-
-**`feature-card-elevated`** — slightly-elevated variant
-- Same chrome as `feature-card-dark` but background flips to `{colors.surface-elevated}` — used to break visual rhythm in alternating feature rows.
-
-**`store-extension-card`** — store-page extension card
-- Container: background `{colors.surface}`, 1px solid `{colors.hairline}`, padding `{spacing.lg}` (16px), rounded `{rounded.md}`.
-- Layout: 48px `{component.app-icon-tile}` at left, vertical stack of name + by-author metadata + 1-line description in the center, `{component.install-button}` at the right edge.
-
-**`pricing-tier-card`** — pricing plan card (default tier)
-- Container: background `{colors.surface}`, 1px solid `{colors.hairline}`, padding `{spacing.xl}` (24px), rounded `{rounded.lg}`.
-- Layout: tier name in `{typography.heading-xl}` (24px), price in larger numeric in `{typography.display-lg}`, body description in `{typography.body-lg}`, CTA `{component.button-primary}` (or `{component.button-secondary}` for free tier), feature checklist with `✓` glyphs.
-
-**`pricing-tier-card-featured`** — middle "Pro" featured tier
-- Same chrome but background flips to `{colors.surface-elevated}` (one notch lighter) — the only visual cue distinguishing the featured tier from the surrounding cards.
-
-**`hero-stripe-band`** — home-page hero with red stripe gradient
-- Background `{colors.canvas}` with three diagonal red stripes layered across the top half (`{colors.hero-stripe-start}` → `{colors.hero-stripe-end}`).
-- Padding `{spacing.section}` 96px vertical / 48px horizontal, rounded `{rounded.none}`.
-- Carries the hero headline in `{typography.display-xl}` and a single `{component.button-primary}` "Download" CTA.
-
-### Decorative
-
-**`app-icon-tile`** — small 48px square app icon
-- Background `{colors.surface-card}`, padding 0 (icon fills the tile), rounded `{rounded.md}`, size 48×48.
-- Used in command-palette rows and store extension cards.
-
-**`app-icon-tile-large`** — 64px feature variant
-- Same but at 64×64. Used in featured store cards and home-page hero illustration rows.
-
-**`keycap`** — keyboard shortcut glyph
-- Background `{colors.surface-card}` with a subtle linear gradient `{colors.key-bg-start}` → `{colors.key-bg-end}`, text `{colors.body}` in `{typography.caption-md}`, padding `1px 6px`, height ~20px, rounded `{rounded.xs}`.
-- Renders inline command-palette shortcut hints like `⌘ K`, `⏎`, `Esc`. The signature "physical-key" feel on a flat dark canvas.
-
-### Navigation
-
-**`primary-nav`**
-- Background `{colors.canvas}`, text `{colors.on-dark}`, height ~56px, type `{typography.body-sm-strong}`, rounded `{rounded.none}`, with a 1px `{colors.hairline}` bottom rule.
-- Layout (desktop): Raycast wordmark at left, centered nav cluster ("Pro · AI · Store · Manual · Changelog · Blog · Pricing"), right cluster (Sign in link + the always-white `{component.button-primary}` "Download" CTA pill).
-
-**Top Nav (Mobile)**
-- Hamburger menu icon at left, Raycast wordmark at center, "Download" white CTA pill at right. Primary nav collapses into a full-screen drawer that slides from the left.
-
-### Footer
-
-**`footer-section`**
-- Background `{colors.canvas}`, text `{colors.body}` in `{typography.body-sm}`, padding `64px 48px`, with a 1px `{colors.hairline}` top rule.
-- Layout: 6-column horizontal link grid (Product · Core Features · Top Extensions · Company · Community · By Raycast) with column headers in `{typography.body-sm-strong}` `{colors.on-dark}` and link lists in `{typography.body-sm}` `{colors.body}`.
-- Bottom row: small Raycast wordmark + a subscribe newsletter input field with `{component.button-primary}` "Subscribe" at the right.
-- The very top of the footer band has a faint red stripe-gradient repeat — a smaller echo of the hero's diagonal stripe motif.
-
-### Inline
-
-**`link-inline`** — body-prose anchor link
-- `{colors.on-dark}` text with no underline by default; underlines on focus. Inline body links are full-white rather than a tinted accent color, which keeps the dark canvas tonally pure.
-
-## Do's and Don'ts
-
-### Do
-- Render the entire site in one continuous dark mode. There is no light variant in the system.
-- Use `{colors.marketing-primary}` (white pill) for every primary CTA. There is no second primary color — white IS the brand action.
-- Build elevation from the surface-color ladder (`{colors.canvas}` → `{colors.surface}` → `{colors.surface-elevated}` → `{colors.surface-card}`), never from drop shadows.
-- Enable `font-feature-settings: "calt", "kern", "liga", "ss03"` on the body element. The ss03 alternate `g` is part of the brand identity.
-- Anchor a `{component.command-palette-card}` mockup as the hero's load-bearing visual. Real Raycast UI is the brand.
-- Use `{component.keycap}` glyphs inline to indicate keyboard shortcuts. Subtle key-bg gradient (`{colors.key-bg-start}` → `{colors.key-bg-end}`) is the brand's only "depth" decoration.
-- Reserve `{colors.hero-stripe-start}` → `{colors.hero-stripe-end}` red gradient for the hero band exactly once per page. Never repeat the stripe gradient deeper in the page.
-- Use saturated category accents (`{colors.accent-yellow}`, `{colors.accent-red}`, `{colors.accent-green}`, `{colors.accent-blue}`) only inside extension and feature illustrations — never on chrome buttons or text.
-
-### Don't
-
-- Do not use native `.help()` tooltips in the main shell; use the shared command tooltip.
-  The excluded Pet view retains its native tooltip.
-- Don't introduce a light mode. The system is dark-only by design.
-- Don't add drop shadows on cards. Elevation is built from the surface ladder, not from shadows.
-- Don't replace `{colors.marketing-primary}` (white) with a tinted accent for the primary CTA. Pure white is the brand action color.
-- Don't use the saturated accent colors (`{colors.accent-yellow}`, `{colors.accent-red}`, `{colors.accent-green}`, `{colors.accent-blue}`) on text, buttons, or chrome surfaces. They belong inside extension illustrations.
-- Don't repeat the hero stripe gradient outside the top hero band. The one-band rule is the system's restraint.
-- Don't use Inter without the `ss03` feature flag enabled. The chrome will lose its signature voice.
-- Don't pad cards with 32px+ on all sides. The system runs tight at 16–24px in-card padding.
-
-## Responsive Behavior
-
-### Breakpoints
-
-| Name | Width | Key Changes |
-|---|---|---|
-| ultrawide | 1920px+ | Content max-width holds at 1240px; outer gutters grow to ~80px |
-| desktop-large | 1440px | Default — 3-up pricing grid, 2-up store extension grid |
-| desktop | 1280px | Same with narrower outer gutters |
-| desktop-small | 1024px | 3-up pricing collapses to 2+1; primary nav remains horizontal |
-| tablet | 768px | Pricing → 1-up stacked; primary nav becomes hamburger drawer |
-| mobile | 480px | Single-column everything; hero `{typography.display-xl}` scales 64px → ~36px |
-| mobile-narrow | 320px | Section padding tightens to 48px |
-
-### Touch Targets
-All interactive elements meet WCAG AA at 36px+. `{component.button-primary}` and `{component.button-tertiary}` sit at 36px height with 16px padding. `{component.text-input}` sits at 36px. `{component.store-search-bar}` sits at 44px (above AAA). `{component.pill-tab}` is ~24–28px height with 10px padding extending to 36–40px tappable via inline padding (above AA but below AAA — intentional, the chips are compact). `{component.install-button}` sits at ~32px height with 14px padding.
-
-### Collapsing Strategy
-- **Primary nav:** desktop horizontal cluster → tablet hamburger drawer at 768px. The white "Download" CTA stays visible at every breakpoint.
-- **Hero command-palette mockup:** desktop full-fidelity 2-column with copy at left + mockup at right → tablet stacks vertical with mockup below copy → mobile mockup scales down to ~80% width.
-- **Store extension grid:** 2-up → 1-up at tablet.
-- **Pricing tier grid:** 3-up → 2+1 at desktop-small → 1-up stacked at tablet.
-- **Comparison table:** desktop full 5-column → tablet horizontal scroll → mobile vertical card stack with one tier per card.
-- **Footer:** 6-up link columns → 3-up at tablet → 2-up at mobile-landscape → 1-up at mobile.
-- **Section padding:** `{spacing.section}` (96px) desktop → 64px tablet → 48px mobile.
-- **Hero headline:** `{typography.display-xl}` (64px) at desktop, scaling 56px / 44px / 36px down the breakpoint stack.
-
-### Image Behavior
-The only "imagery" in the system is in-product Raycast UI screenshots and small app-icon assets:
-- **Command-palette mockups** scale fluidly with the container; the in-product UI itself is responsive and re-renders for each breakpoint.
-- **App-icon tiles** stay at 48–64px fixed size at every breakpoint; they tile in flexible rows that wrap at narrower widths.
-- **Hero stripe gradient** stays at the top of the hero band at every breakpoint with the stripe angle preserved.
-
-## Iteration Guide
-
-1. Focus on ONE component at a time. Pull its YAML entry and verify every property resolves.
-2. Reference component names and tokens directly (`{colors.marketing-primary}`, `{component.button-primary-pressed}`, `{rounded.md}`) — do not paraphrase.
-3. Run `npx @google/design.md lint DESIGN.md` after edits — `broken-ref`, `contrast-ratio`, and `orphaned-tokens` warnings flag issues automatically.
-4. Add new variants as separate component entries (`-pressed`, `-disabled`, `-active`) — do not bury them inside prose.
-5. Default body to `{typography.body-md}` (16px / 400 / 1.6); reach for `{typography.body-strong}` for emphasis; reserve `{typography.display-xl}` strictly for the hero band.
-6. Keep `{colors.marketing-primary}` (white CTA pill) scarce per viewport — at most one solid white pill per fold.
-7. When introducing a new component, ask whether it can be expressed with the existing surface-ladder + 8px-radius + ss03-Inter vocabulary before adding new tokens. The system's strength is that it almost never needs new ones.
-
-## Known Gaps
-
-- **Mobile screenshots not captured** — responsive behavior synthesizes Raycast's mobile pattern (hamburger drawer, single-column grid, hero downscale) from desktop evidence and the breakpoint stack.
-- Native shell hover and held-key states are documented in In-Product Components; the marketing reference does not claim measured hover behavior.
-- Hide native shell chrome is specified in In-Product Components below.
-  Raycast launcher screenshots remain design references, not a separate implementation contract.
-- **Dark mode is the only mode** — no light variant exists in the captured surfaces.
-- **Form validation states** beyond the focused-input border treatment are not present in the captured surfaces.
-- **Authenticated chrome** (account dashboard, billing settings, team management) not in the captured pages.
 
 ## Native Git and lineage tokens
 
-The [agent workflow contract](design/agent-workflow-review.md) and the adopted `Screen /` and `Component /` boards in `design/hide.pen` define parent-centric delegation, project-wide task Overview, shared Agent identity, pane focus, and Explorer Git decorations.
-The former Review candidates, Final, R2, R3, and the family-only Overview comparison are historical and are not implementation references.
+The [agent workflow contract](design/agent-workflow-review.md) and the adopted `Screen /` and `Component /` boards in `design/hide.pen` define parent-centric delegation, shared Agent identity, pane focus, and Explorer Git decorations.
+The former Review candidates, Final, R2, R3, the family-only Overview comparison, and the task-forest Overview that the worktree-grouped list replaced are historical and are not implementation references.
 `My Work` is a session-local default, and `All` restores delegated rows without changing status groups, pane focus, or read state.
 
 `HideTheme.lineageIndent` is one column per descendant level, uniform at every depth.
@@ -825,7 +133,7 @@ It replaced a step that shrank after two levels, which kept deep trees narrow at
 The disclosure occupies the first identity line rather than the center of a multiline row, and the descending rail starts below its glyph.
 Continuing ancestor rails remain in that ancestor parent column through deeper descendants.
 `lineageElbowY` places the turn at the row's status mark, a fixed offset from the row's top rather than a fraction of its height, so a row that grows a stall notice does not slide the connector off the mark.
-The Git worktree section sizes its own text from `HideTheme.gitRowFontSize` (11pt) for a worktree row and `HideTheme.gitDetailFontSize` (10pt) for the ahead/behind, pushed and disk detail beside it.
+`HideTheme.gitRowFontSize` (11pt) and `HideTheme.gitDetailFontSize` (10pt) are the History board's row and detail sizes; the Overview draws its group headers on the shared scale instead.
 Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
 The branch is the title; the primary checkout carries a separate `primary` role badge.
 The sidebar hierarchy is Project > Workspace > Agents; a workspace corresponds to one checkout path, including a plain folder.
@@ -838,6 +146,19 @@ Project-view number shortcuts skip agents hidden by workspace disclosure.
 `agentMarkWidth` (12pt) and `checkoutIconWidth` (14pt) define the status and branch columns.
 `compactAgentLeadingInset` derives the root agent status center from the Workspace branch center, accounting for the lineage chevron gutter.
 Compact agent rows use `spacingXS` (4pt) between the status, provider icon, and title.
+An agent row's title is the core's `identity_label` at both densities: the session name the label plugin derived (Claude's `ai-title`, Codex's first turn), or the Herdr agent name, or the rolling task, or the workspace label, in that order; a prominent row keeps its project context as a qualifier on a third line, `Typography.micro` in `muted`, because beside the sentence it took the width the sentence needed.
+The second line is chosen by the core from the row's group and drawn as given, so no view decides it twice ([status model](docs/status-model.md#the-second-line)):
+
+| Group | Sentence |
+| --- | --- |
+| Needs You, unread Done | `expected_reply`, else `progress`, caption regular in `primary` |
+| Working | `progress`, caption regular in `secondary` |
+| Seen, unknown | none - the row is one line |
+
+A row with no sentence draws the status word instead, `Typography.caption` medium in the mark's color, so a row is never left with an empty second line; beside a sentence the word is not drawn, because the mark and the group heading already say it and the two together took a third of the row.
+A delegated row's sentence is `muted`, like the rest of it.
+The sentence is one line with tail truncation, and the full text is the row tooltip and the accessibility label, which reads name, agent kind, status word, sentence in that order even when the word left the screen.
+There is no third gray for the sentence: a `muted` step between `secondary` and `primary` was tried and the two grays did not separate in the rendered row.
 The Workspace status is shown once in a trailing chip with the representative provider and `+N` remaining agents; single agents omit the suffix, and empty Workspaces omit the chip.
 An expanded Workspace omits the chip as well: each nested agent row carries its own status and provider, so the summary would repeat what is already beside it. The disclosure chevron stays in both states.
 The chip uses the toolbar height, `radiusMedium`, `spacingXS`, and the elevated surface; the disclosure chevron follows it at the far right.
@@ -872,6 +193,10 @@ The sidebar runtime version stays on one line with middle truncation; its toolti
 ## Pane header lineage and ownership
 
 The pane header keeps one 28pt identity row.
+Its title is `name · sentence` on one line, or `name · word` when the row has no sentence: the identity in caption semibold `primary`, ` · ` in `muted`, the status word in caption medium in the mark's color when the row shows it, and the sentence in caption regular with the row's emphasis color, tail-truncated to no less than `Layout.paneHeaderSentenceMinWidth` (120pt).
+When the header is narrower than that, `ViewThatFits` drops the sentence first and the word second, so the identity is what survives a three-way split.
+A shell operation string (`forking…`, `reopening…`) takes the sentence's slot while it runs.
+The header and the sidebar row call a pane by the same name, and the header's accessibility label carries the status word in the same order as the row's.
 A pane with children gains a second 24pt row for the child chips, and that row exists only when there are children; a pane with none stays at 28pt.
 This is a user decision between four candidates, not a default: compressing the marks onto the breadcrumb row, relying on the sidebar alone, and a bottom status bar were all rejected, because the chip has to carry the child's name where the operator is already looking.
 
@@ -890,7 +215,6 @@ A canvas notice preserves pending and failed feedback after successful navigatio
 A root with no parent carries no Return control, following the existing rule that a control with nothing to do is not drawn.
 
 The header wash marks the pane Hide is showing, while the outer primary hairline marks the terminal that owns the native keyboard responder.
-Inspecting an Overview task leaves the shown wash in place and removes the terminal outline.
 Zoom or Restore stays at the right edge, secondary fork, port, and sibling actions live in overflow, and Close remains separate.
 
 Ownership is drawn as emphasis, not as a new color or container.
@@ -902,15 +226,13 @@ The uninstrumented mark is drawn in exactly three places, and only on panes wher
 It is a mark plus an accessible name, never a color alone, and its tooltip carries the whole sentence.
 The subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
 
-Overview Tasks reuses the same agent identity and state presentation as the sidebar and relationship sheet.
-A missing task row means the current live projection has no agent there; an uninstrumented mark means Hide cannot see in-process children and never means zero.
-Git mode retains the existing branch, ahead/behind, pushed, PR, CI, and lookup-failure presentation on its worktree rows.
+An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet.
+A missing row means the current live projection has no agent there; an uninstrumented mark means Hide cannot see in-process children and never means zero.
 
 ## In-Product Components
 
 This section is the native shell contract.
 It applies to the sidebar, checkout cards, tab strip, terminal and browser headers, right panel, status bar, empty and unavailable states, Search, New Agent, Settings, file search, and editor overlays.
-The earlier marketing analysis remains reference material; these native values govern the application.
 The direction is compact Orca chrome expressed through the existing Hide components, with neutral controls and semantic state marks.
 Pet windows, the menu bar dashboard, and native context menus retain their existing appearance.
 The dashboard's active preservation tokens remain in the token definition file and its shared rows retain their existing system font.
@@ -982,7 +304,7 @@ Fixed content geometry remains in its named Layout tokens rather than changing w
 
 ### Shared control family
 
-The shell owns control appearance through shared styles while retaining native Button, Toggle, DisclosureGroup and TextField behavior.
+The shell owns control appearance through shared styles while retaining native Button, Toggle and TextField behavior.
 Sheet and popover presentation, text editing, IME, scroll physics and ProgressView animation remain platform-owned.
 The native controls are not replaced with gesture-only drawings.
 
@@ -993,11 +315,10 @@ The native controls are not replaced with gesture-only drawings.
 | `HideChoiceGroup` segmented | Contained choices on sidebar, 2pt inset, divider border, radius 6, elevated selected choice | Tree/List changes only inspection mode; selected choice and group label are accessible |
 | `HideSearchField` | Shared input surface, 36pt height, radius 6, 8pt gap, magnifier and 24pt clear action | Existing `HideSearchKeyboard` is the only focus owner; a local focus observation drives the neutral outline; native IME and search keyboard behavior remain intact |
 | `HideCheckboxStyle` | 16pt mark inside a compact hit area; neutral checked fill and check mark | Toggle owns checked state and accessibility; unchecked, checked, disabled, hover and focus are distinguishable |
-| `HideDisclosureStyle` | Subhead 12 label, compact row, chevron and shared quiet interaction treatment | DisclosureGroup owns expansion; visible label and expanded state remain accessible, and collapsed content is absent |
 
 `HideInputSurface` owns text-input typography, horizontal inset, elevated fill, neutral border, focused outline and disabled appearance at compact 24pt or regular 36pt minimum height.
 It is a presentation modifier and does not install focus, submit, selection or keyboard handlers.
-Search retains `HideSearchKeyboard` as its only focus owner; address, form and composer inputs retain their existing native editing bindings.
+Search retains `HideSearchKeyboard` as its only focus owner; address and form inputs retain their existing native editing bindings.
 `HideMenuChipLabel` owns compact menu-trigger typography, chevron, surface and border; the native Menu retains activation and selected menu-item semantics.
 `HideEmptyState` owns the shell's empty/unavailable heading, decorative icon, explanation, wrapping and accessibility grouping using real caller-provided content.
 Its optional semantic emphasis colors the heading and icon for warnings and failures while keeping the explanation readable.
@@ -1018,11 +339,11 @@ Settings tabs, sidebar mode choices and right-panel sections use `HideChoiceGrou
 The sidebar opts into equal-width choices and supplies option-specific command tooltips; equal width covers each choice's background and hit area, not only its layout slot.
 Cmd+K, file search and Overview reuse `HideSearchField`, including its clear action and the same keyboard selection behavior.
 Main-shell worktree review and settings Boolean controls use `HideCheckboxStyle`; a checkbox inside an operating-system Menu retains native menu semantics.
-Changes, sidebar and tab rows retain their domain layout but reuse `HideInteractiveButtonStyle` for hover, pressed, focus and disabled feedback.
-Shell actions use shared text/icon styles, including destructive roles, editor conflict recovery and composer submission.
+History, sidebar and tab rows retain their domain layout but reuse `HideInteractiveButtonStyle` for hover, pressed, focus and disabled feedback.
+Shell actions use shared text/icon styles, including destructive roles and editor conflict recovery.
 The old unreferenced checkout-summary renderer is retired; Overview remains the active project context composition.
 
-Project summary rows, Git rails, worktree rows and inspector composition remain owned by Overview instead of becoming general-purpose domain components.
+The stat strip, group headers and agent rows remain owned by Overview instead of becoming general-purpose domain components.
 
 ### Recent navigation in the native shell
 
@@ -1034,10 +355,13 @@ Option+Tab and Option+Shift+Tab cycle projects globally and restore each project
 Hold the chord's modifier to preview, release it to commit, or press Escape to keep the original selection.
 Menu actions commit immediately.
 Window > Reopen Closed Tab uses Shift+Command+T and is disabled when the session-local recent-close stack is empty or a restore is already running.
-The keyboard chord and Window menu item restore regardless of whether a terminal, file editor, search field, or composer text input owns focus.
+The keyboard chord and Window menu item restore regardless of whether a terminal, file editor, or search field owns focus.
 Restoration is one action with no confirmation: an in-flight pane uses the existing pane-header progress suffix, while a restore without a target pane uses the tab strip's compact warning line.
 Missing cwd, unavailable prior conversation, pruned Browser pane, missing file, and retryable failure states use the same warning color and inline notice vocabulary as existing pane operations, without adding a banner, card, or modal alert.
 A definitive Herdr close refusal removes its reserved reopen entry, while an unconfirmed transport or acknowledgement result keeps the entry and explains inline that Hide could not determine whether the item closed.
+Pane and tab mutations use the same target-scoped activity suffix and failure notice, so a delayed operation stays attached to the surface it affects and does not become a global alert.
+An unknown activity state stops destructive close and offers the existing read-only `Check status` action inline; it is separate from the one-time work-interruption confirmation.
+The close confirmation keeps `Keep open` as the cancel/default action and leaves `Stop work and close` as the explicit destructive choice.
 Option+1 through Option+9 select sidebar agents; Command+1 through Command+9 retain direct strip selection.
 Agent number hints follow the command registry: reveal only during an exact Option hold, ignoring Caps Lock, and clear on release or a suppressing sheet.
 Numbered agent shortcuts are handled before native text interpretation, so terminal and editor responders cannot consume the Option chord.
@@ -1055,6 +379,7 @@ The existing core catalog determines grouping; navigation does not infer it from
 Both switchers use the same themed overlay and registry-derived keycaps, with at most nine rows around the highlight.
 Project rows show the last surface and checkout; panel rows show their project and checkout, collapsed to the checkout alone when both carry the same name, and their surface type.
 Recent Panels uses the same focused-pane agent brand mark as the tab strip, including Claude Code and Codex; file, diff and unassociated terminal surfaces keep their type icons.
+A panel row whose tab holds exactly one agent pane is titled by that agent's identity with its status mark before the brand mark, derived in the core as the strip entry's `agent_identity`; a tab with no agent or several keeps the Herdr tab label, and the Herdr label itself is never changed for this.
 History is session-local and retains only existing projects and surfaces.
 A deleted highlight moves to the next surviving entry without reordering the held cycle and records the reconciliation in structured trace.
 If none survives, cancel with a structured recovery trace and keep the core's current selection.
@@ -1063,6 +388,7 @@ Empty projects show “No open tabs”; a project without an available checkout 
 ### Search keyboard navigation
 
 Command+K opens agent/workspace search and Command+P opens file search with the same focused query field and first-result selection behavior.
+An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling to the rolling task when the state chose no sentence (unless that is already the title) and then to the status word; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
 Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
 Return executes the highlighted result through the existing agent, checkout, or file-opening action; Escape closes the sheet.
 The selected row uses the existing accent emphasis fill and scrolls into view.
@@ -1084,6 +410,8 @@ Hint mode renders the same keycap.
 Tooltip mode uses `{typography.subhead}`, `{colors.balloon}`, `{rounded.radiusMedium}`, the same hairline, horizontal `{spacing.spacingSM}`, and vertical `{spacing.spacingXS}`.
 Tooltip width is limited to 360 points.
 There is no native tooltip layered underneath it.
+Do not use native `.help()` tooltips in the main shell; use the shared command tooltip.
+The excluded Pet view retains its native tooltip.
 
 Both take a command resolved from the menu registry, effective pane binding, direct selection number, or chordless label.
 A chorded tooltip reads label followed by the registry chord in parentheses; chordless controls show only the label.
@@ -1130,6 +458,7 @@ A state keeps its symbol and semantic color when read, with reduced emphasis ins
 
 Search, New Agent, Settings, and file search each host the same tooltip overlay.
 Sheets use panel containers, headline titles, body or caption supporting text, and the same spacing scale.
+The Settings sheet is `settingsSheetSize` wide and grows with the presenting window from that height to `settingsSheetMaxHeight`, keeping `settingsSheetWindowInset` clear above and below, so a tab taller than the smallest size is read without a scroll on an ordinary window; the Settings scene, which is its own window, keeps the smallest size.
 The selected provider card uses an elevated fill and stronger neutral border; its status remains readable.
 Disabled Start and Add controls retain their existing enablement conditions and use disabled emphasis.
 
@@ -1146,6 +475,14 @@ It is recomputed from the core's timestamp on each snapshot, so it ages while th
 The project name takes the row's width first; the trailing detail truncates in a narrow sidebar rather than pushing the name out.
 Raised Needs You and Done groups retain their status ordering above Projects.
 
+A registered project can be pinned from its row menu, the same `Pin` / `Unpin` item in the trailing `⋯` menu and the row's right-click menu, which otherwise carry the same items.
+Pinned projects are drawn once, under a `Pinned N` section header that sits between the raised groups and `Projects · Recent activity`, and only while at least one project is pinned; the activity header stays and counts the unpinned projects.
+Inside `Pinned` the order is the tree's own, device first and then latest activity, so a local pin always precedes a remote one and pins never repeat per device.
+The section header is the existing sidebar section label with no pin glyph, the row is the ordinary project row with its disclosure, selection and trailing detail, and nothing changes in Search.
+The pin lives on the project's registration (`WorkspaceRegistration.pinned`), so it survives a relaunch, an older state file reads as unpinned, an unregistered folder row offers neither `Pin` nor `Remove project…`, and removing the registration takes the pin with it.
+A pinned project is exempt from the device's `Inactive projects` fold whatever its activity; its own stale worktrees still fold behind its `Inactive N` row.
+The remote navigation context, chosen from the sidebar's device selector, carries no pins because its wire carries none.
+
 Inactive work is folded without changing that activity order.
 A project's merged, closed, or seven-day inactive secondary checkouts move behind one trailing `Inactive N` disclosure, while its primary and every checkout with live work, local changes, unpushed commits, or current focus remain visible.
 When every checkout in a project is inactive, the project moves behind the trailing `Inactive projects N` disclosure for its device.
@@ -1156,39 +493,44 @@ The project tree uses one token-based indentation ladder: top-level projects and
 Selection begins just before the selected checkout's own content edge instead of spanning back to the top-level edge, so its background preserves the child relationship.
 Each completed project block leaves the same project-level vertical gap before the next sibling or top-level inactive disclosure; rows inside a block retain their compact spacing.
 
-The right panel starts with Overview, followed by Explorer and Changes.
+The right panel starts with Overview, followed by Explorer and History.
 The compact section selector uses text labels on one line without a competing checkout title.
 Saved Git section selections migrate to Overview; other selections survive, and new state starts on Overview.
-Overview is project-scoped and opens in Tasks, which shows the current Project's live task forest across its Workspaces with a compact selected-task inspector.
-Git is a separate Overview mode that preserves the existing Project Summary, GitHub result, allocated disk measurement, cleanup entry, ancestry graph, worktree list, and selected-workspace inspector.
+Overview is project-scoped and is one list: the current Project's worktrees as groups, each holding the agents working in it, under a strip of derived project facts.
+It has no mode, no graph, no inspector and no summary rows; what a group or a row has to say is on its own line, and what an operator would look up sits in a tooltip or an existing popover.
+
+The top block carries the project name, `Project · N workspaces · M inactive` (the inactive count only when there is one), the refresh icon button, and the stat strip.
+The strip's first row is always drawn for a Git project: `N GB on disk`, which opens the existing disk popover, and `⑂ N open PRs`, which opens the existing GitHub popover; zero open pull requests is a measured value and is drawn.
+The second row holds only cells with something to act on, `main ↓N behind origin` and `N merged to clean up`, and is absent when neither applies; behind is read only, in the warning color, because Hide does not fetch, and cleanup opens the review sheet.
+Every cell follows one glyph language: a number when it is known, `…` in muted while it is being read, `?` in the warning color when it cannot be, and absence when it does not apply; the reason is in the tooltip and the popover, never on the surface.
+A plain folder project has only its size in the strip and only its size on its group header.
 GitHub summarizes active branches from the existing bounded, per-branch PR selection, not an invented repository-wide PR total.
 The popover states the lookup window and preserves loading, no recent PRs, authentication, unavailable and stale results.
 
-Tasks creates edges only from authoritative child pane IDs and never infers parentage from depth, name, creation order, or shared Workspace.
-Unknown parents, visible orphans, and cycles remain visible as roots.
-Root tasks and cross-Workspace children carry their Workspace label, while search retains matching tasks and their known ancestors.
-Row selection and Return update inspection only; the trailing pane action and the inspector's Open action are the only controls that change pane focus and read state.
-Loading, confirmed empty, query-empty, partial lineage, disconnected, and unavailable states are distinct, and query-empty preserves the prior inspector.
+A group header is `▾ ⎇ branch` on the left, opening the workspace, and one mono micro line on the right: `<N files|Clean> · <↑a ↓b> · <size> · <#PR>`, each part only when it applies.
+A zero side of `↑↓` is left out, behind is in the warning color, and the pull request chip is the bundled octicon in its state color with the number beside it and the state word in its tooltip only.
+A long branch name truncates on the left so its distinguishing tail stays visible; the detail line is never truncated.
+The `N files` chip is the one chip that navigates: hover washes it, its tooltip reads `Open in History`, and a click opens that checkout on History in one core event.
+The chevron folds the group's rows and shares the sidebar's collapsed set.
+Groups sit in one fixed order, the primary checkout first, then linked worktrees oldest first by the time they were added, then a `› Inactive N` fold that shares the sidebar's fold state; an unfolded inactive checkout is a header line with no rows.
+No agent state and no search reorders a group.
 
-Git Tree draws actual Git parent edges for all project worktree HEADs and the known main/base refs.
-Commit parent order is preserved, including merges; named refs and worktree attachments stay visible when linear ancestry is folded.
-A window holds at most 512 commits; actual parent IDs beyond it form a continuation frontier, never a fabricated root or branch.
-Shallow boundaries and unavailable history are explicit, and a missing or unborn HEAD has no invented attachment.
-Tree may scroll horizontally when concurrent lanes exceed panel width.
-Git List reuses the search keyboard pattern and Needs You, Done, Working, Seen ordering, with stable path ties and an explicit empty state.
-Git modes share one core-owned Workspace inspector selection; switching modes, filtering, inspecting and scrolling never changes the terminal's pane, tab, checkout focus or read state.
-Only explicit Open workspace or Open/Return agent actions change workspace or pane focus.
-View changes switches the section for the currently open workspace; another inspected workspace must first be opened.
+An agent row is mark · badge · name · task · `↗`, at the pane header's 28pt height, and the whole row is the button: a click shows that pane, and the `↗` says so.
+A delegated child is indented under its parent with `↳`; a child delegated into another worktree stands in its own group with the caption `↳ from <parent> · <parent branch>` under it.
+An empty group has one row, `No agent · Start agent…`, whose menu is the same `Terminal only / Claude / Codex` choice the header's `New agent here ▸` offers.
+The header's context menu is `New agent here ▸`, `New worktree…`, `Set as base branch`, then `Open pull request #N` when there is one and `Open in History`, then `Copy Path` and `Open in ▸`, then the destructive `Delete worktree…` behind the sidebar's gate and wording.
+An agent row's context menu is `Open pane`, `Reveal in sidebar`, `Copy pane id` and the destructive `Close pane…`, with the same confirmation the pane header uses.
+Search matches an agent's name, its task and a branch; it keeps the matching rows with their group header, and no match reads `No matching agents or workspaces` with a `Clear search` action.
 
-The task inspector puts canonical agent identity, status, Workspace, lineage availability, explicit Open, and Workspace details together without attributing Workspace change counts to one agent.
-The Git inspector puts the branch, short folder name, current representative agent and status, changed files and PR before collapsed latest-commit details.
-The live pane list is not repeated.
-Absolute paths and commit IDs are selectable secondary details; the latest commit describes the checkout HEAD, not the pane that authored it.
+Loading, local-only, no-workspace, disconnected and unreadable states are distinct and each is drawn in its smallest form.
+While the live agent projection is unavailable a caption above the search says so and the last known rows stay clickable; a value Hide cannot read is `?` and never a zero.
+Only a row click, the header click, the `N files` chip and the menus' explicit actions change pane focus, checkout focus, the panel section or read state; scrolling, folding, searching and refreshing never do.
 The pinned Herdr contract offers lifetime-scoped display metadata and agent lineage but no persistent commit-authoring relation, so Hide neither adds Git trailers nor renames branches.
-Retired or moved panes leave the current context on the next topology projection; a retired parent ID is omitted.
+Retired or moved panes leave the list on the next topology projection.
 Remote Overview explicitly reports that local Git context is unavailable.
 Explorer contains file navigation only, with no checkout summary above it.
-Changes retains its diff navigation; Git/PR context remains in Overview and Workspace controls.
+History retains its diff navigation; Git/PR context remains in Overview and Workspace controls.
+VoiceOver reads a group header as its branch followed by each chip in words, `prd/hide-orchestrator, 12 changed files, 3 ahead, 2.4 GB, pull request 107 open`, and a row as `Open sasu, Working, prd/hide-orchestrator`; every tooltip is also the control's accessibility help.
 
 Allocated on disk sums main, linked worktree folders and the actual shared Git directory once.
 Nested roots belong to the longest matching root; hard links share one inode allocation, and descendant symlinks are not followed.
@@ -1208,30 +550,30 @@ Completion lists individual removed/refused outcomes; repeating the same complet
 Review and cancel perform no filesystem mutations.
 This file deletion flow is separate from registration removal.
 
-Overview geometry uses named `HideTheme.Overview` tokens: a 64pt minimum rail, 14pt lane spacing, 12pt inset, 28pt node offset, 7pt nodes, 28pt commit rows, 96pt worktree rows and 236pt row content.
-The project title uses the 17pt headline token; workspace titles and summary values use 13pt, with 12pt supporting text.
-Git lanes use a repeating blue, violet (`#B69AFF`), green and amber category palette through `HideTheme.Overview`; these colors identify graph lanes, not agent status or commit authorship.
-Actual agent lifecycle colors retain their existing semantic meaning.
-A 16pt ring marks the selected workspace HEAD, and only selected rows receive the elevated surface.
-The graph legend distinguishes solid ancestry, dashed workspace attachments and folded commits without relying on color alone.
-The inspector groups the short folder with its branch, then places agent status below the task and beside its explicit Open/Return action.
-These actions reuse `HideTextButtonStyle` so system appearance cannot introduce a competing light button surface.
+Overview draws on the shared scale alone: the project title uses the 17pt headline token, stat values are 12pt semibold mono with a 10pt caption beside them, group headers are 11pt semibold with a 9pt mono detail line, and rows use the pane header's 28pt height and the sidebar's agent mark, badge and lineage widths.
+Actual agent lifecycle colors retain their existing semantic meaning; the warning color marks a behind count and an unreadable value, and no color is introduced for the list.
+Only the shown pane's row receives the elevated surface.
+Menu actions reuse `HideTextButtonStyle` so system appearance cannot introduce a competing light button surface.
 GitHub and disk popovers use the same dark panel surface as existing PR details and show pending refresh alongside any retained result.
 The cleanup sheet uses the existing 440pt worktree dialog width and a 560pt height with a scrolling list.
 Colors, typography, spacing, corners, status marks and tooltip/accessibility help come from the shared shell system.
 
-Remove Registration removes only Hide's registration and never deletes files, worktrees or Herdr workspaces.
-The action is offered only for registered projects and retains its existing confirmation.
-An in-use project stays registered and reports how to close or move its Herdr workspaces before retrying.
+`Remove project…` removes only Hide's registration and never deletes files, worktrees, sessions or Herdr workspaces; it is offered only for registered projects, from the same row menus as the pin.
+A project Herdr has no pane in is confirmed with the registration-only copy (`Hide will remove only its registration. …`, `Remove registration`).
+A project with panes is not refused: the confirmation reads the core's counts (`Closes 3 panes (2 running agents). The folder, repository, and worktrees stay on disk.`, destructive `Close 3 panes and remove`, `Cancel`), the parenthetical is omitted at zero running agents and the nouns follow their counts.
+On confirmation the core sends `pane.close` for every pane in the project's checkouts from a worker outside the runtime mutex and waits for Herdr's snapshot to confirm they are gone, the same handshake worktree deletion uses; only that confirmation removes the registration and its row.
+A timeout or refusal leaves the project registered with the reason in the error banner, and a repeated `Remove project…` continues from the panes that remain; a repeat while the close is still running starts nothing.
+Removing the project that holds the focused checkout moves focus and the pane selection to the next project, the way a Herdr restart does, so no sync reports the closed pane as unavailable.
+A registration id is keyed by its folder, so adding that folder back while the close is still running is refused with the reason in the banner (`workspace.remove_in_flight`), removing a project whose first pane is still being opened is refused the same way (`workspace.create_in_flight`), and an add that lands anyway cancels the removal and says so (`workspace.remove_cancelled`) rather than losing the project it just opened a pane in.
 A completed removal disappears from the core snapshot and a repeated request is a quiet no-op.
 Save failures remain caller-visible; normal no-op results never become alerts.
 
 The project sidebar requests GitHub data once when a local Git project appears; repeated appearances reuse the same result.
 The selected Overview project retains its open/refresh triggers, while the sidebar popover and project menu can explicitly refresh one repository.
 All triggers share the existing bounded background reader, authentication and cache.
-Explorer and Changes do not independently start GitHub queries.
+Explorer and History do not independently start GitHub queries.
 Loading, missing authentication, query failure and stale results remain explicit; an absent or unrecognized CI result never renders as passing.
-Changes is a compact navigation list; activating a row opens a read-only diff as a central editor tab instead of dividing the panel vertically.
+History is a compact navigation list; activating a row opens a read-only diff as a central editor tab instead of dividing the panel vertically.
 Diff tabs use the editor's monospaced content scale, fixed old and new line-number columns, semantic added and removed tints, and horizontal scrolling for long lines.
 Their scroll canvas fills the editor viewport, with short diffs anchored at the top left and long diffs growing beyond it for scrolling.
 Text file tabs use a fixed line-number ruler and preserve source whitespace through non-wrapping horizontal scrolling.
@@ -1239,7 +581,7 @@ The ruler clips all drawing to its own bounds, and text loaded into an initially
 Syntax selection comes from the core's filename-aware language result, including extensionless configuration files and JSON-family extensions.
 Loading and failed tree states, empty sidebar and checkout, missing pane projection, waiting pane size, browser connecting or disconnected, and editor conflict or stale banners use the same tokens as normal state.
 Remote and browser idle, loading, ready, stale, unavailable, and failed phases preserve their existing labels and semantic status colors.
-Existing controls retain their accessibility contracts; Overview adds named section, inspection, graph, search, explicit focus and cleanup targets.
+Existing controls retain their accessibility contracts; Overview adds named stat, group, row, search, start-agent and cleanup targets.
 
 ### Enforcement
 
@@ -1271,7 +613,7 @@ Geometry, color, typography and spacing are selected through existing tokens and
 The machine-readable control policy is `scripts/design-control-policy.json`.
 Its exact paths identify approved owners, existing legacy uses and platform exceptions, with a reason and count for each detected construct.
 The policy records native control invocations inside shared owners, the Pet dashboard empty-state exception and native menu controls.
-Remaining input invocations are owned wrappers or the composer/address editing boundary, each with the shared input surface.
+Remaining input invocations are owned wrappers or the address editing boundary, each with the shared input surface.
 Overview's stock segmented Picker, cleanup's stock checkbox appearance and obsolete toolbar/destructive styles have no retained allowance.
 TextField, SecureField and TextEditor invocations are counted as well: new input controls belong in a documented shared owner, while enumerated existing fields remain legacy uses.
 An allowance permits a specific native behavior boundary; it does not permit a caller to invent another appearance.
@@ -1317,39 +659,78 @@ Controls use HideIconButton and the shared tooltip/accessibility renderer.
 Unsaved drafts and the existing read-only/conflict notices remain visible in either mode.
 Diff tabs retain their existing viewer.
 
-Markdown files alone show the centered Preview/Edit HideChoiceGroup.
-The core owns mode and source wrapping per open file tab; another tab has independent choices, returning to a tab restores them, and close/reopen or app restart starts Preview with source wrapping off.
+The core names each open file's kind (`document_kind`: text, markdown, image, pdf, binary) and the overlay picks the adapter from it; the toolbar is the same bar in every kind, with the controls a kind cannot use taken away rather than left dead.
+A PDF, recognised by its `%PDF-` signature whatever its name, shows in PDFKit's view: continuous vertical pages fitted to the width, text selectable, nothing editable.
+Its toolbar keeps the breadcrumb and the two reveals, shows Find disabled with the tooltip `Find is unavailable for PDF`, and hides Wrap, the Markdown mode group and Unsaved, which a PDF can never earn.
+A PDF that PDFKit cannot decode, cannot be read, or is password-protected shows the `PDF unavailable` empty state with the reason under the same toolbar.
+An image hides Wrap as well; a file that is not UTF-8 shows the `Preview only` empty state with `This file type cannot be shown as text.` and keeps Wrap disabled beside a disabled Find.
+The size and read-only reasons are unchanged.
+`Screen / Editor / Document kinds` in the design canvas draws one frame per kind, including the PDF failure.
+
+Markdown files alone show the centered Live/Source HideChoiceGroup, and Live is the default.
+Both are editors over the same draft: Live draws the formatting in place and hides the markup on every line the caret is not on, the way Obsidian's Live Preview does; Source is the monospaced editor with its line-number ruler and Wrap toggle.
+The core owns mode and source wrapping per open file tab; another tab has independent choices, returning to a tab restores them, and close/reopen or app restart starts Live with source wrapping off.
 These choices share the existing ephemeral editor-tab lifecycle and are not added to persisted UI state.
-The preview displays the current draft, including unsaved content; it never substitutes an older disk read.
 Autosave captures its file identity when scheduled so a subsequent tab selection cannot redirect the write.
 Closing a file tab carries that tab's matching pending save in the same close intent, and the tab remains open with a visible error if the exact path and contents cannot be saved.
 The native editor retains only its latest unacknowledged draft while older core snapshots arrive, preventing a snapshot echo from moving the caret or replacing newer input.
 The syntax highlighter and text view use the same scaled monospaced font; unchanged view updates do not restart highlighting or reset its typography.
 Core acknowledgement, switching file identity, and explicitly reloading a disk conflict settle that presentation buffer.
 
-Foundation's established Markdown parser supplies block and inline structure to a native selectable text view.
-The document adds theme tokens for a 720-point readable width, 15-point Inter body and 5-point line spacing; Korean uses the font's native fallback and word wrapping.
-Headers, paragraphs, emphasis, lists, quotes, code and links retain readable structure.
-Tables use visibly separated textual cells rather than a grid; native tab stops must not make adjacent values appear concatenated.
-Raw HTML is inert literal text, never a browser execution surface.
-Local and remote Markdown images both display their description with an explicit preview-disabled label; no image resource is read or fetched by preview.
-HTTP(S) links open only after activation through the existing external-browser owner; relative file links are restricted to existing files inside the current symlink-resolved checkout.
-Unsupported schemes, fragments, outside-checkout paths and missing links show a caller-visible notice.
-Extended Markdown has no execution or plugin mechanism; unsupported syntax remains readable source and can always be inspected in Edit.
-A parse failure displays the reason and original source; an empty document offers Edit.
+The Live view is one editable text view whose storage is the source, so draft, autosave, Find, selection and copy read the same text Source would (`MarkdownLiveEditor.swift`).
+Foundation's Markdown parser, asked for source positions, supplies block and inline structure as ranges over that source (`MarkdownLiveSource.swift`); the characters of a block no run covers are its markup.
+Formatting is attributes over those ranges, and markup is hidden by the layout manager generating no glyph for it rather than by removing it: the text never changes, only what is drawn.
+The line holding the caret, and every line a selection crosses, shows its source; a fenced code block is one unit, so a caret anywhere inside it shows both fences.
+Markup hides again the moment the caret leaves, with no animation.
+Headings 1 through 6 take `HideTheme.Editor.headingFontSizes` at semibold with their hashes hidden; bold, italic and strikethrough hide their delimiters, italic as a skew because the bundled Inter has no italic face; inline code and fenced blocks use the editor's monospaced font over the panel fill, a fenced block filling its full measure; unordered markers draw as a bullet and ordered markers keep their digits, both with a hanging indent; a quote indents behind a `quoteRuleWidth` bar and hides its `>`; a link shows its text in the accent color with the brackets and URL hidden; a `---` line draws as a rule.
+Tables, images, HTML, footnotes and task lists are not drawn: they stay monospaced source, editable in place, and a parse the view cannot use leaves the whole document monospaced with the reason in the notice bar while typing continues.
+An empty Markdown file is an empty Live editor with the caret in it.
+The body is Inter at `documentFontSize` with `documentLineSpacing`, wrapped in a `documentWidth` measure the text view keeps centred in the pane; Korean uses the font's native fallback and word wrapping, and the text-scale chords apply in both modes.
+Links open on Command-click only, through the existing owner: HTTP(S) in the external browser, a relative file inside the current symlink-resolved checkout as an Explorer reveal, and anything else as a caller-visible notice; a plain click places the caret.
+Raw HTML is inert literal text, never a browser execution surface, and no image resource is read or fetched.
+A document over 256 KB opens in Source with the Live option disabled and the notice `Live preview is off for files over 256 KB` under the toolbar, because Live re-parses the whole document after each edit.
+That re-parse runs off the main thread, one at a time, with a burst of keystrokes coalescing into at most one more; attributes are re-applied only over the region whose plan changed, and hidden markup is recomputed from the selection alone, so a caret move touches its old and new lines and nothing else.
+No re-parse lands while an IME composition is marked, so Korean input composes uninterrupted.
+In both modes a Markdown document answers the list keys with orca's rules carried over to source text (`MarkdownListEditing.swift`): Enter after an item's text starts the next item with the same marker or the next number, Enter or Backspace on an empty item removes its marker and leaves the list, Tab and Shift-Tab move an item one level (two spaces) with a numbered item counting in the column it joins, the column an item left renumbers from 1, and a lone `1. ` line stays as typed on Enter because it may be text; none of this runs while a composition is marked, and a task box is not an item.
+The text that results is ordinary Markdown, with nothing hidden or special in it.
 
-MarkdownDocumentTests checks rendered text, inert HTML/images and actual Inter Korean/English layout at two widths.
+`MarkdownLiveSourceTests` asks the plan for values: which ranges each construct styles, which characters it hides, and which the caret reveals.
+`MarkdownLiveEditorTests` drives the real AppKit view: hidden glyphs off the caret line and revealed on it, a fenced block as one unit, typing into a formatted line landing at the caret, Korean and English wrapping in the measure, Command-click against plain click, the raw fallback with its notice, the 256 KB Source fallback, and the list keys reaching both views but not a composition.
+`MarkdownListEditingTests` asks the list rules for the edit each key produces, as text with the caret marked.
+`ConversationMarkdownTests` covers the conversation ledger's separate rendered Markdown, which keeps tables as textual cells and images as labelled descriptions.
 Native editor tests check complete typed and autosaved content, final lines without a newline, and the first glyph remaining outside the line-number ruler across wrap changes and window widths.
 They exercise real AppKit layout and the core file-save boundary, and reproduced missing/reordered characters, a nonterminating EOF draw, and covered leading glyphs before the fixes.
 These few user-outcome tests retain no mock call graph or exact view hierarchy contract.
 The core's file-view lifecycle test checks independent tabs, repeated-intent convergence and reopen defaults.
 Native screenshots remain necessary to approve toolbar spacing, font fallback and narrow-window behavior.
 
+## Editor preview tab
+
+A single click on an Explorer file or a History row opens it in the checkout's one preview tab, VS Code's model: the strip draws the title in the theme's italic variant, and the next single click replaces the tab in the same slot instead of adding one.
+The core owns the flag (`EditorTabSnapshot.preview`, and the strip entry beside it), decides replacement and promotion, and the shell only says what the click meant: `file_open` and `changes_select` carry `preview`, and one `file_keep_open` event promotes.
+Promotion happens in the same slot, on four triggers: a double-click on the Explorer row, a double-click on the tab title, the first edit, and File > Keep Open (`⇧⌘K`, declared in `ShellMenuCommand`); a drag to a new slot promotes as well.
+A dirty tab is never replaced: the core promotes it where it sits and opens the new preview beside it.
+Every other entry point - Cmd+P, Reopen Closed Tab, a Markdown or terminal link, a file the Explorer just created - opens an ordinary tab, and a single click on a file that already has a tab focuses it without touching the slot.
+A replaced preview tab is not a close: its document, Markdown mode and wrap state are dropped and nothing enters Recent Closed; closing the tab yourself records it as any file tab.
+Editor tabs stay ephemeral, so the flag is never persisted.
+
+The italic variant is `HideTheme.Typography.previewSlant`, an oblique of the bundled Inter face applied through the font matrix, because that face carries no italic axis; it is reached only through `hideFont(italic:)`.
+The tooltip and the accessibility label read `name · Preview` while the tab is one and drop the suffix on promotion (`EditorTabTitlePresentation`); the tab's colors, close button, keycap and its Recent Panels row are the ordinary tab's.
+The `Screen / Workbench / Preview tab` board draws the preview, promoted and dirty-kept states; pen substitutes the family's own italic, so the angle is not reviewed there, only size and spacing.
+The core's rules are fixed by `runtime/tests/editor_preview.rs`, the shell's by `EditorPreviewTabPresentationTests`.
+
 ## Explorer file management
 
-The local tree's context menu is the native `NSMenu`, in VS Code's order: New File, New Folder, a separator, Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
-The empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
+The local tree's context menu is the native `NSMenu`, in VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App, Open in Browser Pane and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
+A folder row has no open items, because its open is Reveal in Finder; the empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
 `WorkspaceOutlineMenuPresentation` decides the item set, so the menu a click gets is a value a test can ask for.
+
+Open with Default App hands the file to macOS through the existing external opener, and a refusal is the notice `macOS could not open <path>: <reason>`.
+Open in Browser Pane stays in the menu whether or not it can act; when it cannot, the item is disabled and its tooltip carries the one reason, in the order the operator can act on it: `Remote files open on their device`, `Opening…`, `Node.js is not on PATH`, `Not connected to Herdr`, `No focused pane to open beside`.
+The menu does not auto-enable, so the disabled state is the presentation's decision and not AppKit's.
+The outcome of an open is a notice: the host's own sentence when it refused, `No running chromux profile. Launch one with chromux launch <name>.` when nothing is running, `Browser pane did not open in time` after thirty seconds.
+`Screen / Panel / Explorer file menu` in the design canvas draws the file menu enabled and with the item disabled.
+`docs/BROWSER_PANES.md` owns how the pane is opened and which profile is chosen.
 
 Delete has two entry points, the menu item and `⌘⌫` while the tree holds the keyboard, and both end in the same confirmation: an alert titled `Move 'name' to Trash?`, a folder told that everything in it goes too, and both told the item can be restored from Finder, with Cancel as the default and Move to Trash as the destructive button.
 Nothing reaches the core without that alert; Cancel and Esc send nothing.
@@ -1381,9 +762,9 @@ Deleted descendants still mark an existing ancestor folder but never create a fi
 Clean and unavailable decoration both reserve the slot, while loading and failure are distinguished by the panel notice above the still-usable tree.
 The decoration is not a control and cannot intercept file open, disclosure, inline editing, drag, keyboard navigation, or the native context menu.
 
-Git state comes from the root-scoped Changes projection.
+Git state comes from the root-scoped History projection.
 Rename keeps both previous and current relative paths, conflict remains an independent status, and folder state is derived from the complete changed set rather than only loaded outline children.
-Explorer visibility reuses the Changes reader's bounded two-second refresh outside the runtime mutex.
+Explorer visibility reuses the History reader's bounded two-second refresh outside the runtime mutex.
 Switching Workspaces replaces the decoration root, and no per-row, hover, selection, or scroll path starts Git.
 
 ## Terminal image attachment boundary

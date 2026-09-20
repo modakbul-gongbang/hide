@@ -118,8 +118,8 @@ struct PaneChildChip: View {
         }
         .buttonStyle(HideInteractiveButtonStyle())
         .disabled(navigationPending)
-        .hideTooltip("\(pending ? "Opening " : "")\(chip.label): \(status.label). \(chip.detail)")
-        .accessibilityLabel("\(chip.label), \(status.label). \(chip.detail)")
+        .hideTooltip("\(pending ? "Opening " : "")\(chip.label): \(chip.description(status: status))")
+        .accessibilityLabel("\(chip.label), \(chip.description(status: status))")
         .accessibilityHint("Shows this child in place of the current pane")
     }
 }
@@ -375,7 +375,7 @@ private struct PaneRelationshipSheet: View {
                                         .hideFont(size: HideTheme.Typography.body, weight: .medium)
                                         .lineLimit(2)
                                         .fixedSize(horizontal: false, vertical: true)
-                                    Text(child.detail)
+                                    Text(child.description(status: status))
                                         .hideFont(size: HideTheme.Typography.caption)
                                         .foregroundStyle(HideTheme.secondary)
                                         .lineLimit(1)
@@ -394,7 +394,7 @@ private struct PaneRelationshipSheet: View {
                         }
                         .buttonStyle(HideInteractiveButtonStyle())
                         .disabled(operation?.isPending == true)
-                        .hideTooltip("\(child.label): \(child.detail)")
+                        .hideTooltip("\(child.label): \(child.description(status: status))")
                     }
                 }
             }

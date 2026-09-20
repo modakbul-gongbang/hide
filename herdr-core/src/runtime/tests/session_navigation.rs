@@ -1,102 +1,106 @@
 use super::*;
 
 #[test]
-fn eligible_agent_panes_default_to_conversation_and_toggle_to_terminal() {
+fn eligible_agent_panes_open_on_the_terminal_and_keep_the_conversation_they_asked_for() {
     let mut runtime = runtime();
-    let payload = || -> SessionSnapshotPayload {
+    let payload = |pane_ids: &[&str]| -> SessionSnapshotPayload {
+        let agents: Vec<_> = pane_ids
+            .iter()
+            .enumerate()
+            .map(|(index, pane_id)| {
+                serde_json::json!({
+                    "pane_id": pane_id,
+                    "workspace_label": "Fixture",
+                    "agent": "codex",
+                    "agent_status": "idle",
+                    "tokens": {"status_idle": "\u{25cb}", "activity": format!("000000000000{index}")}
+                })
+            })
+            .collect();
+        let panes: Vec<_> = pane_ids
+            .iter()
+            .map(|pane_id| {
+                serde_json::json!({"pane_id": pane_id, "cwd": "/private/tmp/hide-conversation-default"})
+            })
+            .collect();
+        // One tab per pane: a shared tab would need Herdr's split tree.
+        let tabs: Vec<_> = pane_ids
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                serde_json::json!({
+                    "workspace_id": "w1",
+                    "tab_id": format!("w1:t{index}"),
+                    "label": format!("{index}")
+                })
+            })
+            .collect();
+        let layouts: Vec<_> = pane_ids
+            .iter()
+            .enumerate()
+            .map(|(index, pane_id)| {
+                serde_json::json!({
+                    "workspace_id": "w1",
+                    "tab_id": format!("w1:t{index}"),
+                    "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+                    "focused_pane_id": pane_id,
+                    "panes": [{"pane_id": pane_id, "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+                    "splits": []
+                })
+            })
+            .collect();
         serde_json::from_value(serde_json::json!({
-            "agents": [{
-                "pane_id": "w1:p1",
-                "workspace_label": "Fixture",
-                "agent": "codex",
-                "agent_status": "idle",
-                "tokens": {"status_idle": "\u{25cb}", "activity": "0000000000002"}
-            }],
+            "agents": agents,
             "workspaces": [{"workspace_id": "w1", "label": "fixture"}],
-            "panes": [{"pane_id": "w1:p1", "cwd": "/private/tmp/hide-conversation-default"}],
-            "tabs": [{"workspace_id": "w1", "tab_id": "w1:t1", "label": "1"}],
-            "layouts": [{
-                "workspace_id": "w1",
-                "tab_id": "w1:t1",
-                "zoomed": false,
-                "area": {"x": 0, "y": 0, "width": 80, "height": 24},
-                "focused_pane_id": "w1:p1",
-                "panes": [{"pane_id": "w1:p1", "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
-                "splits": []
-            }]
+            "panes": panes,
+            "tabs": tabs,
+            "layouts": layouts
         }))
         .expect("conversation fixture")
     };
-    let toggle = serde_json::to_vec(&serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "toggle_conversation",
-        "payload": {"pane_id": "w1:p1"}
-    }))
-    .expect("conversation toggle event");
+    let toggle = |pane_id: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "toggle_conversation",
+            "payload": {"pane_id": pane_id}
+        }))
+        .expect("conversation toggle event")
+    };
+    let conversation =
+        |runtime: &Runtime| runtime.snapshot().ui_state.conversation_pane_ids.clone();
 
-    runtime.ingest_session(Ok(payload()));
-    assert!(
-        runtime
-            .snapshot()
-            .ui_state
-            .conversation_pane_ids
-            .contains("w1:p1")
-    );
-    assert!(
-        !runtime
-            .snapshot()
-            .ui_state
-            .terminal_pane_ids
-            .contains("w1:p1")
-    );
+    // A new agent pane is a terminal until the operator asks otherwise.
+    runtime.ingest_session(Ok(payload(&["w1:p1", "w1:p2"])));
+    assert_eq!(runtime.snapshot().navigator.agents.len(), 2);
+    assert!(conversation(&runtime).is_empty());
 
-    assert!(runtime.dispatch_json(&toggle));
-    assert!(
-        !runtime
-            .snapshot()
-            .ui_state
-            .conversation_pane_ids
-            .contains("w1:p1")
-    );
-    assert!(
-        runtime
-            .snapshot()
-            .ui_state
-            .terminal_pane_ids
-            .contains("w1:p1")
+    // Asking is one toggle, and the choice is per pane.
+    assert!(runtime.dispatch_json(&toggle("w1:p1")));
+    assert_eq!(
+        conversation(&runtime).into_iter().collect::<Vec<_>>(),
+        ["w1:p1"]
     );
 
-    runtime.ingest_session(Ok(payload()));
-    assert!(
-        !runtime
-            .snapshot()
-            .ui_state
-            .conversation_pane_ids
-            .contains("w1:p1")
-    );
-    assert!(
-        runtime
-            .snapshot()
-            .ui_state
-            .terminal_pane_ids
-            .contains("w1:p1")
+    // A refresh keeps the choice rather than treating the pane as new again.
+    runtime.ingest_session(Ok(payload(&["w1:p1", "w1:p2"])));
+    assert_eq!(
+        conversation(&runtime).into_iter().collect::<Vec<_>>(),
+        ["w1:p1"]
     );
 
-    assert!(runtime.dispatch_json(&toggle));
-    assert!(
-        runtime
-            .snapshot()
-            .ui_state
-            .conversation_pane_ids
-            .contains("w1:p1")
+    // Toggling again returns the pane to its terminal.
+    assert!(runtime.dispatch_json(&toggle("w1:p1")));
+    assert!(conversation(&runtime).is_empty());
+
+    // A choice does not outlive the pane that made it.
+    assert!(runtime.dispatch_json(&toggle("w1:p2")));
+    assert_eq!(
+        conversation(&runtime).into_iter().collect::<Vec<_>>(),
+        ["w1:p2"]
     );
-    assert!(
-        !runtime
-            .snapshot()
-            .ui_state
-            .terminal_pane_ids
-            .contains("w1:p1")
-    );
+    runtime.ingest_session(Ok(payload(&["w1:p1"])));
+    assert!(conversation(&runtime).is_empty());
 }
 
 #[test]
@@ -1671,7 +1675,15 @@ fn tab_strip_reorder_keeps_herdrs_order_and_reports_when_a_move_is_refused() {
             desired: vec!["herdr:w-order:t2".to_owned(), "herdr:w-order:t1".to_owned()],
             workspace_id: "w-order".to_owned(),
             herdr_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+            target_id: "w-order:t1".to_owned(),
             generation: 7,
+            connection_generation: 0,
+            phase: "transmitting".to_owned(),
+            stage: "request".to_owned(),
+            started_at_unix_ms: 0,
+            deadline_at_unix_ms: None,
+            message: None,
+            retryable: false,
         },
     );
 
@@ -1682,6 +1694,7 @@ fn tab_strip_reorder_keeps_herdrs_order_and_reports_when_a_move_is_refused() {
             insert_index: 2,
             expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
             generation: 7,
+            connection_generation: 0,
         },
         Err("tab.move failed: tab_not_found: tab w-order:t9 not found".to_owned()),
         4,
@@ -1746,6 +1759,7 @@ fn tab_strip_reorder_a_refused_drag_can_simply_be_dragged_again() {
             insert_index: 2,
             expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
             generation,
+            connection_generation: 0,
         },
         Err("tab.move failed: tab_not_found: tab w-order:t1 not found".to_owned()),
         4,
@@ -1814,7 +1828,15 @@ fn tab_strip_reorder_ignores_a_result_a_later_drag_has_replaced() {
         desired: vec!["herdr:w-order:t2".to_owned(), "herdr:w-order:t1".to_owned()],
         workspace_id: "w-order".to_owned(),
         herdr_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+        target_id: "w-order:t1".to_owned(),
         generation: 9,
+        connection_generation: 0,
+        phase: "transmitting".to_owned(),
+        stage: "request".to_owned(),
+        started_at_unix_ms: 0,
+        deadline_at_unix_ms: None,
+        message: None,
+        retryable: false,
     };
     runtime
         .pending_tab_move
@@ -1828,6 +1850,7 @@ fn tab_strip_reorder_ignores_a_result_a_later_drag_has_replaced() {
             insert_index: 2,
             expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
             generation: 8,
+            connection_generation: 0,
         },
         Err("tab.move failed: transport".to_owned()),
         4,
@@ -1905,6 +1928,7 @@ fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
         label: "registered".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     }];
     runtime.rebuild_catalog();
     let checkout_id =
@@ -2006,7 +2030,7 @@ fn an_exited_panes_root_directory_does_not_become_a_checkout() {
     }))
     .expect("exited pane payload");
 
-    let spaces = Runtime::session_spaces(&payload, "");
+    let spaces = Runtime::session_spaces(&payload);
 
     assert_eq!(spaces.len(), 1);
     assert_eq!(
@@ -2026,6 +2050,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
         label: "Selected".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let selected_workspace = workspace(
         &workspace_id,
@@ -2175,6 +2200,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
         label: "Missing pane".to_owned(),
         path: checkout_path.to_owned(),
         device_id: "local".to_owned(),
+        pinned: false,
     };
     let selected_workspace = workspace(
         &workspace_id,

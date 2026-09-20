@@ -57,6 +57,11 @@ An asynchronous task still costs work and can accumulate a queue; it is not a pe
 | Terminal wheel / typing | Prompt delivery preserving routing, ordering, and signed scroll quantity | Wait for an unrelated frame; drop intentional input as a duplicate |
 | IME composition step / terminal feed while composing | Show the new marked text; re-anchor the overlay once the caret has moved | Rebuild the overlay's attribute dictionary or attributed string when neither the text nor the caret changed |
 | Drag / repaint | Update affected geometry or damaged visible content | Per-event persistence or rebuilding unchanged rows |
+| Pane/tab mutation | Create one target-scoped operation record, use the existing session coordinator for confirmation, and coalesce same-pane same-axis resize to its latest signed delta | Per-tick polling, lock-held I/O, an unbounded retry queue, or a global error publication |
+| Ambiguous close | Start one read-only status check for the close scope and settle it against the connection generation and fresh topology | Destructive close resend, reopen before absence is confirmed, or treating transport success as topology proof |
+
+The 250 ms asynchronous-operation tick advances deadlines under the coordinator lock and publishes only real state transitions; it performs no network or subprocess I/O.
+One close status check reads the current session once and fans that snapshot out to all eligible local close reservations.
 
 ### Two-level recent navigation cost contract
 
@@ -167,15 +172,14 @@ Every invocation, including cleanup, must use the same explicit routing environm
 | `XDG_CONFIG_HOME`, `XDG_STATE_HOME` | Private configuration and state roots under the run directory |
 | `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID` | Clear inherited identifiers before launching the fixture |
 | `HERDR_ENV` | Clear inherited nesting marker when starting the standalone reference TUI |
-| Hide `--state-path`, `--workspace-root` | Explicit run-owned app state file and disposable checkout |
-| Hide `--verification-no-remote` | Disable configured remote targets in the debug bundle while exercising a live private local server |
+| Hide `--state-path`, `--workspace-root` | Explicit run-owned app state file and disposable checkout; the state file also holds the SSH devices, so a private one registers none |
 
 Check the pinned runtime's path behavior when updating it.
 The tested session layout stores sessions under `<XDG_CONFIG_HOME>/herdr/sessions/<HERDR_SESSION>`; changing `HERDR_CONFIG_PATH` alone does not isolate session data.
 The client socket inserts `-client` before `.sock`; allow room for that suffix in the platform's Unix socket path limit.
 Do not repurpose `HOME` or assume a private local socket disables SSH discovery.
 Inspect remote registrations, automatic SSH connection attempts, and remote client state too; an unexpected remote connection is an isolation failure to resolve before interacting.
-Pass `--verification-no-remote` to a debug bundle when the scenario does not exercise remote behavior; release builds ignore this verification-only argument.
+SSH devices are registrations in the app state file, so a run-owned `--state-path` is what keeps a scenario that does not exercise remote behavior from making an SSH connection attempt.
 Do not edit the operator's SSH configuration or stop remote services to make a local fixture pass.
 
 Save process/socket ownership before launch, prove the private server has zero workspaces before creating fixtures, and verify that the operator server gained no QA connection.
@@ -317,6 +321,9 @@ A cache that stays bounded may remove periodic destruction spikes while leaving 
   Keep keyboard delivery direct from the main-actor delegate to the writer without another asynchronous hop.
 - Announce once per burst and clear the notifier latch before taking the snapshot lock.
   Read-then-clear can swallow a concurrent change.
+- Keep async operation records bounded by active intent and conflict scope.
+  A close or topology mutation uses an absolute five-second stage deadline; expiry becomes a caller-visible unknown result and never schedules a destructive resend.
+  Status checks are read-only and are started only for an ambiguous close or an explicit status action, so unknown activity does not become a polling loop.
 
 Follow engineering principles 1, 7, 12, and 13: remove obsolete paths, reuse existing mechanisms, test observable outcomes, and fix the failure class.
 For a backing-store bug, repeated draws into fresh pixel buffers should preserve nonempty content; a test that merely approves a frame gate repeats the faulty assumption.
@@ -397,17 +404,18 @@ A write failure publishes the existing caller-visible save error.
 FFI destruction stops producers and joins the last save outside the mutex; forced process termination does not guarantee a pending save.
 Standalone unit runtimes without a worker context retain synchronous persistence outside any shared runtime mutex.
 
-Regression owners are `projects_follow_authoritative_activity_and_identical_snapshots_settle`, `overview_tracks_live_checkout_panes_and_drops_retired_lineage`, and the two `removing_registration_*` tests.
-Native acceptance uses many private projects, Search and disclosure, live pane retirement/movement, and successful versus in-use registration removal.
+A pin is one more key in the same sort and one more exclusion in the same fold pass; `workspace_pin_set` re-sorts the projected list in place and persists through the existing off-lock save, and the removal counts ride the checkout summary pass rather than a second visit of the panes.
+Closing a project's panes for `Remove project…` runs on the same worker pattern as worktree deletion, outside the mutex, with one in-flight close per project.
+Regression owners are `projects_follow_authoritative_activity_and_identical_snapshots_settle`, `overview_tracks_live_checkout_panes_and_drops_retired_lineage`, `pinned_projects_lead_their_device_in_activity_order`, `pinning_a_registration_reorders_the_row_and_persists_the_flag`, and the `removing_a_registration_*` and `removing_registration_*` tests.
+Native acceptance uses many private projects, Search and disclosure, live pane retirement/movement, pin and unpin, and registration removal with and without open panes.
 Measure baseline and candidate idle/driven work separately with the same project/pane count; tests alone do not prove native responsiveness.
 
-### Project history, disk and cleanup
+### Project worktrees, disk and cleanup
 
-Only the selected open Overview project requests a bounded history read through WorktreeReader.
-One `git log` includes all real worktree HEADs and known main/base refs, retaining ordered parents, decorations, shallow boundaries and a continuation frontier outside the 512-commit window.
-Overview-only request changes reuse the worker's catalog cache; closing Overview and unchanged ticks perform no extra Git commands.
-Graph geometry rebuilds when history or checkout HEAD identities change; agent status updates do not recompute ancestry.
-Linear chains fold around worktree/ref boundaries; rendering is bounded by the history window and retained worktree count.
+The Overview reads nothing of its own: every group header and stat cell is derived from the worktree catalog the sidebar already reads, and opening or closing the Overview adds no Git command.
+`behind_upstream` rides the same `rev-list --left-right --count @{u}...HEAD` call that already counted unpushed commits, so a fetched-side count costs no extra process, and `created_at_unix_ms` is one `stat` of the worktree's gitdir in the same background pass off the mutex.
+The catalog pass is bounded by the worktree count; a project with many worktrees pays one status, one rev-list and one stat per worktree per change, never per tick or per agent update.
+Group ordering, chips and search are pure functions of the snapshot in `OverviewPresentation`; agent status updates redraw rows and never recompute the catalog.
 List rows use the existing lazy native scrolling and search keyboard patterns.
 
 Disk reuses DiskReader, triggered by opening Git/Overview or explicit refresh, with one inflight read and coalesced pending input.
@@ -425,8 +433,8 @@ The UI therefore describes a fresh eligibility check rather than a permanent unu
 A stale, missing or failed check is caller-visible and never becomes permission to delete.
 Completed intents are retained until dismissal; duplicate confirmation does no work, and retry through a fresh review excludes already removed targets.
 
-Regression owners include `overview_inspection_does_not_focus_or_repeat_publish`, `overview_history_preserves_real_merge_parents_and_reads_all_heads_once`, `overview_close_and_idle_do_not_run_additional_git_commands`, disk filesystem fixtures, cleanup filesystem fixtures and `OverviewPresentationTests`.
-Native acceptance additionally covers Tree/List inspection versus explicit focus, narrow Korean/English wrapping, unknown/partial summaries, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
+Regression owners include `overview_open_section_focuses_the_checkout_and_switches_the_panel_in_one_event`, `agent_start_in_checkout_reports_through_the_task_operation_slot`, `behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side`, `linked_worktrees_carry_their_creation_time_and_the_main_worktree_none`, disk filesystem fixtures, cleanup filesystem fixtures and `OverviewPresentationTests`.
+Native acceptance additionally covers row click versus header click versus the `N files` chip, narrow Korean/English wrapping of branch names and tasks, `…`/`?` cells, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
 
 ### Background candidate launch
 

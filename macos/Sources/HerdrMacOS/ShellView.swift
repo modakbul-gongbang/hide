@@ -590,7 +590,7 @@ struct PaneTerminalCell<Content: View>: View {
             paneID: pane.id,
             title: PaneHeaderPresentation.title(
                 herdrLabel: pane.herdrLabel,
-                agentSummary: agent?.identityLabel ?? pane.summary,
+                agentSummary: agent?.identityLabel ?? pane.identityLabel,
                 terminalTitle: pane.terminalTitle,
                 workspaceLabel: pane.workspaceLabel,
                 paneID: pane.id
@@ -625,17 +625,95 @@ struct PaneTerminalCell<Content: View>: View {
     }
 }
 
+/// The pane header's one line: `name · [Word] sentence`.
+///
+/// The name is caption semibold in primary, the separator muted, the word
+/// caption medium in the status colour, and the sentence caption regular in
+/// the row's emphasis colour (PRD D-08). When the line is short of room the
+/// sentence goes first, then the word, and the name alone truncates at the
+/// tail (PRD B8). The sentence keeps at least `paneHeaderSentenceMinWidth`
+/// and truncates at the tail above it, so a long sentence is cut rather
+/// than dropped (PRD B7).
+struct PaneHeaderTitle: View {
+    let title: String
+    let activity: String
+    let sentence: PaneHeaderPresentation.Sentence
+    let statusColor: Color?
+
+    var body: some View {
+        if !activity.isEmpty {
+            // ` · forking…` arrives with its own separator, as it always has.
+            line(word: false, text: false, trailing: activity, trailingColor: HideTheme.muted)
+        } else if sentence.isEmpty {
+            line(word: false, text: false, trailing: nil, trailingColor: HideTheme.muted)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                if sentence.text != nil {
+                    line(word: true, text: true, trailing: nil, trailingColor: HideTheme.muted)
+                }
+                if sentence.word != nil {
+                    line(word: true, text: false, trailing: nil, trailingColor: HideTheme.muted)
+                }
+                line(word: false, text: false, trailing: nil, trailingColor: HideTheme.muted)
+            }
+        }
+    }
+
+    private func line(word: Bool, text: Bool, trailing: String?, trailingColor: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: HideTheme.spacingXXS) {
+            Text(title)
+                .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                .foregroundStyle(HideTheme.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                // Inside a candidate that carries more than the name, the name
+                // holds its width so the candidate is judged whole; the last
+                // candidate is the name alone, and there it may truncate.
+                .fixedSize(horizontal: word || text, vertical: false)
+            if let trailing {
+                Text(trailing)
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(trailingColor)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            if word || text {
+                Text("·")
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(HideTheme.muted)
+                    .fixedSize()
+            }
+            if word, let statusWord = sentence.word {
+                Text(statusWord)
+                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                    .foregroundStyle(statusColor ?? HideTheme.secondary)
+                    .fixedSize()
+            }
+            if text, let detail = sentence.text {
+                Text(detail)
+                    .hideFont(size: HideTheme.Typography.caption)
+                    .foregroundStyle(sentence.emphasized ? HideTheme.primary : HideTheme.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: HideTheme.Layout.paneHeaderSentenceMinWidth, alignment: .leading)
+                    .hideTooltip(detail)
+            }
+        }
+    }
+}
+
 enum PaneHeaderPresentation {
     /// The name a pane is shown by, most specific first.
     ///
     /// A Herdr label is a name the user chose for this pane, so it outranks
-    /// everything. The core's agent identity is the task name the sidebar
-    /// already shows, so the header and the sidebar name one pane the
-    /// same way. A terminal title is what the running program calls itself;
-    /// Claude Code flips it between the session name and a status line such
-    /// as "Claude is waiting for…", which is why it ranks below the summary.
-    /// The workspace label names the project, which every pane in it shares.
-    /// The pane id is the last resort and is never empty.
+    /// everything. The core's agent identity is the stable session name the
+    /// sidebar row already shows, so the header and the sidebar name one pane
+    /// the same way (PRD D-09). A terminal title is what the running program
+    /// calls itself; Claude Code flips it between the session name and a
+    /// status line such as "Claude is waiting for…", which is why it ranks
+    /// below the identity. The workspace label names the project, which
+    /// every pane in it shares. The pane id is the last resort and is never
+    /// empty.
     static func title(
         herdrLabel: String?,
         agentSummary: String? = nil,
@@ -648,6 +726,58 @@ enum PaneHeaderPresentation {
             if !normalized.isEmpty { return normalized }
         }
         return paneID
+    }
+
+    /// What follows the name on the header's one line: `· [Word] sentence`.
+    ///
+    /// The core chose the word and the sentence for the row's state (PRD
+    /// D-06); the header spreads the same answer across one line (PRD D-08).
+    /// A shell operation on the pane (` · forking…`) takes the whole slot
+    /// while it runs, because it is about this pane right now and the
+    /// sentence is about the agent's turn (PRD B9).
+    struct Sentence: Equatable {
+        /// The status word, present when the row would draw it.
+        let word: String?
+        /// The sentence, present when the core chose one.
+        let text: String?
+        /// Whether the sentence is drawn bright (a row that still concerns
+        /// the operator) or subdued (a working row's progress).
+        let emphasized: Bool
+
+        var isEmpty: Bool { word == nil && text == nil }
+    }
+
+    static func sentence(agent: SidebarAgent?, activity: String) -> Sentence {
+        guard activity.isEmpty, let agent else {
+            return Sentence(word: nil, text: nil, emphasized: false)
+        }
+        return Sentence(
+            word: agent.statusWordVisible ? agent.statusLabel : nil,
+            text: agent.detail,
+            emphasized: agent.emphasized
+        )
+    }
+
+    /// The accessible reading of the header's line: the name, then the agent
+    /// kind and the status word whether or not the word is drawn, then the
+    /// sentence (PRD D-10).
+    static func accessibilityLabel(
+        kind: String,
+        title: String,
+        paneID: String,
+        agent: SidebarAgent?,
+        activity: String,
+        notice: String?
+    ) -> String {
+        [
+            "Focus \(kind) pane \(title) (\(paneID))",
+            agent.map { "\($0.agentKind), \($0.statusLabel)" },
+            activity.isEmpty ? agent?.detail : nil,
+            activity.isEmpty ? nil : activity,
+            notice,
+        ]
+        .compactMap { $0 }
+        .joined(separator: ", ")
     }
 }
 
@@ -799,19 +929,21 @@ struct HideTerminalPaneCard<Content: View>: View {
                 }
 
                 Button(action: onFocus) {
-                    Text(title + activity)
-                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                        .foregroundStyle(HideTheme.primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                    PaneHeaderTitle(
+                        title: title,
+                        activity: activity,
+                        sentence: PaneHeaderPresentation.sentence(agent: agent, activity: activity),
+                        statusColor: agent.map { AgentStatusPresentation(agent: $0, connected: connected).color }
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(HideInteractiveButtonStyle())
                 .accessibilityLabel(
-                    ["Focus \(kind) pane \(title) (\(paneID))", agent.map { "\($0.agentKind), \($0.statusLabel)" }]
-                        .compactMap { $0 }
-                        .joined(separator: ", ")
+                    PaneHeaderPresentation.accessibilityLabel(
+                        kind: kind, title: title, paneID: paneID, agent: agent,
+                        activity: activity, notice: notice
+                    )
                 )
 
                 if PaneLineagePresentation.showsInstrumentationHelp(children),
@@ -888,7 +1020,14 @@ struct HideTerminalPaneCard<Content: View>: View {
                 HideIconButton(
                     systemImage: "xmark",
                     help: closeHelp,
-                    accessibilityLabel: "Close pane \(paneID)",
+                    accessibilityLabel: [
+                        "Close pane \(paneID)",
+                        closeHelp,
+                        activity.isEmpty ? nil : activity,
+                        notice,
+                    ]
+                        .compactMap { $0 }
+                        .joined(separator: ", "),
                     variant: .toolbar,
                     command: .pane(.closePane),
                     paneID: paneID,

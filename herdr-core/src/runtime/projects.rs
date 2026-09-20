@@ -74,13 +74,6 @@ impl Runtime {
             })
             .collect();
         crate::worktrees::WorktreeRequest {
-            overview_root: (self.snapshot.ui_state.right_panel_visible
-                && self.snapshot.ui_state.right_panel_section == RightPanelSection::Overview)
-                .then(|| {
-                    self.focused_local_checkout()
-                        .map(|(w, _)| PathBuf::from(&w.path))
-                })
-                .flatten(),
             projects,
             generation: self.worktree_generation,
         }
@@ -664,6 +657,271 @@ impl Runtime {
         true
     }
 
+    /// Pins or unpins a registered project (D-07, D-08). The row moves at
+    /// once and the registration is persisted on the existing off-lock save;
+    /// the same value again changes nothing and writes nothing.
+    pub(super) fn set_workspace_pinned(&mut self, payload: WorkspacePinSetPayload) -> bool {
+        let Some(registration) = self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter_mut()
+            .find(|registration| registration.id == payload.workspace_id)
+        else {
+            self.set_error(
+                "workspace.pin_unregistered",
+                format!(
+                    "Project {} is not registered, so it cannot be pinned",
+                    payload.workspace_id
+                ),
+                false,
+            );
+            return true;
+        };
+        if registration.pinned == payload.pinned {
+            return false;
+        }
+        registration.pinned = payload.pinned;
+        for workspace in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .chain(self.last_accepted_catalog.iter_mut().flatten())
+            .filter(|workspace| workspace.id == payload.workspace_id)
+        {
+            workspace.pinned = payload.pinned;
+        }
+        // Re-sort in place, the way an activity change does: the catalog
+        // carries the flag on its next rebuild, but the row moves now.
+        let agents = self.snapshot.navigator.agents.clone();
+        crate::project_context::sort_projects(&mut self.snapshot.navigator.workspaces, &agents);
+        self.refresh_inactive_groups();
+        self.persist_ui_state();
+        self.push_diagnostic(
+            if payload.pinned {
+                "workspace.pinned"
+            } else {
+                "workspace.unpinned"
+            },
+            format!("Project {}", payload.workspace_id),
+        );
+        true
+    }
+
+    /// `Remove project…` (D-09, D-11). A project with no pane loses its
+    /// registration at once, as before. One with panes has them closed on a
+    /// worker thread that waits for Herdr to confirm; only that confirmation
+    /// removes the registration, so a timeout leaves the project registered
+    /// with the reason in the error banner and a retry starts from whatever
+    /// panes remain.
+    pub(super) fn remove_workspace(&mut self, payload: RemoveWorkspacePayload) -> bool {
+        if !self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .any(|registration| registration.id == payload.workspace_id)
+        {
+            // Already gone: the target state is reached, and a repeat of a
+            // completed removal stays quiet (DESIGN.md, registration removal).
+            return false;
+        }
+        if self
+            .workspace_removals_in_flight
+            .contains(&payload.workspace_id)
+        {
+            return false;
+        }
+        // The mirror of the create-side refusal: a creation still running
+        // for this folder will push the registration back after the retire.
+        if self.workspace_creation_in_flight_for(&payload.workspace_id) {
+            self.set_error(
+                "workspace.create_in_flight",
+                "This project is still being added; wait for its first pane, then remove it",
+                false,
+            );
+            return true;
+        }
+        let (checkout_paths, pane_ids) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.id == payload.workspace_id)
+            .flat_map(|workspace| &workspace.checkouts)
+            .fold(
+                (Vec::new(), Vec::new()),
+                |(mut paths, mut panes), checkout| {
+                    paths.push(checkout.path.clone());
+                    panes.extend(
+                        checkout
+                            .tabs
+                            .iter()
+                            .flat_map(|tab| &tab.panes)
+                            .map(|pane| pane.id.clone()),
+                    );
+                    (paths, panes)
+                },
+            );
+        if pane_ids.is_empty() {
+            return self.retire_workspace_registration(&payload.workspace_id);
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "registration", "kind": "remove.close_requested",
+            "workspace_id": payload.workspace_id, "pane_ids": pane_ids,
+        }));
+        let Some(context) = self.live.as_ref().cloned() else {
+            self.set_error(
+                "workspace.remove_failed",
+                "Removing a project with open panes needs a live Herdr connection",
+                true,
+            );
+            return true;
+        };
+        self.workspace_removals_in_flight
+            .insert(payload.workspace_id.clone());
+        if let Err(message) = live::spawn_workspace_close(
+            context,
+            payload.workspace_id.clone(),
+            checkout_paths,
+            pane_ids,
+        ) {
+            self.ingest_workspace_close_result(&payload.workspace_id, Err(message));
+        }
+        true
+    }
+
+    /// The worker's answer to `remove_workspace`: Herdr confirmed every pane
+    /// gone, or it did not in time. Only the first removes the registration.
+    pub fn ingest_workspace_close_result(
+        &mut self,
+        workspace_id: &str,
+        result: Result<(), String>,
+    ) -> bool {
+        if !self.workspace_removals_in_flight.remove(workspace_id) {
+            return false;
+        }
+        match result {
+            Ok(()) => self.retire_workspace_registration(workspace_id),
+            Err(message) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "registration", "kind": "remove.close_failed",
+                    "workspace_id": workspace_id, "error": message,
+                }));
+                self.set_error(
+                    "workspace.remove_failed",
+                    format!("{message}. The project stays registered; remove it again to close the panes that remain."),
+                    true,
+                );
+                true
+            }
+        }
+    }
+
+    /// The registration id a removal is still closing panes for, when
+    /// `path` names that same folder. Ids are path-keyed, so the folder and
+    /// the registration cannot be told apart by id alone. The registration is
+    /// still listed while the close runs, so its stored path is the
+    /// comparison; nothing is resolved on disk under the lock.
+    pub(super) fn workspace_removal_in_flight_for(&self, path: &str) -> Option<String> {
+        if self.workspace_removals_in_flight.is_empty() {
+            return None;
+        }
+        let requested = Path::new(path);
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .filter(|registration| self.workspace_removals_in_flight.contains(&registration.id))
+            .find(|registration| Path::new(&registration.path) == requested)
+            .map(|registration| registration.id.clone())
+    }
+
+    /// Whether a creation still running names the folder `workspace_id`
+    /// registers; creation is keyed by the requested path, not the id.
+    fn workspace_creation_in_flight_for(&self, workspace_id: &str) -> bool {
+        if self.workspace_creations_in_flight.is_empty() {
+            return false;
+        }
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .filter(|registration| registration.id == workspace_id)
+            .any(|registration| {
+                self.workspace_creations_in_flight
+                    .iter()
+                    .any(|path| Path::new(path) == Path::new(&registration.path))
+            })
+    }
+
+    /// Drops the registration and its row. Files, worktrees and Herdr
+    /// workspaces are never touched here.
+    fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
+        let before = self.snapshot.ui_state.workspace_registrations.len();
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .retain(|registration| registration.id != workspace_id);
+        if before == self.snapshot.ui_state.workspace_registrations.len() {
+            return false;
+        }
+        // The focused checkout and the selected pane leave with the project;
+        // kept, they would name a checkout no catalog carries and the sync
+        // would report `pane.projection_unavailable` every tick instead of
+        // moving to the next project, exactly as after a Herdr restart
+        // (`consume_restore_hint`).
+        let focus_leaves_with_workspace = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.id == workspace_id)
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .any(|checkout| {
+                Some(checkout.id.as_str()) == self.snapshot.navigator.focused_checkout_id.as_deref()
+            });
+        // Retire the accepted projection directly. Rebuilding the
+        // filesystem catalog here ran git while holding the mutex.
+        self.snapshot
+            .navigator
+            .workspaces
+            .retain(|workspace| workspace.id != workspace_id);
+        if focus_leaves_with_workspace {
+            self.snapshot.ui_state.focused_checkout_id = None;
+            self.snapshot.navigator.focused_checkout_id = None;
+            self.snapshot.ui_state.selected_pane_id = None;
+            self.snapshot.terminal.pane_id = None;
+            self.snapshot.focused.pane_id = None;
+            self.clear_terminal_projection();
+            if self
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .is_some_and(|error| error.kind == "pane.projection_unavailable")
+            {
+                self.snapshot.status.last_error = None;
+            }
+        }
+        if let Some(catalog) = &mut self.last_accepted_catalog {
+            catalog.retain(|workspace| workspace.id != workspace_id);
+        }
+        self.snapshot
+            .ui_state
+            .collapsed_workspace_ids
+            .retain(|id| id != workspace_id);
+        self.refresh_inactive_groups();
+        self.resync_navigator_focus();
+        self.persist_current_ui_state();
+        self.push_diagnostic(
+            "workspace.unregistered",
+            format!("Unregistered workspace {workspace_id} without touching its files"),
+        );
+        true
+    }
+
     pub fn ingest_worktree_close_result(&mut self, id: u64, result: Result<(), String>) -> bool {
         let Some(active) = self.snapshot.worktree_removal.as_ref() else {
             return false;
@@ -792,8 +1050,13 @@ impl Runtime {
                 RightPanelSection::Overview
             ) {
             self.focused_local_checkout()
-                .and_then(|(workspace, _)| self.worktree_catalog.project(&workspace.path))
-                .map(|project| {
+                .and_then(|(workspace, _)| {
+                    // A folder project has no worktree list, and it still has
+                    // a size the Overview states (PRD B16): the folder itself.
+                    if !workspace.is_git {
+                        return Some(vec![PathBuf::from(&workspace.path)]);
+                    }
+                    let project = self.worktree_catalog.project(&workspace.path)?;
                     let mut paths: Vec<_> = project
                         .worktrees
                         .iter()
@@ -802,7 +1065,7 @@ impl Runtime {
                     if let Some(shared) = &project.shared_git_path {
                         paths.push(PathBuf::from(shared));
                     }
-                    paths
+                    Some(paths)
                 })
                 .unwrap_or_default()
         } else {
@@ -931,12 +1194,6 @@ impl Runtime {
             .unwrap_or_default();
         let disk_measuring = checkout.is_worktree && disk.path.is_none();
         crate::model::CheckoutCardSnapshot {
-            inspected_checkout_path: self
-                .overview_selection
-                .as_ref()
-                .filter(|path| workspace.checkouts.iter().any(|c| &c.path == *path))
-                .cloned()
-                .or_else(|| Some(checkout.path.clone())),
             checkout_id: Some(checkout.id.clone()),
             panes: crate::project_context::checkout_panes(
                 checkout,
@@ -1011,6 +1268,152 @@ impl Runtime {
             return self.ingest_task_operation_result(id, Err(message));
         }
         true
+    }
+
+    /// The Overview's `Open in History` and its `N files` chip: focus the
+    /// checkout and switch the panel section together. The checkout has to be
+    /// a local one the navigator lists; the section has to be one the panel
+    /// has. Either failing is an error the operator did not cause and cannot
+    /// act on, so it goes to the log and nothing on screen moves.
+    pub(super) fn overview_open_section(&mut self, payload: OverviewOpenSectionPayload) -> bool {
+        let Some(section) = RightPanelSection::parse(&payload.section) else {
+            self.set_error(
+                "overview.unknown_section",
+                format!("Right panel has no section {}", payload.section),
+                false,
+            );
+            return true;
+        };
+        let Some((workspace_id, checkout_id)) = self.local_checkout_ids(&payload.checkout_path)
+        else {
+            self.set_error(
+                "overview.unknown_checkout",
+                format!("Checkout is not listed: {}", payload.checkout_path),
+                false,
+            );
+            return true;
+        };
+        if self.snapshot.navigator.focused_checkout_id.as_deref() != Some(checkout_id.as_str()) {
+            self.focus_checkout(&workspace_id, &checkout_id);
+        }
+        self.snapshot.ui_state.right_panel_visible = true;
+        self.snapshot.ui_state.right_panel_section = section;
+        self.persist_ui_state();
+        true
+    }
+
+    /// `New agent here ▸ Terminal only / Claude / Codex` and the empty
+    /// group's `Start agent…`: one tab with the checkout as its cwd, in the
+    /// checkout's own Herdr workspace, through the task operation slot the
+    /// worktree sheet already reports through. The shell starts the provider
+    /// in the pane the slot names, so `terminal` needs nothing more from it.
+    pub(super) fn agent_start_in_checkout(&mut self, payload: AgentStartInCheckoutPayload) -> bool {
+        let agent_kind = match payload.provider.as_str() {
+            "terminal" => None,
+            "claude" | "codex" => Some(payload.provider.clone()),
+            other => {
+                self.set_error(
+                    "agent_start.unknown_provider",
+                    format!("No agent provider named {other}"),
+                    false,
+                );
+                return true;
+            }
+        };
+        let Some((workspace_id, checkout_id)) = self.local_checkout_ids(&payload.checkout_path)
+        else {
+            self.set_error(
+                "overview.unknown_checkout",
+                format!("Checkout is not listed: {}", payload.checkout_path),
+                false,
+            );
+            return true;
+        };
+        let (workspace_path, label, session_workspace_id) = {
+            let workspace = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id)
+                .expect("local_checkout_ids named a listed workspace");
+            let checkout = workspace
+                .checkouts
+                .iter()
+                .find(|checkout| checkout.id == checkout_id)
+                .expect("local_checkout_ids named a listed checkout");
+            // The checkout's own workspace is the one its visible tab is in;
+            // a checkout with no pane has none and gets a workspace of its own.
+            let session_workspace_id = self
+                .visible_tab_ids
+                .get(&checkout_id)
+                .and_then(|tab_id| {
+                    self.snapshot
+                        .pane_layouts
+                        .iter()
+                        .find(|layout| &layout.tab_id == tab_id)
+                })
+                .map(|layout| layout.workspace_id.clone())
+                .or_else(|| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .find_map(|tab| tab.workspace_id.clone())
+                })
+                .filter(|id| workspace.session_workspace_ids.contains(id));
+            let label = if session_workspace_id.is_some() {
+                checkout.next_tab_label.clone()
+            } else {
+                format!("hide {}", checkout.label)
+            };
+            (workspace.path.clone(), label, session_workspace_id)
+        };
+        let id = match self.begin_task_operation(
+            "agent_start",
+            Some(workspace_path),
+            None,
+            None,
+            agent_kind,
+        ) {
+            Ok(id) => id,
+            Err(message) => {
+                self.set_error("task_operation.busy", message, true);
+                return true;
+            }
+        };
+        let request = live::CheckoutTabRequest {
+            id,
+            checkout_path: payload.checkout_path,
+            label,
+            session_workspace_id,
+        };
+        let Some(context) = self.live.as_ref().cloned() else {
+            return self.ingest_task_operation_result(
+                id,
+                Err("start an agent: a live Herdr connection is required".into()),
+            );
+        };
+        if let Err(message) = live::spawn_checkout_tab_create(context, request) {
+            return self.ingest_task_operation_result(id, Err(message));
+        }
+        true
+    }
+
+    /// The workspace and checkout ids a local checkout path names, or `None`
+    /// for a path the navigator does not list locally.
+    fn local_checkout_ids(&self, checkout_path: &str) -> Option<(String, String)> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.path == checkout_path)
+                    .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
+            })
     }
 
     pub(super) fn migrate_main_branch(&mut self, payload: MigrateMainBranchPayload) -> bool {

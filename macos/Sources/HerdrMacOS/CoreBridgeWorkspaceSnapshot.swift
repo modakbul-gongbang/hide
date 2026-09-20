@@ -74,11 +74,8 @@ struct CoreNavigatorSnapshot: Decodable {
     let inactiveProjects: [CoreInactiveProjectGroupSnapshot]
     let agents: [SidebarAgent]
     let providerUsage: [CoreProviderUsageSnapshot]
-    /// The one space that is not a project.
-    let scratch: CoreScratchSnapshot
 
     enum CodingKeys: String, CodingKey {
-        case scratch
         case rootPath = "root_path"
         case focusedDeviceID = "focused_device_id"
         case focusedWorkspaceID = "focused_workspace_id"
@@ -107,8 +104,6 @@ struct CoreNavigatorSnapshot: Decodable {
             [CoreProviderUsageSnapshot].self,
             forKey: .providerUsage
         ) ?? []
-        scratch = try container.decodeIfPresent(CoreScratchSnapshot.self, forKey: .scratch)
-            ?? CoreScratchSnapshot.empty
     }
 }
 
@@ -123,76 +118,6 @@ struct CoreInactiveProjectGroupSnapshot: Decodable, Identifiable {
         case expanded
         case projectIDs = "project_ids"
     }
-}
-
-/// The Scratch node as the sidebar draws it: one folder, and the tabs in it.
-struct CoreScratchSnapshot: Decodable {
-    let id: String
-    let label: String
-    let path: String
-    let expanded: Bool
-    let sessionWorkspaceIDs: [String]
-    let tabs: [CoreScratchTabSnapshot]
-
-    static let empty = CoreScratchSnapshot(
-        id: "scratch",
-        label: "Scratch",
-        path: "",
-        expanded: false,
-        sessionWorkspaceIDs: [],
-        tabs: []
-    )
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case label
-        case path
-        case expanded
-        case sessionWorkspaceIDs = "session_workspace_ids"
-        case tabs
-    }
-
-    init(
-        id: String,
-        label: String,
-        path: String,
-        expanded: Bool,
-        sessionWorkspaceIDs: [String],
-        tabs: [CoreScratchTabSnapshot]
-    ) {
-        self.id = id
-        self.label = label
-        self.path = path
-        self.expanded = expanded
-        self.sessionWorkspaceIDs = sessionWorkspaceIDs
-        self.tabs = tabs
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decodeIfPresent(String.self, forKey: .id) ?? "scratch"
-        label = try container.decodeIfPresent(String.self, forKey: .label) ?? "Scratch"
-        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
-        expanded = try container.decodeIfPresent(Bool.self, forKey: .expanded) ?? false
-        sessionWorkspaceIDs = try container.decodeIfPresent(
-            [String].self,
-            forKey: .sessionWorkspaceIDs
-        ) ?? []
-        tabs = try container.decodeIfPresent([CoreScratchTabSnapshot].self, forKey: .tabs) ?? []
-    }
-}
-
-/// One Scratch row.
-struct CoreScratchTabSnapshot: Decodable, Identifiable {
-    let id: String
-    let label: String
-    /// The chat's title, when the composer wrote one onto its pane.
-    let title: String?
-    let panes: [CorePaneSnapshot]
-
-    /// What the row says: the title when there is one, the tab label when
-    /// there is not. Derived once here so no view has to decide it again.
-    var displayName: String { title ?? label }
 }
 
 struct CoreProviderUsageSnapshot: Decodable, Identifiable {
@@ -261,17 +186,44 @@ struct CoreDeviceSnapshot: Decodable, Identifiable {
     let label: String
     let kind: String
     let state: String
+    /// Why an SSH device is not ready, in the core's words; nil while it is.
+    let message: String?
     let sshAlias: String?
     let agentCount: UInt32
+    /// The last connection test the operator asked for, or the one running.
+    let test: CoreDeviceTestSnapshot?
 
     enum CodingKeys: String, CodingKey {
         case id
         case label
         case kind
         case state
+        case message
         case sshAlias = "ssh_alias"
         case agentCount = "agent_count"
+        case test
     }
+}
+
+struct CoreDeviceTestSnapshot: Decodable, Equatable {
+    /// `running`, `passed` or `failed`.
+    let state: String
+    let checkedAtUnixMs: UInt64?
+    let stages: [CoreDeviceTestStageSnapshot]
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case checkedAtUnixMs = "checked_at_unix_ms"
+        case stages
+    }
+}
+
+struct CoreDeviceTestStageSnapshot: Decodable, Equatable, Identifiable {
+    var id: String { stage }
+    let stage: String
+    /// `pending`, `passed` or `failed`.
+    let state: String
+    let detail: String
 }
 
 struct CoreWorkspaceSnapshot: Decodable, Identifiable {
@@ -291,8 +243,14 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     /// agent activity, in Unix milliseconds. Absent when the project has
     /// neither, which is what lets the row leave its time blank.
     let lastActivityUnixMS: UInt64?
+    /// The registration's pin, carried onto the row by the core, which also
+    /// orders pinned rows first. Absent on a wire that predates pins or on
+    /// the remote navigation wire, which reads as unpinned.
+    let pinned: Bool
     let checkouts: [CoreCheckoutSnapshot]
     let inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot
+    /// What `Remove project…` closes, counted by the core.
+    let removal: CoreWorkspaceRemovalGateSnapshot
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -308,8 +266,10 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         case registered
         case temporary
         case lastActivityUnixMS = "last_activity_unix_ms"
+        case pinned
         case checkouts
         case inactiveCheckouts = "inactive_checkouts"
+        case removal
     }
 
     init(
@@ -326,8 +286,10 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         registered: Bool,
         temporary: Bool,
         lastActivityUnixMS: UInt64? = nil,
+        pinned: Bool = false,
         checkouts: [CoreCheckoutSnapshot],
-        inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot = .empty
+        inactiveCheckouts: CoreInactiveCheckoutGroupSnapshot = .empty,
+        removal: CoreWorkspaceRemovalGateSnapshot = .none
     ) {
         self.id = id
         self.label = label
@@ -342,8 +304,10 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         self.registered = registered
         self.temporary = temporary
         self.lastActivityUnixMS = lastActivityUnixMS
+        self.pinned = pinned
         self.checkouts = checkouts
         self.inactiveCheckouts = inactiveCheckouts
+        self.removal = removal
     }
 
     init(from decoder: Decoder) throws {
@@ -361,11 +325,28 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
         registered = try container.decodeIfPresent(Bool.self, forKey: .registered) ?? true
         temporary = try container.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
         lastActivityUnixMS = try container.decodeIfPresent(UInt64.self, forKey: .lastActivityUnixMS)
+        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
         checkouts = try container.decodeIfPresent([CoreCheckoutSnapshot].self, forKey: .checkouts) ?? []
         inactiveCheckouts = try container.decodeIfPresent(
             CoreInactiveCheckoutGroupSnapshot.self,
             forKey: .inactiveCheckouts
         ) ?? .empty
+        removal = try container.decodeIfPresent(
+            CoreWorkspaceRemovalGateSnapshot.self,
+            forKey: .removal
+        ) ?? .none
+    }
+}
+
+struct CoreWorkspaceRemovalGateSnapshot: Decodable, Equatable {
+    let paneCount: Int
+    let runningAgentCount: Int
+
+    static let none = CoreWorkspaceRemovalGateSnapshot(paneCount: 0, runningAgentCount: 0)
+
+    enum CodingKeys: String, CodingKey {
+        case paneCount = "pane_count"
+        case runningAgentCount = "running_agent_count"
     }
 }
 
@@ -554,19 +535,40 @@ struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
     let kind: Kind
     let sourceID: String
     let label: String
+    /// The one agent this tab holds, when the core found exactly one. The
+    /// Recent Panels switcher names the tab by it; a shell-only tab and a tab
+    /// with several agents carry none and keep their label.
+    let agentIdentity: CoreAgentChip?
+    /// Whether this editor entry is the checkout's preview tab, whose title
+    /// the strip draws in italic. The core decides it; a Herdr entry never is.
+    let preview: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
         case kind
         case sourceID = "source_id"
         case label
+        case agentIdentity = "agent_identity"
+        case preview
     }
 
-    init(id: String, kind: Kind, sourceID: String, label: String) {
+    init(id: String, kind: Kind, sourceID: String, label: String, agentIdentity: CoreAgentChip? = nil, preview: Bool = false) {
         self.id = id
         self.kind = kind
         self.sourceID = sourceID
         self.label = label
+        self.agentIdentity = agentIdentity
+        self.preview = preview
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        sourceID = try container.decode(String.self, forKey: .sourceID)
+        label = try container.decode(String.self, forKey: .label)
+        agentIdentity = try container.decodeIfPresent(CoreAgentChip.self, forKey: .agentIdentity)
+        preview = try container.decodeIfPresent(Bool.self, forKey: .preview) ?? false
     }
 }
 
@@ -684,7 +686,6 @@ struct CoreDiskUsage: Decodable, Equatable {
 
 /// What the summary card needs that a checkout row does not already carry.
 struct CoreCheckoutCard: Decodable, Equatable {
-    var inspectedCheckoutPath: String? = nil
     let checkoutID: String?
     let github: CoreGithubStatus
     let disk: CoreDiskUsage
@@ -701,7 +702,6 @@ struct CoreCheckoutCard: Decodable, Equatable {
     )
 
     enum CodingKeys: String, CodingKey {
-        case inspectedCheckoutPath = "inspected_checkout_path"
         case checkoutID = "checkout_id"
         case github
         case disk
@@ -728,7 +728,6 @@ struct CoreCheckoutCard: Decodable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        inspectedCheckoutPath = try container.decodeIfPresent(String.self, forKey: .inspectedCheckoutPath)
         checkoutID = try container.decodeIfPresent(String.self, forKey: .checkoutID)
         github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
         disk = try container.decodeIfPresent(CoreDiskUsage.self, forKey: .disk) ?? .empty
@@ -824,7 +823,10 @@ struct CorePaneSnapshot: Decodable, Identifiable {
     /// Whether closing this pane needs confirmation first, as the core derived
     /// it for the same agent the sidebar row shows.
     let requiresCloseConfirmation: Bool
-    let summary: String?
+    /// Whether activity must be refreshed before the core permits a close.
+    let requiresCloseStatusCheck: Bool
+    /// The agent's stable name, from the same ladder the sidebar row shows.
+    let identityLabel: String?
     let activityAt: UInt64?
     let fork: CorePaneFork
     /// Ports listened on from at or below this pane's working directory.
@@ -846,7 +848,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         case cwd
         case statusLabel = "status_label"
         case requiresCloseConfirmation = "requires_close_confirmation"
-        case summary
+        case requiresCloseStatusCheck = "requires_close_status_check"
+        case identityLabel = "identity_label"
         case activityAt = "activity_at_unix_ms"
         case children
         case lineagePath = "lineage_path"
@@ -861,7 +864,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         cwd: String,
         statusLabel: String,
         requiresCloseConfirmation: Bool = false,
-        summary: String?,
+        requiresCloseStatusCheck: Bool = false,
+        identityLabel: String? = nil,
         activityAt: UInt64?,
         fork: CorePaneFork = CorePaneFork(),
         ports: [UInt16] = [],
@@ -876,7 +880,8 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.cwd = cwd
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
-        self.summary = summary
+        self.requiresCloseStatusCheck = requiresCloseStatusCheck
+        self.identityLabel = identityLabel
         self.activityAt = activityAt
         self.fork = fork
         self.ports = ports
@@ -900,7 +905,10 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         requiresCloseConfirmation = try container.decode(
             Bool.self, forKey: .requiresCloseConfirmation
         )
-        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        requiresCloseStatusCheck = try container.decodeIfPresent(
+            Bool.self, forKey: .requiresCloseStatusCheck
+        ) ?? false
+        identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel)
         activityAt = try container.decodeIfPresent(UInt64.self, forKey: .activityAt)
         fork = try container.decodeIfPresent(CorePaneFork.self, forKey: .fork) ?? CorePaneFork()
         ports = try container.decodeIfPresent([UInt16].self, forKey: .ports) ?? []
@@ -915,7 +923,10 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
     var id: String { paneID }
     let paneID: String
     let label: String
-    let detail: String
+    /// The row's second line as the core chose it: the sentence, or nothing.
+    let detail: String?
+    /// Whether the status word is drawn beside that sentence.
+    let statusWordVisible: Bool
     let agentKind: String
     let demand: String
     let activity: String
@@ -924,10 +935,18 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
     let statusLabel: String
     let delegated: Bool
 
+    /// The tooltip and accessibility description: the status word as the
+    /// surface resolved it (a disconnected server says so), then the
+    /// sentence when there is one.
+    func description(status: AgentStatusPresentation) -> String {
+        [status.label, detail].compactMap { $0 }.joined(separator: ". ")
+    }
+
     enum CodingKeys: String, CodingKey {
         case paneID = "pane_id"
         case label
         case detail
+        case statusWordVisible = "status_word_visible"
         case agentKind = "agent_kind"
         case demand
         case activity
@@ -940,7 +959,8 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
     init(
         paneID: String,
         label: String,
-        detail: String = "",
+        detail: String? = nil,
+        statusWordVisible: Bool = true,
         agentKind: String = "claude",
         demand: String = "none",
         activity: String = "working",
@@ -952,6 +972,7 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
         self.paneID = paneID
         self.label = label
         self.detail = detail
+        self.statusWordVisible = statusWordVisible
         self.agentKind = agentKind
         self.demand = demand
         self.activity = activity
@@ -959,6 +980,21 @@ struct CoreAgentChip: Decodable, Equatable, Identifiable {
         self.symbol = symbol
         self.statusLabel = statusLabel
         self.delegated = delegated
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        paneID = try container.decode(String.self, forKey: .paneID)
+        label = try container.decode(String.self, forKey: .label)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        statusWordVisible = try container.decodeIfPresent(Bool.self, forKey: .statusWordVisible) ?? true
+        agentKind = try container.decode(String.self, forKey: .agentKind)
+        demand = try container.decode(String.self, forKey: .demand)
+        activity = try container.decode(String.self, forKey: .activity)
+        emphasized = try container.decode(Bool.self, forKey: .emphasized)
+        symbol = try container.decode(String.self, forKey: .symbol)
+        statusLabel = try container.decode(String.self, forKey: .statusLabel)
+        delegated = try container.decodeIfPresent(Bool.self, forKey: .delegated) ?? false
     }
 }
 
@@ -1109,11 +1145,19 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let statusLabel: String
     /// Whether closing this pane needs confirmation first.
     let requiresCloseConfirmation: Bool
+    /// Whether the activity status must be refreshed before closing this pane.
+    let requiresCloseStatusCheck: Bool
+    /// The stable name every surface calls this agent by (PRD D-01).
     let identityLabel: String
-    let summary: String
+    /// The label plugin's rolling task title; the search sheet's subtitle
+    /// when the state chose no sentence (PRD D-15).
+    let task: String?
+    /// The second line the core chose for this row's state, or nothing.
+    let detail: String?
+    /// Whether the status word is drawn on the second line.
+    let statusWordVisible: Bool
     let elapsed: String
     let lastActivity: String
-    let ambient: CoreAmbientSignal?
 
     var lineageDepth: Int = 0
     var lineageChildPaneIDs: [String] = []
@@ -1150,11 +1194,13 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         emphasized: Bool = false,
         statusLabel: String = "Idle",
         requiresCloseConfirmation: Bool = false,
-        summary: String,
-        identityLabel: String? = nil,
+        requiresCloseStatusCheck: Bool = false,
+        identityLabel: String,
+        task: String? = nil,
+        detail: String? = nil,
+        statusWordVisible: Bool = true,
         elapsed: String,
-        lastActivity: String,
-        ambient: CoreAmbientSignal?
+        lastActivity: String
     ) {
         self.id = id
         self.paneID = paneID
@@ -1170,11 +1216,13 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         self.emphasized = emphasized
         self.statusLabel = statusLabel
         self.requiresCloseConfirmation = requiresCloseConfirmation
-        self.identityLabel = identityLabel ?? summary
-        self.summary = summary
+        self.requiresCloseStatusCheck = requiresCloseStatusCheck
+        self.identityLabel = identityLabel
+        self.task = task
+        self.detail = detail
+        self.statusWordVisible = statusWordVisible
         self.elapsed = elapsed
         self.lastActivity = lastActivity
-        self.ambient = ambient
     }
 
     init(from decoder: Decoder) throws {
@@ -1193,11 +1241,13 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         emphasized = try container.decode(Bool.self, forKey: .emphasized)
         statusLabel = try container.decode(String.self, forKey: .statusLabel)
         requiresCloseConfirmation = try container.decode(Bool.self, forKey: .requiresCloseConfirmation)
-        summary = try container.decode(String.self, forKey: .summary)
-        identityLabel = try container.decodeIfPresent(String.self, forKey: .identityLabel) ?? summary
+        requiresCloseStatusCheck = try container.decodeIfPresent(Bool.self, forKey: .requiresCloseStatusCheck) ?? false
+        identityLabel = try container.decode(String.self, forKey: .identityLabel)
+        task = try container.decodeIfPresent(String.self, forKey: .task)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        statusWordVisible = try container.decodeIfPresent(Bool.self, forKey: .statusWordVisible) ?? true
         elapsed = try container.decode(String.self, forKey: .elapsed)
         lastActivity = try container.decode(String.self, forKey: .lastActivity)
-        ambient = try container.decodeIfPresent(CoreAmbientSignal.self, forKey: .ambient)
         lineageDepth = try container.decodeIfPresent(Int.self, forKey: .lineageDepth) ?? 0
         lineageChildPaneIDs = try container.decodeIfPresent([String].self, forKey: .lineageChildPaneIDs) ?? []
         lineageRootCheckoutID = try container.decodeIfPresent(String.self, forKey: .lineageRootCheckoutID)
@@ -1227,11 +1277,13 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case emphasized
         case statusLabel = "status_label"
         case requiresCloseConfirmation = "requires_close_confirmation"
+        case requiresCloseStatusCheck = "requires_close_status_check"
         case identityLabel = "identity_label"
-        case summary
+        case task
+        case detail
+        case statusWordVisible = "status_word_visible"
         case elapsed
         case lastActivity = "last_activity"
-        case ambient
         case lineageDepth = "lineage_depth"
         case lineageChildPaneIDs = "lineage_child_pane_ids"
         case lineageRootCheckoutID = "lineage_root_checkout_id"
@@ -1247,14 +1299,3 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     }
 }
 
-struct CoreAmbientSignal: Decodable, Equatable {
-    let subagentsActive: UInt32
-    let backgroundRunning: UInt32
-    let backgroundFailed: UInt32
-
-    enum CodingKeys: String, CodingKey {
-        case subagentsActive = "subagents_active"
-        case backgroundRunning = "background_running"
-        case backgroundFailed = "background_failed"
-    }
-}

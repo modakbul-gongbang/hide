@@ -81,7 +81,7 @@ sudo /usr/bin/ditto --rsrc --extattr --qtn dist/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
 
-The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.9.0-preview.2026-09-15-deefc5857a5c arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
+The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.9.1 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
 After a successful local build, `dist/` retains only that current Hide zip/checksum pair; published historical versions remain available from GitHub Releases, and unrelated local files are preserved.
 
 ## Verify the installed app
@@ -104,7 +104,7 @@ Also run `pgrep -fl HerdrMacOS` to rule out a second dev or worktree instance; m
 ## First launch
 
 hide runs the Herdr it bundles.
-On launch it verifies the bundled Herdr v0.9.0-preview.2026-09-15-deefc5857a5c binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
+On launch it verifies the bundled Herdr v0.9.1 binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
 Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket; hide and every `herdr` process it starts follow the same value.
 
 A Herdr server that is already running on that socket is used as it is when it speaks the protocol revision hide was built against.
@@ -118,6 +118,16 @@ Authentication is not bundled: SSH, Herdr, Claude Code, and Codex continue to ow
 
 If you want to start agents from hide, install and sign in to the relevant CLI before launching the app.
 hide resolves those executables from the macOS login shell path and reports an explicit error when the selected CLI is unavailable.
+
+## Connect another Mac over SSH
+
+hide can show and drive a Herdr server on another machine.
+Open Settings, choose Devices, and add the machine with a label and the alias `~/.ssh/config` already knows it by; that alias is the only thing hide stores about it.
+Authentication stays with SSH: the alias's `IdentityFile`, or the running SSH agent, is what hide signs in with, and hide never asks for or keeps a password.
+
+The remote machine needs Herdr installed where a non-login shell finds it (`~/.local/bin`, Homebrew, or the system paths) and a running `herdr server`.
+hide asks that machine `herdr status server --json` to learn where the server socket is, so nothing about the remote user or home directory is configured on this side.
+Each device row in Settings shows whether the remote session is connected and, when it is not, the reason in the words the connection failed with; `Test` runs the SSH, authentication, Herdr, protocol, PTY, SFTP, and Git stages one after another and lists the first one that needs attention on that host.
 
 ## Update
 
@@ -140,9 +150,9 @@ Quit only owned test instances, rebuild and reinstall when intended, then launch
 For QA, use the isolation and restoration procedure in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); do not stop the operator's Herdr server.
 
 <!-- herdr-provenance:start -->
-hide distributes a modified Herdr preview from the [modakbul-gongbang/herdr fork](https://github.com/modakbul-gongbang/herdr/releases/tag/preview-2026-09-15-deefc5857a5c), built from commit `deefc5857a5c`.
-This fork supplies host-scoped snapshots, ordered event sequences, and agent lineage that the upstream stable release does not yet expose.
-The weekly `herdr-update.yml` workflow continues to propose upstream stable releases with `--repo herdrdev/herdr`; return to upstream when the contract field tests and runtime checks pass.
+hide distributes the [upstream Herdr release v0.9.1](https://github.com/herdrdev/herdr/releases/tag/v0.9.1).
+The bundled binary is not modified by hide.
+The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
 
 ### hide says its bundled Herdr is missing or failed verification
@@ -170,11 +180,15 @@ hide never substitutes the other agent when the selected executable is missing.
 
 ### Remote workspaces do not connect
 
-Confirm the SSH host works outside hide first:
+Confirm the SSH host works outside hide first, with the same alias the device was added with:
 
 ```sh
 ssh <host-alias> true
+ssh <host-alias> 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH" herdr status server --json'
 ```
 
+The second command is what hide runs to find the remote socket.
+`command not found` means Herdr is not installed there or not on a non-login shell's `PATH`; `"running":false` means the server is stopped, and running `herdr` once on that machine starts it.
+The device row in Settings carries the same answer, and `Test` names the stage that failed.
 hide delegates authentication to the existing SSH configuration and agent.
 It does not display, copy, or store a password.

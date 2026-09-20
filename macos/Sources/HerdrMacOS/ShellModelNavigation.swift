@@ -14,6 +14,29 @@ struct ShellTabItem: Identifiable {
     let kind: ShellTabKind
     var focusedAgent: SidebarAgent? = nil
     var contextLabel: String? = nil
+    /// The one agent a Herdr tab holds, as the core named it. Where a tab is
+    /// named rather than drawn as a strip slot - the Recent Panels switcher -
+    /// this is the title and the mark; a tab without one keeps `label`.
+    var agentIdentity: CoreAgentChip? = nil
+    /// The checkout's preview tab: titled in italic, named with "Preview",
+    /// promoted by a double-click on the title (PRD editor-preview-tab D-06).
+    var preview: Bool = false
+}
+
+/// What a preview tab says about itself wherever it is named rather than
+/// drawn: the tooltip and the accessibility label carry "Preview" after the
+/// file name, and lose it the moment the tab is promoted (B16). The strip's
+/// colours, close button and keycap are the ordinary tab's (B17).
+enum EditorTabTitlePresentation {
+    static let previewSuffix = "Preview"
+
+    static func spoken(label: String, preview: Bool) -> String {
+        preview ? "\(label) · \(previewSuffix)" : label
+    }
+
+    static func italic(preview: Bool) -> Bool {
+        preview
+    }
 }
 
 /// Only the overlay subscribes to held-key presentation changes. The shell's
@@ -84,7 +107,7 @@ enum ShellTabStrip {
                 let agent = pane.flatMap { agentsByPane[$0.id] }
                 let paneTitle = pane.map {
                     PaneHeaderPresentation.title(
-                        herdrLabel: $0.herdrLabel, agentSummary: agent?.identityLabel ?? $0.summary,
+                        herdrLabel: $0.herdrLabel, agentSummary: agent?.identityLabel ?? $0.identityLabel,
                         terminalTitle: $0.terminalTitle, workspaceLabel: $0.workspaceLabel, paneID: $0.id
                     )
                 } ?? entry.label
@@ -98,7 +121,8 @@ enum ShellTabStrip {
                     active: activeFileTabID == nil && entry.sourceID == activeHerdrTabID,
                     kind: .herdr(tab),
                     focusedAgent: agent,
-                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(paneTitle)" }
+                    contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(paneTitle)" },
+                    agentIdentity: entry.agentIdentity
                 )
             case .file:
                 guard let tab = editorByID[entry.sourceID]
@@ -108,7 +132,8 @@ enum ShellTabStrip {
                     label: entry.label,
                     dirty: tab.dirty,
                     active: entry.sourceID == activeFileTabID,
-                    kind: .editor(tab)
+                    kind: .editor(tab),
+                    preview: entry.preview
                 )
             case .diff:
                 guard let tab = editorByID[entry.sourceID]
@@ -118,7 +143,8 @@ enum ShellTabStrip {
                     label: entry.label,
                     dirty: false,
                     active: entry.sourceID == activeFileTabID,
-                    kind: .editor(tab)
+                    kind: .editor(tab),
+                    preview: entry.preview
                 )
             }
         }

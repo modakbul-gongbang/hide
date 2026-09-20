@@ -21,7 +21,6 @@ use std::fmt::{Display, Formatter};
 use std::fs::{self, File, Metadata};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 #[cfg(not(unix))]
 use std::time::SystemTime;
@@ -34,7 +33,6 @@ use std::os::unix::fs::MetadataExt;
 pub const CODEX_FALLBACK_DAYS: usize = 7;
 /// Number of newest files considered by the usage fallback.
 pub const CODEX_CANDIDATE_LIMIT: usize = 32;
-const REPORTED_SESSION_FRESHNESS: Duration = Duration::from_secs(30);
 
 /// The two local agent session formats supported by Hide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +150,13 @@ impl RescanReason {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedSession {
     pub events: Vec<ConversationEvent>,
+    /// The name the agent gave its own session, when the chunk carried one.
+    ///
+    /// Claude Code writes an `ai-title` record once it has named the
+    /// conversation and repeats it on later turns; the last one in the
+    /// chunk wins. It is a property of the session rather than an event, so
+    /// it never enters `events`. Codex has no such record and leaves `None`.
+    pub title: Option<String>,
     pub skipped_lines: usize,
     pub skipped_reasons: BTreeMap<SkipReason, usize>,
     pub rescan_reason: Option<RescanReason>,
@@ -352,27 +357,22 @@ impl SessionLocator {
         identity: Option<&SessionIdentity>,
         cwd: Option<&str>,
     ) -> Result<PathBuf> {
+        // A session Herdr reported for this pane is that pane's session, full
+        // stop, and a reported session whose file does not exist yet is a
+        // session that has not started, not a reason to read another one.
+        // Both fallbacks to the newest file in the cwd were tried and both
+        // handed a pane its neighbour's transcript: the first once the
+        // reported file went quiet for 30 s, the second in the seconds
+        // between Claude's launch and its first written turn, when the id is
+        // already reported and the file is not there yet (2026-09-18/19). A
+        // pane that starts a new session in place (`/clear`, `--resume`) is
+        // reported again by the runtime hook, so a switch reaches here as a
+        // new id. The cwd search below serves only a pane with no reported
+        // session at all.
         if let Some(identity) = identity {
-            match self.reported_path(agent, cwd, identity) {
-                Ok(path) => {
-                    if self.is_recent(&path) {
-                        self.resolved.insert(pane_id.to_owned(), path.clone());
-                        return Ok(path);
-                    }
-                    if let Some(cwd) = cwd
-                        && let Some(newest) = self.newest_for_cwd(agent, cwd)?
-                        && newest != path
-                        && self.is_recent(&newest)
-                    {
-                        self.resolved.insert(pane_id.to_owned(), newest.clone());
-                        return Ok(newest);
-                    }
-                    self.resolved.insert(pane_id.to_owned(), path.clone());
-                    return Ok(path);
-                }
-                Err(SessionError::SessionFileMissing) if cwd.is_some() => {}
-                Err(error) => return Err(error),
-            }
+            let path = self.reported_path(agent, cwd, identity)?;
+            self.resolved.insert(pane_id.to_owned(), path.clone());
+            return Ok(path);
         }
 
         if let Some(path) = self.resolved.get(pane_id)
@@ -491,14 +491,6 @@ impl SessionLocator {
         days.truncate(CODEX_FALLBACK_DAYS);
         Ok(days)
     }
-
-    fn is_recent(&self, path: &Path) -> bool {
-        fs::metadata(path)
-            .and_then(|meta| meta.modified())
-            .ok()
-            .and_then(|modified| modified.elapsed().ok())
-            .is_some_and(|age| age <= REPORTED_SESSION_FRESHNESS)
-    }
 }
 
 fn read_directory(path: &Path) -> Result<Vec<PathBuf>> {
@@ -615,6 +607,9 @@ enum LineResult {
     Ignore,
     Skip(SkipReason),
     Event(ConversationEvent),
+    /// A session-level record rather than a turn: the title the agent gave
+    /// the conversation.
+    Title(String),
 }
 
 /// Parse Claude Code JSONL records into normalized events.
@@ -649,6 +644,7 @@ fn parse_lines(contents: &str, mut extract: impl FnMut(&Value) -> LineResult) ->
             LineResult::Ignore => {}
             LineResult::Skip(reason) => parsed.skipped(reason),
             LineResult::Event(event) => parsed.events.push(event),
+            LineResult::Title(title) => parsed.title = Some(title),
         }
     }
     parsed
@@ -658,6 +654,17 @@ fn parse_claude_line(item: &Value) -> LineResult {
     let role = match item.get("type").and_then(Value::as_str) {
         Some("user") => "user",
         Some("assistant") => "assistant",
+        Some("ai-title") => {
+            return match item
+                .get("aiTitle")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+            {
+                Some(title) => LineResult::Title(title.to_owned()),
+                None => LineResult::Ignore,
+            };
+        }
         _ => return LineResult::Ignore,
     };
     let Some(text) = session_text(item.pointer("/message/content")) else {
@@ -1046,6 +1053,29 @@ mod tests {
         assert_eq!(parsed.events[4].text, "--quick");
         assert_eq!(parsed.events[5].text, "[Request interrupted by user]");
         assert_eq!(parsed.skipped_lines, 0);
+        assert_eq!(parsed.title, None, "the fixture carries no ai-title record");
+    }
+
+    /// Claude's `ai-title` record is the session's own name: the last one
+    /// wins, it is not an event, and an empty one is nothing.
+    #[test]
+    fn claude_ai_title_is_the_session_title_and_not_an_event() {
+        let chunk = concat!(
+            r#"{"type":"ai-title","aiTitle":"  Hook 버그 확인 ","sessionId":"s1"}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-18T00:00:00.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"hook 고쳐줘"}}"#,
+            "\n",
+            r#"{"type":"ai-title","aiTitle":"","sessionId":"s1"}"#,
+            "\n",
+            r#"{"type":"ai-title","aiTitle":"Hook 보고 경로 교체","sessionId":"s1"}"#,
+            "\n",
+        );
+        let parsed = parse_claude_events(chunk);
+        assert_eq!(parsed.title.as_deref(), Some("Hook 보고 경로 교체"));
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.skipped_lines, 0);
+        let codex = parse_codex_events(chunk);
+        assert_eq!(codex.title, None);
     }
 
     #[test]
@@ -1107,6 +1137,75 @@ mod tests {
                 )
                 .unwrap(),
             codex
+        );
+    }
+
+    #[test]
+    fn a_reported_session_is_kept_when_a_neighbour_in_the_same_cwd_is_newer() {
+        let home = tempdir().unwrap();
+        let claude_dir = home.path().join(".claude/projects/-Users-example");
+        fs::create_dir_all(&claude_dir).unwrap();
+        let quiet = claude_dir.join("quiet-id.jsonl");
+        let busy = claude_dir.join("busy-id.jsonl");
+        fs::write(&quiet, b"").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        fs::File::open(&quiet).unwrap().set_modified(old).unwrap();
+        fs::write(&busy, b"").unwrap();
+        let mut locator = SessionLocator::new(home.path());
+        assert_eq!(
+            locator
+                .locate(
+                    "pane-quiet",
+                    Agent::Claude,
+                    Some(&SessionIdentity::id("quiet-id")),
+                    Some("/Users/example"),
+                )
+                .unwrap(),
+            quiet
+        );
+        // Without a reported id the newest file in the cwd is still the answer.
+        assert_eq!(
+            locator
+                .locate("pane-unknown", Agent::Claude, None, Some("/Users/example"))
+                .unwrap(),
+            busy
+        );
+    }
+
+    /// A reported session whose file is not written yet (Claude before its
+    /// first turn) is missing, never the neighbour's newest transcript.
+    #[test]
+    fn a_reported_session_without_a_file_yet_is_missing_not_the_neighbour() {
+        let home = tempdir().unwrap();
+        let claude_dir = home.path().join(".claude/projects/-Users-example");
+        fs::create_dir_all(&claude_dir).unwrap();
+        let busy = claude_dir.join("busy-id.jsonl");
+        fs::write(&busy, b"").unwrap();
+        let mut locator = SessionLocator::new(home.path());
+        let unborn = SessionIdentity::id("unborn-id");
+        assert!(matches!(
+            locator.locate(
+                "pane-new",
+                Agent::Claude,
+                Some(&unborn),
+                Some("/Users/example")
+            ),
+            Err(SessionError::SessionFileMissing)
+        ));
+        // Once the file exists the same pane resolves to it, not to what
+        // the cwd search would have cached.
+        let own = claude_dir.join("unborn-id.jsonl");
+        fs::write(&own, b"").unwrap();
+        assert_eq!(
+            locator
+                .locate(
+                    "pane-new",
+                    Agent::Claude,
+                    Some(&unborn),
+                    Some("/Users/example")
+                )
+                .unwrap(),
+            own
         );
     }
 }

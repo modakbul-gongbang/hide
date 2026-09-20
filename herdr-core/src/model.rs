@@ -11,16 +11,7 @@ pub struct CoreOptions {
     pub herdr_socket_path: Option<String>,
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
-    pub remote_targets: Vec<RemoteTarget>,
     pub app_state_path: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct RemoteTarget {
-    pub id: String,
-    pub label: String,
-    pub ssh_alias: String,
-    pub herdr_socket_path: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -63,12 +54,46 @@ pub struct RecentClosedSnapshot {
     pub top_label: Option<String>,
     pub restoring: bool,
     pub notices: Vec<RecentClosedNoticeSnapshot>,
+    /// Close reservations whose topology is not confirmed yet. These are
+    /// deliberately separate from `count`: a pending close must not evict a
+    /// confirmed undo entry or become reopenable by accident.
+    pub pending: Vec<RecentClosedPendingSnapshot>,
+    pub can_reopen: bool,
+    pub reopen_blocked_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RecentClosedNoticeSnapshot {
     pub pane_id: Option<String>,
     pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RecentClosedPendingSnapshot {
+    pub key: String,
+    pub target_id: String,
+    pub label: String,
+    pub phase: String,
+    pub checking: bool,
+    pub message: Option<String>,
+    pub retryable: bool,
+}
+
+/// A core-owned asynchronous mutation. The shell renders this record in the
+/// existing request-scoped affordance for the subject and never infers a
+/// server confirmation from the transport response alone.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AsyncOperationSnapshot {
+    pub id: String,
+    pub kind: String,
+    pub target_id: String,
+    pub scope_id: String,
+    pub phase: String,
+    pub stage: String,
+    pub started_at_unix_ms: u64,
+    pub deadline_at_unix_ms: Option<u64>,
+    pub message: Option<String>,
+    pub retryable: bool,
 }
 
 /// What a pane search found, over the pane's whole scrollback.
@@ -123,9 +148,10 @@ pub struct PetBadgesSnapshot {
     /// Retained agents on a server that stopped answering. They are counted
     /// separately because a stale count of what is waiting would be a lie.
     pub disconnected: usize,
+    /// In-process subagents Hide's hook reported as working, summed over the
+    /// agents on an answering server. It is the one count the hook can vouch
+    /// for; an uninstrumented session contributes nothing, not a zero.
     pub subagents_active: u32,
-    pub background_running: u32,
-    pub background_failed: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -148,9 +174,6 @@ pub struct NavigatorSnapshot {
     pub inactive_projects: Vec<InactiveProjectGroupSnapshot>,
     pub agents: Vec<SidebarAgentSnapshot>,
     pub provider_usage: Vec<ProviderUsageSnapshot>,
-    /// The one space that is not a project. Its own section, never a row in
-    /// `workspaces` and never counted with them.
-    pub scratch: ScratchSnapshot,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -159,44 +182,6 @@ pub struct InactiveProjectGroupSnapshot {
     pub expanded: bool,
     /// IDs in the same recent-activity order as `NavigatorSnapshot.workspaces`.
     pub project_ids: Vec<String>,
-}
-
-/// The Scratch node: one fixed folder, and the Herdr tabs living in it.
-///
-/// It is deliberately not a `WorkspaceSnapshot`. A project is a repository
-/// with checkouts, worktrees, a branch and a card; Scratch is a folder with
-/// tabs, and giving it the project shape would have meant answering all of
-/// that with placeholders and then keeping it out of every project view by
-/// hand.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct ScratchSnapshot {
-    /// Always `scratch::NODE_ID`. Carried so the shell addresses the node by
-    /// the value the core sent rather than by a string it repeats.
-    pub id: String,
-    pub label: String,
-    /// The folder every Scratch pane runs in. The core creates it as the
-    /// first step of the Scratch tab pipeline.
-    pub path: String,
-    /// Collapsed by default, so this is false until the operator opens it.
-    pub expanded: bool,
-    /// The Herdr workspaces holding Scratch panes, in Herdr order. Empty when
-    /// Herdr has none yet, which is what tells a new tab to create one.
-    pub session_workspace_ids: Vec<String>,
-    pub tabs: Vec<ScratchTabSnapshot>,
-}
-
-/// One row in the Scratch section.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ScratchTabSnapshot {
-    /// Herdr's tab id.
-    pub id: String,
-    /// Herdr's own tab label, which is what a tab with no agent shows.
-    pub label: String,
-    /// The chat's title, read from the pane metadata token an agent tab was
-    /// started with. Absent for a terminal tab, and for an agent tab whose
-    /// title was never written, which then falls back to the label.
-    pub title: Option<String>,
-    pub panes: Vec<PaneSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -274,9 +259,34 @@ pub struct DeviceSnapshot {
     pub id: String,
     pub label: String,
     pub kind: String,
+    /// `local` for this Mac; for an SSH device `ready`, `unavailable` or
+    /// `disabled`, read off its remote status.
     pub state: String,
+    /// Why an SSH device is not `ready`, in the words its remote status
+    /// carries; `None` while it is.
+    pub message: Option<String>,
     pub ssh_alias: Option<String>,
     pub agent_count: u32,
+    /// The last connection test the operator asked for, or the one running.
+    pub test: Option<DeviceTestSnapshot>,
+}
+
+/// One staged connection test of an SSH device: SSH, authentication, Herdr,
+/// protocol, PTY, SFTP and Git, each with the host's answer.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeviceTestSnapshot {
+    /// `running`, `passed` or `failed`.
+    pub state: String,
+    pub checked_at_unix_ms: Option<u64>,
+    pub stages: Vec<DeviceTestStageSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DeviceTestStageSnapshot {
+    pub stage: String,
+    /// `pending`, `passed` or `failed`.
+    pub state: String,
+    pub detail: String,
 }
 
 /// An agent's state on three independent axes, plus the values the shell draws
@@ -319,9 +329,33 @@ pub struct SidebarAgentSnapshot {
     /// Derived: closing this pane would interrupt work or discard a result the
     /// operator has not read.
     pub requires_close_confirmation: bool,
-    /// Canonical task identity, distinct from the compact activity summary.
+    /// Derived: the activity evidence is incomplete, so a destructive close
+    /// must wait for a fresh status rather than assuming the pane is idle.
+    pub requires_close_status_check: bool,
+    /// The stable name every surface calls this agent by; `sidebar.rs` owns
+    /// the ladder that picks it (PRD D-01).
     pub identity_label: String,
-    pub summary: String,
+    /// The session name the label plugin published as a token when Herdr
+    /// refused it as an agent name (PRD D-03).
+    #[serde(skip_serializing)]
+    pub name: Option<String>,
+    /// The label plugin's rolling task title. A fallback name in the row,
+    /// and the search sheet's subtitle when the state chose no sentence
+    /// (PRD D-01, D-15).
+    pub task: Option<String>,
+    /// The label plugin's one-line progress sentence.
+    #[serde(skip_serializing)]
+    pub progress: Option<String>,
+    /// The one action the operator is being asked for, at most 40 characters.
+    #[serde(skip_serializing)]
+    pub expected_reply: Option<String>,
+    /// Derived: the row's second line, chosen by the group from the three
+    /// sentences above (PRD D-06). `None` draws no sentence.
+    pub detail: Option<String>,
+    /// Derived: whether the row draws its status word. It leaves working and
+    /// read rows, where the mark already says it, and stays on rows that
+    /// still concern the operator.
+    pub status_word_visible: bool,
     pub elapsed: String,
     /// The ordering key: the label plugin's activity timestamp when it has one,
     /// otherwise Herdr's state change sequence zero-padded to the same width.
@@ -330,19 +364,16 @@ pub struct SidebarAgentSnapshot {
     /// read record.
     #[serde(skip_serializing)]
     pub state_change_seq: Option<u64>,
-    pub ambient: Option<AmbientSignal>,
     /// The conversation id this agent is running, kept only when Herdr recorded
     /// the session as an id. A session recorded as a path is dropped here,
     /// because neither agent's fork command takes one.
     #[serde(skip_serializing)]
     pub session_id: Option<String>,
-    /// The pane this agent was spawned from, as Herdr's own lineage records it.
+    /// The pane this agent was spawned from: Herdr's own lineage record, or
+    /// the `parent_pane` token its spawner declared when Herdr recorded none.
+    /// `wire.rs::lineage_parent` is the one place that resolves the two.
     #[serde(skip_serializing)]
     pub spawned_from_pane_id: Option<String>,
-    /// The chat title the composer wrote onto this agent's pane, read back
-    /// from Herdr's pane metadata token. Absent for an agent Hide did not
-    /// start through the composer, which falls back to its tab label.
-    pub chat_title: Option<String>,
     /// Ownership, derived from the lineage alone: a root is the operator's own
     /// work, a descendant is work the root delegated. It is the fourth derived
     /// axis beside demand, activity and read, and it is advice rather than a
@@ -393,16 +424,6 @@ pub struct SidebarAgentSnapshot {
     pub lineage_collapsed: bool,
 }
 
-/// The only three values this client ever reads out of a pane's optional
-/// `ambient` object. Any other key, or a value of the wrong type, is dropped
-/// during parsing and never reaches app state, the UI, or logs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct AmbientSignal {
-    pub subagents_active: u32,
-    pub background_running: u32,
-    pub background_failed: u32,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceSnapshot {
     pub id: String,
@@ -434,11 +455,33 @@ pub struct WorkspaceSnapshot {
     /// shell reads it when present and keeps its previous behavior when not.
     #[serde(default)]
     pub last_activity_unix_ms: Option<u64>,
+    /// Whether the operator pinned this project's registration. A pinned
+    /// project sorts before its device's unpinned ones and is exempt from the
+    /// device's inactive fold; the shell draws the pinned rows under their own
+    /// `Pinned` section. It is the registration's flag carried onto the row
+    /// (D-07), so an unregistered workspace is never pinned.
+    #[serde(default)]
+    pub pinned: bool,
     pub checkouts: Vec<CheckoutSnapshot>,
     /// Checkout rows grouped after the active rows in this project. The full
     /// rows stay in `checkouts`, which remains the authority for focus,
     /// search, tab state, and every non-sidebar consumer.
     pub inactive_checkouts: InactiveCheckoutGroupSnapshot,
+    /// What `Remove project…` would close, counted by the core so the
+    /// confirmation names the same panes the close will send to Herdr
+    /// (D-10). Both are zero for a project Herdr has no pane in, which is
+    /// the registration-only removal.
+    #[serde(default)]
+    pub removal: WorkspaceRemovalGateSnapshot,
+}
+
+/// The counts the project removal confirmation reads (D-10).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WorkspaceRemovalGateSnapshot {
+    pub pane_count: usize,
+    /// Panes whose agent is currently working, the same definition
+    /// `WorktreeDeletionGateSnapshot` warns with.
+    pub running_agent_count: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -521,6 +564,18 @@ pub struct StripTabSnapshot {
     /// The Herdr tab id or editor tab id this entry stands for.
     pub source_id: String,
     pub label: String,
+    /// Whether this editor entry is the checkout's replaceable preview tab,
+    /// which the strip titles in italic. A Herdr entry is never one. It rides
+    /// the strip rather than only the editor tab because promotion and
+    /// replacement change the slot itself, and both happen once per tab, not
+    /// per keystroke.
+    pub preview: bool,
+    /// The one agent this tab holds, when it holds exactly one, drawn as the
+    /// tab's identity where a tab is named: the Recent Panels switcher shows
+    /// its name and mark instead of the Herdr label, which for an unnamed tab
+    /// is only a number (PRD D-16). A shell-only tab and a tab with several
+    /// agents carry `None` and keep their label.
+    pub agent_identity: Option<AgentChipSnapshot>,
 }
 
 /// The kinds of tab a strip holds.
@@ -540,26 +595,41 @@ impl StripTabSnapshot {
             kind: StripTabKind::Herdr,
             source_id,
             label: label.into(),
+            preview: false,
+            agent_identity: None,
         }
     }
 
-    pub fn file(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn file(source_id: impl Into<String>, label: impl Into<String>, preview: bool) -> Self {
         let source_id = source_id.into();
         Self {
             id: format!("file:{source_id}"),
             kind: StripTabKind::File,
             source_id,
             label: label.into(),
+            preview,
+            agent_identity: None,
         }
     }
 
-    pub fn diff(source_id: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn diff(source_id: impl Into<String>, label: impl Into<String>, preview: bool) -> Self {
         let source_id = source_id.into();
         Self {
             id: format!("diff:{source_id}"),
             kind: StripTabKind::Diff,
             source_id,
             label: label.into(),
+            preview,
+            agent_identity: None,
+        }
+    }
+
+    /// The strip entry an editor tab stands behind, so a replaced preview tab
+    /// can hand its slot to the tab that took its place.
+    pub fn editor(tab: &EditorTabSnapshot) -> Self {
+        match tab.kind {
+            EditorTabKind::File => Self::file(tab.id.clone(), tab.label.clone(), tab.preview),
+            EditorTabKind::Diff => Self::diff(tab.id.clone(), tab.label.clone(), tab.preview),
         }
     }
 
@@ -685,7 +755,11 @@ pub struct PaneSnapshot {
     /// with the agent row's own value so the header and the core cannot
     /// disagree about it.
     pub requires_close_confirmation: bool,
-    pub summary: Option<String>,
+    /// Whether the core needs a fresh activity status before allowing a close.
+    pub requires_close_status_check: bool,
+    /// The agent's stable name, from the same ladder the sidebar row shows,
+    /// so the header and the row cannot call one pane two things (PRD D-09).
+    pub identity_label: Option<String>,
     pub activity_at_unix_ms: Option<u64>,
     pub fork: PaneForkSnapshot,
     /// The ports listened on from at or below this pane's working directory.
@@ -752,8 +826,10 @@ pub struct AgentChipSnapshot {
     pub pane_id: String,
     /// The short name the chip shows beside its mark.
     pub label: String,
-    /// The longer description for the chip's tooltip.
-    pub detail: String,
+    /// The row's second line: the sentence the group chose, or nothing.
+    pub detail: Option<String>,
+    /// Whether the status word is drawn beside that sentence.
+    pub status_word_visible: bool,
     pub agent_kind: String,
     pub demand: String,
     pub activity: String,
@@ -981,9 +1057,17 @@ pub struct EditorTabSnapshot {
     pub kind: EditorTabKind,
     /// Which Changes group a diff tab represents. Present only for diff tabs.
     pub diff_committed: Option<bool>,
-    pub markdown_preview: bool,
+    /// Whether a Markdown file tab draws its formatting in place (Live) or
+    /// shows the source editor. Per tab; a reopened tab starts Live.
+    pub markdown_live: bool,
     pub wrap: bool,
     pub dirty: bool,
+    /// The checkout's one replaceable preview tab (VS Code's model): opened by
+    /// a single click, replaced in place by the next single click, and
+    /// promoted to an ordinary tab by a double-click, the first edit, Keep
+    /// Open, or a drag. A dirty tab is never replaced. Editor tabs are
+    /// ephemeral, so this is never persisted.
+    pub preview: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -993,13 +1077,39 @@ pub enum EditorTabKind {
     Diff,
 }
 
+/// What kind of document an open file is, decided once by the core when the
+/// file is read (`files::open`) and drawn by the shell as one view per kind.
+/// Adding a kind is one variant here and one case in the shell's switch;
+/// nothing else in the shell inspects extensions or bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentKind {
+    Text,
+    Markdown,
+    Image,
+    Pdf,
+    /// Not UTF-8 and not a kind the shell can draw on its own.
+    Binary,
+}
+
+impl DocumentKind {
+    /// Only text-backed kinds take a draft; the others never carry
+    /// `contents_utf8`, so an edit has nothing to apply to.
+    pub fn is_editable(self) -> bool {
+        matches!(self, Self::Text | Self::Markdown)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorDocumentSnapshot {
     pub path: String,
     pub language: Option<String>,
+    pub document_kind: DocumentKind,
     pub contents_utf8: Option<String>,
     pub opened_modified_at_unix_ms: Option<u64>,
     pub dirty: bool,
+    /// Why an otherwise editable document takes no edits: its size or its
+    /// permissions. The kind, not this field, says a PDF or image is read-only.
     pub readonly_reason: Option<String>,
     pub conflict: Option<EditorConflictSnapshot>,
 }
@@ -1098,15 +1208,11 @@ pub struct UiStateSnapshot {
     /// Eligible agent panes whose terminal is replaced by the local
     /// conversation ledger. This is snapshot-only interaction state;
     /// persistence owns a separate stored representation and intentionally
-    /// omits this set. New eligible panes enter this set by default.
+    /// omits this set. A pane enters it only through `toggle_conversation`:
+    /// a new agent pane opens on its terminal, and a pane that leaves the
+    /// session leaves the set with it.
     #[serde(default)]
     pub conversation_pane_ids: BTreeSet<String>,
-    /// Eligible panes the operator explicitly switched back to the terminal.
-    /// This is not sent over the wire or persisted; it lets the core keep the
-    /// default Conversation mode stable across refreshes without treating a
-    /// terminal toggle as a new default.
-    #[serde(skip)]
-    pub terminal_pane_ids: BTreeSet<String>,
     /// What the operator had already seen on each pane, keyed by pane id.
     ///
     /// This is Hide's own record and the only authority for the read axis.
@@ -1118,24 +1224,6 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
-    /// The agent the composer offers next time, which is the one the operator
-    /// last started. Written on submission only, so it costs the revisioned
-    /// section nothing between submissions.
-    #[serde(default = "default_agent_kind")]
-    pub last_agent_kind: String,
-    /// Whether the composer's bypass toggle is on. The operator's choice
-    /// survives a restart because they asked for it to (D-15); the warning
-    /// beside the chip is what keeps it visible rather than forgetting it.
-    #[serde(default)]
-    pub last_agent_bypass: bool,
-    /// Whether the Scratch section is open.
-    ///
-    /// Its own field rather than a row in `collapsed_workspace_ids`, because
-    /// that list records the exceptions to a default of expanded and Scratch
-    /// defaults to collapsed. Encoding "collapsed by default" in a collapsed
-    /// list needs a sentinel for "never recorded"; one boolean says it.
-    #[serde(default)]
-    pub scratch_expanded: bool,
 }
 
 /// One pane's read mark: the state the operator was looking at the last time
@@ -1207,11 +1295,7 @@ impl Default for UiStateSnapshot {
             pane_text_scales: BTreeMap::new(),
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
-            terminal_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
-            last_agent_kind: default_agent_kind(),
-            last_agent_bypass: false,
-            scratch_expanded: false,
         }
     }
 }
@@ -1223,6 +1307,11 @@ pub struct WorkspaceRegistration {
     pub path: String,
     #[serde(default = "default_local_device_id")]
     pub device_id: String,
+    /// Absent in a store written before projects could be pinned, which
+    /// loads as unpinned without a warning (D-07). Removing the registration
+    /// takes the pin with it; nothing else about the pin is stored.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -1235,11 +1324,6 @@ pub struct DeviceRegistration {
 
 pub(crate) fn default_local_device_id() -> String {
     "local".to_owned()
-}
-
-/// The composer's agent before the operator has started one.
-pub(crate) fn default_agent_kind() -> String {
-    "claude".to_owned()
 }
 
 pub(crate) fn default_accent_hex() -> String {
@@ -1505,6 +1589,15 @@ pub struct WorktreeSnapshot {
     pub nested: bool,
     pub merged: Option<bool>,
     pub upstream_state: String,
+    /// Commits the upstream has that this branch does not, as of the last
+    /// fetch. Absent when the branch has no upstream, the upstream is gone,
+    /// or the count could not be read; `upstream_state` says which, so the
+    /// Overview draws no cell, `?`, or a number rather than a silent zero.
+    pub behind_upstream: Option<u32>,
+    /// When a linked worktree was added: the creation time of its
+    /// `.git/worktrees/<name>` entry. The main worktree has none, and it
+    /// leads the Overview's list regardless.
+    pub created_at_unix_ms: Option<u64>,
     pub unavailable_reason: Option<String>,
     pub last_fetch_at_unix_ms: Option<u64>,
     pub measured_at_unix_ms: Option<u64>,
@@ -1630,7 +1723,6 @@ pub struct ProjectWorktreesSnapshot {
     pub pull_requests: Vec<PullRequestSnapshot>,
     pub pull_request_window: String,
     pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
-    pub history: Option<crate::worktrees::history::GitHistorySnapshot>,
     pub shared_git_path: Option<String>,
     pub shared_git_disk: DiskUsageSnapshot,
     pub disk_total_bytes: Option<u64>,
@@ -1686,7 +1778,6 @@ pub struct DiskUsageSnapshot {
 /// and whether the worktree may be removed.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct CheckoutCardSnapshot {
-    pub inspected_checkout_path: Option<String>,
     /// Absent when nothing is selected, or when the selection is a remote
     /// checkout - remote worktree management is out of scope, so no card.
     pub checkout_id: Option<String>,
@@ -1731,6 +1822,10 @@ pub struct StatusSnapshot {
     pub background_ai: BackgroundAiSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
+    /// Core-owned operations which are waiting for a transport result or an
+    /// authoritative Herdr event. Keeping these beside status lets every
+    /// surface show the same bounded, target-scoped state.
+    pub async_operations: Vec<AsyncOperationSnapshot>,
     /// The core-owned outcome of the latest explicitly correlated pane-focus
     /// request. Ordinary focus events have no request id and do not replace
     /// this receipt, so a relationship control never mistakes another pane's
@@ -1830,6 +1925,11 @@ pub struct AgentHooksSnapshot {
     /// They are the ones a restart would fix, and they are the reason the
     /// screen exists: the hook can be installed and a pane still uninstrumented.
     pub sessions_predating_install: Vec<AgentHookPaneSnapshot>,
+    /// The sentence describing the last hook report Herdr did not take, when
+    /// the most recent report failed. It is what separates "installed but
+    /// every report is refused" from the restart advice above: with it on
+    /// screen, a restart is not the fix and the sentence says what is.
+    pub last_report_failure: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1989,26 +2089,11 @@ impl Snapshot {
                 focused_device_id: None,
                 focused_workspace_id: None,
                 focused_checkout_id: None,
-                devices: vec![DeviceSnapshot {
-                    id: "local".to_owned(),
-                    label: "This Mac".to_owned(),
-                    kind: "local".to_owned(),
-                    state: "ready".to_owned(),
-                    ssh_alias: None,
-                    agent_count: 0,
-                }],
+                devices: vec![crate::workspace::local_device()],
                 workspaces: Vec::new(),
                 inactive_projects: Vec::new(),
                 agents: Vec::new(),
                 provider_usage: ProviderUsageSnapshot::initial_rows(),
-                scratch: ScratchSnapshot {
-                    id: crate::scratch::NODE_ID.to_owned(),
-                    label: crate::scratch::LABEL.to_owned(),
-                    path: crate::scratch::root().to_string_lossy().into_owned(),
-                    expanded: false,
-                    session_workspace_ids: Vec::new(),
-                    tabs: Vec::new(),
-                },
             },
             overlay: OverlaySnapshot {
                 kind: None,
@@ -2077,17 +2162,7 @@ impl Snapshot {
                     received_protocol: None,
                     received_version: None,
                 },
-                remote: options
-                    .remote_targets
-                    .iter()
-                    .map(|target| RemoteStatusSnapshot {
-                        target_id: target.id.clone(),
-                        state: "not_connected".to_owned(),
-                        message: Some("Waiting for the first remote connection attempt".to_owned()),
-                        session: None,
-                        files: RemoteFileListSnapshot::idle(),
-                    })
-                    .collect(),
+                remote: Vec::new(),
                 chromux: ChromuxStatusSnapshot {
                     state: "not_checked".to_owned(),
                     profile: "default".to_owned(),
@@ -2101,6 +2176,7 @@ impl Snapshot {
                 background_ai: BackgroundAiSnapshot::unread(),
                 diagnostics: Vec::new(),
                 last_error: None,
+                async_operations: Vec::new(),
                 pane_focus_request: None,
             },
             pet: PetSnapshot::initial(),

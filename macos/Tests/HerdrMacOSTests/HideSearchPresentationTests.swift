@@ -13,10 +13,9 @@ private func searchAgent(paneID: String) -> SidebarAgent {
         activity: "working",
         group: "working",
         symbol: "\u{25cf}",
-        summary: "Agent in \(paneID)",
+        identityLabel: "Agent in \(paneID)",
         elapsed: "1m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
 }
 
@@ -49,10 +48,9 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         activity: "working",
         group: "working",
         symbol: "\u{25cf}",
-        summary: "Build the release",
+        identityLabel: "Build the release",
         elapsed: "2m",
-        lastActivity: "0000000000001",
-        ambient: nil
+        lastActivity: "0000000000001"
     )
     let workspace = try JSONDecoder().decode(
         CoreWorkspaceSnapshot.self,
@@ -64,7 +62,7 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
     let entries = [
         HideSearchEntry(
             id: "agent-agent-1",
-            title: agent.summary,
+            title: agent.identityLabel,
             subtitle: "Agent · \(agent.workspaceLabel)",
             kind: .agent(agent)
         ),
@@ -100,6 +98,49 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
         [.agent(paneID: "pane-1")],
         [.agent(paneID: "pane-2")],
     ])
+}
+
+/// PRD D-15, B17: an agent result is titled by its identity, subtitled by the
+/// core's sentence (the status word when there is none), and still found by
+/// its pane id, which the row no longer prints.
+@Test func agentSearchRowsShowIdentityAndSentenceAndMatchThePaneID() throws {
+    let workspace = try searchWorkspace(id: "workspace-1", paneID: "w7J:p2P")
+    let question = SidebarAgent(
+        id: "q", paneID: "w7J:p2P", workspaceLabel: "Same name", agentKind: "claude",
+        demand: "question", unread: true, group: "needs_you", symbol: "?", emphasized: true,
+        statusLabel: "Question",
+        identityLabel: "결제 멱등키 PR", detail: "A/B 선택 후 DB 마이그레이션 승인", statusWordVisible: false,
+        elapsed: "2m", lastActivity: ""
+    )
+    let entries = HideSearchPresentation.agentGroups(
+        workspaces: [workspace], agents: [question], query: ""
+    ).flatMap(\.entries)
+    #expect(entries.map(\.title) == ["결제 멱등키 PR"])
+    #expect(entries.map(\.subtitle) == ["A/B 선택 후 DB 마이그레이션 승인"])
+    #expect(entries.map(\.match) == ["w7J:p2P"])
+    #expect(HideSearchPresentation.agentGroups(
+        workspaces: [workspace], agents: [question], query: "p2p"
+    ).flatMap(\.entries).map(\.id) == ["agent-w7J:p2P"])
+    #expect(HideSearchPresentation.agentGroups(
+        workspaces: [workspace], agents: [question], query: "마이그레이션"
+    ).flatMap(\.entries).count == 1)
+
+    let quiet = searchAgent(paneID: "w7J:p2P")
+    #expect(HideSearchPresentation.agentSubtitle(quiet) == "Idle")
+    let tasked = SidebarAgent(
+        id: "t", paneID: "w7J:p3", workspaceLabel: "Same name", agentKind: "claude",
+        group: "seen", symbol: "\u{25cb}", statusLabel: "Idle",
+        identityLabel: "hook-bug-check", task: "hook 보고 경로 교체",
+        elapsed: "2m", lastActivity: ""
+    )
+    #expect(HideSearchPresentation.agentSubtitle(tasked) == "hook 보고 경로 교체")
+    let named = SidebarAgent(
+        id: "n", paneID: "w7J:p4", workspaceLabel: "Same name", agentKind: "claude",
+        group: "seen", symbol: "\u{25cb}", statusLabel: "Idle",
+        identityLabel: "hook 보고 경로 교체", task: "hook 보고 경로 교체",
+        elapsed: "2m", lastActivity: ""
+    )
+    #expect(HideSearchPresentation.agentSubtitle(named) == "Idle", "the task is already the title")
 }
 
 @Test func foldedProjectSearchRoutesToPrimaryWithoutExpandingItsGroup() throws {

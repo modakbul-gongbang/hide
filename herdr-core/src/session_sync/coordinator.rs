@@ -26,12 +26,19 @@ fn run_coordinator(
 ) {
     let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
     let mut replica: Option<SessionReplica> = None;
+    let mut active_tab_reads: BTreeMap<String, u32> = BTreeMap::new();
     let mut subscription: Option<ActiveSubscription> = None;
     let mut subscription_generation = 0_u64;
-    let mut needs_bootstrap = true;
+    // Until when a line off the stream is reconciled against the bootstrap
+    // snapshot rather than applied strictly. Every connect is a bootstrap,
+    // because Herdr's stream has no position to resume from.
+    let mut reconcile_until = Instant::now();
     let mut reconnect_at = Instant::now();
     let mut reconnect_delay = RECONNECT_INITIAL_DELAY;
+    let mut defer_background_reads = true;
     let mut next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+    let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
+    let mut next_hook_diagnosis_refresh = Instant::now();
     let mut catalog_cache: Option<CatalogCache> = None;
     // The hook-install state is two small file reads of this machine's own
     // configuration, so the local coordinator takes it once before the first
@@ -76,27 +83,25 @@ fn run_coordinator(
 
         if subscription.is_none() && Instant::now() >= reconnect_at {
             let has_projection = replica.is_some();
-            let attempt = match (needs_bootstrap, replica.as_ref()) {
-                (false, Some(current)) => {
-                    connect_from_cursor(&context, current, &sender, &mut subscription_generation)
-                }
-                _ => connect_from_snapshot(
-                    &context,
-                    &sender,
-                    &mut subscription_generation,
-                    has_projection,
-                )
-                .map(|(next_replica, next_subscription)| {
+            match connect(
+                &context,
+                &sender,
+                &mut subscription_generation,
+                has_projection,
+            ) {
+                Ok(Connected {
+                    replica: next_replica,
+                    subscription: next_subscription,
+                    snapshot_at,
+                }) => {
                     replica = Some(next_replica);
-                    next_subscription
-                }),
-            };
-
-            match attempt {
-                Ok(next_subscription) => {
                     subscription = Some(next_subscription);
+                    reconcile_until = snapshot_at + RECONCILE_GRACE;
+                    active_tab_reads.clear();
+                    defer_background_reads = true;
                     reconnect_delay = RECONNECT_INITIAL_DELAY;
                     next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+                    next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
                     if replica
                         .as_ref()
                         .is_some_and(SessionReplica::ready_to_publish)
@@ -108,17 +113,29 @@ fn run_coordinator(
                     if let (Some(home), Some(current)) = (hook_home.as_deref(), replica.as_ref()) {
                         sweep_subagent_counters(home, current);
                     }
-                    needs_bootstrap = false;
                 }
-                Err(failure) => {
-                    log_sync_failure(&context, "connect.failed", replica.as_ref(), &failure.error);
-                    needs_bootstrap |= failure.needs_bootstrap;
-                    if !publish_failure(&context, failure.error) {
+                Err(error) => {
+                    log_sync_failure(&context, "connect.failed", replica.as_ref(), &error);
+                    if !publish_failure(&context, error) {
                         return;
                     }
                     reconnect_at = Instant::now() + reconnect_delay;
                     reconnect_delay = next_reconnect_delay(reconnect_delay);
+                    defer_background_reads = true;
                 }
+            }
+        }
+
+        if subscription.is_some()
+            && let Some(runtime) = context.runtime.upgrade()
+        {
+            let requested = match runtime.lock() {
+                Ok(mut guard) => guard.take_status_refresh_request(),
+                Err(_) => false,
+            };
+            drop(runtime);
+            if requested {
+                next_agent_refresh = Instant::now();
             }
         }
 
@@ -129,16 +146,34 @@ fn run_coordinator(
                     let current = replica
                         .as_mut()
                         .expect("active subscription always has a replica");
-                    let publish =
+                    let requested =
                         agent_tick_needs_publish(current, &agents, catalog_cache.as_ref())
                             || stall_tick_needs_publish(&context);
-                    if publish {
+                    if requested {
                         current.replace_agents(agents);
-                        if current.ready_to_publish()
-                            && !publish_replica(&context, current, &mut catalog_cache)
-                        {
-                            stop_subscription(&mut subscription);
-                            return;
+                        match current.refresh_published_state() {
+                            Ok(changed)
+                                if (changed || requested)
+                                    && !publish_replica(&context, current, &mut catalog_cache) =>
+                            {
+                                stop_subscription(&mut subscription);
+                                return;
+                            }
+                            Ok(_) => {}
+                            Err(error) => {
+                                log_sync_failure(
+                                    &context,
+                                    "agent_refresh.invalid_projection",
+                                    Some(current),
+                                    &error,
+                                );
+                                stop_subscription(&mut subscription);
+                                if !publish_failure(&context, error) {
+                                    return;
+                                }
+                                reconnect_at = Instant::now() + reconnect_delay;
+                                reconnect_delay = next_reconnect_delay(reconnect_delay);
+                            }
                         }
                     }
                 }
@@ -154,184 +189,265 @@ fn run_coordinator(
             }
         }
 
-        if let Some(reader) = usage_reader.as_mut() {
-            let Some(activity) = read_usage_activity(&context) else {
-                stop_subscription(&mut subscription);
-                return;
-            };
-            if let Some(provider_usage) = reader.read_if_due(activity)
-                && !publish_provider_usage(&context, provider_usage)
-            {
-                stop_subscription(&mut subscription);
-                return;
-            }
-        }
-
-        if let Some(reader) = changes_reader.as_mut() {
-            // The request is read under a brief lock; the `git` calls that
-            // answer it happen after the guard is dropped.
-            let Some(request) = read_changes_request(&context) else {
-                stop_subscription(&mut subscription);
-                return;
-            };
-            if let Some(changes) = reader.read_if_due(request)
-                && !publish_changes(&context, changes)
-            {
-                stop_subscription(&mut subscription);
-                return;
-            }
-        }
-
-        // An install the operator approved. The file write happens here,
-        // outside every lock, and the diagnosis is read back afterwards so
-        // the screen shows what the file now says rather than what was asked
-        // for (PRD B28, D-31).
-        if let Some(home) = hook_home.as_deref() {
-            let Some(requested) = take_agent_hook_installs(&context) else {
-                stop_subscription(&mut subscription);
-                return;
-            };
-            if !requested.is_empty() {
-                // An install the operator pressed for reports back to the
-                // operator. The diagnosis that follows reads the file, so a
-                // refusal that never reached the file would otherwise leave
-                // the screen unchanged and the press unanswered (PRD B28,
-                // engineering rule 4).
-                let mut refusal = None;
-                for runtime in requested {
-                    refusal = install_agent_hook(home, runtime).or(refusal);
-                }
-                publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
-                if let Some(refusal) = refusal
-                    && let Some(core) = context.runtime.upgrade()
-                    && let Ok(mut locked) = core.lock()
-                {
-                    locked.set_error("agent_hooks.install_refused", refusal.message(), false);
+        if Instant::now() >= next_operation_tick {
+            next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
+            let now_unix_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+                .unwrap_or(0);
+            if let Some(runtime) = context.runtime.upgrade() {
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => guard.tick_async_operations(now_unix_ms),
+                    Err(_) => false,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
                 }
             }
-        }
-
-        if let Some(reader) = ports_reader.as_mut() {
-            // `lsof` runs here, outside every lock; only the result is handed
-            // in.
-            if let Some(ports) = reader.read_if_due()
-                && !publish_ports(&context, ports)
+            if subscription.is_some()
+                && let Some(current) = replica.as_mut()
+                && !current.workspaces_awaiting_active_tab().is_empty()
             {
-                stop_subscription(&mut subscription);
-                return;
-            }
-        }
-
-        if let Some(reader) = worktree_reader.as_mut() {
-            let Some(request) = read_worktrees_request(&context) else {
-                stop_subscription(&mut subscription);
-                return;
-            };
-            if let Some(catalog) = reader.read_if_due(request) {
-                // New worktree facts change which rows exist and what they
-                // say, so the catalog is rebuilt rather than only stored.
-                match publish_worktrees(&context, catalog) {
-                    None => {
-                        stop_subscription(&mut subscription);
-                        return;
-                    }
-                    Some(true) => {
-                        if let Some(current) = replica.as_ref()
-                            && current.ready_to_publish()
-                            && !publish_replica(&context, current, &mut catalog_cache)
-                        {
+                match settle_active_tab_reads(&context, current, &mut active_tab_reads) {
+                    Ok(true) => {
+                        if !publish_replica(&context, current, &mut catalog_cache) {
                             stop_subscription(&mut subscription);
                             return;
                         }
                     }
-                    Some(false) => {}
+                    Ok(false) => {}
+                    Err(error) => {
+                        log_sync_failure(&context, "active_tab_read.failed", Some(current), &error);
+                        stop_subscription(&mut subscription);
+                        if !publish_failure(&context, error) {
+                            return;
+                        }
+                        reconnect_at = Instant::now() + reconnect_delay;
+                        reconnect_delay = next_reconnect_delay(reconnect_delay);
+                    }
                 }
             }
         }
 
-        if let Some(reader) = github_reader.as_mut() {
-            let Some(request) = read_github_request(&context) else {
-                stop_subscription(&mut subscription);
-                return;
-            };
-            if let Some(github) = reader.read_if_due(request)
-                && !publish_github(&context, github)
-            {
-                stop_subscription(&mut subscription);
-                return;
-            }
-        }
-
-        if let Some(reader) = disk_reader.as_mut() {
-            let Some(request) = read_disk_request(&context) else {
-                stop_subscription(&mut subscription);
-                return;
-            };
-            if let Some(disk) = reader.read_if_due(request)
-                && !publish_disk_usage(&context, disk)
-            {
-                stop_subscription(&mut subscription);
-                return;
-            }
-        }
-
-        if let Some(reader) = ai_reader.as_mut() {
-            let Some((request, queued_settings)) = read_ai_request(&context) else {
-                stop_subscription(&mut subscription);
-                return;
-            };
-            // The settings write is file I/O, so it happens here rather than
-            // under the runtime mutex that took the operator's choice.
-            if let Some(settings) = queued_settings {
-                // The choice has already been taken out of the runtime, so a
-                // home this process could not resolve must not swallow it in
-                // silence; it is the same failure as a refused write and it
-                // reaches the same line on the group.
-                let saved = match hook_home.as_deref() {
-                    Some(home) => save_ai_settings(&context, home, &settings),
-                    None => {
-                        crate::diagnostic!(serde_json::json!({
-                            "component": "ai_settings",
-                            "kind": "settings.write_skipped",
-                            "message": "no home directory on this session",
-                        }));
-                        report_ai_settings_failure(
-                            &context,
-                            "The choice could not be saved (no home directory); \
-                             it applies to this session only"
-                                .to_string(),
-                        )
-                    }
+        let run_background_reads = subscription.is_some() && !defer_background_reads;
+        defer_background_reads = false;
+        if run_background_reads {
+            if let Some(reader) = usage_reader.as_mut() {
+                let Some(activity) = read_usage_activity(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
                 };
-                if !saved {
+                if let Some(provider_usage) = reader.read_if_due(activity)
+                    && !publish_provider_usage(&context, provider_usage)
+                {
                     stop_subscription(&mut subscription);
                     return;
                 }
             }
-            if let Some(background_ai) = reader.read_if_due(request)
-                && !publish_background_ai(&context, background_ai)
-            {
-                stop_subscription(&mut subscription);
-                return;
+
+            if let Some(reader) = changes_reader.as_mut() {
+                // The request is read under a brief lock; the `git` calls that
+                // answer it happen after the guard is dropped.
+                let Some(request) = read_changes_request(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
+                };
+                if let Some(changes) = reader.read_if_due(request)
+                    && !publish_changes(&context, changes)
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
+
+            // An install the operator approved. The file write happens here,
+            // outside every lock, and the diagnosis is read back afterwards so
+            // the screen shows what the file now says rather than what was asked
+            // for (PRD B28, D-31).
+            if let Some(home) = hook_home.as_deref() {
+                let Some(requested) = take_agent_hook_installs(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
+                };
+                if !requested.is_empty() {
+                    // An install the operator pressed for reports back to the
+                    // operator. The diagnosis that follows reads the file, so a
+                    // refusal that never reached the file would otherwise leave
+                    // the screen unchanged and the press unanswered (PRD B28,
+                    // engineering rule 4).
+                    let mut refusal = None;
+                    for runtime in requested {
+                        refusal = install_agent_hook(home, runtime).or(refusal);
+                    }
+                    publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+                    if let Some(refusal) = refusal
+                        && let Some(core) = context.runtime.upgrade()
+                        && let Ok(mut locked) = core.lock()
+                    {
+                        locked.set_error("agent_hooks.install_refused", refusal.message(), false);
+                    }
+                }
+                // While the Settings agents tab is on screen the diagnosis is
+                // read back once a second, because the hook helper records a
+                // report it could not deliver from its own process and that
+                // record is the one thing that distinguishes "installed but
+                // refused" from "this session started first". Off screen,
+                // nothing is read.
+                if Instant::now() >= next_hook_diagnosis_refresh {
+                    next_hook_diagnosis_refresh = Instant::now() + HOOK_DIAGNOSIS_REFRESH_INTERVAL;
+                    let Some(observed) = read_settings_observed(&context) else {
+                        stop_subscription(&mut subscription);
+                        return;
+                    };
+                    if observed
+                        && !publish_hook_diagnosis(
+                            &context,
+                            hide_agent_hooks::Diagnosis::read(home),
+                        )
+                    {
+                        stop_subscription(&mut subscription);
+                        return;
+                    }
+                }
+            }
+
+            if let Some(reader) = ports_reader.as_mut() {
+                // `lsof` runs here, outside every lock; only the result is handed
+                // in.
+                if let Some(ports) = reader.read_if_due()
+                    && !publish_ports(&context, ports)
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
+
+            if let Some(reader) = worktree_reader.as_mut() {
+                let Some(request) = read_worktrees_request(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
+                };
+                if let Some(catalog) = reader.read_if_due(request) {
+                    // New worktree facts change which rows exist and what they
+                    // say, so the catalog is rebuilt rather than only stored.
+                    match publish_worktrees(&context, catalog) {
+                        None => {
+                            stop_subscription(&mut subscription);
+                            return;
+                        }
+                        Some(true) => {
+                            if let Some(current) = replica.as_ref()
+                                && !publish_replica(&context, current, &mut catalog_cache)
+                            {
+                                stop_subscription(&mut subscription);
+                                return;
+                            }
+                        }
+                        Some(false) => {}
+                    }
+                }
+            }
+
+            if let Some(reader) = github_reader.as_mut() {
+                let Some(request) = read_github_request(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
+                };
+                if let Some(github) = reader.read_if_due(request)
+                    && !publish_github(&context, github)
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
+
+            if let Some(reader) = disk_reader.as_mut() {
+                let Some(request) = read_disk_request(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
+                };
+                if let Some(disk) = reader.read_if_due(request)
+                    && !publish_disk_usage(&context, disk)
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
+
+            if let Some(reader) = ai_reader.as_mut() {
+                let Some((request, queued_settings)) = read_ai_request(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
+                };
+                // The settings write is file I/O, so it happens here rather than
+                // under the runtime mutex that took the operator's choice.
+                if let Some(settings) = queued_settings {
+                    // The choice has already been taken out of the runtime, so a
+                    // home this process could not resolve must not swallow it in
+                    // silence; it is the same failure as a refused write and it
+                    // reaches the same line on the group.
+                    let saved = match hook_home.as_deref() {
+                        Some(home) => save_ai_settings(&context, home, &settings),
+                        None => {
+                            crate::diagnostic!(serde_json::json!({
+                                "component": "ai_settings",
+                                "kind": "settings.write_skipped",
+                                "message": "no home directory on this session",
+                            }));
+                            report_ai_settings_failure(
+                                &context,
+                                "The choice could not be saved (no home directory); \
+                             it applies to this session only"
+                                    .to_string(),
+                            )
+                        }
+                    };
+                    if !saved {
+                        stop_subscription(&mut subscription);
+                        return;
+                    }
+                }
+                if let Some(background_ai) = reader.read_if_due(request)
+                    && !publish_background_ai(&context, background_ai)
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
             }
         }
 
-        let timeout = coordinator_wait(subscription.is_some(), reconnect_at, next_agent_refresh);
+        let timeout = coordinator_wait(
+            subscription.is_some(),
+            reconnect_at,
+            next_agent_refresh,
+            next_operation_tick,
+        );
         match receiver.recv_timeout(timeout) {
             Ok(CoordinatorMessage::Stop) => {
                 stop_subscription(&mut subscription);
                 return;
             }
-            Ok(CoordinatorMessage::SubscriptionLine { generation, line }) => {
+            Ok(CoordinatorMessage::SubscriptionLine {
+                generation,
+                line,
+                received_at,
+            }) => {
                 if subscription.as_ref().map(|active| active.generation) != Some(generation) {
                     continue;
                 }
+                defer_background_reads = true;
+                let mode = if received_at <= reconcile_until {
+                    ApplyMode::Reconcile
+                } else {
+                    ApplyMode::Strict
+                };
                 match parse_subscription_line(&line) {
                     Ok(SubscriptionLine::Event(event)) => {
                         let current = replica
                             .as_mut()
                             .expect("active subscription always has a replica");
-                        match current.apply(event) {
+                        match current.apply(event, mode) {
                             Ok(outcome) => {
                                 if outcome.refresh_agents {
                                     next_agent_refresh = Instant::now();
@@ -347,11 +463,43 @@ fn run_coordinator(
                                     stop_subscription(&mut subscription);
                                     return;
                                 }
+                                if !current.workspaces_awaiting_active_tab().is_empty() {
+                                    match settle_active_tab_reads(
+                                        &context,
+                                        current,
+                                        &mut active_tab_reads,
+                                    ) {
+                                        Ok(true) => {
+                                            if !publish_replica(
+                                                &context,
+                                                current,
+                                                &mut catalog_cache,
+                                            ) {
+                                                stop_subscription(&mut subscription);
+                                                return;
+                                            }
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => {
+                                            log_sync_failure(
+                                                &context,
+                                                "active_tab_read.failed",
+                                                Some(current),
+                                                &error,
+                                            );
+                                            stop_subscription(&mut subscription);
+                                            if !publish_failure(&context, error) {
+                                                return;
+                                            }
+                                            reconnect_at = Instant::now() + reconnect_delay;
+                                            reconnect_delay = next_reconnect_delay(reconnect_delay);
+                                        }
+                                    }
+                                }
                             }
                             Err(error) => {
                                 log_sync_failure(&context, "event.rejected", Some(current), &error);
                                 stop_subscription(&mut subscription);
-                                needs_bootstrap = true;
                                 if !publish_failure(&context, error) {
                                     return;
                                 }
@@ -361,18 +509,15 @@ fn run_coordinator(
                         }
                     }
                     Ok(SubscriptionLine::Error { code, message }) => {
-                        let event_gap = code == "event_gap" || code == "event_journal_unavailable";
-                        let cursor = replica.as_ref().map(|current| current.cursor);
                         crate::diagnostic!(json!({
                             "component": "session_sync",
                             "kind": "subscription.error",
                             "target": context.log_target(),
                             "code": code,
-                            "sequence": cursor,
+                            "applied_events": replica.as_ref().map(|current| current.applied_events),
                             "message": message,
                         }));
                         stop_subscription(&mut subscription);
-                        needs_bootstrap = event_gap;
                         let error = SessionFetchError::Stale(format!(
                             "Herdr event stream failed with {code}: {message}"
                         ));
@@ -390,7 +535,6 @@ fn run_coordinator(
                             &error,
                         );
                         stop_subscription(&mut subscription);
-                        needs_bootstrap = true;
                         if !publish_failure(&context, error) {
                             return;
                         }
@@ -406,10 +550,14 @@ fn run_coordinator(
                 if subscription.as_ref().map(|active| active.generation) != Some(generation) {
                     continue;
                 }
+                defer_background_reads = true;
                 stop_subscription(&mut subscription);
-                let cursor = replica.as_ref().map(|current| current.cursor).unwrap_or(0);
+                let applied = replica
+                    .as_ref()
+                    .map(|current| current.applied_events)
+                    .unwrap_or(0);
                 let error = SessionFetchError::Stale(format!(
-                    "Herdr event stream disconnected after sequence {cursor}: {message}"
+                    "Herdr event stream disconnected after {applied} events: {message}"
                 ));
                 log_sync_failure(
                     &context,
@@ -601,6 +749,51 @@ fn stall_tick_needs_publish(context: &SessionSyncContext) -> bool {
     due
 }
 
+/// Reads the replacement active tab for every workspace still waiting for
+/// one and settles the replica with the answer. Returns whether the
+/// published projection changed. A read that names a tab the event stream
+/// has not delivered keeps the workspace waiting for the next tick; a
+/// workspace still waiting after `ACTIVE_TAB_READ_ATTEMPT_LIMIT` reads is a
+/// replica that cannot converge, which the caller rebuilds from a snapshot.
+fn settle_active_tab_reads(
+    context: &SessionSyncContext,
+    replica: &mut SessionReplica,
+    attempts: &mut BTreeMap<String, u32>,
+) -> Result<bool, SessionFetchError> {
+    let waiting = replica.workspaces_awaiting_active_tab();
+    attempts.retain(|workspace_id, _| waiting.contains(workspace_id));
+    let mut settled = false;
+    for workspace_id in waiting {
+        let attempt = attempts.entry(workspace_id.clone()).or_insert(0);
+        *attempt += 1;
+        let attempt = *attempt;
+        if attempt > ACTIVE_TAB_READ_ATTEMPT_LIMIT {
+            return Err(SessionFetchError::Stale(format!(
+                "workspace {workspace_id} named no active tab the event stream knows in {ACTIVE_TAB_READ_ATTEMPT_LIMIT} reads"
+            )));
+        }
+        let active_tab_id = fetch_workspace_active_tab(context, &workspace_id)?;
+        let settled_now = replica.settle_active_tab(&workspace_id, &active_tab_id);
+        crate::diagnostic!(json!({
+            "component": "session_sync",
+            "kind": "active_tab.read",
+            "target": context.log_target(),
+            "workspace_id": workspace_id,
+            "tab_id": active_tab_id,
+            "attempt": attempt,
+            "settled": settled_now,
+        }));
+        if settled_now {
+            attempts.remove(&workspace_id);
+            settled = true;
+        }
+    }
+    if !settled {
+        return Ok(false);
+    }
+    replica.refresh_published_state()
+}
+
 fn publish_replica(
     context: &SessionSyncContext,
     replica: &SessionReplica,
@@ -640,17 +833,16 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (registrations, worktrees, scratch_root) = match runtime.lock() {
+    let (registrations, worktrees) = match runtime.lock() {
         Ok(guard) => (
             guard.snapshot().ui_state.workspace_registrations.clone(),
             guard.worktree_catalog(),
-            guard.scratch_root(),
         ),
         Err(_) => return false,
     };
     drop(runtime);
 
-    let spaces = Runtime::session_spaces(&payload, &scratch_root);
+    let spaces = Runtime::session_spaces(&payload);
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
         cache.registrations == registrations
             && cache.spaces == spaces
@@ -733,6 +925,15 @@ fn publish_provider_usage(
 fn read_usage_activity(context: &SessionSyncContext) -> Option<crate::usage::UsageActivity> {
     let runtime = context.runtime.upgrade()?;
     runtime.lock().ok().map(|guard| guard.usage_activity())
+}
+
+/// Whether the Settings agents tab is on screen. `None` means the runtime is
+/// gone.
+fn read_settings_observed(context: &SessionSyncContext) -> Option<bool> {
+    let runtime = context.runtime.upgrade()?;
+    let observed = runtime.lock().ok()?.settings_observed();
+    drop(runtime);
+    Some(observed)
 }
 
 /// Hands the runtime the hook-install judgement, which was read on this
@@ -1000,12 +1201,13 @@ fn coordinator_wait(
     subscribed: bool,
     reconnect_at: Instant,
     next_agent_refresh: Instant,
+    next_operation_tick: Instant,
 ) -> Duration {
     let now = Instant::now();
     let deadline = if subscribed {
-        next_agent_refresh
+        next_agent_refresh.min(next_operation_tick)
     } else {
-        reconnect_at
+        reconnect_at.min(next_operation_tick)
     };
     deadline.saturating_duration_since(now)
 }

@@ -13,12 +13,28 @@ enum HideTheme {
         return font
     }()
 
-    @MainActor static func font(size: CGFloat, weight: SwiftUI.Font.Weight, design: SwiftUI.Font.Design) -> SwiftUI.Font {
-        if design == .monospaced { return .system(size: size, weight: weight, design: .monospaced) }
-        return SwiftUI.Font(nativeFont(size: size, weight: weight))
+    @MainActor static func font(
+        size: CGFloat,
+        weight: SwiftUI.Font.Weight,
+        design: SwiftUI.Font.Design,
+        italic: Bool = false
+    ) -> SwiftUI.Font {
+        if design == .monospaced {
+            let system = SwiftUI.Font.system(size: size, weight: weight, design: .monospaced)
+            return italic ? system.italic() : system
+        }
+        return SwiftUI.Font(nativeFont(size: size, weight: weight, italic: italic))
     }
 
-    @MainActor static func nativeFont(size: CGFloat, weight: SwiftUI.Font.Weight = .regular) -> NSFont {
+    /// The bundled Inter face carries weight and optical-size axes and no
+    /// italic, so the italic variant is the same face slanted by
+    /// `Typography.previewSlant` through the font matrix rather than a
+    /// second font file. Every italic chrome label takes it from here.
+    @MainActor static func nativeFont(
+        size: CGFloat,
+        weight: SwiftUI.Font.Weight = .regular,
+        italic: Bool = false
+    ) -> NSFont {
         let numericWeight: Double = switch weight {
         case .ultraLight: 100
         case .thin: 200
@@ -35,7 +51,13 @@ enum HideTheme {
                 kCTFontFeatureSelectorIdentifierKey: kStylisticAltThreeOnSelector]],
             kCTFontVariationAttribute: [NSNumber(value: 0x77676874): numericWeight],
         ] as CFDictionary)
-        return CTFontCreateWithGraphicsFont(inter, size, nil, descriptor) as NSFont
+        guard italic else {
+            return CTFontCreateWithGraphicsFont(inter, size, nil, descriptor) as NSFont
+        }
+        var matrix = CGAffineTransform(
+            a: 1, b: 0, c: tan(Typography.previewSlant * .pi / 180), d: 1, tx: 0, ty: 0
+        )
+        return CTFontCreateWithGraphicsFont(inter, size, &matrix, descriptor) as NSFont
     }
     /// The excluded pet dashboard retains its existing appearance (N2).
     /// These are active surface tokens, not a second copy of its components.
@@ -81,6 +103,10 @@ enum HideTheme {
         static let title: CGFloat = 13
         static let headline: CGFloat = 17
         static let display: CGFloat = 30
+        /// The italic variant of the chrome face, as the oblique angle in
+        /// degrees the font matrix applies. A preview tab's title is the one
+        /// place the strip draws it (PRD editor-preview-tab D-06).
+        static let previewSlant: CGFloat = 12
     }
     enum Editor {
         static let contentInset = spacingMD
@@ -90,6 +116,15 @@ enum HideTheme {
         static let documentWidth: CGFloat = 720
         static let documentFontSize: CGFloat = 15
         static let documentLineSpacing: CGFloat = 5
+        /// Live Markdown heading sizes, h1 through h6, over the 15pt body. Every
+        /// level is semibold; the two smallest sit at body size, so they differ
+        /// from the body by weight only and not from each other.
+        static let headingFontSizes: [CGFloat] = [28, 24, 20, 17, 15, 15]
+        /// The rule beside a quoted block; two hairlines so it reads as a bar
+        /// rather than a divider.
+        static let quoteRuleWidth: CGFloat = 2
+        /// The bundled Inter has no italic face, so emphasis is a skew.
+        static let italicSkew: CGFloat = 0.2
     }
     enum Conversation {
         static let measureWidth: CGFloat = 640
@@ -124,7 +159,7 @@ enum HideTheme {
     /// system's own neutral ladder rather than on Seti's. Seti's own neutral,
     /// `#6D8086`, is a dark slate that reads as a speck against the panel at
     /// 12px - which is what made `.gitignore` and `Cargo.toml` look unrendered.
-    /// These two are DESIGN.md's `mute` and `charcoal` steps.
+    /// These two are DESIGN.md's `file-icon-neutral` and `file-icon-document` colors.
     static let fileIconNeutralHex = "#9C9C9D"
     static let fileIconDocumentHex = "#D3D3D4"
     /// Monospaced content sizes at a pane's default scale. The per-pane zoom
@@ -280,8 +315,18 @@ enum HideTheme {
 
     static let compactControlSize: CGFloat = 36
     static let searchSheetSize = CGSize(width: 570, height: 430)
+    /// The Settings sheet's width and its smallest height. The sheet grows
+    /// with the window up to `settingsSheetMaxHeight`, keeping
+    /// `settingsSheetWindowInset` clear above and below, so a tab whose
+    /// content is taller than 560 points is read without a scroll on an
+    /// ordinary window and the sheet's bottom edge does not cut through a row.
     static let settingsSheetSize = CGSize(width: 720, height: 560)
+    static let settingsSheetMaxHeight: CGFloat = 800
+    static let settingsSheetWindowInset: CGFloat = 40
     static let addDeviceSheetSize = CGSize(width: 470, height: 300)
+    /// The stage column of a device connection test, wide enough for
+    /// `protocol` in the monospaced caption so the details line up.
+    static let deviceTestStageColumnWidth: CGFloat = 64
 
     static let badgeHeight: CGFloat = 16
 
@@ -301,19 +346,6 @@ enum HideTheme {
     /// spacing and radius scale above, which any view may reach for.
     enum Overview {
         static let cleanupHeight: CGFloat = 560
-        static let railWidth: CGFloat = 64
-        static let laneInset: CGFloat = 12
-        static let laneSpacing: CGFloat = 14
-        static let nodeOffset: CGFloat = 28
-        static let nodeSize: CGFloat = 7
-        static let commitHeight: CGFloat = 28
-        static let workspaceHeight: CGFloat = 96
-        static let rowWidth: CGFloat = 236
-        static let selectedNodeSize: CGFloat = 16
-        static let graphLineWidth: CGFloat = 1.5
-        // Git lane categories, independent of agent lifecycle colors.
-        static let lanes = [agentWorking, color(for: "#B69AFF"), success, warning]
-        static func laneColor(_ lane: Int) -> Color { lanes[lane % lanes.count] }
     }
 
     enum Layout {
@@ -347,6 +379,11 @@ enum HideTheme {
         /// truncated. Long identifiers and Korean names both have to fit
         /// several chips on one row rather than one chip pushing the rest off.
         static let paneChildChipMaxWidth: CGFloat = 132
+        /// The least room the pane header's sentence keeps before the header
+        /// drops it. Above this it truncates at the tail; below it the row
+        /// would show an ellipsis and nothing else, so the sentence goes and
+        /// the name and the status word stay (PRD D-08, B7, B8).
+        static let paneHeaderSentenceMinWidth: CGFloat = 120
         static let sidebarMinWidth: CGFloat = 220
         static let sidebarIdealWidth: CGFloat = 292
         static let sidebarMaxWidth: CGFloat = 440
@@ -369,7 +406,4 @@ enum HideTheme {
 
     static let gitRowFontSize: CGFloat = 11
     static let gitDetailFontSize: CGFloat = 10
-    /// The composer is a message box, not a form: wide enough for a sentence
-    /// to breathe and short enough to read as a prompt rather than a page.
-    static let composerSheetSize = CGSize(width: 560, height: 250)
 }

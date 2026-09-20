@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use crate::ffi::ChangeNotifier;
 use crate::find::PaneFindOptions;
-use crate::fork::{ForkRequest, fork_arguments};
+use crate::fork::ForkRequest;
 use crate::model::{
     EditorDocumentSnapshot, PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
     WorkspaceRegistration, WorkspaceSnapshot,
@@ -47,8 +47,9 @@ pub(crate) mod cleanup;
 #[path = "worktree_control.rs"]
 mod worktree_control;
 pub use worktree_control::{
-    WorktreeTaskOutcome, WorktreeTaskRequest, spawn_branch_migration, spawn_worktree_close,
-    spawn_worktree_create, spawn_worktree_open,
+    CheckoutTabRequest, WorktreeTaskOutcome, WorktreeTaskRequest, spawn_branch_migration,
+    spawn_checkout_tab_create, spawn_workspace_close, spawn_worktree_close, spawn_worktree_create,
+    spawn_worktree_open,
 };
 
 /// Everything a terminal session spawn needs from the live configuration.
@@ -67,7 +68,6 @@ pub struct LiveContext {
 pub struct RemoteTerminalContext {
     target_id: String,
     client: Arc<RusshRemoteClient>,
-    socket_path: String,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 }
@@ -76,14 +76,12 @@ impl RemoteTerminalContext {
     pub(crate) fn new(
         target_id: impl Into<String>,
         client: Arc<RusshRemoteClient>,
-        socket_path: impl Into<String>,
         runtime: Weak<Mutex<Runtime>>,
         notifier: ChangeNotifier,
     ) -> Self {
         Self {
             target_id: target_id.into(),
             client,
-            socket_path: socket_path.into(),
             runtime,
             notifier,
         }
@@ -150,14 +148,11 @@ pub fn spawn_workspace_creation(
             // must carry the worktree rows the reader has already found.
             // Building it from an empty catalog would drop every worktree
             // without a pane until the next read.
-            let (worktrees, scratch_root) = context
+            let worktrees = context
                 .runtime
                 .upgrade()
                 .and_then(|runtime| {
-                    let read = runtime
-                        .lock()
-                        .ok()
-                        .map(|guard| (guard.worktree_catalog(), guard.scratch_root()));
+                    let read = runtime.lock().ok().map(|guard| guard.worktree_catalog());
                     drop(runtime);
                     read
                 })
@@ -188,7 +183,7 @@ pub fn spawn_workspace_creation(
                                 error.message()
                             )
                         })?;
-                    let before_spaces = Runtime::session_spaces(&before, &scratch_root);
+                    let before_spaces = Runtime::session_spaces(&before);
                     let before_catalog =
                         workspace::build_catalog(&registrations, &before_spaces, &worktrees);
                     let needs_herdr_workspace = before_catalog
@@ -215,7 +210,7 @@ pub fn spawn_workspace_creation(
                     } else {
                         before
                     };
-                    let spaces = Runtime::session_spaces(&session, &scratch_root);
+                    let spaces = Runtime::session_spaces(&session);
                     let workspaces = workspace::build_catalog(&registrations, &spaces, &worktrees);
                     Ok(WorkspaceCreationOutcome {
                         registration,
@@ -401,6 +396,9 @@ pub enum RemoteControlAction {
         /// Which reorder this request belongs to, so a result that a later
         /// drag has already superseded cannot cancel the newer one.
         generation: u64,
+        /// The Herdr connection that carried the request. A late response
+        /// from an older socket cannot settle a move on a reconnected host.
+        connection_generation: u64,
     },
 }
 
@@ -425,6 +423,33 @@ pub enum RemoteControlOutcome {
     },
     /// The workspace tab order Herdr reported back, in Herdr's order.
     TabsOrdered { tab_ids: Vec<String> },
+}
+
+/// A control result is either a known refusal or an answer that may have been
+/// lost after Herdr accepted the request. The runtime must never retry the
+/// latter mutation without first reading fresh topology.
+#[derive(Clone, Debug)]
+pub(crate) enum ControlFailure {
+    Definite(String),
+    Ambiguous(String),
+}
+
+impl ControlFailure {
+    pub(crate) fn is_ambiguous(&self) -> bool {
+        matches!(self, Self::Ambiguous(_))
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        match self {
+            Self::Definite(message) | Self::Ambiguous(message) => message,
+        }
+    }
+}
+
+impl From<String> for ControlFailure {
+    fn from(message: String) -> Self {
+        Self::Definite(message)
+    }
 }
 
 #[derive(Clone)]
@@ -458,7 +483,7 @@ impl RemoteControlContext {
 fn execute_remote_control(
     connector: &dyn ApiConnector,
     action: &RemoteControlAction,
-) -> Result<RemoteControlOutcome, String> {
+) -> Result<RemoteControlOutcome, ControlFailure> {
     let (created_tab_id, created_pane_id) = match action {
         RemoteControlAction::Pane(action) => match action {
             PaneControlAction::Focus { .. }
@@ -467,7 +492,9 @@ fn execute_remote_control(
             | PaneControlAction::Close { .. } => match execute_pane_control(connector, action)? {
                 PaneControlOutcome::Acknowledged { created_pane_id } => (None, created_pane_id),
                 PaneControlOutcome::Projected { .. } => {
-                    return Err("remote pane mutation returned a layout projection".to_owned());
+                    return Err(ControlFailure::Definite(
+                        "remote pane mutation returned a layout projection".to_owned(),
+                    ));
                 }
             },
             // A remote pane is never relocated: Hide leaves another
@@ -475,11 +502,13 @@ fn execute_remote_control(
             PaneControlAction::Project { .. }
             | PaneControlAction::Resize { .. }
             | PaneControlAction::MoveToNewTab { .. } => {
-                return Err("unsupported remote pane control action".to_owned());
+                return Err(ControlFailure::Definite(
+                    "unsupported remote pane control action".to_owned(),
+                ));
             }
         },
         RemoteControlAction::FocusWorkspace { workspace_id } => {
-            control_request(
+            mutation_request(
                 connector,
                 "workspace.focus",
                 wire::workspace_target_params(workspace_id)?,
@@ -487,7 +516,7 @@ fn execute_remote_control(
             (None, None)
         }
         RemoteControlAction::FocusTab { tab_id } => {
-            control_request(connector, "tab.focus", wire::tab_target_params(tab_id)?)?;
+            mutation_request(connector, "tab.focus", wire::tab_target_params(tab_id)?)?;
             (None, None)
         }
         RemoteControlAction::CreateTab {
@@ -495,16 +524,16 @@ fn execute_remote_control(
             cwd,
             label,
         } => {
-            let result = control_request(
+            let result = mutation_request(
                 connector,
                 "tab.create",
                 wire::tab_create_params(workspace_id, cwd, label)?,
             )?;
-            let (tab_id, pane_id) = wire::created_tab(result)?;
+            let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
             (Some(tab_id), Some(pane_id))
         }
         RemoteControlAction::CloseTab { tab_id } => {
-            control_request(connector, "tab.close", wire::tab_target_params(tab_id)?)?;
+            mutation_request(connector, "tab.close", wire::tab_target_params(tab_id)?)?;
             (None, None)
         }
         RemoteControlAction::MoveTab {
@@ -515,12 +544,12 @@ fn execute_remote_control(
             // `tab.move` answers with the workspace's whole tab list in its
             // new order, so the caller can check what Herdr actually did
             // instead of assuming the request landed as asked.
-            let result = control_request(
+            let result = mutation_request(
                 connector,
                 "tab.move",
                 wire::tab_move_params(tab_id, *insert_index)?,
             )?;
-            let tab_ids = wire::moved_tabs(result)?;
+            let tab_ids = wire::moved_tabs(result).map_err(ControlFailure::Ambiguous)?;
             return Ok(RemoteControlOutcome::TabsOrdered { tab_ids });
         }
     };
@@ -533,13 +562,14 @@ fn execute_remote_control(
 fn execute_pane_control(
     connector: &dyn ApiConnector,
     action: &PaneControlAction,
-) -> Result<PaneControlOutcome, String> {
+) -> Result<PaneControlOutcome, ControlFailure> {
     if let PaneControlAction::Project { pane_id } = action {
         return fetch_pane_layout(connector, pane_id)
-            .map(|layout| PaneControlOutcome::Projected { layout });
+            .map(|layout| PaneControlOutcome::Projected { layout })
+            .map_err(ControlFailure::Definite);
     }
     if let PaneControlAction::Focus { pane_id } = action {
-        control_request(connector, "pane.focus", wire::pane_target_params(pane_id)?)?;
+        mutation_request(connector, "pane.focus", wire::pane_target_params(pane_id)?)?;
         return Ok(PaneControlOutcome::Acknowledged {
             created_pane_id: None,
         });
@@ -550,7 +580,7 @@ fn execute_pane_control(
         amount,
     } = action
     {
-        control_request(
+        mutation_request(
             connector,
             "pane.resize",
             wire::pane_resize_params(pane_id, *direction, *amount)?,
@@ -570,15 +600,15 @@ fn execute_pane_control(
             // part of the split and the pane_focused event lands the shell's
             // selection there with no second round trip.
             let params = wire::pane_split_params(pane_id, *direction, cwd.as_deref())?;
-            let result = control_request(connector, "pane.split", params)?;
-            Some(wire::split_pane(result)?)
+            let result = mutation_request(connector, "pane.split", params)?;
+            Some(wire::split_pane(result).map_err(ControlFailure::Ambiguous)?)
         }
         PaneControlAction::ToggleZoom { pane_id } => {
-            control_request(connector, "pane.zoom", wire::pane_zoom_params(pane_id)?)?;
+            mutation_request(connector, "pane.zoom", wire::pane_zoom_params(pane_id)?)?;
             None
         }
         PaneControlAction::Close { pane_id } => {
-            control_request(connector, "pane.close", wire::pane_target_params(pane_id)?)?;
+            mutation_request(connector, "pane.close", wire::pane_target_params(pane_id)?)?;
             None
         }
         PaneControlAction::MoveToNewTab {
@@ -587,10 +617,10 @@ fn execute_pane_control(
             label,
         } => {
             let params = wire::pane_move_to_new_tab_params(pane_id, workspace_id, label)?;
-            let result = control_request(connector, "pane.move", params)?;
+            let result = mutation_request(connector, "pane.move", params)?;
             // The created tab is checked here so a refusal Herdr reported as
             // an unchanged move fails the action rather than reading as done.
-            wire::moved_pane_tab(result)?;
+            wire::moved_pane_tab(result).map_err(ControlFailure::Ambiguous)?;
             None
         }
         PaneControlAction::Project { .. }
@@ -607,6 +637,23 @@ fn control_request(
 ) -> Result<Value, String> {
     request_with_connector(connector, method, params, Duration::from_secs(5))
         .map_err(|error| format!("{method} failed: {error}"))
+}
+
+fn mutation_request(
+    connector: &dyn ApiConnector,
+    method: &str,
+    params: Value,
+) -> Result<Value, ControlFailure> {
+    request_with_connector(connector, method, params, Duration::from_secs(5)).map_err(|error| {
+        match error {
+            ApiError::Remote { code, message } => {
+                ControlFailure::Definite(format!("{method} was refused: {code}: {message}"))
+            }
+            ApiError::Transport(message) | ApiError::Malformed(message) => {
+                ControlFailure::Ambiguous(format!("{method} result is unknown: {message}"))
+            }
+        }
+    })
 }
 
 fn reopen_request(
@@ -634,6 +681,9 @@ pub enum CloseCaptureTarget {
 #[derive(Clone, Debug)]
 pub struct CloseCaptureRequest {
     pub key: String,
+    /// A response from an older live connection must never settle a newer
+    /// close intent after reconnect.
+    pub connection_generation: u64,
     pub context: ClosedContext,
     pub panes: Vec<ClosedPane>,
     pub target: CloseCaptureTarget,
@@ -647,6 +697,7 @@ pub struct CloseCaptureOutcome {
 #[derive(Clone, Debug)]
 pub struct CloseEffectRequest {
     pub key: String,
+    pub connection_generation: u64,
     pub target: CloseCaptureTarget,
 }
 
@@ -761,6 +812,59 @@ fn run_close_effect(
         Duration::from_secs(5),
     )
     .map(|_| ())
+}
+
+/// A read-only fresh session check for a close whose transport result was
+/// ambiguous. It does not repeat the mutation and carries the connection
+/// generation so a late answer from an older socket cannot change current
+/// state.
+#[derive(Clone, Debug)]
+pub struct CloseStatusCheckRequest {
+    pub key: String,
+    pub target: CloseCaptureTarget,
+}
+
+pub fn spawn_close_status_check(
+    context: LiveContext,
+    key: String,
+    connection_generation: u64,
+    target: CloseCaptureTarget,
+) -> Result<(), String> {
+    spawn_close_status_checks(
+        context,
+        connection_generation,
+        vec![CloseStatusCheckRequest { key, target }],
+    )
+}
+
+/// Runs one read for all close operations waiting on the same authoritative
+/// session. The result is fanned out while the runtime lock is held, so a
+/// single fresh snapshot cannot settle one close and leave its siblings stale.
+pub fn spawn_close_status_checks(
+    context: LiveContext,
+    connection_generation: u64,
+    requests: Vec<CloseStatusCheckRequest>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-close-status-check".to_owned())
+        .spawn(move || {
+            let result = fetch_session_with_connector(context.api_connector.as_ref());
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let changed = match runtime.lock() {
+                Ok(mut guard) => {
+                    guard.ingest_close_status_results(connection_generation, &requests, result)
+                }
+                Err(_) => false,
+            };
+            drop(runtime);
+            if changed {
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("close status worker could not be started: {error}"))
 }
 
 #[derive(Clone, Debug)]
@@ -1575,6 +1679,17 @@ fn fetch_pane_layout(
 }
 
 pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Result<(), String> {
+    spawn_pane_control_with_generation(context, action, None)
+}
+
+/// Starts a pane control worker with the connection generation that created it.
+/// The generation is part of the operation identity, so a late answer from an
+/// older Herdr socket cannot settle a newer request for the same pane.
+pub fn spawn_pane_control_with_generation(
+    context: LiveContext,
+    action: PaneControlAction,
+    connection_generation: Option<u64>,
+) -> Result<(), String> {
     let worker_name = match &action {
         PaneControlAction::Project { .. } => "herdr-core-pane-project".to_owned(),
         PaneControlAction::Focus { .. } => "herdr-core-pane-focus".to_owned(),
@@ -1598,7 +1713,12 @@ pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Re
                 return;
             };
             let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_pane_control_result(action, result, elapsed_ms),
+                Ok(mut guard) => guard.ingest_pane_control_failure_with_generation(
+                    action,
+                    result,
+                    elapsed_ms,
+                    connection_generation,
+                ),
                 Err(_) => return,
             };
             drop(runtime);
@@ -1748,15 +1868,12 @@ fn read_pane_text(
 }
 
 pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<(), String> {
-    let herdr_bin = context.herdr_bin.clone().ok_or_else(|| {
-        "herdr binary was not found; install herdr or set its path in the app options".to_owned()
-    })?;
     thread::Builder::new()
         .name("herdr-core-agent-fork".to_owned())
         .spawn(move || {
             let started = Instant::now();
             let parent_pane_id = request.parent_pane_id.clone();
-            let result = run_agent_fork(&herdr_bin, &context.socket_path, &request);
+            let result = run_agent_fork(context.api_connector.as_ref(), &request);
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
@@ -1774,32 +1891,56 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
         .map_err(|error| format!("fork worker could not be started: {error}"))
 }
 
-fn run_agent_fork(
-    herdr_bin: &Path,
-    socket_path: &Path,
-    request: &ForkRequest,
-) -> Result<String, String> {
-    let output = Command::new(herdr_bin)
-        .args(fork_arguments(request))
-        .env("HERDR_SOCKET_PATH", socket_path)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("herdr agent new could not be run: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if stderr.is_empty() {
-            format!("herdr agent new exited with {}", output.status)
-        } else {
-            stderr
-        });
+/// Splits beside the parent, starts the agent in the new pane, and declares
+/// the parent on it. The three calls are not one transaction, so a pane
+/// whose agent never started is closed again before the failure is
+/// reported: the operator asked for a fork, and an empty pane is not one.
+fn run_agent_fork(connector: &dyn ApiConnector, request: &ForkRequest) -> Result<String, String> {
+    let child_pane_id = control_request(
+        connector,
+        "pane.split",
+        wire::fork_split_params(&request.parent_pane_id, request.cwd.as_deref())?,
+    )
+    .and_then(wire::split_pane)?;
+    let started = start_agent(
+        connector,
+        &format!("herdr-core:fork:{}:start", request.name),
+        &child_pane_id,
+        &request.name,
+        request.agent.kind(),
+        request.agent.resume_arguments(&request.session_id),
+    )
+    .and_then(|started_pane_id| {
+        control_request(
+            connector,
+            "pane.report_metadata",
+            wire::declare_parent_pane_params(&started_pane_id, &request.parent_pane_id)?,
+        )
+        .map(|_| started_pane_id)
+    });
+    match started {
+        Ok(pane_id) => Ok(pane_id),
+        Err(error) => {
+            let closed = control_request(
+                connector,
+                "pane.close",
+                wire::pane_target_params(&child_pane_id)?,
+            );
+            Err(match closed {
+                Ok(_) => error,
+                Err(close_error) => format!(
+                    "{error}; the pane {child_pane_id} it split could not be closed: {close_error}"
+                ),
+            })
+        }
     }
-    wire::created_agent_pane(&output.stdout)
 }
 
 pub fn spawn_remote_control(
     context: RemoteControlContext,
     request_id: String,
     action: RemoteControlAction,
+    connection_generation: u64,
 ) -> Result<(), String> {
     let target_id = context.target_id.clone();
     let worker_name = match &action {
@@ -1850,12 +1991,13 @@ pub fn spawn_remote_control(
                 return;
             };
             let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_remote_control_result(
+                Ok(mut guard) => guard.ingest_remote_control_failure_with_generation(
                     &target_id,
                     &request_id,
                     action,
                     result,
                     elapsed_ms,
+                    Some(connection_generation),
                 ),
                 Err(_) => return,
             };
@@ -1889,7 +2031,7 @@ pub fn spawn_local_control(
                 return;
             };
             let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_local_control_result(action, result, elapsed_ms),
+                Ok(mut guard) => guard.ingest_local_control_failure(action, result, elapsed_ms),
                 Err(_) => return,
             };
             drop(runtime);
@@ -1899,120 +2041,6 @@ pub fn spawn_local_control(
         })
         .map(|_| ())
         .map_err(|error| format!("local tab control worker could not be started: {error}"))
-}
-
-/// What a Scratch tab needs to exist: the folder, and either the Herdr
-/// workspace already holding Scratch or a new one.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScratchTabRequest {
-    /// The folder Scratch runs in. Created here when it is missing, because
-    /// the first tab is what brings Scratch into existence.
-    pub root: String,
-    /// The Herdr workspace to add a tab to, or `None` to create the
-    /// workspace. Herdr drops a workspace with its last pane, so Scratch is
-    /// regularly in the second state without the operator having done
-    /// anything.
-    pub workspace_id: Option<String>,
-    pub label: String,
-}
-
-/// Creates a Scratch tab off the runtime lock.
-///
-/// Three steps that can each fail, and each failure names its own step: a
-/// folder that could not be created is not a Herdr error, and the operator is
-/// owed the difference.
-pub fn spawn_scratch_tab_creation(
-    context: LiveContext,
-    request: ScratchTabRequest,
-) -> Result<(), String> {
-    thread::Builder::new()
-        .name("herdr-core-scratch-tab".to_owned())
-        .spawn(move || {
-            let started = Instant::now();
-            let result = create_scratch_tab(context.api_connector.as_ref(), &request);
-            let elapsed_ms = started.elapsed().as_millis();
-            let Some(runtime) = context.runtime.upgrade() else {
-                return;
-            };
-            let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_scratch_tab_result(result, elapsed_ms),
-                Err(_) => return,
-            };
-            drop(runtime);
-            if changed {
-                context.notifier.notify();
-            }
-        })
-        .map(|_| ())
-        .map_err(|error| format!("scratch tab worker could not be started: {error}"))
-}
-
-pub fn spawn_scratch_chat_tab_creation(
-    context: LiveContext,
-    id: u64,
-    request: ScratchTabRequest,
-) -> Result<(), String> {
-    thread::Builder::new()
-        .name("herdr-core-scratch-chat-tab".to_owned())
-        .spawn(move || {
-            let started = Instant::now();
-            let result =
-                create_scratch_tab(context.api_connector.as_ref(), &request).map(|pane_id| {
-                    WorktreeTaskOutcome {
-                        path: request.root.clone(),
-                        pane_id,
-                    }
-                });
-            let Some(runtime) = context.runtime.upgrade() else {
-                return;
-            };
-            let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_task_operation_result(id, result),
-                Err(_) => return,
-            };
-            drop(runtime);
-            if changed {
-                crate::diagnostic!(json!({
-                    "component":"scratch_chat",
-                    "kind":"scratch_chat.tab_finished",
-                    "duration_ms":started.elapsed().as_millis(),
-                }));
-                context.notifier.notify();
-            }
-        })
-        .map(|_| ())
-        .map_err(|error| format!("scratch chat tab worker could not be started: {error}"))
-}
-
-fn create_scratch_tab(
-    connector: &dyn ApiConnector,
-    request: &ScratchTabRequest,
-) -> Result<String, String> {
-    // An existing folder is a success, so a second tab costs nothing and a
-    // repeated request cannot fail on the folder it already made.
-    std::fs::create_dir_all(&request.root).map_err(|error| {
-        format!(
-            "scratch folder: {} could not be created: {error}",
-            request.root
-        )
-    })?;
-    match request.workspace_id.as_deref() {
-        Some(workspace_id) => {
-            let result = control_request(
-                connector,
-                "tab.create",
-                wire::tab_create_params(workspace_id, &request.root, &request.label)?,
-            )
-            .map_err(|error| format!("tab.create: {error}"))?;
-            let (_, pane_id) = wire::created_tab(result)?;
-            Ok(pane_id)
-        }
-        None => {
-            let created = create_herdr_workspace(connector, &request.root, &request.label)
-                .map_err(|error| format!("workspace.create: {error}"))?;
-            Ok(created.pane_id)
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2614,13 +2642,7 @@ impl TerminalSession {
     ) -> Result<Self, String> {
         let process = context
             .client
-            .open_terminal_session(
-                &context.socket_path,
-                source_pane_id,
-                mode.as_str(),
-                rows,
-                cols,
-            )
+            .open_terminal_session(source_pane_id, mode.as_str(), rows, cols)
             .map_err(|error| error.to_string())?;
         let (reader, transport_writer, shutdown) = process.into_parts();
         let writer = match (mode, transport_writer) {
@@ -3357,9 +3379,8 @@ mod tests {
         let herdr = FakeHerdr::start("reopen-owned-pane", |method, _| match method {
             "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
                 "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
-                "workspaces":[], "tabs":[], "agents":[], "lineage":[],
-                "panes":[{"pane_id":"w1:p3","workspace_id":"w1","tab_id":"w1:t1","cwd":"/tmp","focused":false,"agent_status":"idle","revision":0,"surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"unrelated-term"}}}],
+                "workspaces":[], "tabs":[], "agents":[],
+                "panes":[{"pane_id":"w1:p3", "terminal_id": "fixture-terminal","workspace_id":"w1","tab_id":"w1:t1","cwd":"/tmp","focused":false,"agent_status":"idle","revision":0}],
                 "layouts":[{"workspace_id":"w1","tab_id":"w1:t1","zoomed":false,
                     "area":{"x":0,"y":0,"width":80,"height":24}, "focused_pane_id":"w1:p1",
                     "panes":[{"pane_id":"w1:p1","focused":true,"rect":{"x":0,"y":0,"width":40,"height":24}},
@@ -3377,13 +3398,8 @@ mod tests {
                 }
             }),
             "pane.split" => json!({"type": "pane_info", "pane": {
-                "pane_id": "w1:p4", "workspace_id": "w1", "tab_id": "w1:t1",
-                "focused": true, "agent_status": "idle", "revision": 1,
-                "surface": {"kind": "terminal", "attach": {
-                    "host": {"host_id": "fixture", "session_id": "fixture"},
-                    "transport": "herdr_client", "protocol": HERDR_PROTOCOL_REVISION,
-                    "terminal_id": "owned-term"
-                }}
+                "pane_id": "w1:p4", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1",
+                "focused": true, "agent_status": "idle", "revision": 1
             }}),
             method => panic!("unexpected method {method}"),
         });
@@ -3458,10 +3474,9 @@ mod tests {
         let herdr = FakeHerdr::start("reopen-owned-layout", move |method, params| match method {
             "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
                 "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
                 "workspaces":[{"workspace_id":"w2","label":"Fixture","active_tab_id":"w2:t1","number":2,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
                 "tabs":[{"workspace_id":"w2","tab_id":"w2:t1","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
-                "panes":[], "layouts":[], "agents":[], "lineage":[]
+                "panes":[], "layouts":[], "agents":[]
             }}),
             "layout.export" => json!({"type":"layout_export","layout": {
                 "workspace_id":"w2", "tab_id":"w2:t1", "zoomed":false,
@@ -3476,7 +3491,7 @@ mod tests {
                 json!({"type":"workspace_created",
                     "workspace":{"workspace_id":"w3","number":3,"label":"Fixture","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w3:t1","agent_status":"idle"},
                     "tab":{"tab_id":"w3:t1","workspace_id":"w3","number":1,"label":"1","focused":true,"pane_count":1,"agent_status":"idle"},
-                    "root_pane":{"pane_id":"w3:p3","surface":{"kind":"terminal","attach":{"host":{"host_id":"fixture","session_id":"fixture"},"transport":"herdr_client","protocol":HERDR_PROTOCOL_REVISION,"terminal_id":"seed-term"}},"workspace_id":"w3","tab_id":"w3:t1","focused":true,"agent_status":"idle","revision":1}
+                    "root_pane":{"pane_id":"w3:p3", "terminal_id": "fixture-terminal","workspace_id":"w3","tab_id":"w3:t1","focused":true,"agent_status":"idle","revision":1}
                 })
             }
             "layout.apply" => {
@@ -3581,10 +3596,9 @@ mod tests {
             move |method, params| match method {
                 "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
                     "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                    "host":{"host_id":"fixture","session_id":"fixture"}, "event_sequence":1,
                     "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
                     "tabs":[{"workspace_id":"w1","tab_id":"w1:t2","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
-                    "panes":[], "layouts":[], "agents":[], "lineage":[]
+                    "panes":[], "layouts":[], "agents":[]
                 }}),
                 "layout.export" => json!({"type":"layout_export","layout": {
                     "workspace_id":"w1", "tab_id":"w1:t2", "zoomed":false,
@@ -3727,8 +3741,6 @@ mod tests {
                 "snapshot": {
                     "version": "fixture",
                     "protocol": HERDR_PROTOCOL_REVISION,
-                    "host": {"host_id": "fixture", "session_id": "s1"},
-                    "event_sequence": 1,
                     "workspaces": [],
                     "tabs": [],
                     "panes": [],
@@ -3747,8 +3759,7 @@ mod tests {
                         "cwd": "/tmp",
                         "foreground_cwd": "/tmp",
                         "revision": 0
-                    }],
-                    "lineage": []
+                    }]
                 }
             }),
             "pane.send_text" => {
@@ -3913,7 +3924,7 @@ mod tests {
                 "type": "workspace_created",
                 "workspace": {"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
                 "tab": {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w1:p1", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
+                "root_pane": {"pane_id": "w1:p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
             })
         });
 
@@ -3947,7 +3958,7 @@ mod tests {
     fn pane_control_uses_the_official_socket_contract_for_every_mutation() {
         let herdr = FakeHerdr::start("pane-control", |method, _| match method {
             "pane.split" => {
-                json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
+                json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
             }
             "pane.zoom" | "pane.close" => json!({"type": "ok"}),
             other => panic!("unexpected {other}"),
@@ -4011,7 +4022,7 @@ mod tests {
             "tab.create" => json!({
                 "type": "tab_created",
                 "tab": {"tab_id": "w1:t3", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w1:p3", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
+                "root_pane": {"pane_id": "w1:p3", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}
             }),
             other => panic!("unexpected {other}"),
         });
@@ -4087,8 +4098,6 @@ mod tests {
     fn official_remote_control_fixture_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
             .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
-        let socket_path = std::env::var("HERDR_TEST_SOCKET_PATH")
-            .expect("HERDR_TEST_SOCKET_PATH is the absolute remote Unix socket path");
         let workspace_id = std::env::var("HERDR_TEST_REMOTE_CONTROL_WORKSPACE_ID")
             .expect("HERDR_TEST_REMOTE_CONTROL_WORKSPACE_ID names the owned fixture workspace");
         let cwd = std::env::var("HERDR_TEST_REMOTE_CONTROL_CWD")
@@ -4106,9 +4115,7 @@ mod tests {
         .expect("SSH alias resolves");
         let client =
             crate::remote::RusshRemoteClient::new(alias).expect("remote client initializes");
-        let connector = client
-            .herdr_api_connector(socket_path)
-            .expect("remote connector initializes");
+        let connector = client.herdr_api_connector();
 
         let response = request_with_connector(
             &connector,
@@ -4252,7 +4259,7 @@ mod tests {
         let herdr = FakeHerdr::start("pane-worker", |method, _| {
             assert_eq!(method, "pane.split");
             std::thread::sleep(Duration::from_millis(500));
-            json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
+            json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
         });
         let context = LiveContext {
             socket_path: herdr.socket_path().to_path_buf(),
@@ -4290,7 +4297,7 @@ mod tests {
             assert_eq!(params["pane_id"], "fixture:p2");
             match method {
                 "pane.focus" => {
-                    json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "surface": {"kind": "terminal", "attach": {"host": {"host_id": "fixture", "session_id": "s1"}, "transport": "herdr_client", "protocol": 21, "terminal_id": "fixture"}}, "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
+                    json!({"type": "pane_info", "pane": {"pane_id": "fixture:p2", "terminal_id": "fixture-terminal", "workspace_id": "fixture", "tab_id": "fixture:t1", "focused": false, "agent_status": "idle", "revision": 1}})
                 }
                 "pane.layout" => json!({
                     "type": "pane_layout",
@@ -4330,11 +4337,8 @@ mod tests {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
             "version": "fixture",
-            "host": {"host_id": "fixture-host", "session_id": "fixture"},
-            "event_sequence": 0,
             "panes": [],
             "tabs": [],
-            "lineage": [],
             "workspaces": [
                 {"workspace_id": "w1", "label": "herdr-ide", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"},
             ],
@@ -4392,10 +4396,7 @@ mod tests {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
             "version": "fixture",
-            "host": {"host_id": "fixture-host", "session_id": "fixture"},
-            "event_sequence": 0,
             "panes": [],
-            "lineage": [],
             "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"}],
             "tabs": [{
                 "workspace_id": "w1",
@@ -4429,11 +4430,8 @@ mod tests {
         let snapshot = json!({
             "protocol": HERDR_PROTOCOL_REVISION,
             "version": "fixture",
-            "host": {"host_id": "fixture-host", "session_id": "fixture"},
-            "event_sequence": 0,
             "panes": [],
             "tabs": [],
-            "lineage": [],
             "workspaces": [{"workspace_id": "w1", "label": "verify", "active_tab_id": "w1:t1", "number": 1, "focused": true, "pane_count": 1, "tab_count": 1, "agent_status": "idle"}],
             "agents": [],
             "focused_pane_id": "w1:p3",

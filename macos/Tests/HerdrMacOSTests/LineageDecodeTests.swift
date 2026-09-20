@@ -14,7 +14,7 @@ import Testing
         "cwd": "/fixture",
         "status_label": "Working",
         "requires_close_confirmation": false,
-        "summary": "building",
+        "identity_label": "building",
         "activity_at_unix_ms": 1,
         "children": {
             "instrumented": true,
@@ -66,7 +66,7 @@ import Testing
         "cwd": "/fixture",
         "status_label": "Idle",
         "requires_close_confirmation": false,
-        "summary": null,
+        "identity_label": null,
         "activity_at_unix_ms": null
     }
     """
@@ -102,8 +102,9 @@ import Testing
         "agent_kind": "claude", "demand": "none", "activity": "working",
         "unread": false, "blocked": false, "group": "needs_you",
         "symbol": "\\u25cf", "emphasized": true, "status_label": "Working",
-        "requires_close_confirmation": true, "summary": "waiting",
+        "requires_close_confirmation": true,
         "identity_label": "전체 작업 조율과 긴 한국어 작업 이름",
+        "detail": "waiting", "status_word_visible": true,
         "elapsed": "16m", "last_activity": "1",
         "delegated": false,
         "stall_level": "hard",
@@ -112,6 +113,8 @@ import Testing
     """
     let agent = try JSONDecoder().decode(SidebarAgent.self, from: Data(payload.utf8))
     #expect(agent.identityLabel == "전체 작업 조율과 긴 한국어 작업 이름")
+    #expect(agent.detail == "waiting")
+    #expect(agent.statusWordVisible)
     #expect(!agent.delegated)
     #expect(agent.stallLevel == "hard")
     #expect(agent.stallNotice?.contains("16 minutes") == true)
@@ -123,13 +126,15 @@ import Testing
         "agent_kind": "claude", "demand": "question", "activity": "stopped",
         "unread": true, "blocked": false, "group": "seen",
         "symbol": "?", "emphasized": false, "status_label": "Asked",
-        "requires_close_confirmation": false, "summary": "asking",
+        "requires_close_confirmation": false, "identity_label": "Child",
         "elapsed": "1m", "last_activity": "2",
         "delegated": true
     }
     """
     let child = try JSONDecoder().decode(SidebarAgent.self, from: Data(quiet.utf8))
     #expect(child.delegated)
+    #expect(child.detail == nil)
+    #expect(child.statusWordVisible, "an older core without the flag keeps the word, as before")
     #expect(child.stallLevel.isEmpty)
     #expect(child.stallNotice == nil)
     #expect(child.group == "seen", "a delegated question is not the operator's Needs You")

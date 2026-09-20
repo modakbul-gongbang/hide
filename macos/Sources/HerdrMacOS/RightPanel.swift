@@ -81,7 +81,7 @@ struct RightPanel: View {
                     fontScale: fontScale,
                     operation: model.core.snapshot?.explorerOperation,
                     gitDecorations: explorerGitDecorations,
-                    openFile: model.openFile,
+                    openFile: { url, preview in model.openFile(url, preview: preview) },
                     updateExpandedPaths: { paths in
                         model.core.persistUIState(expandedPaths: paths)
                     },
@@ -90,7 +90,10 @@ struct RightPanel: View {
                         createDirectory: { parent, name in model.core.createDirectory(root: activeRoot, parent: parent, name: name) },
                         rename: { path, name in model.core.renamePath(root: activeRoot, path: path, name: name) },
                         move: { path, destination in model.core.movePath(root: activeRoot, path: path, destination: destination) },
-                        requestTrash: model.requestExplorerTrash
+                        requestTrash: model.requestExplorerTrash,
+                        openWithDefaultApp: model.openWithDefaultApp,
+                        openInBrowserPane: model.openInBrowserPane,
+                        browserPaneAvailability: model.browserPaneAvailability
                     )
                 )
             }
@@ -309,8 +312,10 @@ struct ChangesView: View {
     private func row(_ entry: CoreChangedFile, committed: Bool) -> some View {
         let isSelected = entry.path == changes.selectedPath
             && changes.selectedCommitted == committed
+        // A single click on a row is a preview: the diff takes the
+        // checkout's one preview slot (B12).
         return ChangedFileRow(entry: entry, committed: committed, isSelected: isSelected) {
-            model.selectChangedFile(entry.path, committed: committed)
+            model.selectChangedFile(entry.path, committed: committed, preview: true)
         }
     }
 }

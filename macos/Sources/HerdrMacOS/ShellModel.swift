@@ -108,14 +108,9 @@ enum CloseShortcutPolicy {
         hasActiveFileTab: Bool,
         hasActiveHerdrTab: Bool,
         hasFocusedPane: Bool = false,
-        hasFocusedScratchPane: Bool = false,
         tabCount: Int
     ) -> CloseShortcutAction {
         if hasActiveFileTab { return .closeFile }
-        // Scratch belongs to no checkout, so it answers no to every question
-        // below: the workspace gate would send ⌘W to "nothing to close" while
-        // the operator is looking at the pane it would have closed.
-        if hasFocusedScratchPane { return .closePane }
         if !hasWorkspace { return .nothingToClose }
         if hasActiveHerdrTab && hasFocusedPane { return .closePane }
         if hasActiveHerdrTab { return .closeHerdr }
@@ -158,7 +153,6 @@ final class ShellModel: ObservableObject {
     @Published var agentListScope: AgentListScope = .mine
     @Published var consequenceNotice: ConsequenceNotice?
     @Published var consequenceResult: String?
-    @Published var showComposer = false { didSet { refreshHintSheetState() } }
     @Published var showSearch = false { didSet { refreshHintSheetState() } }
     @Published var showFileSearch = false { didSet { refreshHintSheetState() } }
     @Published var showSettings = false { didSet { refreshHintSheetState() } }
@@ -179,6 +173,9 @@ final class ShellModel: ObservableObject {
     /// The Explorer item waiting for the Move to Trash modal's answer.
     @Published var explorerTrashPrompt: WorkspaceOutlineTrashPrompt?
     @Published var worktreeToDelete: CoreGitWorktree?
+    /// The Projects list row the sidebar scrolls to on `Reveal in sidebar`.
+    /// The nonce makes a repeat on the same row a new request.
+    @Published private(set) var sidebarReveal: SidebarRevealRequest?
     @Published var deleteWorktreeBranch = false
     private var handledRemovalIDs: Set<UInt64> = []
     @Published var worktreeWorkspace: CoreWorkspaceSnapshot?
@@ -186,14 +183,26 @@ final class ShellModel: ObservableObject {
     @Published private(set) var worktreeError: String?
     @Published var branchMigration: BranchMigrationRequest?
     private var handledTaskOperationIDs: Set<UInt64> = []
-    private var pendingScratchChat: (provider: AgentProvider, message: String, bypass: Bool)?
     @Published var interactionNotice: String?
+    @Published private(set) var interactionStatusRefreshAvailable = false
     @Published var herdrProtocolMismatch: HerdrProtocolMismatchDetails?
     /// When the last reported fork failure happened, so one failure is raised
     /// once rather than on every snapshot that still carries it.
     /// Panes with a fork in flight, which is what puts "forking…" in the
     /// header and what a failure is attributed to.
     @Published private(set) var panesForking: Set<String> = []
+    /// Files with an Open in Browser Pane request in flight, keyed by path,
+    /// which is what disables the item for that file until the host answers
+    /// (D-09: one request per file at a time).
+    @Published private(set) var browserPaneOpensInFlight: Set<String> = []
+    /// Resolved once per launch, like the agent CLIs: PATH does not change
+    /// under a running app, and the menu asks on every right-click.
+    private lazy var browserPaneHost: BrowserPaneOpener.Host? = {
+        guard let node = BrowserPaneOpener.nodeExecutable(),
+              let script = BrowserPaneOpener.hostScript()
+        else { return nil }
+        return BrowserPaneOpener.Host(node: node, script: script)
+    }()
 
     /// Relationship Open and parent Return share this target-scoped outcome.
     /// Generic bridge errors remain available to the status bar, but are not
@@ -207,14 +216,6 @@ final class ShellModel: ObservableObject {
     @Published private(set) var panesReopening: Set<String> = []
 
     private var lastReportedForkFailure: UInt64?
-    /// Which checkout the composer opens on, or `nil` for Scratch. Scratch is
-    /// the default from every entry point that is not a project one, which is
-    /// what makes `⌘N` a question rather than a folder chooser.
-    @Published var composerCheckoutID: String?
-    @Published var composerDeviceID = "local"
-    /// True from submission until the four steps answer. The sheet is locked
-    /// for exactly that long: no cancel, and a second `⌘↩` does nothing.
-    @Published private(set) var composerSubmitting = false
     @Published private(set) var paneShortcuts: [PaneCommand: PaneShortcut]
     @Published private(set) var shortcutErrors: [PaneCommand: String] = [:]
     @Published private(set) var shortcutDiagnostic: String?
@@ -229,6 +230,8 @@ final class ShellModel: ObservableObject {
     private var remoteSubscription: AnyCancellable?
     private var pendingPaneCloseTarget: PaneCloseTarget?
     private var pendingTabCloseTarget: TabCloseTarget?
+    private var pendingCloseScopePaneIDs: [String]?
+    private var pendingCloseApprovalFingerprint: String?
     private var lastRemoteDevice: CoreDeviceSnapshot?
     @Published private(set) var activeRemoteDevice: CoreDeviceSnapshot?
     private var pendingCheckoutStarts: Set<String> = []
@@ -299,13 +302,23 @@ final class ShellModel: ObservableObject {
 
     private func observeRecentClosed(in snapshot: CoreSnapshot?) {
         let state = snapshot?.recentClosed ?? .empty
+        let visiblePaneIDs = Set(
+            (snapshot?.navigator.workspaces ?? [])
+                .flatMap(\.checkouts)
+                .flatMap(\.tabs)
+                .flatMap(\.panes)
+                .map(\.id)
+        )
         reopenPaneNotices = Dictionary(
             state.notices.compactMap { notice in
                 notice.paneID.map { ($0, notice.message) }
             },
             uniquingKeysWith: { _, newest in newest }
         )
-        reopenTabNotice = state.notices.last(where: { $0.paneID == nil })?.message
+        reopenTabNotice = state.notices.last(where: { notice in
+            guard let paneID = notice.paneID else { return true }
+            return !visiblePaneIDs.contains(paneID)
+        })?.message
         panesReopening = state.restoring
             ? Set(state.notices.compactMap(\.paneID))
             : []
@@ -358,23 +371,134 @@ final class ShellModel: ObservableObject {
     /// What a pane is doing right now, shown after its name in the header.
     func paneActivity(for paneID: String) -> String {
         if panesReopening.contains(paneID) { return " · reopening…" }
+        if let operation = asyncOperation(targetID: paneID) {
+            return asyncOperationActivity(operation)
+        }
         return panesForking.contains(paneID) ? " · forking…" : ""
     }
 
     /// A failure that belongs to one pane, shown in that pane rather than in
     /// a dialog.
     func paneNotice(for paneID: String) -> String? {
-        reopenPaneNotices[paneID] ?? paneNotices[paneID]
+        reopenPaneNotices[paneID] ?? asyncOperationNotice(asyncOperation(targetID: paneID)) ?? paneNotices[paneID]
     }
 
     var canReopenClosed: Bool {
         guard let recent = core.snapshot?.recentClosed else { return false }
-        return recent.count > 0 && !recent.restoring
+        return recent.canReopen
     }
 
     func reopenClosed() {
         guard canReopenClosed else { return }
         core.reopenClosed()
+    }
+
+    private var asyncOperations: [CoreAsyncOperation] {
+        core.snapshot?.status.asyncOperations ?? []
+    }
+
+    private func asyncOperation(targetID: String) -> CoreAsyncOperation? {
+        asyncOperations.last(where: { $0.targetID == targetID })
+    }
+
+    private func asyncOperationActivity(_ operation: CoreAsyncOperation) -> String {
+        switch operation.phase {
+        case "unknown":
+            let closeStatusCheckInFlight = core.snapshot?.recentClosed.pending.contains {
+                $0.key == operation.id && $0.checking
+            } == true
+            return closeStatusCheckInFlight ? " · checking…" : " · status check needed"
+        case "failed", "refused":
+            return ""
+        default:
+            switch operation.kind {
+            case "pane.close", "tab.close": return " · closing…"
+            case "pane.split": return " · splitting…"
+            case "pane.zoom": return " · zooming…"
+            case "pane.resize": return " · resizing…"
+            case "tab.move": return " · moving…"
+            default: return " · working…"
+            }
+        }
+    }
+
+    private func asyncOperationNotice(_ operation: CoreAsyncOperation?) -> String? {
+        guard let operation,
+              ["failed", "refused", "unknown"].contains(operation.phase)
+        else { return nil }
+        return operation.message
+    }
+
+    private func asyncIdentityIDs(for tab: ShellTabItem) -> Set<String> {
+        var ids = Set([tab.id])
+        if case .herdr(let coreTab) = tab.kind, let sourceID = coreTab.id {
+            ids.insert(sourceID)
+        }
+        return ids
+    }
+
+    private func tabAsyncOperation(for tab: ShellTabItem) -> CoreAsyncOperation? {
+        let tabIDs = asyncIdentityIDs(for: tab)
+        return asyncOperations.last(where: { operation in
+            tabIDs.contains(operation.targetID) || tabIDs.contains(operation.scopeID)
+        })
+    }
+
+    func tabActivity(for tab: ShellTabItem) -> String {
+        guard let operation = tabAsyncOperation(for: tab) else { return "" }
+        return asyncOperationActivity(operation)
+    }
+
+    func tabNotice(for tab: ShellTabItem) -> String? {
+        asyncOperationNotice(tabAsyncOperation(for: tab))
+    }
+
+    var asyncTabNotice: String? {
+        guard let operation = asyncOperations.reversed().first(where: { operation in
+            ["failed", "refused", "unknown"].contains(operation.phase)
+                && unifiedTabs.contains { tab in
+                    let tabIDs = asyncIdentityIDs(for: tab)
+                    return tabIDs.contains(operation.targetID) || tabIDs.contains(operation.scopeID)
+                }
+        }) else { return nil }
+        return operation.message
+    }
+
+    private var pendingClose: CoreRecentClosedPending? {
+        core.snapshot?.recentClosed.pending.last
+    }
+
+    var pendingCloseStatusChecking: Bool {
+        pendingClose?.checking == true
+    }
+
+    var pendingCloseNeedsStatusCheck: Bool {
+        pendingClose?.phase == "unknown"
+    }
+
+    var pendingCloseNotice: String? {
+        guard let pendingClose else { return nil }
+        if pendingClose.checking { return "Checking whether the close completed…" }
+        if let message = pendingClose.message { return message }
+        switch pendingClose.phase {
+        case "preparing", "capturing": return "Preparing close…"
+        case "transmitting": return "Closing…"
+        case "awaiting_topology": return "Confirming close…"
+        case "unknown": return "Close result needs checking."
+        default: return nil
+        }
+    }
+
+    func checkLatestCloseStatus() {
+        guard let pendingClose, pendingCloseNeedsStatusCheck, !pendingCloseStatusChecking else { return }
+        core.checkCloseStatus(pendingClose.key)
+    }
+
+    func refreshInteractionStatus() {
+        guard interactionStatusRefreshAvailable else { return }
+        interactionStatusRefreshAvailable = false
+        interactionNotice = nil
+        core.refreshStatus()
     }
 
     var workspaces: [CoreWorkspaceSnapshot] {
@@ -395,13 +519,14 @@ final class ShellModel: ObservableObject {
         }
     }
 
-    var sidebarProjectRows: [SidebarProjectRow] {
-        SidebarInactiveProjection.projectRows(workspaces, groups: inactiveProjectGroups)
+    var sidebarProjectSections: SidebarProjectSections {
+        SidebarProjectSections(workspaces, groups: inactiveProjectGroups)
     }
 
-    /// Project rows in exactly the order the Projects view draws them.
+    /// Project rows in exactly the order the Projects view draws them: the
+    /// `Pinned` section first, then the activity list.
     var sidebarVisibleWorkspaces: [CoreWorkspaceSnapshot] {
-        sidebarProjectRows.compactMap { row in
+        sidebarProjectSections.rows.compactMap { row in
             guard case .workspace(let workspace, _) = row else { return nil }
             return workspace
         }
@@ -623,12 +748,12 @@ final class ShellModel: ObservableObject {
             }
         }
         guard let layout = remote.navigation?.focusedPaneLayout else {
-            return "remote.pane_layout_unavailable: The selected remote tab has panes but no layout in the Herdr snapshot. Retry the Mac mini connection."
+            return "remote.pane_layout_unavailable: The selected remote tab has panes but no layout in the Herdr snapshot. Retry the remote connection."
         }
         let expectedPaneIDs = Set(focusedPanes.map(\.id))
         let layoutPaneIDs = Set(layout.frames.map(\.paneID))
         guard !layout.frames.isEmpty, layoutPaneIDs == expectedPaneIDs else {
-            return "remote.pane_layout_mismatch: The selected remote tab's panes do not match its layout. Retry the Mac mini connection."
+            return "remote.pane_layout_mismatch: The selected remote tab's panes do not match its layout. Retry the remote connection."
         }
         return nil
     }
@@ -665,10 +790,6 @@ final class ShellModel: ObservableObject {
                 .flatMap(\.tabs)
                 .flatMap(\.panes)
                 .first(where: { $0.id == paneID })
-            // The walk above is over checkouts, and Scratch is in none of
-            // them. Without this every caller that asks about a Scratch pane -
-            // its status, its close - reads it as a pane that is not there.
-            ?? scratchPane(paneID)
     }
 
     /// The canonical pane name already used by the focused header. Lineage
@@ -680,7 +801,7 @@ final class ShellModel: ObservableObject {
         let agent = agents.first { $0.paneID == paneID }
         return PaneHeaderPresentation.title(
             herdrLabel: pane.herdrLabel,
-            agentSummary: agent?.identityLabel ?? pane.summary,
+            agentSummary: agent?.identityLabel ?? pane.identityLabel,
             terminalTitle: pane.terminalTitle,
             workspaceLabel: pane.workspaceLabel,
             paneID: pane.id
@@ -691,11 +812,6 @@ final class ShellModel: ObservableObject {
         PaneLineagePresentation.resolvingLivePaneLabels(in: pane.lineagePath) {
             paneIdentity(for: $0)
         }
-    }
-
-    /// The Scratch pane with this id, if Scratch is the one that owns it.
-    func scratchPane(_ paneID: String) -> CorePaneSnapshot? {
-        scratch.tabs.lazy.flatMap(\.panes).first(where: { $0.id == paneID })
     }
 
     func paneStatus(for paneID: String) -> String {
@@ -874,7 +990,7 @@ final class ShellModel: ObservableObject {
     }
 
     private func allPaneMetadata() -> [CorePaneSnapshot] {
-        workspaces.lazy.flatMap(\.checkouts).flatMap(\.tabs).flatMap(\.panes) + scratch.tabs.flatMap(\.panes)
+        Array(workspaces.lazy.flatMap(\.checkouts).flatMap(\.tabs).flatMap(\.panes))
     }
 
     func openTerminalLink(_ rawValue: String, paneID: String) {
@@ -993,20 +1109,6 @@ final class ShellModel: ObservableObject {
         }
     }
 
-    /// Opens the composer.
-    ///
-    /// `checkoutID` is the project entry points' way of preselecting Where;
-    /// every other entry point leaves it nil and the sheet opens on Scratch.
-    /// A submission already in flight swallows the request rather than opening
-    /// a second sheet over it.
-    func openComposer(checkoutID: String? = nil) {
-        guard !composerSubmitting else { return }
-        composerCheckoutID = checkoutID
-        composerDeviceID = core.snapshot?.navigator.focusedDeviceID ?? "local"
-        showComposer = true
-        interactionNotice = nil
-    }
-
     func openSearch() {
         showSearch = true
         interactionNotice = nil
@@ -1092,12 +1194,6 @@ final class ShellModel: ObservableObject {
     }
 
     func selectAgent(_ agent: SidebarAgent) {
-        // A Scratch agent has no checkout to focus alongside its pane, which
-        // is what "not a project" means. Focusing the pane is the whole of it.
-        if scratchPaneIDs.contains(agent.paneID) {
-            focusPane(agent.paneID)
-            return
-        }
         guard let identity = workspaces.lazy.compactMap({ workspace in
             workspace.checkouts.lazy.compactMap { checkout in
                 checkout.tabs.contains(where: { tab in
@@ -1158,7 +1254,7 @@ final class ShellModel: ObservableObject {
     }
 
     private var hintSuppressingSheetVisibility: [Bool] {
-        [showComposer, showSearch, showFileSearch, showSettings]
+        [showSearch, showFileSearch, showSettings]
     }
 
     var hintSheetPresented: Bool {
@@ -1454,6 +1550,10 @@ final class ShellModel: ObservableObject {
         workspaceToRemove = workspace
     }
 
+    func setWorkspacePinned(_ workspace: CoreWorkspaceSnapshot, pinned: Bool) {
+        core.setWorkspacePinned(workspace.id, pinned: pinned)
+    }
+
     func confirmRemoveWorkspace() {
         guard let workspace = workspaceToRemove else { return }
         core.removeWorkspace(workspace.id)
@@ -1462,6 +1562,74 @@ final class ShellModel: ObservableObject {
 
     func requestExplorerTrash(_ prompt: WorkspaceOutlineTrashPrompt) {
         explorerTrashPrompt = prompt
+    }
+
+    /// Open with Default App is an explicit choice, so the file goes to
+    /// whatever macOS opens it with; the terminal link's executable guard is
+    /// for a guessed click, not a menu (D-05).
+    func openWithDefaultApp(_ file: URL) {
+        interactionNotice = nil
+        ExternalFileOpener.open(file) { [weak self] message in
+            self?.interactionNotice = message
+        }
+    }
+
+    /// What the Explorer item reads when the menu opens (D-08).
+    func browserPaneAvailability(for file: URL) -> BrowserPaneOpenAvailability {
+        WorkspaceOutlineMenuPresentation.browserPaneAvailability(.init(
+            isRemote: isRemoteContext,
+            nodeOnPath: browserPaneHost != nil,
+            herdrConnected: herdrIsConnected,
+            hasFocusedPane: focusedPaneID != nil,
+            opening: browserPaneOpensInFlight.contains(file.standardizedFileURL.path)
+        ))
+    }
+
+    /// Shows the file in a browser pane split right of the focused pane.
+    ///
+    /// A pane already bound to this file is left exactly as it is, without a
+    /// host call, so choosing the item twice converges on one pane (D-07,
+    /// B9). Otherwise one host process runs under the opener's deadline and
+    /// its refusal, verbatim, is the notice (B13).
+    func openInBrowserPane(_ file: URL) {
+        let path = file.standardizedFileURL.path
+        interactionNotice = nil
+        if let reason = browserPaneAvailability(for: file).reason {
+            interactionNotice = reason
+            return
+        }
+        guard let host = browserPaneHost, let targetPane = focusedPaneID else { return }
+        let key = BrowserPaneOpener.bindingKey(for: file)
+        let bound = workspaces.lazy
+            .flatMap(\.checkouts)
+            .flatMap(\.tabs)
+            .flatMap(\.panes)
+            .contains { pane in
+                if case .browser(let binding) = pane.content { return binding.bindingID == key }
+                return false
+            }
+        if bound {
+            HideLaunchTrace.mark("explorer.browser_pane.reused", detail: key)
+            return
+        }
+        browserPaneOpensInFlight.insert(path)
+        HideLaunchTrace.mark("explorer.browser_pane.opening", detail: key)
+        BrowserPaneOpener.open(
+            file: file,
+            targetPane: targetPane,
+            host: host,
+            environment: HideRuntimeEnvironment.childEnvironment()
+        ) { [weak self] result in
+            guard let self else { return }
+            self.browserPaneOpensInFlight.remove(path)
+            switch result {
+            case .success:
+                HideLaunchTrace.mark("explorer.browser_pane.opened", detail: key)
+            case .failure(let failure):
+                HideLaunchTrace.mark("explorer.browser_pane.failed", detail: key)
+                self.interactionNotice = failure.message
+            }
+        }
     }
 
     /// The one call that sends `path_trash`. Cancel and Esc clear the
@@ -1573,6 +1741,55 @@ final class ShellModel: ObservableObject {
         ])
     }
 
+    /// The Overview header's `N files` chip and `Open in History`: the
+    /// checkout comes forward and the panel shows History, in one event.
+    func openHistory(for checkout: CoreCheckoutSnapshot) {
+        core.dispatch(kind: "overview_open_section", payload: [
+            "checkout_path": checkout.path,
+            "section": RightPanelSection.changes.rawValue,
+        ])
+    }
+
+    /// `New agent here ▸`: one tab with the checkout as its cwd, then the
+    /// provider started in it through the same task operation the New
+    /// worktree sheet reports through. `provider` is `terminal` for the tab
+    /// alone, else an `AgentProvider` raw value.
+    func startAgent(in checkout: CoreCheckoutSnapshot, provider: String) {
+        guard requireLocalHerdrMutationReadiness() else { return }
+        core.dispatch(kind: "agent_start_in_checkout", payload: [
+            "checkout_path": checkout.path,
+            "provider": provider,
+        ])
+    }
+
+    /// `Reveal in sidebar`: the Projects list opens on the agent's project
+    /// with its checkout unfolded, so the row is where the sidebar keeps it.
+    func revealAgentInSidebar(_ agent: SidebarAgent) {
+        guard let (workspace, checkout) = workspaces.lazy.compactMap({ workspace in
+            workspace.checkouts.first { checkout in
+                checkout.tabs.flatMap(\.panes).contains { $0.id == agent.paneID }
+            }.map { (workspace, $0) }
+        }).first else {
+            interactionNotice = "Agent pane \(agent.paneID) is no longer listed in a project."
+            return
+        }
+        showSidebarContent(.projects)
+        if !workspace.expanded { toggleWorkspace(workspace) }
+        if !isCheckoutExpanded(checkout) { toggleCheckoutExpansion(checkout) }
+        if workspace.inactiveCheckouts.checkoutIDs.contains(checkout.id), !workspace.inactiveCheckouts.expanded {
+            toggleInactiveCheckouts(in: workspace)
+        }
+        sidebarReveal = SidebarRevealRequest(
+            rowID: SidebarProjectRow.workspace(workspace, level: .root).id,
+            nonce: (sidebarReveal?.nonce ?? 0) &+ 1
+        )
+    }
+
+    func copyPaneID(_ paneID: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(paneID, forType: .string)
+    }
+
     func copyCheckoutPath(_ checkout: CoreCheckoutSnapshot) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(checkout.path, forType: .string)
@@ -1609,14 +1826,9 @@ final class ShellModel: ObservableObject {
             let message = WorktreeSubmissionPresentation.oneLine(
                 operation.message ?? "The operation failed."
             )
-            switch operation.kind {
-            case "worktree_create":
+            if operation.kind == "worktree_create" {
                 worktreeError = message
-            case "scratch_chat_tab":
-                composerSubmitting = false
-                pendingScratchChat = nil
-                interactionNotice = message
-            default:
+            } else {
                 interactionNotice = message
             }
             return
@@ -1626,44 +1838,21 @@ final class ShellModel: ObservableObject {
             if operation.kind == "worktree_create" {
                 worktreeError = message
             } else {
-                composerSubmitting = false
-                pendingScratchChat = nil
                 interactionNotice = message
             }
             return
         }
-        if operation.kind == "scratch_chat_tab", let pending = pendingScratchChat {
-            pendingScratchChat = nil
-            guard requireLocalHerdrMutationReadiness() else {
-                composerSubmitting = false
-                showComposer = false
-                return
+        if operation.kind == "worktree_create" || operation.kind == "agent_start" {
+            if operation.kind == "worktree_create" {
+                worktreeWorkspace = nil
+                worktreeDraft = WorktreeSheetDraft()
             }
-            core.startAgentInCreatedPane(
-                paneID: paneID,
-                path: path,
-                provider: pending.provider,
-                message: pending.message,
-                bypassWarnings: pending.bypass
-            ) { [weak self] result in
-                guard let self else { return }
-                self.composerSubmitting = false
-                self.showComposer = false
-                if !result.succeeded { self.interactionNotice = result.message }
-            }
-            return
-        }
-        if operation.kind == "worktree_create" {
-            worktreeWorkspace = nil
-            worktreeDraft = WorktreeSheetDraft()
             if let raw = operation.agentKind, let provider = AgentProvider(rawValue: raw) {
                 guard requireLocalHerdrMutationReadiness() else { return }
                 core.startAgentInCreatedPane(
                     paneID: paneID,
                     path: path,
-                    provider: provider,
-                    message: nil,
-                    bypassWarnings: false
+                    provider: provider
                 ) { [weak self] result in
                     if !result.succeeded { self?.interactionNotice = result.message }
                 }
@@ -1696,17 +1885,6 @@ final class ShellModel: ObservableObject {
     }
 
     func addTab() {
-        // Scratch answers first. It has no checkout, so the project path
-        // below would refuse a new tab in exactly the space that is meant to
-        // be the easiest place to open one.
-        if scratchIsFocused {
-            core.createTab(
-                workspaceID: scratch.id,
-                checkoutID: nil,
-                label: nextScratchTabLabel
-            )
-            return
-        }
         guard let workspace = focusedWorkspace else {
             interactionNotice = "Create or register a workspace before adding a tab."
             return
@@ -1767,7 +1945,9 @@ final class ShellModel: ObservableObject {
         focus(.terminal)
     }
 
-    func openFile(_ url: URL) {
+    /// `preview` is the Explorer single click; Cmd+P, a double-click and every
+    /// other caller open an ordinary tab (PRD editor-preview-tab D-09).
+    func openFile(_ url: URL, preview: Bool = false) {
         guard !isRemoteContext,
               let workspace = focusedWorkspace,
               let checkout = focusedCheckout
@@ -1775,8 +1955,23 @@ final class ShellModel: ObservableObject {
             interactionNotice = "Select a local workspace before opening a file."
             return
         }
-        core.openFile(url, workspaceID: workspace.id, checkoutID: checkout.id)
+        core.openFile(url, workspaceID: workspace.id, checkoutID: checkout.id, preview: preview)
         interactionNotice = nil
+    }
+
+    /// Keep Open from the menu: the active editor tab, if it is a preview,
+    /// becomes an ordinary tab. With no editor tab active there is nothing
+    /// to keep, and the menu item is a no-op rather than a notice.
+    func keepActiveEditorTabOpen() {
+        guard let tabID = core.snapshot?.editor.activeTabID else { return }
+        core.keepFileTabOpen(tabID)
+    }
+
+    /// A double-click on a strip title. A Herdr tab has no preview state, so
+    /// only an editor entry sends anything.
+    func keepUnifiedTabOpen(_ item: ShellTabItem) {
+        guard case .editor(let tab) = item.kind, item.preview else { return }
+        core.keepFileTabOpen(tab.id)
     }
 
     func focusEditorTab(_ tab: CoreEditorTabSnapshot) {
@@ -1791,76 +1986,6 @@ final class ShellModel: ObservableObject {
         core.closeFileTab(tab.id)
     }
 
-    /// Sends the composer's message: one tab, one agent, that message, and
-    /// the title it earns.
-    ///
-    /// The sheet stays open and locked until the four steps answer, then
-    /// closes whatever the outcome was. A failure after the tab exists leaves
-    /// the tab in place and says which step failed; a failure to make the tab
-    /// leaves nothing behind.
-    func sendComposerMessage(
-        provider: AgentProvider,
-        message: String,
-        bypassWarnings: Bool
-    ) {
-        guard !composerSubmitting else { return }
-        let scratch = scratch
-        let route = ChatSubmissionRouting.route(
-            deviceID: composerDeviceID,
-            checkout: composerCheckout.map { checkout in
-                .checkout(
-                    id: checkout.id,
-                    path: checkout.path,
-                    workspaceID: HerdrLiveWorkspaceIdentity.workspaceID(for: checkout.tabs)
-                )
-            },
-            scratchPath: scratch.path,
-            scratchWorkspaceID: scratch.sessionWorkspaceIDs.first
-        )
-        let destination: ChatDestination
-        switch route {
-        case .refuse(let notice):
-            interactionNotice = notice
-            showComposer = false
-            return
-        case .start(let resolved):
-            destination = resolved
-        }
-        guard requireLocalHerdrMutationReadiness() else {
-            showComposer = false
-            return
-        }
-        // The operator's choices are remembered before the work starts, so a
-        // failed launch still leaves the composer offering what they picked.
-        core.persistUIState(
-            lastAgentKind: provider.rawValue,
-            lastAgentBypass: bypassWarnings
-        )
-        composerSubmitting = true
-        interactionNotice = nil
-        if case .scratch = destination {
-            pendingScratchChat = (provider, message, bypassWarnings)
-            core.dispatch(kind: "create_scratch_chat_tab", payload: [
-                "label": "hide \(provider.rawValue)"
-            ])
-            return
-        }
-        guard case .checkout(let id, let path, let workspaceID) = destination else { return }
-        core.startChat(
-            destination: CheckoutChatDestination(id: id, path: path, workspaceID: workspaceID),
-            provider: provider,
-            message: message,
-            bypassWarnings: bypassWarnings
-        ) { [weak self] result in
-            guard let self else { return }
-            self.composerSubmitting = false
-            self.showComposer = false
-            if !result.succeeded {
-                self.interactionNotice = result.message
-            }
-        }
-    }
-
     func updatePreferences(accentHex: String? = nil, fontSize: Double? = nil) {
         core.persistUIState(
             accentHex: accentHex,
@@ -1870,6 +1995,7 @@ final class ShellModel: ObservableObject {
 
     func clearInteractionNotice() {
         interactionNotice = nil
+        interactionStatusRefreshAvailable = false
     }
 
     func dismissHerdrProtocolMismatch() {
@@ -2031,84 +2157,6 @@ final class ShellModel: ObservableObject {
         checkoutStartState = .idle
     }
 
-    /// The checkout the composer's Where chip names, or nil for Scratch.
-    ///
-    /// Unlike the sheet it replaces, no checkout is substituted when none was
-    /// chosen: nothing chosen means Scratch, which is a destination rather
-    /// than a missing answer.
-    var composerCheckout: CoreCheckoutSnapshot? {
-        guard let composerCheckoutID else { return nil }
-        return workspaces.lazy.compactMap { workspace in
-            workspace.checkouts.first(where: { $0.id == composerCheckoutID })
-        }.first
-    }
-
-    /// Every checkout the Where chip can offer. A checkout git no longer has
-    /// cannot be started in, so it is not offered.
-    var composerCheckouts: [(workspace: CoreWorkspaceSnapshot, checkout: CoreCheckoutSnapshot)] {
-        workspaces.flatMap { workspace in
-            workspace.checkouts
-                .filter(\.exists)
-                .map { (workspace: workspace, checkout: $0) }
-        }
-    }
-
-    /// Opens or closes the Scratch section, and remembers which.
-    func toggleScratchExpanded() {
-        core.persistUIState(scratchExpanded: !scratch.expanded)
-    }
-
-    /// Focuses a Scratch tab by the pane it holds. A tab with no pane has
-    /// nothing to focus, and says so rather than sending a command that
-    /// cannot land.
-    func focusScratchTab(_ tab: CoreScratchTabSnapshot) {
-        guard let paneID = tab.panes.first?.id else {
-            interactionNotice = "That Scratch tab has no pane yet."
-            return
-        }
-        focusPane(paneID)
-    }
-
-    /// Every pane Scratch holds, for the two places that need to know whether
-    /// a pane is one of its own.
-    var scratchPaneIDs: Set<String> {
-        Set(scratch.tabs.flatMap(\.panes).map(\.id))
-    }
-
-    /// The label the next Scratch terminal tab carries. Herdr's own numbering
-    /// is per workspace, so counting the rows already drawn is what keeps two
-    /// tabs from both being `Tab 1`.
-    var nextScratchTabLabel: String { "Tab \(scratch.tabs.count + 1)" }
-
-    /// The Scratch node, as the core projected it.
-    var scratch: CoreScratchSnapshot {
-        core.snapshot?.navigator.scratch ?? CoreScratchSnapshot.empty
-    }
-
-    /// Whether the selected pane is one of Scratch's.
-    ///
-    /// This is what `⌘T` reads: Scratch has no checkout to be focused, so
-    /// "Scratch is where I am" is derived from the pane the operator is in
-    /// rather than tracked as a second kind of focus.
-    var scratchIsFocused: Bool {
-        guard let paneID = focusedPaneID else { return false }
-        return scratchPaneIDs.contains(paneID)
-    }
-
-    /// The agents running in Scratch, found through the panes it owns.
-    func scratchAgent(for tab: CoreScratchTabSnapshot) -> SidebarAgent? {
-        let paneIDs = Set(tab.panes.map(\.id))
-        return agents.first { paneIDs.contains($0.paneID) }
-    }
-
-    /// Scratch rows the raised Needs You and Done sections already drew.
-    ///
-    /// The project tree follows the same rule, so a waiting agent is one row
-    /// at the top rather than two rows in two places.
-    var scratchTabsBelowRaisedSections: [CoreScratchTabSnapshot] {
-        SidebarGrouping.scratchTabsBelowRaisedSections(tabs: scratch.tabs, agents: agents)
-    }
-
     var leftSidebarVisible: Bool {
         core.snapshot?.uiState.leftSidebarVisible ?? true
     }
@@ -2130,8 +2178,8 @@ final class ShellModel: ObservableObject {
         core.snapshot?.changes ?? .empty
     }
 
-    func selectChangedFile(_ path: String?, committed: Bool = false) {
-        core.selectChangedFile(path: path, committed: committed)
+    func selectChangedFile(_ path: String?, committed: Bool = false, preview: Bool = false) {
+        core.selectChangedFile(path: path, committed: committed, preview: preview)
     }
 
     /// What the summary card shows beyond the checkout row's own facts.
@@ -2349,16 +2397,14 @@ final class ShellModel: ObservableObject {
         let activeFile = core.snapshot?.editor.activeTabID.flatMap { activeID in
             core.snapshot?.editor.tabs.first(where: { $0.id == activeID })
         }
-        let focusedScratchPane = focusedPaneID.flatMap(scratchPane(_:))
         let focusedPane = focusedPaneID.flatMap { paneID in
             focusedPanes.first(where: { $0.id == paneID })
-        } ?? focusedScratchPane
+        }
         switch CloseShortcutPolicy.action(
             hasWorkspace: focusedWorkspace != nil,
             hasActiveFileTab: activeFile != nil,
             hasActiveHerdrTab: focusedTab?.id != nil,
             hasFocusedPane: focusedPane != nil,
-            hasFocusedScratchPane: focusedScratchPane != nil,
             tabCount: unifiedTabs.count
         ) {
         case .closePane:
@@ -2470,13 +2516,27 @@ final class ShellModel: ObservableObject {
             target = .local(tabID: tabID)
         }
         let destructiveTargets = tab.panes.map { destructiveTarget(for: $0) }
+        if let unknownTarget = destructiveTargets.first(where: \.requiresStatusCheck) {
+            pendingTabCloseTarget = nil
+            pendingCloseScopePaneIDs = nil
+            pendingCloseApprovalFingerprint = nil
+            consequenceNotice = nil
+            presentActivityStatusUnknown(label: unknownTarget.label)
+            return
+        }
         let notice = ConsequencePolicy.notice(kind: .tab, targets: destructiveTargets)
         consequenceResult = nil
         if notice.requiresConfirmation {
             pendingTabCloseTarget = target
+            pendingCloseScopePaneIDs = tab.panes.map(\.id).sorted()
+            pendingCloseApprovalFingerprint = closeApprovalFingerprint(
+                paneIDs: pendingCloseScopePaneIDs ?? []
+            )
             consequenceNotice = notice
         } else {
             pendingTabCloseTarget = nil
+            pendingCloseScopePaneIDs = nil
+            pendingCloseApprovalFingerprint = nil
             executeTabClose(target, confirmed: false)
             consequenceResult = "Close requested for tab \(tab.label ?? tabID)."
         }
@@ -2560,9 +2620,15 @@ final class ShellModel: ObservableObject {
             label: pane.herdrLabel ?? pane.id,
             statusLabel: agent?.statusLabel ?? "Idle",
             requiresCloseConfirmation: contentConsequence != nil || (agent?.requiresCloseConfirmation ?? false),
-            summary: contentConsequence ?? agent?.summary ?? "No working or attention state is reported for this pane.",
+            summary: contentConsequence ?? agent?.detail ?? "No working or attention state is reported for this pane.",
+            requiresStatusCheck: pane.requiresCloseStatusCheck || (agent?.requiresCloseStatusCheck ?? false),
             contentConsequence: contentConsequence
         )
+    }
+
+    private func presentActivityStatusUnknown(label: String) {
+        interactionStatusRefreshAvailable = true
+        interactionNotice = "Activity status for \(label) is unknown. Check status before closing."
     }
 
     private func closeCurrentPane(target closeTarget: PaneCloseTarget) {
@@ -2575,13 +2641,27 @@ final class ShellModel: ObservableObject {
             return
         }
         let target = destructiveTarget(for: pane)
+        if target.requiresStatusCheck {
+            pendingPaneCloseTarget = nil
+            pendingCloseScopePaneIDs = nil
+            pendingCloseApprovalFingerprint = nil
+            consequenceNotice = nil
+            presentActivityStatusUnknown(label: target.label)
+            return
+        }
         let notice = ConsequencePolicy.notice(kind: .pane, targets: [target])
         consequenceResult = nil
         if notice.requiresConfirmation {
             pendingPaneCloseTarget = closeTarget
+            pendingCloseScopePaneIDs = closeScopePaneIDs(for: paneID)
+            pendingCloseApprovalFingerprint = closeApprovalFingerprint(
+                paneIDs: pendingCloseScopePaneIDs ?? []
+            )
             consequenceNotice = notice
         } else {
             pendingPaneCloseTarget = nil
+            pendingCloseScopePaneIDs = nil
+            pendingCloseApprovalFingerprint = nil
             executePaneClose(closeTarget, confirmed: false)
             consequenceResult = "Close requested for idle pane \(paneID)."
         }
@@ -2690,14 +2770,17 @@ final class ShellModel: ObservableObject {
     func previewConsequence(_ kind: DestructiveTargetKind) {
         pendingPaneCloseTarget = nil
         pendingTabCloseTarget = nil
+        pendingCloseScopePaneIDs = nil
+        pendingCloseApprovalFingerprint = nil
         let agents = core.snapshot?.navigator.agents ?? []
         let targets = agents.map {
             DestructiveTarget(
                 id: $0.paneID,
-                label: $0.workspaceLabel,
+                label: $0.identityLabel,
                 statusLabel: $0.statusLabel,
                 requiresCloseConfirmation: $0.requiresCloseConfirmation,
-                summary: $0.summary
+                summary: $0.detail ?? $0.statusLabel,
+                requiresStatusCheck: $0.requiresCloseStatusCheck
             )
         }
         consequenceNotice = ConsequencePolicy.notice(kind: kind, targets: targets)
@@ -2707,8 +2790,19 @@ final class ShellModel: ObservableObject {
     func confirmConsequencePreview() {
         guard let consequenceNotice else { return }
         if let target = pendingTabCloseTarget {
+            guard closeApprovalStillMatches(target: target) else {
+                consequenceResult = nil
+                interactionNotice = "The tab changed while it was waiting for confirmation. Select it and review the close again."
+                pendingTabCloseTarget = nil
+                pendingCloseScopePaneIDs = nil
+                pendingCloseApprovalFingerprint = nil
+                self.consequenceNotice = nil
+                return
+            }
             if case .local = target, !requireLocalHerdrMutationReadiness() {
                 pendingTabCloseTarget = nil
+                pendingCloseScopePaneIDs = nil
+                pendingCloseApprovalFingerprint = nil
                 self.consequenceNotice = nil
                 return
             }
@@ -2716,8 +2810,19 @@ final class ShellModel: ObservableObject {
             consequenceResult = "Confirmed close requested for tab \(target.tabID)."
             pendingTabCloseTarget = nil
         } else if let target = pendingPaneCloseTarget {
+            guard closeApprovalStillMatches(target: target) else {
+                consequenceResult = nil
+                interactionNotice = "The tab changed while it was waiting for confirmation. Select the pane and review the close again."
+                pendingPaneCloseTarget = nil
+                pendingCloseScopePaneIDs = nil
+                pendingCloseApprovalFingerprint = nil
+                self.consequenceNotice = nil
+                return
+            }
             if case .local = target, !requireLocalHerdrMutationReadiness() {
                 pendingPaneCloseTarget = nil
+                pendingCloseScopePaneIDs = nil
+                pendingCloseApprovalFingerprint = nil
                 self.consequenceNotice = nil
                 return
             }
@@ -2730,6 +2835,8 @@ final class ShellModel: ObservableObject {
                 ? "Confirmation recorded for the prefixed verification preview. No user resource was changed."
                 : "Idle close requires no confirmation. No user resource was changed in this preview."
         }
+        pendingCloseScopePaneIDs = nil
+        pendingCloseApprovalFingerprint = nil
         self.consequenceNotice = nil
     }
 
@@ -2737,7 +2844,68 @@ final class ShellModel: ObservableObject {
         consequenceResult = "Cancelled before any process or checkout was affected."
         pendingPaneCloseTarget = nil
         pendingTabCloseTarget = nil
+        pendingCloseScopePaneIDs = nil
+        pendingCloseApprovalFingerprint = nil
         consequenceNotice = nil
+    }
+
+    private func closeScopePaneIDs(for paneID: String) -> [String]? {
+        let tab = workspaces
+            .lazy
+            .flatMap(\.checkouts)
+            .flatMap(\.tabs)
+            .first(where: { $0.panes.contains(where: { $0.id == paneID }) })
+        return tab?.panes.map(\.id).sorted()
+    }
+
+    private func closeTabScopePaneIDs(for tabID: String) -> [String]? {
+        if let tab = workspaces
+            .lazy
+            .flatMap(\.checkouts)
+            .flatMap(\.tabs)
+            .first(where: { $0.id == tabID })
+        {
+            return tab.panes.map(\.id).sorted()
+        }
+        return nil
+    }
+
+    private func closeApprovalFingerprint(paneIDs: [String]) -> String {
+        let panes = paneIDs.sorted().map { paneID in
+            guard let pane = paneMetadata(for: paneID) else {
+                return "missing|\(paneID)"
+            }
+            let target = destructiveTarget(for: pane)
+            return [
+                paneID,
+                target.statusLabel,
+                target.requiresCloseConfirmation ? "confirm" : "idle",
+                target.requiresStatusCheck ? "unknown" : "known",
+                target.summary,
+            ].joined(separator: "\u{1F}")
+        }
+        return [focusedPaneID ?? "none", panes.joined(separator: "\u{1E}")]
+            .joined(separator: "\u{1D}")
+    }
+
+    private func closeApprovalStillMatches(target: TabCloseTarget) -> Bool {
+        guard let expected = pendingCloseScopePaneIDs,
+              let expectedFingerprint = pendingCloseApprovalFingerprint
+        else { return false }
+        let current: [String]?
+        switch target {
+        case .local(let tabID), .remote(_, let tabID):
+            current = closeTabScopePaneIDs(for: tabID)
+        }
+        return current == expected && closeApprovalFingerprint(paneIDs: current ?? []) == expectedFingerprint
+    }
+
+    private func closeApprovalStillMatches(target: PaneCloseTarget) -> Bool {
+        guard let expected = pendingCloseScopePaneIDs,
+              let expectedFingerprint = pendingCloseApprovalFingerprint,
+              let current = closeScopePaneIDs(for: target.paneID)
+        else { return false }
+        return current == expected && closeApprovalFingerprint(paneIDs: current) == expectedFingerprint
     }
 
     private func executePaneClose(_ target: PaneCloseTarget, confirmed: Bool) {

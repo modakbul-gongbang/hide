@@ -32,14 +32,17 @@ struct PetDashboardRow: Identifiable, Equatable {
     let emphasized: Bool
     let symbol: String
     let statusLabel: String
-    let summary: String
+    /// The stable name and the state line, as the core chose them for the
+    /// sidebar row; the dashboard draws the same row.
+    let identityLabel: String
+    let detail: String?
+    let statusWordVisible: Bool
     let elapsed: String
     /// Whether the server that owns this row is still answering. A row from a
     /// server that stopped is drawn in the warning hue and says so in its
     /// status word; there is no second unread flag, because the bright mark
     /// and the Done word already say that.
     let connection: String
-    let ambient: CoreAmbientSignal?
 }
 
 struct PetDashboardGroup: Identifiable, Equatable {
@@ -75,10 +78,11 @@ enum PetDashboardProjector {
                 emphasized: agent.emphasized,
                 symbol: agent.symbol,
                 statusLabel: connected ? agent.statusLabel : "Disconnected",
-                summary: agent.summary,
+                identityLabel: agent.identityLabel,
+                detail: agent.detail,
+                statusWordVisible: agent.statusWordVisible,
                 elapsed: agent.elapsed,
-                connection: connected ? "connected" : "disconnected",
-                ambient: connected ? agent.ambient : nil
+                connection: connected ? "connected" : "disconnected"
             )
         }
 
