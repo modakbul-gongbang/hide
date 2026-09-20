@@ -1035,6 +1035,47 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "file_keep_open", payload: ["tab_id": tabID])
     }
 
+    func refreshSessions() {
+        dispatch(kind: "sessions_refresh", payload: [:])
+    }
+
+    func setSessionsMode(_ mode: CoreSessionsMode) {
+        dispatch(kind: "sessions_set_mode", payload: ["mode": mode.rawValue])
+    }
+
+    func setSessionsFilter(_ filter: CoreSessionsProviderFilter, query: String) {
+        dispatch(kind: "sessions_set_filter", payload: [
+            "provider": filter.rawValue,
+            "query": query,
+        ])
+    }
+
+    func openArchive(kind: String, id: String, preview: Bool = true) {
+        dispatch(kind: "archive_open", payload: ["kind": kind, "id": id, "preview": preview])
+    }
+
+    func openMemoryForTurn(_ itemIDs: [String]) {
+        dispatch(kind: "memory_open_for_turn", payload: ["item_ids": itemIDs])
+    }
+
+    func memoryAction(
+        _ action: String,
+        itemID: String? = nil,
+        candidateID: String? = nil,
+        body: String? = nil,
+        batchID: String? = nil,
+        conflictChoice: String? = nil
+    ) {
+        dispatch(kind: "memory_action", payload: [
+            "action": action,
+            "item_id": itemID.map { $0 as Any } ?? NSNull(),
+            "candidate_id": candidateID.map { $0 as Any } ?? NSNull(),
+            "body": body.map { $0 as Any } ?? NSNull(),
+            "batch_id": batchID.map { $0 as Any } ?? NSNull(),
+            "conflict_choice": conflictChoice.map { $0 as Any } ?? NSNull(),
+        ])
+    }
+
     /// The explorer's five filesystem changes. Each is one event: the core
     /// decides the paths, runs the call off the runtime mutex, and reports
     /// through `explorerOperation`, so the tree never touches the disk and
@@ -1367,6 +1408,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                     terminal: rest.terminal,
                     editor: editor,
                     changes: decoded.changes ?? snapshot?.changes ?? .empty,
+                    sessions: rest.sessions,
                     card: rest.card,
                     find: decoded.find,
                     uiState: rest.uiState,

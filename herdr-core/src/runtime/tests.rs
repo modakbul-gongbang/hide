@@ -15,6 +15,8 @@ mod editor_reopen;
 mod issues;
 #[path = "tests/lineage.rs"]
 mod lineage;
+#[path = "tests/memory.rs"]
+mod memory;
 #[path = "tests/projects.rs"]
 mod projects;
 #[path = "tests/session_navigation.rs"]

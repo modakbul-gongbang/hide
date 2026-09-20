@@ -22,6 +22,13 @@ use std::fs::{self, File, Metadata};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+mod catalog;
+
+pub use catalog::{
+    ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
+    SessionCatalogError, SessionFilter,
+};
+
 #[cfg(not(unix))]
 use std::time::SystemTime;
 
@@ -35,7 +42,8 @@ pub const CODEX_FALLBACK_DAYS: usize = 7;
 pub const CODEX_CANDIDATE_LIMIT: usize = 32;
 
 /// The two local agent session formats supported by Hide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Agent {
     Codex,
     Claude,
@@ -150,6 +158,11 @@ impl RescanReason {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedSession {
     pub events: Vec<ConversationEvent>,
+    /// Absolute byte offset of the JSONL record that produced each event.
+    ///
+    /// This stays parallel to `events` so archive callers that only need the
+    /// normalized conversation do not have to carry source-location state.
+    pub event_offsets: Vec<u64>,
     /// The name the agent gave its own session, when the chunk carried one.
     ///
     /// Claude Code writes an `ai-title` record once it has named the
@@ -178,6 +191,7 @@ pub enum SessionError {
     CwdUnavailable,
     SessionFileMissing,
     UnsupportedSessionKind,
+    Checkpoint(String),
     Io {
         operation: &'static str,
         path: PathBuf,
@@ -201,6 +215,7 @@ impl Display for SessionError {
             Self::CwdUnavailable => formatter.write_str("session_cwd_unavailable"),
             Self::SessionFileMissing => formatter.write_str("session_file_missing"),
             Self::UnsupportedSessionKind => formatter.write_str("session_kind_unsupported"),
+            Self::Checkpoint(reason) => write!(formatter, "session_checkpoint_invalid:{reason}"),
             Self::Io {
                 operation, source, ..
             } => write!(formatter, "session_{operation}: {source}"),
@@ -220,10 +235,23 @@ impl Error for SessionError {
 pub type Result<T> = std::result::Result<T, SessionError>;
 
 /// A file identity used to detect an atomic replacement at the same path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct FileIdentity {
     first: u64,
     second: u64,
+}
+
+/// Durable state for resuming one append-only session file after relaunch.
+///
+/// The file identity is intentionally retained. An offset without the inode
+/// would silently skip the beginning of an atomic replacement at the same
+/// path.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorCheckpoint {
+    pub offset: u64,
+    identity: Option<FileIdentity>,
+    pub pending: Vec<u8>,
 }
 
 impl FileIdentity {
@@ -254,6 +282,9 @@ impl FileIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionChunk {
     pub contents: String,
+    /// Absolute byte offset where `contents` begins in the session file.
+    /// This can precede the prior cursor offset when a torn line was retained.
+    pub start_offset: u64,
     pub rescan_reason: Option<RescanReason>,
 }
 
@@ -276,6 +307,36 @@ impl SessionCursor {
 
     pub const fn offset(&self) -> u64 {
         self.offset
+    }
+
+    pub fn checkpoint(&self) -> CursorCheckpoint {
+        CursorCheckpoint {
+            offset: self.offset,
+            identity: self.identity,
+            pending: self.pending.clone(),
+        }
+    }
+
+    pub fn restore(checkpoint: CursorCheckpoint) -> Self {
+        Self {
+            offset: checkpoint.offset,
+            identity: checkpoint.identity,
+            pending: checkpoint.pending,
+        }
+    }
+
+    /// Serializes the complete durable cursor, including file identity.
+    /// Callers persist this opaque blob rather than reconstructing an offset
+    /// and accidentally skipping an atomically replaced session file.
+    pub fn encode_checkpoint(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(&self.checkpoint())
+            .map_err(|error| SessionError::Checkpoint(error.to_string()))
+    }
+
+    pub fn restore_checkpoint(bytes: &[u8]) -> Result<Self> {
+        let checkpoint = serde_json::from_slice(bytes)
+            .map_err(|error| SessionError::Checkpoint(error.to_string()))?;
+        Ok(Self::restore(checkpoint))
     }
 
     pub fn reset(&mut self) {
@@ -318,12 +379,15 @@ impl SessionCursor {
         self.offset = start.saturating_add(appended.len() as u64);
         self.identity = Some(identity);
 
+        let retained_len = self.pending.len() as u64;
         let mut combined = std::mem::take(&mut self.pending);
         combined.extend(appended);
+        let chunk_start = start.saturating_sub(retained_len);
         let Some(last_newline) = combined.iter().rposition(|byte| *byte == b'\n') else {
             self.pending = combined;
             return Ok(SessionChunk {
                 contents: String::new(),
+                start_offset: chunk_start,
                 rescan_reason,
             });
         };
@@ -331,6 +395,7 @@ impl SessionCursor {
         self.pending = remainder;
         Ok(SessionChunk {
             contents: String::from_utf8_lossy(&combined).into_owned(),
+            start_offset: chunk_start,
             rescan_reason,
         })
     }
@@ -624,15 +689,36 @@ pub fn parse_codex_events(contents: &str) -> ParsedSession {
 
 /// Parse a complete-line chunk for the selected provider.
 pub fn parse_events(agent: Agent, contents: &str) -> ParsedSession {
+    parse_events_at(agent, contents, 0)
+}
+
+/// Parse a complete-line chunk while preserving each record's absolute byte
+/// offset. The caller supplies the byte offset where `contents` begins.
+pub fn parse_events_at(agent: Agent, contents: &str, base_offset: u64) -> ParsedSession {
     match agent {
-        Agent::Claude => parse_claude_events(contents),
-        Agent::Codex => parse_codex_events(contents),
+        Agent::Claude => parse_lines_at(contents, base_offset, parse_claude_line),
+        Agent::Codex => parse_lines_at(contents, base_offset, parse_codex_line),
     }
 }
 
 fn parse_lines(contents: &str, mut extract: impl FnMut(&Value) -> LineResult) -> ParsedSession {
+    parse_lines_at(contents, 0, &mut extract)
+}
+
+fn parse_lines_at(
+    contents: &str,
+    base_offset: u64,
+    mut extract: impl FnMut(&Value) -> LineResult,
+) -> ParsedSession {
     let mut parsed = ParsedSession::default();
-    for line in contents.lines().filter(|line| !line.trim().is_empty()) {
+    let mut relative_offset = 0_u64;
+    for raw_line in contents.split_inclusive('\n') {
+        let line_offset = base_offset.saturating_add(relative_offset);
+        relative_offset = relative_offset.saturating_add(raw_line.len() as u64);
+        let line = raw_line.trim_end_matches(['\n', '\r']);
+        if line.trim().is_empty() {
+            continue;
+        }
         let value = match serde_json::from_str::<Value>(line) {
             Ok(value) => value,
             Err(_) => {
@@ -643,7 +729,10 @@ fn parse_lines(contents: &str, mut extract: impl FnMut(&Value) -> LineResult) ->
         match extract(&value) {
             LineResult::Ignore => {}
             LineResult::Skip(reason) => parsed.skipped(reason),
-            LineResult::Event(event) => parsed.events.push(event),
+            LineResult::Event(event) => {
+                parsed.events.push(event);
+                parsed.event_offsets.push(line_offset);
+            }
             LineResult::Title(title) => parsed.title = Some(title),
         }
     }
@@ -752,6 +841,7 @@ fn parse_codex_line(item: &Value) -> LineResult {
 pub const INJECTED_PREFIXES: &[&str] = &[
     "<task-notification>",
     "<system-reminder>",
+    "<hide-memory-context>",
     "Another Claude session",
     "# AGENTS.md instructions",
     "<environment_context>",
@@ -959,6 +1049,7 @@ mod tests {
             cursor.read(&path).unwrap(),
             SessionChunk {
                 contents: "one\ntwo\n".to_owned(),
+                start_offset: 0,
                 rescan_reason: None,
             }
         );
@@ -969,7 +1060,9 @@ mod tests {
             .unwrap()
             .write_all(b"three\n")
             .unwrap();
-        assert_eq!(cursor.read(&path).unwrap().contents, "three\n");
+        let appended = cursor.read(&path).unwrap();
+        assert_eq!(appended.contents, "three\n");
+        assert_eq!(appended.start_offset, offset);
         assert!(cursor.offset() > offset);
     }
 
@@ -987,7 +1080,9 @@ mod tests {
             .unwrap()
             .write_all(b"-line\n")
             .unwrap();
-        assert_eq!(cursor.read(&path).unwrap().contents, "partial-line\n");
+        let completed = cursor.read(&path).unwrap();
+        assert_eq!(completed.contents, "partial-line\n");
+        assert_eq!(completed.start_offset, 0);
     }
 
     #[test]
@@ -1027,6 +1122,21 @@ mod tests {
         assert_eq!(parsed.skipped_reasons[&SkipReason::InvalidTimestamp], 1);
         assert_eq!(parsed.skipped_reasons[&SkipReason::MissingTimestamp], 1);
         assert_eq!(parsed.skipped_reasons[&SkipReason::MalformedJson], 1);
+    }
+
+    #[test]
+    fn parser_preserves_absolute_jsonl_offsets_for_emitted_events() {
+        let ignored = "{\"type\":\"session_meta\",\"payload\":{}}\n";
+        let first = "{\"type\":\"user\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"origin\":{\"kind\":\"human\"},\"message\":{\"content\":\"one\"}}\n";
+        let second = "{\"type\":\"assistant\",\"timestamp\":\"1970-01-01T00:00:02Z\",\"message\":{\"content\":\"two\"}}\n";
+        let parsed = parse_events_at(Agent::Claude, &format!("{ignored}{first}{second}"), 700);
+        assert_eq!(
+            parsed.event_offsets,
+            vec![
+                700 + ignored.len() as u64,
+                700 + ignored.len() as u64 + first.len() as u64
+            ]
+        );
     }
 
     #[test]

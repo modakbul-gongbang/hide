@@ -552,6 +552,8 @@ struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
         case herdr
         case file
         case diff
+        case session
+        case memory
     }
 
     let id: String

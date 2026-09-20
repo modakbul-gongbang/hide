@@ -274,7 +274,7 @@ mod tests {
             json!({
                 "pane_id": "w1:p1",
                 "source": "hide-subagents",
-                "tokens": {"hide_hooks": "2", "hide_sub_working": "1", "hide_sub_done": "0"}
+                "tokens": {"hide_hooks": "3", "hide_sub_working": "1", "hide_sub_done": "0"}
             })
         );
 

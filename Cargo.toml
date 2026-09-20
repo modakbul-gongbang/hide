@@ -4,6 +4,8 @@ members = [
     "hide-herdr-client",
     "hide-agent-hooks",
     "hide-ai",
+    "hide-memory",
+    "hide-project",
     "hide-session",
     "plugins/agent-context-labels",
 ]

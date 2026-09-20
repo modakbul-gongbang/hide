@@ -13,12 +13,18 @@ path = "src/bin/hide-agent-hooks.rs"
 
 [dependencies]
 hide-herdr-client = { path = "../hide-herdr-client" }
+hide-memory = { path = "../hide-memory" }
+hide-project = { path = "../hide-project" }
 serde = { version = "=1.0.229", features = ["derive"] }
 # `preserve_order` keeps the operator's own keys in the order their editor
 # wrote them. Without it, appending one hook rewrites the whole settings file
 # in alphabetical order, which reads as Hide having rearranged a file it was
 # only supposed to append to.
 serde_json = { version = "=1.0.151", features = ["preserve_order"] }
+
+[dev-dependencies]
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
+tempfile = "=3.27.0"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

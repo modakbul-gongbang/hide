@@ -1,0 +1,7 @@
+{
+  "session_id": "fixture-codex-session",
+  "turn_id": "fixture-turn",
+  "cwd": "/tmp/fixture-project",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Inspect the project memory boundary"
+}

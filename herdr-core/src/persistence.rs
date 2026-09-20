@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, UiStateSnapshot,
-    WorkspaceRegistration, default_accent_hex, default_font_size, default_pane_text_scale,
-    default_panel_visible,
+    DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, SessionsMode,
+    UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
+    default_pane_text_scale, default_panel_visible,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -22,6 +22,8 @@ struct StoredUiState {
     right_panel_visible: bool,
     #[serde(default)]
     right_panel_section: RightPanelSection,
+    #[serde(default)]
+    sessions_mode_by_project: BTreeMap<String, SessionsMode>,
     expanded_paths: Vec<String>,
     #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
@@ -142,6 +144,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             left_sidebar_visible: stored.left_sidebar_visible,
             right_panel_visible: stored.right_panel_visible,
             right_panel_section: stored.right_panel_section,
+            sessions_mode_by_project: stored.sessions_mode_by_project,
             expanded_paths: stored.expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
             collapsed_checkout_ids: stored.collapsed_checkout_ids,
@@ -188,6 +191,7 @@ pub fn save(
         left_sidebar_visible: state.left_sidebar_visible,
         right_panel_visible: state.right_panel_visible,
         right_panel_section: state.right_panel_section,
+        sessions_mode_by_project: state.sessions_mode_by_project.clone(),
         expanded_paths: state.expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
         collapsed_checkout_ids: state.collapsed_checkout_ids.clone(),
@@ -343,6 +347,32 @@ mod tests {
         let (state, _sizes, disposition) = decode(source);
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert!(state.pane_read_records.is_empty());
+    }
+
+    #[test]
+    fn sessions_mode_defaults_for_an_older_store_and_survives_a_restart() {
+        let older = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#;
+        let (older_state, _sizes, disposition) = decode(older);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert!(older_state.sessions_mode_by_project.is_empty());
+
+        let root =
+            std::env::temp_dir().join(format!("herdr-core-sessions-mode-{}", std::process::id()));
+        let path = root.join("state.json");
+        let _ = fs::remove_dir_all(&root);
+        let mut state = older_state;
+        state
+            .sessions_mode_by_project
+            .insert("project-1".to_owned(), SessionsMode::Memory);
+        save(&path, &state, &PaneTerminalSizes::new()).expect("state saves");
+
+        let (reloaded, _sizes, disposition) = load(&path);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(
+            reloaded.sessions_mode_by_project.get("project-1"),
+            Some(&SessionsMode::Memory)
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     /// AC4, SC3. A damaged store loads empty and says so through the

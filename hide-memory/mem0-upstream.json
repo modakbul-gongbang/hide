@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/mem0ai/mem0",
+  "tag": "v2.1.0",
+  "commit": "19f713408273fb1d657daa38d7b82ccf496d36d5",
+  "adapter": "native-hide-provider-and-store",
+  "audited_files": {
+    "mem0/configs/prompts.py": "10bc8a34b3b5f0ce24560a2a3190c9112b979a891b981f48393bbd168d915a5c",
+    "mem0/memory/main.py": "5b1b75e2f00aca7bd368a6e9cd5905145d60fd05a0e36d6b1ef3e2f1b4f28ca1",
+    "mem0/utils/scoring.py": "9a4313fda723ad05cb52278e9ef0b9b5792b71fb3b41ba6318410121022e4527"
+  }
+}

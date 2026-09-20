@@ -13,7 +13,6 @@
 //! operator owns, and the only paths authorised to do that are Hide's first
 //! run and the Settings action the operator pressed (PRD D-25, D-31, B28).
 
-use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -50,7 +49,7 @@ fn main() -> ExitCode {
 
 fn usage() -> String {
     "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
-     --event <SessionStart|SubagentStart|SubagentStop|Stop> \
+     --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop> \
      [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
 }
@@ -59,8 +58,8 @@ fn run_hook(arguments: &[String]) {
     // The runtimes deliver the event payload on stdin. Nothing here needs it,
     // but leaving it unread makes the agent's write block once the pipe
     // fills, so it is drained and discarded.
-    let mut discarded = Vec::new();
-    let _ = std::io::stdin().take(1 << 16).read_to_end(&mut discarded);
+    let (payload, exceeded) = hide_agent_hooks::memory::read_bounded(std::io::stdin())
+        .unwrap_or_else(|_| (Vec::new(), false));
 
     let Some(event) =
         argument_value("--event", arguments).and_then(|value| HookEvent::parse(&value))
@@ -69,17 +68,25 @@ fn run_hook(arguments: &[String]) {
     };
     let runtime =
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
+    let Some(home) = home_directory() else { return };
+    if let Some(runtime) = runtime {
+        let result = hide_agent_hooks::memory::project_memory_output(
+            runtime, event, &payload, exceeded, &home,
+        );
+        if let Some(output) = result.stdout {
+            println!("{output}");
+        }
+    } else if let Some(output) = runtime.and_then(|runtime| hook_stdout(runtime, event)) {
+        println!("{output}");
+    }
+    if event == HookEvent::UserPromptSubmit {
+        return;
+    }
     let Some(pane_id) = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.is_empty())
     else {
         // Not inside a Herdr pane: there is no pane to describe.
-        return;
-    };
-    if let Some(output) = runtime.and_then(|runtime| hook_stdout(runtime, event)) {
-        println!("{output}");
-    }
-    let Some(home) = home_directory() else {
         return;
     };
     let Ok(counters) = counters::apply(&home, &pane_id, event) else {

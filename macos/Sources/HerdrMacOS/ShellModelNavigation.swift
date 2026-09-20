@@ -143,7 +143,7 @@ enum ShellTabStrip {
                     contextLabel: pane.map { "\(entry.label) · \($0.statusLabel)\n\(paneTitle)" },
                     agentIdentity: entry.agentIdentity
                 )
-            case .file:
+            case .file, .session, .memory:
                 guard let tab = editorByID[entry.sourceID]
                 else { return nil }
                 return ShellTabItem(

@@ -31,6 +31,7 @@ pub struct Snapshot {
     pub pane_layouts: Vec<PaneLayoutSnapshot>,
     pub terminal: TerminalSnapshot,
     pub editor: EditorSnapshot,
+    pub sessions: SessionsSnapshot,
     pub changes: ChangesSnapshot,
     pub card: CheckoutCardSnapshot,
     pub git_worktrees: Option<ProjectWorktreesSnapshot>,
@@ -616,6 +617,8 @@ pub enum StripTabKind {
     Herdr,
     File,
     Diff,
+    Session,
+    Memory,
 }
 
 impl StripTabSnapshot {
@@ -655,12 +658,38 @@ impl StripTabSnapshot {
         }
     }
 
+    pub fn session(source_id: impl Into<String>, label: impl Into<String>, preview: bool) -> Self {
+        let source_id = source_id.into();
+        Self {
+            id: format!("session:{source_id}"),
+            kind: StripTabKind::Session,
+            source_id,
+            label: label.into(),
+            preview,
+            agent_identity: None,
+        }
+    }
+
+    pub fn memory(source_id: impl Into<String>, label: impl Into<String>, preview: bool) -> Self {
+        let source_id = source_id.into();
+        Self {
+            id: format!("memory:{source_id}"),
+            kind: StripTabKind::Memory,
+            source_id,
+            label: label.into(),
+            preview,
+            agent_identity: None,
+        }
+    }
+
     /// The strip entry an editor tab stands behind, so a replaced preview tab
     /// can hand its slot to the tab that took its place.
     pub fn editor(tab: &EditorTabSnapshot) -> Self {
         match tab.kind {
             EditorTabKind::File => Self::file(tab.id.clone(), tab.label.clone(), tab.preview),
             EditorTabKind::Diff => Self::diff(tab.id.clone(), tab.label.clone(), tab.preview),
+            EditorTabKind::Session => Self::session(tab.id.clone(), tab.label.clone(), tab.preview),
+            EditorTabKind::Memory => Self::memory(tab.id.clone(), tab.label.clone(), tab.preview),
         }
     }
 
@@ -1116,6 +1145,7 @@ pub struct EditorSnapshot {
     pub tabs: Vec<EditorTabSnapshot>,
     pub active_tab_id: Option<String>,
     pub document: Option<EditorDocumentSnapshot>,
+    pub archive_detail: Option<ArchiveDetailSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1146,6 +1176,140 @@ pub struct EditorTabSnapshot {
 pub enum EditorTabKind {
     File,
     Diff,
+    Session,
+    Memory,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ArchiveDetailSnapshot {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub provider: Option<String>,
+    pub unavailable_reason: Option<String>,
+    pub events: Vec<ArchiveEventSnapshot>,
+    pub memory: Option<MemoryDetailSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ArchiveEventSnapshot {
+    pub role: String,
+    pub kind: String,
+    pub at_unix_ms: u64,
+    pub text: String,
+    pub memory_attached_count: Option<usize>,
+    pub memory_attached_item_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MemoryDetailSnapshot {
+    pub id: String,
+    pub body: String,
+    pub lifecycle: String,
+    pub revision: u64,
+    pub source_count: usize,
+    pub provided_session_count: usize,
+    pub learned_at_unix_ms: u64,
+    pub conflict_existing_id: Option<String>,
+    pub conflict_candidate_id: Option<String>,
+    pub sources: Vec<MemorySourceSnapshot>,
+    pub revisions: Vec<MemoryRevisionSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemorySourceSnapshot {
+    pub provider: String,
+    pub session_id: String,
+    pub event_offset: u64,
+    pub available: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryRevisionSnapshot {
+    pub revision: u64,
+    pub body: String,
+    pub lifecycle: String,
+    pub created_at_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionsMode {
+    #[default]
+    Sessions,
+    Memory,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionsProviderFilter {
+    #[default]
+    All,
+    Codex,
+    Claude,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SessionsSnapshot {
+    pub project_id: Option<String>,
+    pub checkout_path: Option<String>,
+    pub mode: SessionsMode,
+    pub provider_filter: SessionsProviderFilter,
+    pub query: String,
+    pub loading: bool,
+    pub unavailable_reason: Option<String>,
+    pub rows: Vec<SessionRowSnapshot>,
+    pub total_session_count: usize,
+    pub memories: Vec<MemoryRowSnapshot>,
+    pub memory_enabled: bool,
+    pub memory_disclosure_accepted: bool,
+    pub memory_active_count: usize,
+    pub memory_conflict_count: usize,
+    pub memory_capacity_reached: bool,
+    pub analysis: MemoryAnalysisSnapshot,
+    pub notice: Option<MemoryNoticeSnapshot>,
+    pub this_turn_memory_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SessionRowSnapshot {
+    pub id: String,
+    pub provider: String,
+    pub provider_label: String,
+    pub locator: String,
+    pub checkout_path: String,
+    pub first_human_request: Option<String>,
+    pub started_at_unix_ms: Option<u64>,
+    pub updated_at_unix_ms: u64,
+    pub title: Option<String>,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MemoryRowSnapshot {
+    pub id: String,
+    pub body: String,
+    pub lifecycle: String,
+    pub revision: u64,
+    pub source_count: usize,
+    pub provided_session_count: usize,
+    pub updated_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct MemoryAnalysisSnapshot {
+    pub state: String,
+    pub discovered: usize,
+    pub analyzed: usize,
+    pub failed: usize,
+    pub message: Option<String>,
+    pub action: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MemoryNoticeSnapshot {
+    pub message: String,
+    pub undo_batch_id: Option<String>,
 }
 
 /// What kind of document an open file is, decided once by the core when the
@@ -1185,7 +1349,7 @@ pub struct EditorDocumentSnapshot {
     pub conflict: Option<EditorConflictSnapshot>,
 }
 
-/// The right panel's three persisted sections.
+/// The right panel's four persisted sections.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RightPanelSection {
@@ -1194,6 +1358,7 @@ pub enum RightPanelSection {
     Overview,
     Explorer,
     Changes,
+    Sessions,
 }
 
 impl RightPanelSection {
@@ -1202,6 +1367,7 @@ impl RightPanelSection {
             "overview" | "git" => Some(Self::Overview),
             "explorer" => Some(Self::Explorer),
             "changes" => Some(Self::Changes),
+            "sessions" => Some(Self::Sessions),
             _ => None,
         }
     }
@@ -1213,11 +1379,13 @@ pub struct UiStateSnapshot {
     pub left_sidebar_visible: bool,
     #[serde(default = "default_panel_visible")]
     pub right_panel_visible: bool,
-    /// Which of the right panel's three sections is showing. Persisted rather
+    /// Which of the right panel's four sections is showing. Persisted rather
     /// than held in the view, because hiding the panel tears the view down
     /// and the section has to come back the way it was left.
     #[serde(default)]
     pub right_panel_section: RightPanelSection,
+    #[serde(default)]
+    pub sessions_mode_by_project: BTreeMap<String, SessionsMode>,
     pub expanded_paths: Vec<String>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
@@ -1360,6 +1528,7 @@ impl Default for UiStateSnapshot {
             left_sidebar_visible: true,
             right_panel_visible: true,
             right_panel_section: RightPanelSection::default(),
+            sessions_mode_by_project: BTreeMap::new(),
             expanded_paths: Vec::new(),
             collapsed_workspace_ids: Vec::new(),
             collapsed_checkout_ids: Vec::new(),
@@ -2233,7 +2402,9 @@ impl Snapshot {
                 tabs: Vec::new(),
                 active_tab_id: None,
                 document: None,
+                archive_detail: None,
             },
+            sessions: SessionsSnapshot::default(),
             changes: ChangesSnapshot::default(),
             card: CheckoutCardSnapshot::default(),
             git_worktrees: None,
@@ -2313,6 +2484,7 @@ impl PetSnapshot {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RestSections {
     pub navigator: NavigatorSnapshot,
+    pub sessions: SessionsSnapshot,
     pub card: CheckoutCardSnapshot,
     pub git_worktrees: Option<ProjectWorktreesSnapshot>,
     pub git_worktrees_loading: bool,
@@ -2341,6 +2513,7 @@ impl RestSections {
     pub fn capture(snapshot: &Snapshot) -> Self {
         Self {
             navigator: snapshot.navigator.clone(),
+            sessions: snapshot.sessions.clone(),
             card: snapshot.card.clone(),
             git_worktrees: snapshot.git_worktrees.clone(),
             git_worktrees_loading: snapshot.git_worktrees_loading,
@@ -2370,6 +2543,7 @@ impl RestSections {
     /// case costs a comparison instead of a clone.
     pub fn matches(&self, snapshot: &Snapshot) -> bool {
         self.navigator == snapshot.navigator
+            && self.sessions == snapshot.sessions
             && self.card == snapshot.card
             && self.git_worktrees == snapshot.git_worktrees
             && self.git_worktrees_loading == snapshot.git_worktrees_loading
@@ -2463,6 +2637,7 @@ impl<'a> SnapshotDeltaWire<'a> {
 #[derive(Serialize)]
 pub struct RestWire<'a> {
     pub navigator: &'a NavigatorSnapshot,
+    pub sessions: &'a SessionsSnapshot,
     pub card: &'a CheckoutCardSnapshot,
     pub git_worktrees: &'a Option<ProjectWorktreesSnapshot>,
     pub git_worktrees_loading: bool,
@@ -2488,6 +2663,7 @@ impl<'a> RestWire<'a> {
     fn borrow(rest: &'a RestSections) -> Self {
         Self {
             navigator: &rest.navigator,
+            sessions: &rest.sessions,
             card: &rest.card,
             git_worktrees: &rest.git_worktrees,
             git_worktrees_loading: rest.git_worktrees_loading,

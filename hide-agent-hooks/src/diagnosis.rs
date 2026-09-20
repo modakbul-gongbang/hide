@@ -182,7 +182,10 @@ impl RuntimeDiagnosis {
             HookStatus::RuntimeAbsent => "Not on this Mac".to_owned(),
             HookStatus::Installed { version } => format!("Installed (v{version})"),
             HookStatus::Outdated { version } => {
-                format!("Outdated (v{version}, current v{})", self.current_version)
+                format!(
+                    "Update required (v{version}, current v{})",
+                    self.current_version
+                )
             }
             HookStatus::NotInstalled => "Not installed".to_owned(),
             HookStatus::Failed { reason } => reason.message(),
@@ -349,6 +352,19 @@ mod tests {
             .reason,
             Some(UninstrumentedReason::HookOutdated)
         );
+    }
+
+    #[test]
+    fn outdated_runtime_uses_the_required_update_copy() {
+        let row = RuntimeDiagnosis {
+            runtime: AgentRuntime::Codex,
+            label: "Codex".to_owned(),
+            path: "/tmp/hooks.json".to_owned(),
+            status: HookStatus::Outdated { version: 2 },
+            current_version: 3,
+        };
+        assert_eq!(row.headline(), "Update required (v2, current v3)");
+        assert!(row.offers_install());
     }
 
     #[test]

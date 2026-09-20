@@ -931,6 +931,7 @@ impl SessionReader for LocalSessionReader {
         Self::retain_bounded(&mut state.events);
         Ok(ParsedSession {
             events: state.events.iter().cloned().collect(),
+            event_offsets: Vec::new(),
             title: state.title.clone(),
             skipped_lines: parsed.skipped_lines,
             skipped_reasons: parsed.skipped_reasons,

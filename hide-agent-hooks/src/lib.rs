@@ -21,6 +21,7 @@
 pub mod counters;
 pub mod diagnosis;
 pub mod install;
+pub mod memory;
 pub mod report;
 pub mod runtime;
 

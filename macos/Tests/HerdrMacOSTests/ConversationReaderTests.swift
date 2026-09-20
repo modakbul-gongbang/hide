@@ -251,6 +251,26 @@ struct ConversationReaderTests {
         #expect(document.metadata.count == 2)
     }
 
+    @Test @MainActor func memoryAttachmentUsesExactCopyLinkAndOmitsZero() throws {
+        var attached = ConversationMessage(line: 1, role: .user, text: "Inspect this", timestamp: nil)
+        attached.memoryAttachedCount = 2
+        attached.memoryAttachedItemIDs = ["memory-a", "memory-b"]
+        let document = ConversationLedgerFormatting.document(
+            messages: [attached], provider: .codex, activity: "idle", now: Date(), textScale: 1
+        )
+        #expect(document.attributedString.string.contains("✦ Memory attached 2"))
+        let range = (document.attributedString.string as NSString).range(of: "Memory attached 2")
+        let link = try #require(document.attributedString.attribute(.link, at: range.location, effectiveRange: nil) as? URL)
+        #expect(link.absoluteString == "hide-memory://this-turn?items=memory-a,memory-b")
+
+        var zero = attached
+        zero.memoryAttachedCount = 0
+        let zeroDocument = ConversationLedgerFormatting.document(
+            messages: [zero], provider: .codex, activity: "idle", now: Date(), textScale: 1
+        )
+        #expect(!zeroDocument.attributedString.string.contains("Memory attached"))
+    }
+
     @Test @MainActor func ledgerDocumentKeepsElapsedVisibleForEmptyWorkingTurn() {
         let started = Date(timeIntervalSince1970: 0)
         let document = ConversationLedgerFormatting.document(

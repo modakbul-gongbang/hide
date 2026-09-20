@@ -23,6 +23,8 @@ struct ConversationMessage: Equatable, Identifiable {
     let role: Role
     let text: String
     let timestamp: Date?
+    var memoryAttachedCount: Int? = nil
+    var memoryAttachedItemIDs: [String] = []
 
     var id: Int { line }
 }

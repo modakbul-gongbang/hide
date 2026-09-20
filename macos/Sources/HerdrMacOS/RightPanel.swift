@@ -48,6 +48,9 @@ struct RightPanel: View {
             case .changes:
                 ChangesView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .sessions:
+                SessionsPanel()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(HideTheme.panel)

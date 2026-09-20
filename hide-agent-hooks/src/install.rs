@@ -714,7 +714,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(session_start_command.contains("--runtime codex"));
-        assert!(session_start_command.contains("--source hide-subagents@2"));
+        assert!(session_start_command.contains("--source hide-subagents@3"));
     }
 
     #[test]

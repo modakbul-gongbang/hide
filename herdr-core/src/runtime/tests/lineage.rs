@@ -1241,7 +1241,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
              "state_change_seq":2,"cwd":"/fixture","workspace_label":"Fixture","tokens":{"task":"Restore hook visibility"}}
         ],
         "panes": [
-            {"pane_id":"w1:p1","cwd":"/fixture","tokens":{"hide_hooks":"2","hide_sub_done":"2"}},
+            {"pane_id":"w1:p1","cwd":"/fixture","tokens":{"hide_hooks":"3","hide_sub_done":"2"}},
             {"pane_id":"w1:p2","cwd":"/fixture"}
         ],
         "tabs": [{"workspace_id":"w1","tab_id":"t1","label":""}],
@@ -1292,7 +1292,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
             .map(|row| (row.id.as_str(), row.headline.as_str(), row.offers_install))
             .collect::<Vec<_>>(),
         vec![
-            ("claude-code", "Installed (v2)", false),
+            ("claude-code", "Installed (v3)", false),
             ("codex", "Not installed", true),
         ],
         "a runtime that is fine is not offered a reinstall (PRD B28)"
@@ -1543,11 +1543,11 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         ],
         "panes": [
             {"pane_id":"w1:p1","cwd":"/fixture",
-             "tokens":{"hide_hooks":"2","hide_sub_working":"2","hide_sub_done":"4"}},
-            {"pane_id":"w1:p2","cwd":"/fixture","tokens":{"hide_hooks":"2"}},
-            {"pane_id":"w1:p3","cwd":"/fixture","tokens":{"hide_hooks":"2"}},
+             "tokens":{"hide_hooks":"3","hide_sub_working":"2","hide_sub_done":"4"}},
+            {"pane_id":"w1:p2","cwd":"/fixture","tokens":{"hide_hooks":"3"}},
+            {"pane_id":"w1:p3","cwd":"/fixture","tokens":{"hide_hooks":"3"}},
             {"pane_id":"w1:p4","cwd":"/fixture"},
-            {"pane_id":"w1:p5","cwd":"/fixture","tokens":{"hide_hooks":"2","hide_sub_working":"0","hide_sub_done":"0"}},
+            {"pane_id":"w1:p5","cwd":"/fixture","tokens":{"hide_hooks":"3","hide_sub_working":"0","hide_sub_done":"0"}},
             {"pane_id":"w1:p6","cwd":"/fixture"}
         ],
         "tabs": [

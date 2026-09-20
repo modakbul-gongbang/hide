@@ -18,6 +18,7 @@ struct CoreSnapshot {
     let terminal: CoreTerminalSnapshot
     let editor: CoreEditorSnapshot
     let changes: CoreChangesSnapshot
+    let sessions: CoreSessionsSnapshot
     let card: CoreCheckoutCard
     let find: CorePaneFindSnapshot
     let uiState: CoreUIStateSnapshot
@@ -47,6 +48,7 @@ struct CoreSnapshot {
             terminal: terminal,
             editor: editor ?? self.editor,
             changes: changes ?? self.changes,
+            sessions: sessions,
             card: card,
             find: find,
             uiState: uiState,
@@ -116,6 +118,7 @@ struct CoreRestSnapshot: Decodable {
     let zoomed: String?
     let paneLayouts: [CorePaneLayoutSnapshot]
     let terminal: CoreTerminalSnapshot
+    let sessions: CoreSessionsSnapshot
     let uiState: CoreUIStateSnapshot
     let status: CoreStatusSnapshot
     let pet: CorePetSnapshot
@@ -133,6 +136,7 @@ struct CoreRestSnapshot: Decodable {
         case zoomed
         case paneLayouts = "pane_layouts"
         case terminal
+        case sessions
         case uiState = "ui_state"
         case status
         case pet
@@ -152,6 +156,7 @@ struct CoreRestSnapshot: Decodable {
         zoomed = try container.decodeIfPresent(String.self, forKey: .zoomed)
         paneLayouts = try container.decode([CorePaneLayoutSnapshot].self, forKey: .paneLayouts)
         terminal = try container.decode(CoreTerminalSnapshot.self, forKey: .terminal)
+        sessions = try container.decodeIfPresent(CoreSessionsSnapshot.self, forKey: .sessions) ?? .empty
         uiState = try container.decode(CoreUIStateSnapshot.self, forKey: .uiState)
         status = try container.decode(CoreStatusSnapshot.self, forKey: .status)
         pet = try container.decode(CorePetSnapshot.self, forKey: .pet)
@@ -513,12 +518,13 @@ struct CoreDeviceRegistration: Decodable, Identifiable {
     }
 }
 
-/// The right panel's three sections. The core owns which one is showing, so the
+/// The right panel's four sections. The core owns which one is showing, so the
 /// choice survives hiding and reopening the panel.
 enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
     case overview
     case explorer
     case changes
+    case sessions
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -540,6 +546,7 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         // The section keeps its `changes` identity for the saved state; the
         // panel calls it History (right-panel-overview D-16, PR 2 fills it).
         case .changes: "History"
+        case .sessions: "Sessions"
         }
     }
 
@@ -548,6 +555,7 @@ enum RightPanelSection: String, Decodable, CaseIterable, Identifiable {
         case .overview: "info.circle"
         case .explorer: "doc.text.magnifyingglass"
         case .changes: "arrow.triangle.branch"
+        case .sessions: "clock.arrow.circlepath"
         }
     }
 }

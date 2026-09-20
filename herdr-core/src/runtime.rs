@@ -10,6 +10,7 @@ mod devices;
 mod editor;
 mod events;
 mod issues;
+mod memory;
 mod operations;
 mod projects;
 mod session;
@@ -28,15 +29,14 @@ use crate::live::{
     RemoteControlAction, RemoteControlContext, RemoteControlOutcome, RemoteTerminalContext,
     SessionFetchError, TerminalSession, TerminalSessionContext, TerminalSessionMode,
 };
-use crate::model::CheckoutSnapshot;
-use crate::model::SidebarAgentSnapshot;
 use crate::model::{
-    CoreOptions, DEFAULT_PANE_TEXT_SCALE, DiagnosticSnapshot, EditorDocumentSnapshot,
-    EditorTabKind, EditorTabSnapshot, ExplorerOperationSnapshot, LastErrorSnapshot,
-    PANE_TEXT_SCALE_STEP, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
-    PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
-    PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
-    RightPanelSection, SCHEMA_VERSION, Snapshot, StripTabKind, StripTabSnapshot, Surface,
+    ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
+    DiagnosticSnapshot, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
+    ExplorerOperationSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindSnapshot,
+    PaneFocusRequestSnapshot, PaneForkSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
+    PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
+    RemoteFileListSnapshot, RemoteSessionSnapshot, RightPanelSection, SCHEMA_VERSION,
+    SessionRowSnapshot, SidebarAgentSnapshot, Snapshot, StripTabKind, StripTabSnapshot, Surface,
     TabSnapshot, TerminalChunk, TerminalPaneSnapshot, UiStateSnapshot, WorkspaceSnapshot,
     clamp_pane_text_scale,
 };
@@ -836,6 +836,17 @@ pub struct Runtime {
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
     editor_documents: HashMap<String, EditorDocumentSnapshot>,
+    archive_documents: HashMap<String, ArchiveDetailSnapshot>,
+    session_catalog_rows: Vec<SessionRowSnapshot>,
+    memory_catalog_rows: Vec<crate::model::MemoryRowSnapshot>,
+    memory_operation_in_flight: bool,
+    memory_operation_generation: u64,
+    memory_cancel: Option<hide_ai::CancelToken>,
+    /// True only after the operator approves hook updates while enabling
+    /// Memory. A diagnosis can finish that intent, but cannot create it.
+    memory_enable_after_hook_update: bool,
+    memory_poll_in_flight: bool,
+    memory_next_poll_unix_ms: u64,
     editor_tab_history: Vec<String>,
     worker_context: Option<RuntimeWorkerContext>,
     /// The last moment any agent was working or waiting on the user. The pet
@@ -1100,6 +1111,15 @@ impl Runtime {
             suppress_terminal_session_workers: false,
             workspace_creations_in_flight: HashSet::new(),
             editor_documents: HashMap::new(),
+            archive_documents: HashMap::new(),
+            session_catalog_rows: Vec::new(),
+            memory_catalog_rows: Vec::new(),
+            memory_operation_in_flight: false,
+            memory_operation_generation: 0,
+            memory_cancel: None,
+            memory_enable_after_hook_update: false,
+            memory_poll_in_flight: false,
+            memory_next_poll_unix_ms: 0,
             editor_tab_history: Vec::new(),
             worker_context: None,
             state_save_pending: false,
@@ -1162,6 +1182,11 @@ impl Runtime {
         notifier: ChangeNotifier,
     ) {
         self.worker_context = Some(RuntimeWorkerContext { runtime, notifier });
+        if self.snapshot.ui_state.right_panel_visible
+            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Sessions
+        {
+            self.request_sessions_refresh();
+        }
     }
 
     pub(crate) fn take_state_save_worker(&mut self) -> Option<thread::JoinHandle<()>> {
@@ -1518,6 +1543,14 @@ fn unix_milliseconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0)
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.memory_cancel.take() {
+            cancel.cancel();
+        }
+    }
 }
 
 #[cfg(test)]

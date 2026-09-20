@@ -37,6 +37,7 @@ impl Runtime {
                 }
                 None
             }
+            EditorTabKind::Session | EditorTabKind::Memory => None,
         };
         if let Some(active_id) = self.snapshot.editor.active_tab_id.as_deref()
             && active_id != tab_id
@@ -45,6 +46,7 @@ impl Runtime {
             self.editor_tab_history.push(active_id.to_owned());
         }
         self.snapshot.editor.active_tab_id = Some(tab_id.to_owned());
+        self.snapshot.editor.archive_detail = None;
         match tab.kind {
             EditorTabKind::File => {
                 self.snapshot.editor.document = document;
@@ -62,6 +64,11 @@ impl Runtime {
                 self.snapshot.editor.document = None;
                 self.snapshot.ui_state.selected_path = None;
             }
+            EditorTabKind::Session | EditorTabKind::Memory => {
+                self.snapshot.editor.document = None;
+                self.snapshot.editor.archive_detail = self.archive_documents.get(tab_id).cloned();
+                self.snapshot.ui_state.selected_path = None;
+            }
         }
         Ok(())
     }
@@ -69,6 +76,7 @@ impl Runtime {
     pub(super) fn deactivate_editor_tab(&mut self) {
         self.snapshot.editor.active_tab_id = None;
         self.snapshot.editor.document = None;
+        self.snapshot.editor.archive_detail = None;
         self.editor_tab_history.clear();
     }
 
@@ -88,6 +96,12 @@ impl Runtime {
                             .map(|_| document.clone())
                     })
                 });
+        self.snapshot.editor.archive_detail = self
+            .snapshot
+            .editor
+            .active_tab_id
+            .as_deref()
+            .and_then(|tab_id| self.archive_documents.get(tab_id).cloned());
     }
 
     pub(super) fn sync_file_tab_dirty(&mut self, tab_id: &str) {
@@ -398,10 +412,12 @@ impl Runtime {
         let tab = self.snapshot.editor.tabs.remove(index);
         let was_active = self.snapshot.editor.active_tab_id.as_deref() == Some(tab.id.as_str());
         self.editor_documents.remove(&tab.id);
+        self.archive_documents.remove(&tab.id);
         self.editor_tab_history.retain(|known| known != &tab.id);
         if was_active {
             self.snapshot.editor.active_tab_id = None;
             self.snapshot.editor.document = None;
+            self.snapshot.editor.archive_detail = None;
             if tab.kind == EditorTabKind::Diff {
                 self.snapshot.changes.selected_path = None;
                 self.snapshot.changes.diff = None;
@@ -547,6 +563,48 @@ impl Runtime {
         }
         if let Err(message) = self.activate_editor_tab(&tab_id) {
             self.set_error("diff.focus_failed", message, false);
+        }
+    }
+
+    pub(super) fn show_archive_tab(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        detail: ArchiveDetailSnapshot,
+        preview: bool,
+    ) {
+        let kind = if detail.kind == "memory" {
+            EditorTabKind::Memory
+        } else {
+            EditorTabKind::Session
+        };
+        let tab_id = format!(
+            "{}:{}:{}:{}",
+            detail.kind, workspace_id, checkout_id, detail.id
+        );
+        if self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+            if !preview {
+                self.promote_editor_tab(&tab_id);
+            }
+        } else {
+            self.archive_documents
+                .insert(tab_id.clone(), detail.clone());
+            self.place_editor_tab(EditorTabSnapshot {
+                id: tab_id.clone(),
+                workspace_id: workspace_id.to_owned(),
+                checkout_id: checkout_id.to_owned(),
+                path: detail.id,
+                label: detail.title,
+                kind,
+                diff_committed: None,
+                markdown_live: false,
+                wrap: true,
+                dirty: false,
+                preview,
+            });
+        }
+        if let Err(message) = self.activate_editor_tab(&tab_id) {
+            self.set_error("archive.focus_failed", message, false);
         }
     }
 

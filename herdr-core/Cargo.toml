@@ -13,6 +13,8 @@ anyhow = "=1.0.104"
 hide-agent-hooks = { path = "../hide-agent-hooks" }
 hide-ai = { path = "../hide-ai" }
 hide-herdr-client = { path = "../hide-herdr-client" }
+hide-memory = { path = "../hide-memory" }
+hide-project = { path = "../hide-project" }
 hide-session = { path = "../hide-session" }
 base64 = "=0.23.1"
 libc = "=0.2.189"
@@ -23,6 +25,7 @@ russh-config = "=0.58.0"
 russh-sftp = "=2.4.0"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
+sha2 = "=0.10.9"
 tokio = { version = "=1.53.1", features = ["io-util", "net", "rt-multi-thread", "sync", "time"] }
 trash = { version = "=5.2.8", default-features = false }
 ureq = { version = "=3.4.1", default-features = false, features = ["rustls"] }

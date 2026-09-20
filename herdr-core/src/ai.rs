@@ -123,6 +123,17 @@ fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
     ]
 }
 
+/// Builds the same provider boundary for Project Memory that the Settings
+/// probe describes. The feature owns its prompt and parsing; this retains the
+/// shared provider selection, process, retry, cancellation, and budget caps.
+pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
+    AiRouter::new(
+        backends(&settings.models),
+        settings.router_config(),
+        Arc::new(NoopLogSink),
+    )
+}
+
 fn read(router: &AiRouter, models: &BTreeMap<ProviderId, String>) -> BackgroundAiSnapshot {
     let availability = router.availability();
     let catalogs = router.models();

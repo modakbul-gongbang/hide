@@ -123,6 +123,7 @@ enum HideTheme {
         static let documentWidth: CGFloat = 720
         static let documentFontSize: CGFloat = 15
         static let documentLineSpacing: CGFloat = 5
+        static let memoryMinimumHeight: CGFloat = 160
         /// Live Markdown heading sizes, h1 through h6, over the 15pt body. Every
         /// level is semibold; the two smallest sit at body size, so they differ
         /// from the body by weight only and not from each other.

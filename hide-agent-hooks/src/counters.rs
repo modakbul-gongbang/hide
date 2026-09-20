@@ -68,6 +68,7 @@ pub fn apply(home: &Path, pane_id: &str, event: HookEvent) -> io::Result<PaneCou
     let mut counters = read(home, pane_id);
     match event {
         HookEvent::SessionStart => counters = PaneCounters::default(),
+        HookEvent::UserPromptSubmit => return Ok(counters),
         HookEvent::SubagentStart => counters.working = counters.working.saturating_add(1),
         HookEvent::SubagentStop => {
             counters.working = counters.working.saturating_sub(1);

@@ -21,7 +21,7 @@ pub const HELPER_BINARY_NAME: &str = "hide-agent-hooks";
 /// changes shape, so an older entry is reported as outdated and the operator
 /// is offered a reinstall rather than being silently left with a hook that
 /// reports nothing.
-pub const HOOK_VERSION: u32 = 2;
+pub const HOOK_VERSION: u32 = 3;
 
 /// The one sentence SessionStart adds to either agent runtime inside Hide.
 /// Both runtimes accept the same `hookSpecificOutput.additionalContext`
@@ -30,14 +30,27 @@ pub const HOOK_VERSION: u32 = 2;
 pub const PURPOSE_CONTEXT: &str = "When you create a worktree, set its one-line purpose in 40 characters or fewer by running `herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\"`.";
 
 pub fn hook_stdout(runtime: AgentRuntime, event: HookEvent) -> Option<String> {
-    if event != HookEvent::SessionStart {
-        return None;
-    }
+    hook_stdout_with_context(runtime, event, None)
+}
+
+pub fn hook_stdout_with_context(
+    runtime: AgentRuntime,
+    event: HookEvent,
+    memory_context: Option<&str>,
+) -> Option<String> {
+    let additional_context = match event {
+        HookEvent::SessionStart => match memory_context {
+            Some(memory) if !memory.is_empty() => format!("{PURPOSE_CONTEXT}\n\n{memory}"),
+            _ => PURPOSE_CONTEXT.to_owned(),
+        },
+        HookEvent::UserPromptSubmit => memory_context.filter(|value| !value.is_empty())?.to_owned(),
+        HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Stop => return None,
+    };
     let output = match runtime {
         AgentRuntime::ClaudeCode | AgentRuntime::Codex => serde_json::json!({
             "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": PURPOSE_CONTEXT,
+                "hookEventName": event.name(),
+                "additionalContext": additional_context,
             }
         }),
     };
@@ -177,6 +190,9 @@ impl AgentRuntime {
 pub enum HookEvent {
     /// A new session took over this pane: the pane's counts start again.
     SessionStart,
+    /// One user prompt is about to be submitted. This event performs only a
+    /// bounded, read-only project Memory lookup.
+    UserPromptSubmit,
     /// One subagent started.
     SubagentStart,
     /// One subagent finished.
@@ -188,8 +204,9 @@ pub enum HookEvent {
 }
 
 impl HookEvent {
-    pub const ALL: [HookEvent; 4] = [
+    pub const ALL: [HookEvent; 5] = [
         Self::SessionStart,
+        Self::UserPromptSubmit,
         Self::SubagentStart,
         Self::SubagentStop,
         Self::Stop,
@@ -198,6 +215,7 @@ impl HookEvent {
     pub fn name(self) -> &'static str {
         match self {
             Self::SessionStart => "SessionStart",
+            Self::UserPromptSubmit => "UserPromptSubmit",
             Self::SubagentStart => "SubagentStart",
             Self::SubagentStop => "SubagentStop",
             Self::Stop => "Stop",
