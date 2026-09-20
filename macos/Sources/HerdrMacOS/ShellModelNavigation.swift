@@ -203,6 +203,10 @@ struct AdaptiveTabStripPresentation: Equatable {
     }
     var showsOverflow: Bool { !hiddenIndices.isEmpty }
 
+    static func leadingInset(leftSidebarVisible: Bool) -> CGFloat {
+        leftSidebarVisible ? HideTheme.spacingNone : HideTheme.Layout.trafficLightInset
+    }
+
     init(availableWidth: CGFloat, tabIDs: [String], activeTabID: String?) {
         self.tabIDs = tabIDs
         guard !tabIDs.isEmpty, availableWidth.isFinite, availableWidth > 0 else {

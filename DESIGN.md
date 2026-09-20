@@ -232,6 +232,8 @@ An inactive icon tab uses the leading `tabIconIdentityWidth` (40pt), while the a
 If those compact widths cannot all fit, the strip reserves `tabOverflowControlWidth` (28pt) for an ordered `…` menu and shows one contiguous canonical range containing the active tab.
 Selecting a hidden tab moves that visible range without reordering it, widening restores compact, title and preferred states in reverse, and drag destinations use the same per-tab widths and starts as rendering.
 The strip never scrolls horizontally or scrolls the active tab into view.
+With the left sidebar visible, the first tab background starts flush at the content edge with no outer leading inset; the tab's internal identity spacing and one-point dividers remain unchanged.
+With the left sidebar hidden, the strip retains `trafficLightInset` (69pt) before its first control.
 The tooltip and accessibility label retain the full stable tab name, focused-pane context and state at every density; file and diff tabs retain their file names.
 The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.
 `worktreeDialogWidth` is 440pt for the consequence-first deletion confirmation.

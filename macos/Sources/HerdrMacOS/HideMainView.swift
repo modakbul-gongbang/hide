@@ -50,7 +50,7 @@ private struct HideTabStrip: View {
     /// strip starts after it; with the sidebar collapsed the strip is that
     /// surface and keeps its own first control clear of them.
     private var leadingInset: CGFloat {
-        model.leftSidebarVisible ? HideTheme.spacingSM : HideTheme.Layout.trafficLightInset
+        AdaptiveTabStripPresentation.leadingInset(leftSidebarVisible: model.leftSidebarVisible)
     }
 
     var body: some View {

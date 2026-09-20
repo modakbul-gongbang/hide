@@ -7,6 +7,21 @@ import Testing
 struct AdaptiveTabStripPresentationTests {
     private let tabIDs = (0..<8).map { "tab-\($0)" }
 
+    @Test func visibleSidebarRemovesOnlyTheOuterLeadingInset() {
+        let presentation = make(width: 104, count: 2, active: 0)
+
+        #expect(AdaptiveTabStripPresentation.leadingInset(leftSidebarVisible: true) == 0)
+        #expect(
+            AdaptiveTabStripPresentation.leadingInset(leftSidebarVisible: false)
+                == HideTheme.Layout.trafficLightInset
+        )
+        #expect(HideTheme.Layout.trafficLightInset == 69)
+        #expect(presentation.slots.map(\.width) == [64, 40])
+        #expect(presentation.slots.map(\.start) == [0, 64])
+        #expect(HideTheme.IconButton.toolbarSize.width == 24)
+        #expect(HideTheme.Layout.hairlineWidth == 1)
+    }
+
     @Test func tabsStartAtThePreferredWidth() {
         let presentation = make(width: 360, count: 2, active: 0)
 
