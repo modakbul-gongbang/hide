@@ -83,7 +83,7 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
         path: path.to_path_buf(),
         source,
     })?;
-    let (root, kind) = match git::discover(&canonical)? {
+    let (root, kind) = match git::discover_checked(&canonical)? {
         Some(repository) => (repository.main_root(), ProjectKind::Git),
         None => (
             if canonical.is_dir() {
@@ -149,7 +149,11 @@ pub mod git {
         }
     }
 
-    pub fn discover(path: &Path) -> Result<Option<Repository>, ResolveError> {
+    pub fn discover(path: &Path) -> Option<Repository> {
+        discover_checked(path).ok().flatten()
+    }
+
+    pub fn discover_checked(path: &Path) -> Result<Option<Repository>, ResolveError> {
         let start = fs::canonicalize(path).map_err(|error| ResolveError::InvalidGitLink {
             path: path.to_path_buf(),
             reason: format!("discovery_path:{error}"),
