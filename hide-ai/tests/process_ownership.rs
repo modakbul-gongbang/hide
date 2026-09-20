@@ -290,10 +290,12 @@ fn real_codex_starts_no_mcp_children() {
     match backend.last_measurement() {
         ProcessMeasurement::Available { descendants, .. } => {
             // The private CODEX_HOME carries no config.toml, so no MCP server
-            // is started; the only descendant is the real codex under the
-            // node wrapper (measured: 1).
+            // is started. The pid the crate holds is whatever `codex` on PATH
+            // is: the pnpm install's node wrapper, whose one descendant is the
+            // real app-server (measured 1 on 2026-09-20), or the native
+            // binary with none. The first MCP server would make it two.
             assert!(
-                descendants <= RouterConfig::default().max_app_server_descendants,
+                descendants <= 1,
                 "the app-server started {descendants} descendants; MCP servers leaked in"
             );
             eprintln!("real codex descendants: {descendants}");

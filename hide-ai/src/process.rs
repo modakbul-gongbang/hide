@@ -92,6 +92,11 @@ fn collect_descendants(pid: i32, out: &mut Vec<i32>, depth: u32) {
 #[cfg(target_os = "macos")]
 fn child_pids(pid: i32) -> Vec<i32> {
     use std::os::raw::c_void;
+    // `proc_listchildpids` takes its buffer size in bytes but returns a count
+    // of pids, both for the null-buffer size query and for the filled buffer
+    // (libproc divides by `sizeof(int)` before returning). That differs from
+    // `proc_listpids`, which returns bytes. Reading the count as bytes and
+    // dividing again made three children measure as zero (2026-09-20).
     // SAFETY: the first call asks for the size with a null buffer; the second
     // writes at most `capacity` ints into a buffer we own. Both are the
     // documented `proc_listchildpids` contract.
@@ -101,15 +106,14 @@ fn child_pids(pid: i32) -> Vec<i32> {
             return Vec::new();
         }
         // Slack for children that appear between the two calls.
-        let capacity = needed as usize / std::mem::size_of::<i32>() + 16;
+        let capacity = needed as usize + 16;
         let mut buffer = vec![0i32; capacity];
         let byte_len = (capacity * std::mem::size_of::<i32>()) as libc::c_int;
         let written = libc::proc_listchildpids(pid, buffer.as_mut_ptr() as *mut c_void, byte_len);
         if written <= 0 {
             return Vec::new();
         }
-        let count = (written as usize / std::mem::size_of::<i32>()).min(capacity);
-        buffer.truncate(count);
+        buffer.truncate((written as usize).min(capacity));
         buffer.retain(|child| *child > 0);
         buffer
     }
@@ -134,5 +138,66 @@ fn rss_of(pid: i32) -> u64 {
         } else {
             0
         }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A shell with one direct child and one grandchild measures as three
+    /// descendants. The count is the whole point of the process cap, so it is
+    /// asserted exactly: the reading that only checks `<= cap` passed for a
+    /// measurement that was stuck at zero.
+    #[test]
+    fn a_nested_tree_measures_every_descendant() {
+        let mut shell = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 30 & sh -c 'sleep 30 & wait' & wait")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("sh starts");
+        let pid = shell.id();
+
+        // The children fork after the shell starts; poll until the tree is
+        // complete rather than sleeping a guessed interval.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let measurement = loop {
+            let measurement = measure(pid);
+            if let ProcessMeasurement::Available { descendants: 3, .. } = measurement {
+                break measurement;
+            }
+            if Instant::now() >= deadline {
+                break measurement;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+
+        let mut tree = Vec::new();
+        collect_descendants(pid as i32, &mut tree, 0);
+        for child in &tree {
+            // SAFETY: these pids were read from the kernel as descendants of a
+            // child this test owns, and SIGTERM to a sleep is the intended end.
+            unsafe {
+                libc::kill(*child, libc::SIGTERM);
+            }
+        }
+        let _ = shell.kill();
+        let _ = shell.wait();
+
+        let ProcessMeasurement::Available {
+            app_server_pid,
+            descendants,
+            rss_bytes,
+        } = measurement
+        else {
+            panic!("macOS measures a live tree");
+        };
+        assert_eq!(app_server_pid, pid);
+        assert_eq!(descendants, 3, "sh, its sleep, the inner sh and its sleep");
+        assert!(rss_bytes > 0, "resident size sums over the tree");
     }
 }

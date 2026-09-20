@@ -26,10 +26,14 @@ The one environment variable it sets is that `CODEX_HOME`, pointing the app-serv
   `codex exec` is not used.
 
   `hide-ai` owns this process (see [Process ownership and budgets](#process-ownership-and-budgets)).
-  It runs the app-server under a private, owner-only (`0700`) `CODEX_HOME` in a temporary directory that holds nothing but a symlink to the user's `auth.json` (from the environment's `CODEX_HOME`, or `~/.codex/auth.json`), and no `config.toml`.
+  It runs the app-server under a private, owner-only (`0700`) `CODEX_HOME` in a temporary directory (`$TMPDIR/hide-ai-codex-home-<pid>-<nanos>`) that is created holding nothing but a symlink to the user's `auth.json` (from the environment's `CODEX_HOME`, or `~/.codex/auth.json`), and no `config.toml`.
+  The app-server then writes its own state beside the symlink (`installation_id`, `models_cache.json`, its sqlite databases, `shell_snapshots/`, `skills/`, `tmp/`; 2 to 5 MB a session, measured 2026-09-20), but no `sessions/` rollout, so the ephemeral thread leaves no transcript.
   With no config the app-server starts none of the MCP servers the user's real config declares, which measurement (2026-09-17) showed `-c mcp_servers={}` and a per-thread `config` override both failed to prevent.
   The directory is removed when the session ends; if it or the symlink cannot be created the request fails with `ProviderUnavailable(codex_home_unavailable:<stage>:<kind>)` rather than falling back to `~/.codex`.
-  The credential file is referenced through the symlink and never read; codex's own token refresh writes through it to the real file.
+  An owner that dies without running `Drop` (a `kill -9`, which the CI kill test performs) leaves its directory behind, and nothing sweeps them yet.
+  The credential file is referenced through the symlink and never read.
+  codex's own token refresh writes through it to the real file: the default `file` credential store opens `CODEX_HOME/auth.json` for truncating write, no temp file and no rename, so the symlink is followed and survives (read from `codex-rs/login/src/auth/storage.rs` at `rust-v0.155.1`).
+  A `keyring` or `auto` credential store keys the entry by the canonical `CODEX_HOME` path, so a private home has no entry and the provider reports `needs_login`; that mode is not supported here.
   Shutdown is one graceful path on every exit (`Session::drop`, a session swap, an over-budget restart): close stdin (its EOF is the app-server's own shutdown signal and ends the whole tree), then SIGTERM, then SIGKILL, each after a three-second grace.
   After ten idle minutes with no completed request the app-server is shut down and `ai.app_server.idle_exit` is logged; the next request starts a fresh one.
 - `claude`: `claude -p --output-format json`, print mode, one child process per request.
@@ -104,8 +108,8 @@ The caps live in `RouterConfig` as measured constants, not settings (a setting w
 | --- | --- | --- |
 | `max_in_flight` | 1 | requests running at once across the router |
 | `max_per_minute` | 30 | requests admitted in any 60-second window |
-| `max_app_server_descendants` | 4 | children under the codex app-server after a turn |
-| `max_app_server_rss_bytes` | 1 GiB | resident size of the codex app-server tree |
+| `max_app_server_descendants` | 4 | processes under the child the crate started, transitively, after a turn |
+| `max_app_server_rss_bytes` | 1 GiB | resident size of that child and everything under it |
 | `max_consecutive_restarts` | 3 | over-budget restarts before the provider is failed |
 
 The two request-rate caps are checked before a request is submitted; crossing one returns `AiError::OverBudget { cap, measured }` at once and logs `ai.budget.exceeded`.
@@ -224,8 +228,11 @@ target/release/hide-agent-context-labels verify-provider --provider claude
 
 Each prints that provider's availability and one verdict for a fixed transcript with the answering provider named on it, and exits non-zero when the provider cannot answer, naming the class.
 For codex it also prints the app-server's descendant count and resident size, so a leak is visible from the command rather than only from the log.
+The pid held and measured is whatever `codex` on `PATH` starts: the pnpm install's node wrapper, whose one descendant is the real `codex app-server`, so a healthy tree prints `descendants=1` (measured 2026-09-20; a native binary prints 0), and the first MCP server would make it 2.
 Only `watch` moves state left under the plugin's previous id; verification does not.
-Still give a development build its own home so it never writes next to the installed watcher: `HOME=$(mktemp -d) CODEX_HOME=~/.codex`.
+Still give a development build its own home so it never writes next to the installed watcher: `CODEX_HOME=$HOME/.codex HOME=$(mktemp -d) target/release/hide-agent-context-labels verify-provider --provider codex`.
+The assignments are expanded left to right, so `CODEX_HOME` has to be written before `HOME` is replaced; `HOME=$(mktemp -d) CODEX_HOME=~/.codex` expands `~` against the temporary home and reports `needs_login`.
+The claude path cannot take the isolated home, because Claude Code keys its login to `HOME`; run it with the real home and expect one `live_provider_verified` line in the installed watcher's `events.jsonl`.
 
 ## Known gaps
 
