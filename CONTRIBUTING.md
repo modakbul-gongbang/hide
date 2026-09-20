@@ -144,6 +144,6 @@ It never merges, because three Herdr behaviors the core relies on are covered by
 
 Write commits as project work: what changed in the product, code, or documentation, and why.
 Do not add AI agent, model, or tool names to commit messages, trailers, branch names, or pull request text.
-The pull request template's `AI tooling` section is a checkbox and a line naming what you checked by hand; that is a review input, not an attribution line.
-It is a checkbox because the attribution gate rejects a credit phrase wherever it appears, including inside backticks, so the honest prose answer to that question is the thing the gate exists to block.
+The pull request template's `AI tooling` line names how the change was written and what you checked by hand; that is a review input, not an attribution line.
+It is one line because the attribution gate rejects a credit phrase wherever it appears, including inside backticks, so the honest prose answer to that question is the thing the gate exists to block.
 When the change's subject is one of the integrated products, name it in full or quote its command in backticks.
