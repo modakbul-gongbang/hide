@@ -109,10 +109,13 @@ fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
             .unwrap_or_else(|| hide_ai::settings::default_model(provider).to_owned())
     };
     vec![
-        Arc::new(hide_ai::CodexAppServerBackend::new(hide_ai::CodexConfig {
-            model: model_for(ProviderId::Codex),
-            ..hide_ai::CodexConfig::default()
-        })),
+        Arc::new(hide_ai::CodexAppServerBackend::new(
+            hide_ai::CodexConfig {
+                model: model_for(ProviderId::Codex),
+                ..hide_ai::CodexConfig::default()
+            },
+            Arc::new(NoopLogSink),
+        )),
         Arc::new(hide_ai::ClaudeCliBackend::new(hide_ai::ClaudeConfig {
             model: model_for(ProviderId::Claude),
             ..hide_ai::ClaudeConfig::default()

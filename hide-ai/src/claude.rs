@@ -387,7 +387,7 @@ fn run(
 ) -> Result<Run, RunError> {
     let mut command = Command::new(binary);
     environment.apply(&mut command);
-    let mut child = command
+    command
         .args(args)
         .current_dir(cwd)
         .stdin(if stdin_text.is_some() {
@@ -396,9 +396,10 @@ fn run(
             Stdio::null()
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| RunError::Spawn(error.kind()))?;
+        .stderr(Stdio::null());
+    // Every child in the crate is started through the one spawn helper.
+    let mut child =
+        crate::process::spawn(&mut command).map_err(|error| RunError::Spawn(error.kind()))?;
 
     let Some(mut stdout) = child.stdout.take() else {
         kill(&mut child);

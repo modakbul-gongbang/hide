@@ -3,20 +3,31 @@
 //! Protocol facts come from `codex app-server generate-json-schema` for the
 //! installed CLI, not from guesswork; the request and notification names used
 //! here are listed in `agents/runs/hide-ai-provider-layer/CONTRACT-2026-09-10.md`.
+//!
+//! This backend owns the app-server it starts (`oh-my-principle` resident
+//! process practice): it runs the child under a private `CODEX_HOME` that
+//! carries only an `auth.json` symlink, so no `config.toml` pulls MCP servers
+//! into the tree; it shuts the child down through one graceful path on every
+//! exit; it ends the child after ten idle minutes; and it exposes the process
+//! measurement the router's cap is enforced against.
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+use crate::log::AiLogEvent;
+use crate::process::{self, ProcessMeasurement};
 use crate::{
-    AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ModelCatalog,
-    ProviderId,
+    AiBackend, AiError, AiLogSink, AiRequest, AiResponse, AiUsage, Availability, CancelToken,
+    ModelCatalog, ProviderId,
 };
 
 /// The user's decision for background features.
@@ -62,6 +73,19 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 const INTERRUPT_GRACE: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_millis(100);
 
+/// Each stage of the graceful shutdown waits this long before escalating:
+/// stdin close, then SIGTERM, then SIGKILL. Measured (2026-09-17): stdin close
+/// or SIGTERM ends the whole codex tree within three seconds.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+
+/// The app-server is shut down after this long with no completed request. The
+/// 2026-09-17 incident ran two idle days holding 1,699 processes; a count cap
+/// does nothing while requests are zero, so idle time is the release that does.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// How often the idle reaper checks the last-activity clock.
+const REAPER_TICK: Duration = Duration::from_secs(15);
+
 #[derive(Clone, Debug)]
 pub struct CodexConfig {
     /// `codex` on `PATH` by default; an explicit path is used as given.
@@ -87,36 +111,130 @@ enum Line {
     Eof,
 }
 
+/// A private `CODEX_HOME` for one app-server: an owner-only directory holding
+/// nothing but a symlink to the user's `auth.json`. It carries no
+/// `config.toml`, so the app-server starts none of the MCP servers the user's
+/// real config declares, and it is removed when the session ends. The
+/// credential file itself is only referenced, never read.
+struct CodexHome {
+    path: PathBuf,
+}
+
+impl CodexHome {
+    fn create() -> Result<Self, AiError> {
+        let dir = std::env::temp_dir().join(format!(
+            "hide-ai-codex-home-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        create_private_dir(&dir).map_err(|kind| home_unavailable("mkdir", kind))?;
+        let home = Self { path: dir };
+        link_auth_json(&home.path).map_err(|kind| home_unavailable("symlink", kind))?;
+        Ok(home)
+    }
+}
+
+impl Drop for CodexHome {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn home_unavailable(stage: &str, kind: std::io::ErrorKind) -> AiError {
+    AiError::ProviderUnavailable(format!("codex_home_unavailable:{stage}:{kind}"))
+}
+
+/// The directory the user's real `auth.json` lives in: an explicit
+/// `CODEX_HOME`, or `~/.codex`.
+fn source_codex_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("CODEX_HOME") {
+        return PathBuf::from(dir);
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    home.unwrap_or_default().join(".codex")
+}
+
+fn unique_suffix() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> Result<(), std::io::ErrorKind> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(false)
+        .mode(0o700)
+        .create(dir)
+        .map_err(|error| error.kind())
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(_dir: &Path) -> Result<(), std::io::ErrorKind> {
+    Err(std::io::ErrorKind::Unsupported)
+}
+
+#[cfg(unix)]
+fn link_auth_json(home: &Path) -> Result<(), std::io::ErrorKind> {
+    let source = source_codex_dir().join("auth.json");
+    std::os::unix::fs::symlink(source, home.join("auth.json")).map_err(|error| error.kind())
+}
+
+#[cfg(not(unix))]
+fn link_auth_json(_home: &Path) -> Result<(), std::io::ErrorKind> {
+    Err(std::io::ErrorKind::Unsupported)
+}
+
 struct Session {
     child: Child,
-    stdin: ChildStdin,
+    /// Held in an `Option` so shutdown can close the pipe (its EOF is the
+    /// app-server's own shutdown signal) while the child is still owned.
+    stdin: Option<ChildStdin>,
     incoming: Receiver<Line>,
     /// Notifications that arrived while a response was awaited.
     pending: VecDeque<Value>,
     next_id: u64,
+    /// When the last turn finished, for the idle reaper.
+    last_activity: Instant,
+    /// Removed when the session ends; declared last so it is deleted after the
+    /// child has stopped.
+    _home: CodexHome,
 }
 
 pub struct CodexAppServerBackend {
     config: CodexConfig,
     /// One child, one turn at a time: a background feature never competes
-    /// with itself for the account's rate limit.
-    session: Mutex<Option<Session>>,
+    /// with itself for the account's rate limit. Shared with the idle reaper.
+    session: Arc<Mutex<Option<Session>>>,
+    /// The measurement taken after the most recent turn.
+    measurement: Mutex<ProcessMeasurement>,
+    reaper_stop: Arc<AtomicBool>,
+    reaper: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl CodexAppServerBackend {
-    pub fn new(config: CodexConfig) -> Self {
+    pub fn new(config: CodexConfig, sink: Arc<dyn AiLogSink>) -> Self {
+        let session: Arc<Mutex<Option<Session>>> = Arc::new(Mutex::new(None));
+        let reaper_stop = Arc::new(AtomicBool::new(false));
+        let reaper = spawn_idle_reaper(Arc::clone(&session), sink, Arc::clone(&reaper_stop));
         Self {
             config,
-            session: Mutex::new(None),
+            session,
+            measurement: Mutex::new(ProcessMeasurement::Unavailable),
+            reaper_stop,
+            reaper: Mutex::new(Some(reaper)),
         }
     }
 
-    /// The exact argument vector the child is started with.
+    /// The exact argument vector the child is started with. `mcp_servers` is
+    /// not overridden here: the private `CODEX_HOME` carries no `config.toml`,
+    /// so the app-server has no MCP servers to start, which `-c mcp_servers={}`
+    /// was measured (2026-09-17) not to achieve.
     pub fn spawn_arguments() -> Vec<String> {
         let mut args = vec![
             "app-server".to_owned(),
-            "-c".to_owned(),
-            "mcp_servers={}".to_owned(),
             "-c".to_owned(),
             "web_search=\"disabled\"".to_owned(),
         ];
@@ -394,16 +512,106 @@ impl AiBackend for CodexAppServerBackend {
     fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
         let mut guard = self.lock();
         let session = self.ensure_session(&mut guard)?;
+        let pid = session.child.id();
         let result = self.run_turn(session, request, cancel);
-        if matches!(
+        session.last_activity = Instant::now();
+        // A refusal or a lost connection means the child is gone; measure the
+        // live tree otherwise, while the lock still holds the session still.
+        let child_gone = matches!(
             result,
             Err(AiError::ProviderUnavailable(_) | AiError::CompletionUnknown(_))
-        ) {
-            // The child is gone; the next request starts a fresh one.
-            *guard = None;
+        );
+        *self.measurement.lock().unwrap_or_else(|e| e.into_inner()) = if child_gone {
+            ProcessMeasurement::Unavailable
+        } else {
+            process::measure(pid)
+        };
+        if child_gone {
+            // Take the dead session out, release the lock, then drop it: its
+            // shutdown runs `Session::terminate` and a lost-but-not-yet-dead
+            // child can hold that for the full graceful grace, which must not
+            // block the mutex other callers (the idle reaper, `restart`, the
+            // backend's own `Drop`) wait on. The next request starts a fresh
+            // one.
+            let dead = guard.take();
+            drop(guard);
+            drop(dead);
         }
         result
     }
+
+    fn last_measurement(&self) -> ProcessMeasurement {
+        *self.measurement.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn restart(&self) {
+        let victim = self.lock().take();
+        // Drop outside the lock: shutdown may take a few seconds and no other
+        // request can start one meanwhile.
+        drop(victim);
+        *self.measurement.lock().unwrap_or_else(|e| e.into_inner()) =
+            ProcessMeasurement::Unavailable;
+    }
+}
+
+impl Drop for CodexAppServerBackend {
+    fn drop(&mut self) {
+        self.reaper_stop.store(true, Ordering::SeqCst);
+        // End the child now rather than waiting for the reaper to notice.
+        let victim = self.lock().take();
+        drop(victim);
+        if let Some(handle) = self.reaper.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Watches the last-activity clock and ends the app-server once it has been
+/// idle past [`IDLE_TIMEOUT`], releasing it during the quiet the 2026-09-17
+/// incident held it through.
+fn spawn_idle_reaper(
+    session: Arc<Mutex<Option<Session>>>,
+    sink: Arc<dyn AiLogSink>,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("hide-ai-codex-idle".to_owned())
+        .spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                // Sleep in short steps so the thread joins promptly on drop
+                // (a CLI that builds a router and exits must not wait a whole
+                // tick), while still only checking idle once per tick.
+                let mut waited = Duration::ZERO;
+                while waited < REAPER_TICK {
+                    if stop.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                    waited += Duration::from_millis(200);
+                }
+                let victim = {
+                    let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
+                    match guard.as_ref() {
+                        Some(active) if active.last_activity.elapsed() >= IDLE_TIMEOUT => {
+                            guard.take()
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(active) = victim {
+                    let pid = active.child.id();
+                    // Drop outside the lock so the graceful shutdown does not
+                    // hold requests.
+                    drop(active);
+                    let mut event = AiLogEvent::new("ai.app_server.idle_exit");
+                    event.provider = Some(ProviderId::Codex);
+                    event.app_server_pid = Some(pid);
+                    event.detail = Some(format!("idle_s={}", IDLE_TIMEOUT.as_secs()));
+                    sink.log(event);
+                }
+            }
+        })
+        .expect("idle reaper thread")
 }
 
 enum Wait {
@@ -449,16 +657,18 @@ impl RequestFailure {
 
 impl Session {
     fn spawn(binary: &Path, cwd: &Path) -> Result<Self, AiError> {
-        let mut child = Command::new(binary)
+        let home = CodexHome::create()?;
+        let mut command = Command::new(binary);
+        command
             .args(CodexAppServerBackend::spawn_arguments())
             .current_dir(cwd)
+            .env("CODEX_HOME", &home.path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| {
-                AiError::ProviderUnavailable(format!("app_server_spawn_failed:{}", error.kind()))
-            })?;
+            .stderr(Stdio::null());
+        let mut child = process::spawn(&mut command).map_err(|error| {
+            AiError::ProviderUnavailable(format!("app_server_spawn_failed:{}", error.kind()))
+        })?;
         let stdin = child
             .stdin
             .take()
@@ -489,10 +699,12 @@ impl Session {
         });
         let mut session = Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             incoming,
             pending: VecDeque::new(),
             next_id: 0,
+            last_activity: Instant::now(),
+            _home: home,
         };
         session.request(
             "initialize",
@@ -511,9 +723,13 @@ impl Session {
         let mut line = serde_json::to_vec(message)
             .map_err(|_| AiError::Transient("request_not_encodable".to_owned()))?;
         line.push(b'\n');
-        self.stdin
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| AiError::ProviderUnavailable("app_server_stdin_closed".to_owned()))?;
+        stdin
             .write_all(&line)
-            .and_then(|()| self.stdin.flush())
+            .and_then(|()| stdin.flush())
             .map_err(|error| {
                 AiError::ProviderUnavailable(format!("app_server_write_failed:{}", error.kind()))
             })
@@ -651,15 +867,73 @@ impl Session {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
         Some(Duration::from_secs(resets_at.saturating_sub(now)))
     }
+
+    /// Ends the child through one path: close stdin (its EOF is the
+    /// app-server's shutdown signal and ends the whole tree), then escalate to
+    /// SIGTERM and finally SIGKILL if it has not exited. Every exit path -
+    /// `Drop`, a session swap, an over-budget restart - goes through here.
+    fn terminate(&mut self) {
+        let pid = self.child.id();
+        // 1. stdin EOF: the app-server's own graceful shutdown.
+        self.stdin = None;
+        if self.wait_for_exit(SHUTDOWN_GRACE) {
+            return;
+        }
+        // 2. SIGTERM.
+        signal(pid, term_signal());
+        if self.wait_for_exit(SHUTDOWN_GRACE) {
+            return;
+        }
+        // 3. SIGKILL, and reap so no zombie is left.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    fn wait_for_exit(&mut self, grace: Duration) -> bool {
+        let deadline = Instant::now() + grace;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) => {}
+                Err(_) => return false,
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(
+                POLL.min(deadline - Instant::now())
+                    .max(Duration::from_millis(1)),
+            );
+        }
+    }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // Closing stdin is the app-server's shutdown signal.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.terminate();
     }
 }
+
+#[cfg(unix)]
+fn term_signal() -> i32 {
+    libc::SIGTERM
+}
+
+#[cfg(not(unix))]
+fn term_signal() -> i32 {
+    15
+}
+
+#[cfg(unix)]
+fn signal(pid: u32, sig: i32) {
+    // SAFETY: `kill` with a pid we started and a plain signal number.
+    unsafe {
+        libc::kill(pid as libc::pid_t, sig);
+    }
+}
+
+#[cfg(not(unix))]
+fn signal(_pid: u32, _sig: i32) {}
 
 /// Shared by every backend that starts a user-installed CLI.
 pub(crate) fn resolve_binary(binary: &Path) -> Option<PathBuf> {

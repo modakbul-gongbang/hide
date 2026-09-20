@@ -13,7 +13,8 @@ use std::sync::Arc;
 /// Every provider the plugin can route to, in the order the operator's saved
 /// choice puts them.
 pub fn router(settings: &AiSettings, paths: &StatePaths) -> Arc<AiRouter> {
-    build(all_backends(settings), settings, paths)
+    let sink = event_log(paths);
+    build(all_backends(settings, &sink), settings, sink)
 }
 
 /// One provider only, for a verification that must not fall back.
@@ -22,11 +23,12 @@ pub fn router_for(
     settings: &AiSettings,
     paths: &StatePaths,
 ) -> Arc<AiRouter> {
-    let backends = all_backends(settings)
+    let sink = event_log(paths);
+    let backends = all_backends(settings, &sink)
         .into_iter()
         .filter(|backend| backend.id() == provider)
         .collect();
-    build(backends, settings, paths)
+    build(backends, settings, sink)
 }
 
 /// The operator's saved choice, from the file `hide-ai` owns, and the reason
@@ -81,12 +83,17 @@ pub fn availability_detail(states: &[(ProviderId, Availability)]) -> String {
         .join(";")
 }
 
-fn all_backends(settings: &AiSettings) -> Vec<Arc<dyn AiBackend>> {
+fn all_backends(settings: &AiSettings, sink: &Arc<dyn AiLogSink>) -> Vec<Arc<dyn AiBackend>> {
     vec![
-        Arc::new(CodexAppServerBackend::new(CodexConfig {
-            model: settings.model(ProviderId::Codex).to_owned(),
-            ..CodexConfig::default()
-        })),
+        // The codex backend owns a resident app-server, so it takes the same
+        // log sink the router uses, to record its idle exits.
+        Arc::new(CodexAppServerBackend::new(
+            CodexConfig {
+                model: settings.model(ProviderId::Codex).to_owned(),
+                ..CodexConfig::default()
+            },
+            Arc::clone(sink),
+        )),
         Arc::new(ClaudeCliBackend::new(ClaudeConfig {
             model: settings.model(ProviderId::Claude).to_owned(),
             ..ClaudeConfig::default()
@@ -94,19 +101,23 @@ fn all_backends(settings: &AiSettings) -> Vec<Arc<dyn AiBackend>> {
     ]
 }
 
+fn event_log(paths: &StatePaths) -> Arc<dyn AiLogSink> {
+    Arc::new(EventLog {
+        paths: paths.clone(),
+    })
+}
+
 fn build(
     backends: Vec<Arc<dyn AiBackend>>,
     settings: &AiSettings,
-    paths: &StatePaths,
+    sink: Arc<dyn AiLogSink>,
 ) -> Arc<AiRouter> {
     Arc::new(AiRouter::new(
         backends,
         // Only the priority moves with the choice; every retry, cooldown and
         // stickiness constant is still the router's own.
         settings.router_config(),
-        Arc::new(EventLog {
-            paths: paths.clone(),
-        }),
+        sink,
     ))
 }
 
@@ -142,6 +153,15 @@ impl AiLogSink for EventLog {
         }
         if let Some(output_tokens) = event.output_tokens {
             parts.push(format!("output_tokens={output_tokens}"));
+        }
+        if let Some(app_server_pid) = event.app_server_pid {
+            parts.push(format!("app_server_pid={app_server_pid}"));
+        }
+        if let Some(descendants) = event.descendants {
+            parts.push(format!("descendants={descendants}"));
+        }
+        if let Some(rss_bytes) = event.rss_bytes {
+            parts.push(format!("rss_bytes={rss_bytes}"));
         }
         if let Some(schema_version) = event.schema_version {
             parts.push(format!("schema={schema_version}"));

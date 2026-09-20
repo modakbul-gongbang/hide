@@ -137,3 +137,108 @@ fn the_watcher_moves_legacy_state_once_on_start() {
         r#"{"automatic_summaries":false}"#
     );
 }
+
+/// A short-path home that removes itself on drop, for the one test that needs
+/// the watcher's wake socket path to fit in `SUN_LEN`.
+#[cfg(unix)]
+struct ShortHome(PathBuf);
+
+#[cfg(unix)]
+impl Drop for ShortHome {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A helper that reports whether a pid is still alive, using signal 0.
+#[cfg(unix)]
+fn alive(pid: i32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// When the host that started the watcher exits, the watcher must exit too,
+/// rather than reconnecting forever and holding its app-server (B11). The
+/// watcher runs under an intermediate shell here; killing that shell reparents
+/// the watcher, whose parent-pid poll then notices the host is gone, logs
+/// `watcher_host_gone`, and exits. An empty PATH keeps Herdr and Codex out, so
+/// nothing but the watcher's own loop is under test.
+#[cfg(unix)]
+#[test]
+fn the_watcher_exits_when_its_host_is_gone() {
+    // A short home: the watcher's wake socket path must fit in SUN_LEN (~104
+    // bytes), which a `/var/folders` tempdir blows past, and this test needs
+    // the event loop to actually run rather than fail at socket bind.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = ShortHome(PathBuf::from(format!(
+        "/tmp/hcl-host-death-{}-{unique}",
+        std::process::id()
+    )));
+    std::fs::create_dir_all(&home.0).unwrap();
+    let home = home.0.as_path();
+    // The shell backgrounds the watcher, prints its pid, and waits, so the
+    // shell is the watcher's parent and outlives it until we kill it.
+    let script = format!(r#"{BIN} watch & echo $!; wait"#);
+    let mut parent = Command::new("sh")
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", "/usr/bin:/bin")
+        .args(["-c", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    use std::io::{BufRead, BufReader};
+    let mut lines = BufReader::new(parent.stdout.take().unwrap()).lines();
+    let watcher_pid: i32 = lines
+        .next()
+        .expect("the shell printed the watcher pid")
+        .unwrap()
+        .trim()
+        .parse()
+        .expect("watcher pid is a number");
+
+    // Wait until the watcher is really up (it wrote its start line).
+    let log = current_state(home).join("events.jsonl");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if std::fs::read_to_string(&log)
+            .map(|text| text.contains("watcher_started"))
+            .unwrap_or(false)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Kill the host. The watcher is now an orphan.
+    let _ = parent.kill();
+    let _ = parent.wait();
+
+    // Within a few poll ticks (<= 5s each) the watcher notices and exits.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while alive(watcher_pid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if alive(watcher_pid) {
+        let _ = Command::new("kill")
+            .args(["-9", &watcher_pid.to_string()])
+            .status();
+        panic!("the watcher outlived its host");
+    }
+
+    let seen = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        seen.contains("watcher_host_gone"),
+        "the watcher exited without logging the reason: {seen}"
+    );
+}
