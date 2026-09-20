@@ -705,14 +705,11 @@ struct PaneHeaderTitle: View {
 enum PaneHeaderPresentation {
     /// The name a pane is shown by, most specific first.
     ///
-    /// A Herdr label is a name the user chose for this pane, so it outranks
-    /// everything. The core's agent identity is the operator's Herdr name or
-    /// rolling task title that the sidebar already shows, so the header and
-    /// sidebar call one pane the same thing (PRD D-09). A terminal title is
-    /// what the running program calls itself and can change with status, which
-    /// is why it ranks below the identity. The workspace label names the project, which
-    /// every pane in it shares. The pane id is the last resort and is never
-    /// empty.
+    /// The core's agent identity is the rolling task title or workspace
+    /// fallback that the sidebar already shows, so an agent pane keeps one
+    /// title across every surface (PRD D-09). A non-agent pane falls back to
+    /// its explicit Herdr pane label, then its terminal title and workspace.
+    /// The pane id is the last resort and is never empty.
     static func title(
         herdrLabel: String?,
         agentSummary: String? = nil,
@@ -720,7 +717,7 @@ enum PaneHeaderPresentation {
         workspaceLabel: String?,
         paneID: String
     ) -> String {
-        for candidate in [herdrLabel, agentSummary, terminalTitle, workspaceLabel] {
+        for candidate in [agentSummary, herdrLabel, terminalTitle, workspaceLabel] {
             let normalized = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !normalized.isEmpty { return normalized }
         }

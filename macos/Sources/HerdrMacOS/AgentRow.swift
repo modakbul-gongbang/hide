@@ -91,7 +91,7 @@ struct AgentRowPresentation: Equatable {
     /// The core's short human word. No view builds one out of an axis value.
     let statusLabel: String
     let statusColor: Color
-    /// The operator's Herdr name or the rolling task title (PRD D-01).
+    /// The rolling task title or workspace fallback (PRD D-01).
     let title: String
     /// The sentence the core chose for this row's state: what the operator is
     /// asked for, or what the agent is doing. `nil` draws none (PRD D-06).

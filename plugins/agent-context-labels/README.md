@@ -27,7 +27,7 @@ Each supported pane gets a short task label, lifecycle status, agent kind, and t
 ## What it does
 
 - Adds an 8-to-30-character Korean task label to recognized Codex and Claude Code panes.
-- Uses that rolling task as Hide's default agent title while preserving a Herdr agent name the operator chose.
+- Uses that rolling task as Hide's agent title, with the workspace label as the fallback; Herdr agent names remain control identifiers.
 - Publishes the one-line `progress` and the 40-character `expected_reply` as tokens, so Hide's sidebar can say what the agent is doing or what it is waiting for you to do.
 - Shows question, approval, error, working, unseen completion, idle, and unknown states as compact symbols.
 - Holds one steady symbol per state; working is told apart from an unseen completion by color, not by a blink.
@@ -284,7 +284,8 @@ The refresh action discards the rolling task for the focused pane and asks again
 ## Task titles
 
 The plugin publishes no session `name` and never renames a Herdr agent or tab.
-Hide titles an agent by an operator-chosen Herdr agent name when one exists, then by the rolling `task`, then by the workspace label.
+Hide titles an agent by the rolling `task`, then by the workspace label.
+Names assigned by Sasu or another orchestrator remain available for CLI targeting but never become display titles.
 Claude's `ai-title` and Codex's first human turn have no separate title role.
 
 The second report carries `progress` and `expected_reply`, plus an explicit `null` for the retired `name` token so an older value cannot linger after an upgrade.

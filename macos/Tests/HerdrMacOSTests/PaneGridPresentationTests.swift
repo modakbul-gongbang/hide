@@ -7,9 +7,16 @@ import Testing
 @MainActor
 @Suite("Pane grid presentation")
 struct PaneGridPresentationTests {
-    /// R7: a pane the user named shows that name, and only a pane with no name
-    /// of its own falls back to the project every pane in it shares.
-    @Test func paneHeaderPrefersHerdrLabelThenTerminalTitleThenWorkspaceThenPaneIdentifier() {
+    /// R7: an agent pane uses the task identity every other agent surface
+    /// shows. A non-agent pane keeps its explicit pane-label fallback ladder.
+    @Test func paneHeaderPrefersAgentIdentityAndKeepsTheNonAgentFallbacks() {
+        #expect(PaneHeaderPresentation.title(
+            herdrLabel: "  sasu-implementor  ",
+            agentSummary: "운영 DB 마이그레이션 실행",
+            terminalTitle: "claude",
+            workspaceLabel: "hide",
+            paneID: "w1:p1"
+        ) == "운영 DB 마이그레이션 실행")
         #expect(PaneHeaderPresentation.title(
             herdrLabel: "  review agent  ",
             terminalTitle: "claude",
@@ -22,7 +29,7 @@ struct PaneGridPresentationTests {
             workspaceLabel: "hide",
             paneID: "w1:p1"
         ) == "claude")
-        // The sidebar's context label beats Claude Code's status title.
+        // The sidebar's task identity beats Claude Code's status title.
         #expect(PaneHeaderPresentation.title(
             herdrLabel: nil,
             agentSummary: "운영 DB 마이그레이션 실행",

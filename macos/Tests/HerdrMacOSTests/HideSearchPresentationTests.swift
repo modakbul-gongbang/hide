@@ -127,20 +127,6 @@ private func searchWorkspace(id: String, paneID: String) throws -> CoreWorkspace
 
     let quiet = searchAgent(paneID: "w7J:p2P")
     #expect(HideSearchPresentation.agentSubtitle(quiet) == "Idle")
-    let tasked = SidebarAgent(
-        id: "t", paneID: "w7J:p3", workspaceLabel: "Same name", agentKind: "claude",
-        group: "seen", symbol: "\u{25cb}", statusLabel: "Idle",
-        identityLabel: "hook-bug-check", task: "hook 보고 경로 교체",
-        elapsed: "2m", lastActivity: ""
-    )
-    #expect(HideSearchPresentation.agentSubtitle(tasked) == "hook 보고 경로 교체")
-    let named = SidebarAgent(
-        id: "n", paneID: "w7J:p4", workspaceLabel: "Same name", agentKind: "claude",
-        group: "seen", symbol: "\u{25cb}", statusLabel: "Idle",
-        identityLabel: "hook 보고 경로 교체", task: "hook 보고 경로 교체",
-        elapsed: "2m", lastActivity: ""
-    )
-    #expect(HideSearchPresentation.agentSubtitle(named) == "Idle", "the task is already the title")
 }
 
 @Test func foldedProjectSearchRoutesToPrimaryWithoutExpandingItsGroup() throws {

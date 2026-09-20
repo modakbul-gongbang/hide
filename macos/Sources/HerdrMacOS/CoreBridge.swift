@@ -1408,7 +1408,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 "active_tab_id": tabID,
             ]],
             "tabs": [["tab_id": tabID, "workspace_id": workspaceID, "label": "Round 3"]],
-            "panes": [["pane_id": paneID, "cwd": workspaceRoot.path]],
+            // The pane label deliberately matches the Herdr control name, not
+            // the rolling task. Native QA must still render the task title.
+            "panes": [[
+                "pane_id": paneID,
+                "label": "fixture-agent-working",
+                "cwd": workspaceRoot.path,
+            ]],
             "layouts": [[
                 "workspace_id": workspaceID,
                 "tab_id": tabID,
@@ -1441,7 +1447,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     ) -> [String: Any] {
         let paneID = "fixture-\(id)"
         return [
-            "id": paneID,
+            // Keep the Herdr control name visibly distinct from both the pane
+            // handle and rolling task so native QA catches either one leaking
+            // back into display copy.
+            "id": "fixture-agent-\(id)",
             "pane_id": paneID,
             "workspace_label": workspace,
             "agent": agent,

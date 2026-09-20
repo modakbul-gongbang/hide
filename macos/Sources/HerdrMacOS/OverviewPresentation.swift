@@ -345,19 +345,16 @@ enum OverviewPresentation {
         return entries
     }
 
-    /// The row's second text: the sentence the core chose for its state, or
-    /// the rolling task when an operator name is the title. A task already
-    /// used as the title is not repeated.
-    static func rowTask(_ agent: SidebarAgent) -> String? {
-        if let detail = agent.detail { return detail }
-        if let task = agent.task, task != agent.identityLabel { return task }
-        return nil
+    /// The row's second text is only the sentence the core chose for its
+    /// state. The rolling task is already the title and is never repeated.
+    static func rowDetail(_ agent: SidebarAgent) -> String? {
+        agent.detail
     }
 
     // MARK: - Search
 
     /// Whether a group survives the query: its branch matches, or one of its
-    /// rows does by title or task. A matching group keeps only its matching
+    /// rows does by title or state sentence. A matching group keeps only its matching
     /// rows plus their ancestors, in the order they already had (PRD B15).
     static func filter(
         entries: [AgentEntry],
@@ -371,7 +368,7 @@ enum OverviewPresentation {
             return entries
         }
         let matching = Set(entries.filter { entry in
-            [entry.agent.identityLabel, entry.agent.task, entry.agent.detail]
+            [entry.agent.identityLabel, entry.agent.detail]
                 .compactMap { $0 }
                 .contains { $0.localizedCaseInsensitiveContains(normalized) }
         }.map(\.id))

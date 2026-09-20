@@ -615,7 +615,7 @@ pub fn apply_lineage(
         let spawn_parent = spawned_from
             .as_ref()
             .and_then(|pane| by_pane.get(pane))
-            .map(|parent| agent_identity_label(&agents[*parent]));
+            .map(|parent| agents[*parent].identity_label.clone());
         let hint = spawned_from.as_ref().map(|_| match &spawn_parent {
             Some(name) => format!("↳ from {name}"),
             None => "↳ from an agent Hide can't see".to_owned(),
@@ -683,18 +683,6 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
         status_label: agent.status_label.clone(),
         delegated: agent.delegated,
     }
-}
-
-/// The user-facing title shared by lineage surfaces.
-///
-/// The ladder is `operator Herdr agent name → task → workspace label` (PRD
-/// D-01). A pane id is a transport handle, never a name: a report-only pane
-/// whose `id` is its pane id falls through to the task or workspace label.
-fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
-    (agent.id != agent.pane_id)
-        .then(|| agent.id.clone())
-        .or_else(|| agent.task.clone())
-        .unwrap_or_else(|| agent.workspace_label.clone())
 }
 
 /// What a row's second line says, decided by the row's group (PRD D-06).
@@ -965,7 +953,8 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
 
-    let mut projected = SidebarAgentSnapshot {
+    let identity_label = task.unwrap_or_else(|| workspace_label.clone());
+    let projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         pane_id,
         workspace_label,
@@ -986,8 +975,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         status_label: String::new(),
         requires_close_confirmation: false,
         requires_close_status_check: false,
-        identity_label: String::new(),
-        task,
+        identity_label,
         progress,
         expected_reply,
         detail: None,
@@ -1018,7 +1006,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         spawn_origin_pane_id: None,
         lineage_collapsed: false,
     };
-    projected.identity_label = agent_identity_label(&projected);
     Ok(projected)
 }
 
@@ -1768,16 +1755,15 @@ mod tests {
         );
     }
 
-    /// PRD D-01: an operator name wins, otherwise the rolling task is the
-    /// title and the workspace is the final fallback. A retired `name` token
-    /// has no effect.
+    /// PRD D-01: the rolling task is the title and the workspace is the final
+    /// fallback. Herdr's agent name and the retired `name` token are control
+    /// identifiers, not display titles.
     #[test]
-    fn identity_ladder_prefers_herdr_name_then_task_then_workspace() {
+    fn identity_ladder_uses_task_then_workspace_and_ignores_names() {
         let projected = projected(json!([
             {"pane_id":"p2","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p3","id":"p3","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","name":"첫 프롬프트","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p5","id":"p5","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000005"}}
+            {"pane_id":"p3","id":"sasu-implementor","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","name":"첫 프롬프트"}},
+            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}}
         ]));
         let labels = projected
             .iter()
@@ -1785,12 +1771,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             labels,
-            [
-                "impl-x",
-                "hook 보고 경로 수정",
-                "hook 보고 경로 수정",
-                "hide"
-            ]
+            ["hook 보고 경로 수정", "hide", "hook 보고 경로 수정"]
         );
     }
 

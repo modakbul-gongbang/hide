@@ -335,10 +335,6 @@ pub struct SidebarAgentSnapshot {
     /// The title every surface calls this agent by; `sidebar.rs` owns the
     /// ladder that picks it (PRD D-01).
     pub identity_label: String,
-    /// The label plugin's rolling task title. It is the default row title and
-    /// the search sheet's subtitle when the state chose no sentence (PRD D-01,
-    /// D-15).
-    pub task: Option<String>,
     /// The label plugin's one-line progress sentence.
     #[serde(skip_serializing)]
     pub progress: Option<String>,

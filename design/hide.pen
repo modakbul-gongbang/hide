@@ -9378,7 +9378,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "One title everywhere: the core's identity_label (operator Herdr agent name → task → workspace). Search subtitles the state sentence (else task, else the status word); Recent titles a one-agent tab by its agent and keeps the Herdr label otherwise.",
+          "content": "One title everywhere: the core's identity_label (task → workspace; Herdr agent names are control ids only). Search subtitles the state sentence (else the status word); Recent titles a one-agent tab by its agent and keeps the Herdr label otherwise.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -29114,7 +29114,7 @@
               "type": "text",
               "id": "ari00d",
               "name": "Rule",
-              "content": "Line 1: operator Herdr name, else rolling task, else workspace.",
+              "content": "Line 1: rolling task, else workspace. Herdr agent names are control ids only.",
               "fill": "$--color-secondary",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-body",
