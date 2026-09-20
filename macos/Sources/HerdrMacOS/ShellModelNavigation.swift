@@ -184,20 +184,30 @@ struct AdaptiveTabStripPresentation: Equatable {
         case icon
     }
 
+    struct Slot: Equatable {
+        let tabIndex: Int
+        let start: CGFloat
+        let width: CGFloat
+
+        var midpoint: CGFloat { start + width / 2 }
+    }
+
     let density: Density
-    let slotWidth: CGFloat
-    let visibleRange: Range<Int>
+    let slots: [Slot]
     let hiddenIndices: [Int]
     let tabIDs: [String]
 
+    var visibleRange: Range<Int> {
+        guard let first = slots.first, let last = slots.last else { return 0..<0 }
+        return first.tabIndex..<(last.tabIndex + 1)
+    }
     var showsOverflow: Bool { !hiddenIndices.isEmpty }
 
     init(availableWidth: CGFloat, tabIDs: [String], activeTabID: String?) {
         self.tabIDs = tabIDs
         guard !tabIDs.isEmpty, availableWidth.isFinite, availableWidth > 0 else {
             density = .standard
-            slotWidth = 0
-            visibleRange = 0..<0
+            slots = []
             hiddenIndices = Array(tabIDs.indices)
             return
         }
@@ -206,82 +216,81 @@ struct AdaptiveTabStripPresentation: Equatable {
         let equalWidth = availableWidth / CGFloat(count)
         if equalWidth >= HideTheme.Layout.tabPreferredWidth {
             density = .standard
-            slotWidth = HideTheme.Layout.tabPreferredWidth
-            visibleRange = 0..<count
+            slots = Self.slots(
+                for: 0..<count,
+                widths: Array(repeating: HideTheme.Layout.tabPreferredWidth, count: count)
+            )
             hiddenIndices = []
             return
         }
         if equalWidth >= HideTheme.Layout.tabTitleMinimumWidth {
             density = .compressed
-            slotWidth = equalWidth
-            visibleRange = 0..<count
+            slots = Self.slots(for: 0..<count, widths: Array(repeating: equalWidth, count: count))
             hiddenIndices = []
             return
         }
-        if equalWidth >= HideTheme.Layout.tabIconMinimumWidth {
+
+        let activeIndex = activeTabID.flatMap { tabIDs.firstIndex(of: $0) } ?? 0
+        let compactWidths = tabIDs.indices.map { index in
+            Self.compactWidth(isActive: index == activeIndex)
+        }
+        if compactWidths.reduce(0, +) <= availableWidth {
             density = .icon
-            slotWidth = equalWidth
-            visibleRange = 0..<count
+            slots = Self.slots(for: 0..<count, widths: compactWidths)
             hiddenIndices = []
             return
         }
 
         let tabWidth = max(0, availableWidth - HideTheme.Layout.tabOverflowControlWidth)
-        let visibleCount = min(
-            count,
-            max(1, Int(tabWidth / HideTheme.Layout.tabIconMinimumWidth))
-        )
-        let activeIndex = activeTabID.flatMap { tabIDs.firstIndex(of: $0) } ?? 0
+        let activeWidth = Self.compactWidth(isActive: true)
+        let remainingWidth = max(0, tabWidth - activeWidth)
+        let visibleCount = min(count, 1 + Int(remainingWidth / HideTheme.Layout.tabIconIdentityWidth))
         let centeredStart = activeIndex - visibleCount / 2
         let start = min(max(0, centeredStart), count - visibleCount)
         let range = start..<(start + visibleCount)
 
         density = .icon
-        slotWidth = tabWidth / CGFloat(visibleCount)
-        visibleRange = range
+        slots = Self.slots(
+            for: range,
+            widths: range.map { compactWidths[$0] }
+        )
         hiddenIndices = tabIDs.indices.filter { !range.contains($0) }
+    }
+
+    func slot(at tabIndex: Int) -> Slot? {
+        slots.first { $0.tabIndex == tabIndex }
     }
 
     /// A carried tab may trade places only with tabs in the same visible
     /// segment. Hidden tabs keep their relative order until the operator
     /// selects one and brings it into that segment.
     func destinationIndex(from sourceIndex: Int, translation: CGFloat) -> Int {
-        guard visibleRange.contains(sourceIndex), slotWidth > 0 else { return sourceIndex }
-        let localIndex = sourceIndex - visibleRange.lowerBound
-        let localDestination = Self.destinationIndex(
-            from: localIndex,
-            translation: translation,
-            slotWidth: slotWidth,
-            count: visibleRange.count
-        )
-        return visibleRange.lowerBound + localDestination
-    }
-
-    private static func destinationIndex(
-        from index: Int,
-        translation: CGFloat,
-        slotWidth: CGFloat,
-        count: Int
-    ) -> Int {
-        guard index >= 0, index < count else { return index }
-        var destination = index
+        guard let sourceSlot = slot(at: sourceIndex) else { return sourceIndex }
+        var destination = sourceIndex
         if translation > 0 {
-            var candidate = index + 1
-            while candidate < count {
-                let threshold = slotWidth * (CGFloat(candidate - index) - 0.5)
-                guard translation >= threshold else { break }
-                destination = candidate
-                candidate += 1
+            for target in slots where target.tabIndex > sourceIndex {
+                guard translation >= target.midpoint - (sourceSlot.start + sourceSlot.width) else { break }
+                destination = target.tabIndex
             }
         } else if translation < 0 {
-            var candidate = index - 1
-            while candidate >= 0 {
-                let threshold = slotWidth * (CGFloat(index - candidate) - 0.5)
-                guard -translation >= threshold else { break }
-                destination = candidate
-                candidate -= 1
+            for target in slots.reversed() where target.tabIndex < sourceIndex {
+                guard -translation >= sourceSlot.start - target.midpoint else { break }
+                destination = target.tabIndex
             }
         }
         return destination
+    }
+
+    private static func compactWidth(isActive: Bool) -> CGFloat {
+        HideTheme.Layout.tabIconIdentityWidth
+            + (isActive ? HideTheme.IconButton.toolbarSize.width : 0)
+    }
+
+    private static func slots(for range: Range<Int>, widths: [CGFloat]) -> [Slot] {
+        var start: CGFloat = 0
+        return zip(range, widths).map { index, width in
+            defer { start += width }
+            return Slot(tabIndex: index, start: start, width: width)
+        }
     }
 }

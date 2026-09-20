@@ -361,12 +361,13 @@ enum HideTheme {
         /// would carry it out of its slot.
         static let tabDragActivationDistance: CGFloat = 6
         /// Browser-style tab widths. Tabs begin at the preferred width, share
-        /// the available strip width down to the title boundary, then keep
-        /// their identity and close actions at the icon boundary. The final
-        /// control opens the ordered overflow menu.
+        /// the available strip width down to the title boundary, then keep a
+        /// compact identity at the leading edge. Only the active tab adds the
+        /// existing 24pt toolbar close control. The final control opens the
+        /// ordered overflow menu.
         static let tabPreferredWidth: CGFloat = 180
         static let tabTitleMinimumWidth: CGFloat = 104
-        static let tabIconMinimumWidth: CGFloat = 64
+        static let tabIconIdentityWidth: CGFloat = 40
         static let tabOverflowControlWidth: CGFloat = 28
         static let tabStatusDotSize: CGFloat = 5
         /// The window's first row. A tab, the new-tab control, and the strip

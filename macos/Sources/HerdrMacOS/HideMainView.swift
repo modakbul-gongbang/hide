@@ -77,8 +77,8 @@ private struct HideTabStrip: View {
                     ZStack(alignment: .leading) {
                         WindowDragArea()
                         HStack(spacing: HideTheme.spacingNone) {
-                            ForEach(Array(presentation.visibleRange), id: \.self) { index in
-                                tabCell(tabs[index], presentation: presentation)
+                            ForEach(presentation.slots, id: \.tabIndex) { slot in
+                                tabCell(tabs[slot.tabIndex], slot: slot, presentation: presentation)
                             }
                             if presentation.showsOverflow {
                                 overflowMenu(tabs: tabs, presentation: presentation)
@@ -149,6 +149,7 @@ private struct HideTabStrip: View {
 
     private func tabCell(
         _ tab: ShellTabItem,
+        slot: AdaptiveTabStripPresentation.Slot,
         presentation: AdaptiveTabStripPresentation
     ) -> some View {
         HStack(spacing: HideTheme.spacingNone) {
@@ -171,16 +172,18 @@ private struct HideTabStrip: View {
                 inline: true
             )
 
-            HideIconButton(
-                systemImage: "xmark",
-                help: "Close \(tab.label)",
-                variant: .toolbar,
-                command: .menu(.closeTab),
-                tabID: tab.id,
-                action: { model.closeUnifiedTab(tab) }
-            )
+            if tab.active {
+                HideIconButton(
+                    systemImage: "xmark",
+                    help: "Close \(tab.label)",
+                    variant: .toolbar,
+                    command: .menu(.closeTab),
+                    tabID: tab.id,
+                    action: { model.closeUnifiedTab(tab) }
+                )
+            }
         }
-        .frame(width: presentation.slotWidth, height: HideTheme.Layout.tabStripHeight)
+        .frame(width: slot.width, height: HideTheme.Layout.tabStripHeight)
         // A carried tab climbs to the top of the surface ladder, which is how
         // this system says "closer" without a drop shadow.
         .background(
@@ -216,6 +219,7 @@ private struct HideTabStrip: View {
         switch density {
         case .icon:
             compactTabIdentity(tab, includesAgentStatusMark: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)
         case .standard, .compressed:
             let compressed = density == .compressed

@@ -226,9 +226,11 @@ New worktree uses stacked Branch name, Create from, and Start with fields, follo
 Inside a settings row the same picker drops its stacked label and takes the `settingsControlWidth` (200pt) right-hand column, because the row already carries the label on the left; its accessibility label stays the picker's own.
 Terminal tabs use the stable Herdr tab name; the pane header alone carries the focused pane title and its agent status/provider marks.
 Work tabs begin at the shared `tabPreferredWidth` (180pt) and shrink equally as the strip fills, preserving titles and shortcut keycaps through the inclusive `tabTitleMinimumWidth` (104pt) boundary.
-Below 104pt they become icon tabs, keep identity, live state, close, notice and dirty marks, use a filled document glyph for preview files, and remain at or above `tabIconMinimumWidth` (64pt).
-If every icon tab cannot fit, the strip reserves `tabOverflowControlWidth` (28pt) for an ordered `…` menu and shows one contiguous canonical range containing the active tab.
-Selecting a hidden tab moves that visible range without reordering it, widening restores icon, title and preferred states in reverse, and drag destinations use the exact same presentation as rendering.
+Only the active tab draws the existing 24pt toolbar close control at every density; selecting an inactive tab reveals that control in the same trailing position.
+Below 104pt tabs become icon tabs and keep identity, live state, notice and dirty marks, using a filled document glyph for preview files.
+An inactive icon tab uses the leading `tabIconIdentityWidth` (40pt), while the active tab adds the close control for a 64pt total width.
+If those compact widths cannot all fit, the strip reserves `tabOverflowControlWidth` (28pt) for an ordered `…` menu and shows one contiguous canonical range containing the active tab.
+Selecting a hidden tab moves that visible range without reordering it, widening restores compact, title and preferred states in reverse, and drag destinations use the same per-tab widths and starts as rendering.
 The strip never scrolls horizontally or scrolls the active tab into view.
 The tooltip and accessibility label retain the full stable tab name, focused-pane context and state at every density; file and diff tabs retain their file names.
 The sidebar runtime version stays on one line with middle truncation; its tooltip carries the complete value.

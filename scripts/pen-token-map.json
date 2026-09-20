@@ -122,7 +122,7 @@
     "--size-worktree-dialog": "worktreeDialogWidth",
     "--size-tab-preferred": "Layout.tabPreferredWidth",
     "--size-tab-title-min": "Layout.tabTitleMinimumWidth",
-    "--size-tab-icon-min": "Layout.tabIconMinimumWidth",
+    "--size-tab-icon-identity": "Layout.tabIconIdentityWidth",
     "--size-tab-overflow-control": "Layout.tabOverflowControlWidth",
     "--size-tab-status-dot": "Layout.tabStatusDotSize",
     "--size-editor-line-number-col": "Editor.lineNumberColumnWidth",
