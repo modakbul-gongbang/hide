@@ -22,6 +22,10 @@
     {"node": "fm-menu-opening", "descendant": "fm-open-browser", "variable": "--opacity-disabled"}
   ],
   "mapped": {
+    "--home-column-width": "Home.columnWidth",
+    "--home-collapsed-width": "Home.collapsedWidth",
+    "--home-halo-radius": "Home.haloRadius",
+    "--home-child-indent": "Home.childIndent",
     "--color-background": "background",
     "--color-sidebar": "sidebar",
     "--color-panel": "panel",

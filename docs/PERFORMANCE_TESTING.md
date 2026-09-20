@@ -449,3 +449,15 @@ Native acceptance additionally covers row click versus header click versus the `
 Debug candidates support `--verification-background` from the first window presentation, including the pre-runtime recheck.
 It orders the exact candidate window behind existing windows without activating the application or making the window key.
 This works with a live private server as well as snapshot fixtures; it does not authorize foreground input.
+
+### Project Home projection and issue reads
+
+The shell memoizes the board by navigation snapshot revision, project identity and connection state.
+A body re-evaluation on unchanged input does not regroup cards or rebuild lineage.
+The core issue projection uses accepted catalog and metadata only; it schedules GitHub work on a changed selected reference, board open, project selection or explicit refresh, never a timer.
+The GitHub reader keeps its existing single worker and per-project generation cache.
+At most 200 linked identities and backlog entries are retained per project; one extra list result reports overflow.
+Closed and cross-repository identities are resolved in one bounded query.
+Manual writes use the existing task-operation slot and a terminating worker; cleanup shares the bounded purpose mirror queue.
+Native acceptance includes empty-checkout entry, overlay dismissal, both groupings, issue linking, stale facts, narrow widths and mixed Korean/English labels.
+`ProjectHomeTests` and `runtime::tests::issues` own projection memoization, stage priority, deduplication, issue precedence and transition-only refresh regressions.

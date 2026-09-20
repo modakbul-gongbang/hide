@@ -271,6 +271,14 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                 }
                 return nil
             }
+            let homeTakesEscape = MainActor.assumeIsolated {
+                ProjectHomeShortcutPolicy.shouldClose(event, visible: self.model.projectHomeVisible,
+                    sheetPresented: self.model.hintSheetPresented || self.model.projectHomeIssuePopover)
+            }
+            if homeTakesEscape {
+                MainActor.assumeIsolated { self.model.closeProjectHome() }
+                return nil
+            }
             return event
         }
         presentMainWindow(window, source: "launch")
@@ -636,6 +644,7 @@ struct ShellCommands: Commands {
 
             menuButton(.toggleLeftSidebar) { model.toggleLeftSidebar() }
             menuButton(.toggleSidebarView) { model.toggleSidebarContent() }
+            menuButton(.projectHome) { model.toggleProjectHome() }
             menuButton(.toggleRightPanel) { model.toggleRightPanel() }
 
             Divider()

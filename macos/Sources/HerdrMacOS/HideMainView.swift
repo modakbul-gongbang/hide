@@ -16,6 +16,9 @@ struct HideMainView: View {
                    model.core.snapshot?.editor.activeTabID != nil {
                     EditorViewerOverlay()
                 }
+                if !model.isRemoteContext, model.projectHomeVisible {
+                    ProjectHome()
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(1)
@@ -104,6 +107,13 @@ private struct HideTabStrip: View {
             } else {
                 WindowDragArea()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            if model.focusedWorkspace != nil, !model.isRemoteContext {
+                HideIconButton(systemImage: "square.grid.2x2", help: "Project Home",
+                    variant: .toolbar, isSelected: model.projectHomeVisible,
+                    command: .menu(.projectHome), action: model.toggleProjectHome)
+                    .accessibilityIdentifier("hide-project-home-toggle")
             }
 
             if let notice = model.reopenTabNotice ?? model.pendingCloseNotice ?? model.asyncTabNotice {

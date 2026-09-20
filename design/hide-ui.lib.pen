@@ -13913,6 +13913,22 @@
     "--size-recent-location-max": {
       "type": "number",
       "value": 112
+    },
+    "--home-child-indent": {
+      "type": "number",
+      "value": 12
+    },
+    "--home-collapsed-width": {
+      "type": "number",
+      "value": 148
+    },
+    "--home-column-width": {
+      "type": "number",
+      "value": 288
+    },
+    "--home-halo-radius": {
+      "type": "number",
+      "value": 6
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

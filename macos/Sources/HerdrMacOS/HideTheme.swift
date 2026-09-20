@@ -95,6 +95,13 @@ enum HideTheme {
         static let secondary: Double = 0.72
     }
 
+    enum Home {
+        static let columnWidth: CGFloat = 288
+        static let collapsedWidth: CGFloat = 148
+        static let haloRadius: CGFloat = 6
+        static let childIndent: CGFloat = 12
+    }
+
     enum Typography {
         static let micro: CGFloat = 9
         static let caption: CGFloat = 10

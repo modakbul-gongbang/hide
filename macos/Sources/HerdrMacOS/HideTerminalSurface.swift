@@ -13,7 +13,11 @@ struct HideTerminalSurface: View {
             if let notice = model.paneProjectionNotice {
                 PaneProjectionUnavailableState(notice: notice)
             } else if panes.isEmpty {
-                HideEmptyCheckoutState()
+                if model.projectHomeIsEmptyState {
+                    ProjectHome()
+                } else {
+                    HideEmptyCheckoutState()
+                }
             } else if model.isRemoteContext {
                 HideTabCanvas(
                     items: model.remotePaneGridItems,
