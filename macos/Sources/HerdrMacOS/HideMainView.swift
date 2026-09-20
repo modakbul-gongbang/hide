@@ -27,17 +27,6 @@ struct HideMainView: View {
         .accessibilityIdentifier("hide-main")
     }
 }
-/// Each tab's drawn width, gathered so a drag knows what it is passing over.
-/// Tabs are as wide as their labels, so the destination of a drop cannot be
-/// worked out from an index alone.
-private struct TabWidthPreferenceKey: PreferenceKey {
-    static let defaultValue: [String: CGFloat] = [:]
-
-    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
-    }
-}
-
 /// The tab strip, which is the window's first row.
 ///
 /// Nothing sits above it: the system titlebar and the workspace header that
@@ -55,7 +44,6 @@ private struct HideTabStrip: View {
     @State private var draggingTabID: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dragTranslation: CGFloat = 0
-    @State private var tabWidths: [String: CGFloat] = [:]
 
     /// The traffic lights sit over whichever surface reaches the window's top
     /// left corner. With the sidebar open that is the brand header and the
@@ -79,144 +67,43 @@ private struct HideTabStrip: View {
             }
 
             if model.focusedWorkspace != nil {
-                HStack(spacing: HideTheme.spacingNone) {
-                    ScrollViewReader { scroll in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: HideTheme.spacingNone) {
-                            ForEach(model.unifiedTabs) { tab in
-                                HStack(spacing: HideTheme.spacingNone) {
-                                    Button {
-                                        model.focusUnifiedTab(tab)
-                                    } label: {
-                                        HStack(spacing: HideTheme.spacingSM) {
-                                            if let agent = tab.focusedAgent {
-                                                let status = AgentStatusPresentation(agent: agent, connected: model.agentsConnected)
-                                                AgentStatusMark(symbol: status.symbol, color: status.color)
-                                                AgentBadge(agentKind: agent.agentKind, stateColor: status.color, size: HideTheme.lineageChevronWidth)
-                                            } else {
-                                                Image(systemName: tabIcon(tab))
-                                                    .hideFont(size: HideTheme.Typography.caption, weight: .medium)
-                                            }
-                                            Text(tab.label + model.tabActivity(for: tab))
-                                                .hideFont(
-                                                    size: HideTheme.Typography.body,
-                                                    weight: tab.active ? .semibold : .medium,
-                                                    italic: EditorTabTitlePresentation.italic(preview: tab.preview)
-                                                )
-                                                .lineLimit(1)
-                                                .frame(maxWidth: HideTheme.tabTitleMaxWidth, alignment: .leading)
-                                            if let notice = model.tabNotice(for: tab) {
-                                                Image(systemName: "exclamationmark.triangle")
-                                                    .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
-                                                    .foregroundStyle(HideTheme.warning)
-                                                    .accessibilityLabel(notice)
-                                            }
-                                            if tab.dirty {
-                                                Circle()
-                                                    .fill(HideTheme.secondary)
-                                                    .frame(width: 5, height: 5)
-                                            }
-                                            // The keycap holds its slot whether
-                                            // or not it is shown, so revealing
-                                            // the hints fades them in without
-                                            // resizing the tab under the
-                                            // pointer.
-                                            if let shortcutNumber = model.tabShortcutNumber(tabID: tab.id) {
-                                                HideKeycap(command: .tab(shortcutNumber))
-                                                .opacity((model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.command]) ? 1 : 0)
-                                            }
-                                        }
-                                        .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)
-                                        .padding(.leading, HideTheme.spacingMD)
-                                        .padding(.trailing, HideTheme.spacingSM)
-                                        .frame(height: HideTheme.Layout.tabStripHeight)
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(HideInteractiveButtonStyle())
-                                    // A double-click on the title keeps a
-                                    // preview tab; the button's own click
-                                    // still focuses it on the first click.
-                                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.keepUnifiedTabOpen(tab) })
-                                    .accessibilityLabel(EditorTabTitlePresentation.spoken(label: tab.label, preview: tab.preview))
-                                    .hideTooltip([tab.contextLabel ?? EditorTabTitlePresentation.spoken(label: tab.label, preview: tab.preview), tab.focusedAgent.map { AgentStatusPresentation(agent: $0, connected: model.agentsConnected).label }].compactMap { $0 }.joined(separator: " · "), command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab), inline: true)
-
-                                    HideIconButton(
-                                        systemImage: "xmark",
-                                        help: "Close \(tab.label)",
-                                        variant: .toolbar,
-                                        command: .menu(.closeTab),
-                                        tabID: tab.id,
-                                        action: { model.closeUnifiedTab(tab) }
-                                    )
-                                }
-                                .padding(.trailing, HideTheme.spacingXS)
-                                // A carried tab climbs to the top of the
-                                // surface ladder, which is how this system
-                                // says "closer" without a drop shadow.
-                                .background(
-                                    tab.active || draggingTabID == tab.id
-                                        ? HideTheme.elevated
-                                        : HideTheme.panel
-                                )
-                                .background(
-                                    GeometryReader { proxy in
-                                        Color.clear.preference(
-                                            key: TabWidthPreferenceKey.self,
-                                            value: [tab.id: proxy.size.width]
-                                        )
-                                    }
-                                )
-                                .overlay(alignment: .trailing) {
-                                    Rectangle()
-                                        .fill(HideTheme.divider)
-                                        .frame(width: HideTheme.Layout.hairlineWidth)
-                                }
-                                .overlay {
-                                    if draggingTabID == tab.id {
-                                        Rectangle()
-                                            .strokeBorder(
-                                                HideTheme.divider,
-                                                lineWidth: HideTheme.Layout.hairlineWidth
-                                            )
-                                    }
-                                }
-                                .offset(x: draggingTabID == tab.id ? dragTranslation : 0)
-                                .zIndex(draggingTabID == tab.id ? 1 : 0)
-                                .accessibilityIdentifier("hide-tab-\(tab.id)")
-                                .gesture(tabDragGesture(for: tab))
-                            }
-                        }
-                        .animation(.easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)), value: (model.shortcutHintState.revealed && model.shortcutHintState.modifiers == [.command]))
-                        // SwiftUI hands preference changes to a Sendable
-                        // closure, so the hop back to the main actor is what
-                        // lets the widths land in view state. It only fires
-                        // when a tab's drawn width actually changes.
-                        .onPreferenceChange(TabWidthPreferenceKey.self) { widths in
-                            Task { @MainActor in tabWidths = widths }
-                        }
-                    }
-                    // The active tab is always in view. With more tabs than
-                    // the strip can show, the one the operator just chose
-                    // sat past the edge with no indicator that it existed.
-                    .onChange(of: model.unifiedTabs.first(where: \.active)?.id, initial: true) { _, activeID in
-                        guard let activeID else { return }
-                        scroll.scrollTo(activeID)
-                    }
-                    }
-                    HideIconButton(
-                        systemImage: "plus",
-                        help: "New Tab",
-                        accessibilityLabel: "New Herdr tab",
-                        variant: .toolbar,
-                        command: .menu(.newTab),
-                        action: model.addTab
+                GeometryReader { proxy in
+                    let tabs = model.unifiedTabs
+                    let presentation = AdaptiveTabStripPresentation(
+                        availableWidth: max(0, proxy.size.width - HideTheme.IconButton.toolbarSize.width),
+                        tabIDs: tabs.map(\.id),
+                        activeTabID: tabs.first(where: \.active)?.id
                     )
-                    .accessibilityIdentifier("hide-new-tab")
+                    ZStack(alignment: .leading) {
+                        WindowDragArea()
+                        HStack(spacing: HideTheme.spacingNone) {
+                            ForEach(Array(presentation.visibleRange), id: \.self) { index in
+                                tabCell(tabs[index], presentation: presentation)
+                            }
+                            if presentation.showsOverflow {
+                                overflowMenu(tabs: tabs, presentation: presentation)
+                            }
+                            HideIconButton(
+                                systemImage: "plus",
+                                help: "New Tab",
+                                accessibilityLabel: "New Herdr tab",
+                                variant: .toolbar,
+                                command: .menu(.newTab),
+                                action: model.addTab
+                            )
+                            .accessibilityIdentifier("hide-new-tab")
+                        }
+                        .animation(
+                            .easeOut(duration: HideTooltipState.fadeDuration(reduceMotion: reduceMotion)),
+                            value: model.shortcutHintState.revealed
+                                && model.shortcutHintState.modifiers == [.command]
+                        )
+                    }
                 }
-                // The strip takes the row before the drag area does. Sharing
-                // the row equally cut the strip to four tabs while the rest
-                // of the row stayed empty.
                 .layoutPriority(1)
+            } else {
+                WindowDragArea()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             if let notice = model.reopenTabNotice ?? model.pendingCloseNotice ?? model.asyncTabNotice {
@@ -242,9 +129,6 @@ private struct HideTabStrip: View {
                 .accessibilityIdentifier("hide-reopen-notice")
             }
 
-            WindowDragArea()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
             if !model.rightPanelVisible {
                 HideIconButton(
                     systemImage: "rectangle.rightthird.inset.filled",
@@ -263,6 +147,228 @@ private struct HideTabStrip: View {
         .accessibilityIdentifier("hide-tab-strip")
     }
 
+    private func tabCell(
+        _ tab: ShellTabItem,
+        presentation: AdaptiveTabStripPresentation
+    ) -> some View {
+        HStack(spacing: HideTheme.spacingNone) {
+            Button {
+                model.focusUnifiedTab(tab)
+            } label: {
+                tabSelectionContent(tab, density: presentation.density)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(HideInteractiveButtonStyle())
+            // A double-click on the title keeps a preview tab; the button's
+            // own click still focuses it on the first click.
+            .simultaneousGesture(TapGesture(count: 2).onEnded { model.keepUnifiedTabOpen(tab) })
+            .accessibilityLabel(tabAccessibilityLabel(tab))
+            .hideTooltip(
+                tabAccessibilityLabel(tab),
+                command: model.tabShortcutNumber(tabID: tab.id).map(HideCommand.tab),
+                inline: true
+            )
+
+            HideIconButton(
+                systemImage: "xmark",
+                help: "Close \(tab.label)",
+                variant: .toolbar,
+                command: .menu(.closeTab),
+                tabID: tab.id,
+                action: { model.closeUnifiedTab(tab) }
+            )
+        }
+        .frame(width: presentation.slotWidth, height: HideTheme.Layout.tabStripHeight)
+        // A carried tab climbs to the top of the surface ladder, which is how
+        // this system says "closer" without a drop shadow.
+        .background(
+            tab.active || draggingTabID == tab.id
+                ? HideTheme.elevated
+                : HideTheme.panel
+        )
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(HideTheme.divider)
+                .frame(width: HideTheme.Layout.hairlineWidth)
+        }
+        .overlay {
+            if draggingTabID == tab.id {
+                Rectangle()
+                    .strokeBorder(
+                        HideTheme.divider,
+                        lineWidth: HideTheme.Layout.hairlineWidth
+                    )
+            }
+        }
+        .offset(x: draggingTabID == tab.id ? dragTranslation : 0)
+        .zIndex(draggingTabID == tab.id ? 1 : 0)
+        .accessibilityIdentifier("hide-tab-\(tab.id)")
+        .gesture(tabDragGesture(for: tab, presentation: presentation))
+    }
+
+    @ViewBuilder
+    private func tabSelectionContent(
+        _ tab: ShellTabItem,
+        density: AdaptiveTabStripPresentation.Density
+    ) -> some View {
+        switch density {
+        case .icon:
+            compactTabIdentity(tab, includesAgentStatusMark: true)
+                .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)
+        case .standard, .compressed:
+            let compressed = density == .compressed
+            HStack(spacing: compressed ? HideTheme.spacingXS : HideTheme.spacingSM) {
+                if compressed {
+                    compactTabIdentity(tab, includesAgentStatusMark: false)
+                } else if let agent = tab.focusedAgent {
+                    let status = AgentStatusPresentation(agent: agent, connected: model.agentsConnected)
+                    AgentStatusMark(symbol: status.symbol, color: status.color)
+                    AgentBadge(
+                        agentKind: agent.agentKind,
+                        stateColor: status.color,
+                        size: HideTheme.lineageChevronWidth
+                    )
+                } else {
+                    Image(systemName: tabIcon(tab))
+                        .hideFont(size: HideTheme.Typography.caption, weight: .medium)
+                }
+                Text(tab.label + model.tabActivity(for: tab))
+                    .hideFont(
+                        size: HideTheme.Typography.body,
+                        weight: tab.active ? .semibold : .medium,
+                        italic: EditorTabTitlePresentation.italic(preview: tab.preview)
+                    )
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !compressed, let notice = model.tabNotice(for: tab) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                        .foregroundStyle(HideTheme.warning)
+                        .accessibilityHidden(true)
+                        .hideTooltip(notice)
+                }
+                if !compressed, tab.dirty {
+                    Circle()
+                        .fill(HideTheme.secondary)
+                        .frame(
+                            width: HideTheme.Layout.tabStatusDotSize,
+                            height: HideTheme.Layout.tabStatusDotSize
+                        )
+                        .accessibilityHidden(true)
+                }
+                // The keycap holds its slot while its density shows titles,
+                // so revealing hints never resizes a tab under the pointer.
+                if let shortcutNumber = model.tabShortcutNumber(tabID: tab.id) {
+                    HideKeycap(command: .tab(shortcutNumber))
+                        .opacity(
+                            model.shortcutHintState.revealed
+                                && model.shortcutHintState.modifiers == [.command] ? 1 : 0
+                        )
+                }
+            }
+            .foregroundStyle(tab.active ? HideTheme.primary : HideTheme.secondary)
+            .padding(.leading, compressed ? HideTheme.spacingSM : HideTheme.spacingMD)
+            .padding(.trailing, HideTheme.spacingXS)
+        }
+    }
+
+    private func compactTabIdentity(
+        _ tab: ShellTabItem,
+        includesAgentStatusMark: Bool
+    ) -> some View {
+        ZStack {
+            HStack(spacing: HideTheme.spacingXXS) {
+                if let agent = tab.focusedAgent {
+                    let status = AgentStatusPresentation(agent: agent, connected: model.agentsConnected)
+                    if includesAgentStatusMark {
+                        AgentStatusMark(symbol: status.symbol, color: status.color)
+                    }
+                    AgentBadge(
+                        agentKind: agent.agentKind,
+                        stateColor: status.color,
+                        size: HideTheme.lineageChevronWidth
+                    )
+                } else {
+                    Image(systemName: compactTabIcon(tab))
+                        .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
+                        .accessibilityHidden(true)
+                }
+            }
+            if model.tabNotice(for: tab) != nil {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .hideFont(size: HideTheme.Typography.micro, weight: .bold)
+                    .foregroundStyle(HideTheme.warning)
+                    .offset(x: HideTheme.spacingSM, y: -HideTheme.spacingSM)
+                    .accessibilityHidden(true)
+            }
+            if tab.dirty {
+                Circle()
+                    .fill(HideTheme.secondary)
+                    .frame(
+                        width: HideTheme.Layout.tabStatusDotSize,
+                        height: HideTheme.Layout.tabStatusDotSize
+                    )
+                    .offset(x: HideTheme.spacingSM, y: HideTheme.spacingSM)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(
+            width: includesAgentStatusMark ? HideTheme.spacingXXXL : HideTheme.spacingXL,
+            height: HideTheme.IconButton.toolbarSize.height
+        )
+    }
+
+    private func overflowMenu(
+        tabs: [ShellTabItem],
+        presentation: AdaptiveTabStripPresentation
+    ) -> some View {
+        Menu {
+            ForEach(presentation.hiddenIndices, id: \.self) { index in
+                let tab = tabs[index]
+                Button {
+                    model.focusUnifiedTab(tab)
+                } label: {
+                    Label(tabAccessibilityLabel(tab), systemImage: compactTabIcon(tab))
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .hideFont(size: HideTheme.Typography.body, weight: .bold)
+                .foregroundStyle(HideTheme.secondary)
+                .frame(
+                    width: HideTheme.Layout.tabOverflowControlWidth,
+                    height: HideTheme.Layout.tabStripHeight
+                )
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .hideTooltip("More tabs")
+        .accessibilityLabel("More tabs")
+        .accessibilityIdentifier("hide-tab-overflow")
+    }
+
+    private func tabAccessibilityLabel(_ tab: ShellTabItem) -> String {
+        let spoken = EditorTabTitlePresentation.spoken(label: tab.label, preview: tab.preview)
+        var details = [tab.contextLabel ?? spoken]
+        if let agent = tab.focusedAgent {
+            details.append(AgentStatusPresentation(agent: agent, connected: model.agentsConnected).label)
+        }
+        if tab.dirty {
+            details.append("Unsaved changes")
+        }
+        if let notice = model.tabNotice(for: tab) {
+            details.append(notice)
+        }
+        let activity = model.tabActivity(for: tab).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !activity.isEmpty {
+            details.append(activity)
+        }
+        return details.joined(separator: " · ")
+    }
+
     /// Carries a tab under the pointer and reports where it was let go.
     ///
     /// The gesture only starts after the activation distance, so a click
@@ -270,7 +376,10 @@ private struct HideTabStrip: View {
     /// always a reorder rather than anything the surface behind it does. The
     /// order is not changed here: the drop is dispatched and the strip
     /// redraws from the next snapshot.
-    private func tabDragGesture(for tab: ShellTabItem) -> some Gesture {
+    private func tabDragGesture(
+        for tab: ShellTabItem,
+        presentation: AdaptiveTabStripPresentation
+    ) -> some Gesture {
         DragGesture(minimumDistance: HideTheme.Layout.tabDragActivationDistance)
             .onChanged { value in
                 draggingTabID = tab.id
@@ -280,11 +389,11 @@ private struct HideTabStrip: View {
                 let tabs = model.unifiedTabs
                 draggingTabID = nil
                 dragTranslation = 0
+                guard presentation.tabIDs == tabs.map(\.id) else { return }
                 guard let from = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
-                let destination = TabDragPlacement.destinationIndex(
+                let destination = presentation.destinationIndex(
                     from: from,
-                    translation: value.translation.width,
-                    widths: tabs.map { tabWidths[$0.id] ?? 0 }
+                    translation: value.translation.width
                 )
                 model.reorderUnifiedTab(tab, to: destination)
             }
@@ -294,6 +403,15 @@ private struct HideTabStrip: View {
         switch tab.kind {
         case .herdr: "rectangle.split.2x1"
         case .editor(let tab): tab.kind == .diff ? "doc.text.magnifyingglass" : "doc.text"
+        }
+    }
+
+    private func compactTabIcon(_ tab: ShellTabItem) -> String {
+        guard tab.preview else { return tabIcon(tab) }
+        switch tab.kind {
+        case .herdr: return tabIcon(tab)
+        case .editor(let editor):
+            return editor.kind == .diff ? "doc.text.magnifyingglass" : "doc.text.fill"
         }
     }
 }

@@ -174,35 +174,110 @@ enum TabShortcutNumbering {
     }
 }
 
-/// Where a dragged tab lands when the operator lets go.
-///
-/// Tabs are as wide as their labels, so the destination cannot be a fixed
-/// step: it is decided by how far the drag has carried the tab across the
-/// neighbours beside it. A tab has taken a neighbour's slot once it has moved
-/// past the middle of that neighbour, which is the point where the two would
-/// visually trade places.
-enum TabDragPlacement {
-    static func destinationIndex(
+/// One deterministic answer for what the tab strip draws and where a dragged
+/// tab lands. The view never measures individual labels, so rendering and
+/// reordering cannot disagree for one frame while the window changes size.
+struct AdaptiveTabStripPresentation: Equatable {
+    enum Density: Equatable {
+        case standard
+        case compressed
+        case icon
+    }
+
+    let density: Density
+    let slotWidth: CGFloat
+    let visibleRange: Range<Int>
+    let hiddenIndices: [Int]
+    let tabIDs: [String]
+
+    var showsOverflow: Bool { !hiddenIndices.isEmpty }
+
+    init(availableWidth: CGFloat, tabIDs: [String], activeTabID: String?) {
+        self.tabIDs = tabIDs
+        guard !tabIDs.isEmpty, availableWidth.isFinite, availableWidth > 0 else {
+            density = .standard
+            slotWidth = 0
+            visibleRange = 0..<0
+            hiddenIndices = Array(tabIDs.indices)
+            return
+        }
+
+        let count = tabIDs.count
+        let equalWidth = availableWidth / CGFloat(count)
+        if equalWidth >= HideTheme.Layout.tabPreferredWidth {
+            density = .standard
+            slotWidth = HideTheme.Layout.tabPreferredWidth
+            visibleRange = 0..<count
+            hiddenIndices = []
+            return
+        }
+        if equalWidth >= HideTheme.Layout.tabTitleMinimumWidth {
+            density = .compressed
+            slotWidth = equalWidth
+            visibleRange = 0..<count
+            hiddenIndices = []
+            return
+        }
+        if equalWidth >= HideTheme.Layout.tabIconMinimumWidth {
+            density = .icon
+            slotWidth = equalWidth
+            visibleRange = 0..<count
+            hiddenIndices = []
+            return
+        }
+
+        let tabWidth = max(0, availableWidth - HideTheme.Layout.tabOverflowControlWidth)
+        let visibleCount = min(
+            count,
+            max(1, Int(tabWidth / HideTheme.Layout.tabIconMinimumWidth))
+        )
+        let activeIndex = activeTabID.flatMap { tabIDs.firstIndex(of: $0) } ?? 0
+        let centeredStart = activeIndex - visibleCount / 2
+        let start = min(max(0, centeredStart), count - visibleCount)
+        let range = start..<(start + visibleCount)
+
+        density = .icon
+        slotWidth = tabWidth / CGFloat(visibleCount)
+        visibleRange = range
+        hiddenIndices = tabIDs.indices.filter { !range.contains($0) }
+    }
+
+    /// A carried tab may trade places only with tabs in the same visible
+    /// segment. Hidden tabs keep their relative order until the operator
+    /// selects one and brings it into that segment.
+    func destinationIndex(from sourceIndex: Int, translation: CGFloat) -> Int {
+        guard visibleRange.contains(sourceIndex), slotWidth > 0 else { return sourceIndex }
+        let localIndex = sourceIndex - visibleRange.lowerBound
+        let localDestination = Self.destinationIndex(
+            from: localIndex,
+            translation: translation,
+            slotWidth: slotWidth,
+            count: visibleRange.count
+        )
+        return visibleRange.lowerBound + localDestination
+    }
+
+    private static func destinationIndex(
         from index: Int,
         translation: CGFloat,
-        widths: [CGFloat]
+        slotWidth: CGFloat,
+        count: Int
     ) -> Int {
-        guard widths.indices.contains(index) else { return index }
+        guard index >= 0, index < count else { return index }
         var destination = index
-        var travelled: CGFloat = 0
         if translation > 0 {
             var candidate = index + 1
-            while candidate < widths.count {
-                travelled += widths[candidate]
-                guard translation >= travelled - widths[candidate] / 2 else { break }
+            while candidate < count {
+                let threshold = slotWidth * (CGFloat(candidate - index) - 0.5)
+                guard translation >= threshold else { break }
                 destination = candidate
                 candidate += 1
             }
         } else if translation < 0 {
             var candidate = index - 1
             while candidate >= 0 {
-                travelled += widths[candidate]
-                guard -translation >= travelled - widths[candidate] / 2 else { break }
+                let threshold = slotWidth * (CGFloat(index - candidate) - 0.5)
+                guard -translation >= threshold else { break }
                 destination = candidate
                 candidate -= 1
             }
