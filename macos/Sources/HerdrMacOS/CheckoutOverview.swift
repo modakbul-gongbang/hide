@@ -408,14 +408,9 @@ struct CheckoutOverview: View {
                 .buttonStyle(HideInteractiveButtonStyle())
                 Spacer(minLength: HideTheme.spacingXS)
             }
-            HStack(spacing: HideTheme.spacingXS) {
-                ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
-                    headerChip(chip, checkout: checkout)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.leading, HideTheme.checkoutMetadataLeadingInset)
-            .frame(height: HideTheme.badgeHeight)
+            headerChipStrip(chips, checkout: checkout)
+                .padding(.leading, HideTheme.checkoutMetadataLeadingInset)
+                .frame(maxWidth: .infinity, minHeight: HideTheme.badgeHeight, alignment: .leading)
         }
         .frame(minHeight: HideTheme.overviewGroupHeaderHeight)
         .padding(.horizontal, HideTheme.spacingMD)
@@ -426,6 +421,34 @@ struct CheckoutOverview: View {
         .accessibilityIdentifier("overview-group-\(checkout.id)")
         .opacity(sidebar.rowDimmed ? HideTheme.Opacity.dimmed : 1)
         .contextMenu { headerMenu(checkout, workspace: workspace) }
+    }
+
+    @ViewBuilder
+    private func headerChipStrip(
+        _ chips: [OverviewPresentation.HeaderChip],
+        checkout: CoreCheckoutSnapshot
+    ) -> some View {
+        ViewThatFits(in: .horizontal) {
+            headerChipRow(chips, checkout: checkout)
+            if chips.count > 2 {
+                VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
+                    headerChipRow(Array(chips.prefix(2)), checkout: checkout)
+                    headerChipRow(Array(chips.dropFirst(2)), checkout: checkout)
+                }
+            }
+        }
+    }
+
+    private func headerChipRow(
+        _ chips: [OverviewPresentation.HeaderChip],
+        checkout: CoreCheckoutSnapshot
+    ) -> some View {
+        HStack(spacing: HideTheme.spacingXS) {
+            ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
+                headerChip(chip, checkout: checkout)
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func groupKindColor(

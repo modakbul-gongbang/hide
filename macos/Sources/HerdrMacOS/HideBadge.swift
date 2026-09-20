@@ -16,6 +16,7 @@ struct HideBadge: View {
             }
             Text(label)
                 .hideFont(size: HideTheme.Typography.micro, weight: .medium)
+                .fixedSize(horizontal: true, vertical: false)
         }
             .foregroundStyle(dimmed ? color.opacity(HideTheme.Opacity.dimmed) : color)
             .padding(.horizontal, HideTheme.spacingXS)

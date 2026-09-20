@@ -554,10 +554,11 @@ A plain folder project has only its size in the strip and only its size on its g
 GitHub summarizes active branches from the existing bounded, per-branch PR selection, not an invented repository-wide PR total.
 The popover states the lookup window and preserves loading, no recent PRs, authentication, unavailable and stale results.
 
-A group header is a 52pt two-line comparison card.
+A group header is a minimum 52pt comparison card with its identity on the first line and its badge strip below.
 Its first line is the disclosure chevron, the same checkout kind glyph as the sidebar, the semibold branch, and a muted one-line purpose; when no purpose exists, the pull-request title is the fallback, and when neither exists only the branch remains.
 The full purpose is the header tooltip when the visible copy truncates.
 Its second line is a `HideBadge` strip in the fixed order pull request, checks, files, behind, ahead and allocated size.
+The strip stays on one line when it fits; at a narrow width it wraps without truncating the pull-request lifecycle or review-decision word or dropping a later badge.
 The pull-request badge includes the bundled octicon, number and visible lifecycle or review-decision word; merged and closed outrank draft, draft outranks review decisions, and open is the final fallback.
 Checks are `✓ Checks`, `✗ Checks` or `… Checks`, and the badge is absent when the pull request has no checks.
 Files are `Clean`, `N files`, `… files`, `? files` or `missing` with the matching muted, warning or danger treatment.
