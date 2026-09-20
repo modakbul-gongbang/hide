@@ -576,7 +576,7 @@ impl MemoryStore {
                 CandidateRelation::Supersedes { target_id } if candidate.direct_human_source => {
                     let previous =
                         require_active_target(&transaction, &batch.project_id, target_id)?;
-                    let revision = previous.1 + 1;
+                    let revision = next_revision(&transaction, target_id)?;
                     record_batch_change(
                         &transaction,
                         &batch.id,
@@ -722,7 +722,7 @@ impl MemoryStore {
         let (state, current) = require_target(&transaction, project_id, item_id)?;
         let batch_id = stable_id("edit", &[item_id, &now_ms().to_string(), &redacted.text]);
         record_batch_change(&transaction, &batch_id, item_id, Some(state), Some(current))?;
-        let revision = current + 1;
+        let revision = next_revision(&transaction, item_id)?;
         transaction.execute(
             "UPDATE memory_revisions SET lifecycle='superseded' WHERE item_id=?1 AND revision=?2",
             params![item_id, current],
@@ -745,7 +745,7 @@ impl MemoryStore {
             params![item_id, current],
             |row| row.get(0),
         )?;
-        let revision = current + 1;
+        let revision = next_revision(&transaction, item_id)?;
         transaction.execute("INSERT INTO memory_revisions(id,item_id,revision,body,kind,lifecycle,created_at_ms,batch_id) SELECT ?1,?2,?3,?4,kind,'tombstoned',?5,?6 FROM memory_revisions WHERE item_id=?2 AND revision=?7", params![revision_id(item_id,revision),item_id,revision,body,now_ms(),batch_id,current])?;
         transaction.execute("UPDATE memory_items SET lifecycle='tombstoned',current_revision=?2,updated_at_ms=?3 WHERE id=?1", params![item_id,revision,now_ms()])?;
         remove_index(&transaction, item_id)?;
@@ -1247,6 +1247,15 @@ fn current_revision(transaction: &Transaction<'_>, item_id: &str) -> Result<u64,
         |row| row.get(0),
     )?)
 }
+
+fn next_revision(transaction: &Transaction<'_>, item_id: &str) -> Result<u64, MemoryError> {
+    Ok(transaction.query_row(
+        "SELECT COALESCE(MAX(revision),0)+1 FROM memory_revisions WHERE item_id=?1",
+        [item_id],
+        |row| row.get(0),
+    )?)
+}
+
 fn record_batch_change(
     transaction: &Transaction<'_>,
     batch_id: &str,
@@ -1738,6 +1747,39 @@ mod tests {
                 .items
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn editing_and_forgetting_after_undo_append_revisions_without_reusing_numbers() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "b1", "h1"),
+                &[candidate("Keep provenance", CandidateRelation::New)],
+            )
+            .unwrap();
+        let id = store.list_memories(&project, "").unwrap()[0].id.clone();
+        let undo = store.forget(&project, &id).unwrap();
+        assert_eq!(store.undo_batch(&project, &undo).unwrap(), 1);
+
+        assert_eq!(
+            store
+                .edit(&project, &id, "Keep durable provenance")
+                .unwrap(),
+            3
+        );
+        store.forget(&project, &id).unwrap();
+
+        assert_eq!(
+            store
+                .detail(&project, &id)
+                .unwrap()
+                .revisions
+                .iter()
+                .map(|entry| entry.0)
+                .collect::<Vec<_>>(),
+            [4, 3, 2, 1]
         );
     }
 
