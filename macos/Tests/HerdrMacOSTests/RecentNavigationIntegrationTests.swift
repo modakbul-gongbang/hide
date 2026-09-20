@@ -59,13 +59,14 @@ struct RecentNavigationIntegrationTests {
             "--workspace-root", root.path, "--state-path", root.appendingPathComponent("state.json").path])
         let model = ShellModel(core: bridge)
         try await eventually("initial terminal") { model.recentSurfaces.count == 1 }
-        // The fixture tab holds one agent pane, so the core names the tab
-        // after it and the switcher row reads that name (PRD D-16, B18).
-        try await eventually("one-agent tab is named after its agent") {
-            model.recentSurfaces.values.first?.item.agentIdentity?.label == "working"
+        // The fixture tab holds one unnamed agent pane, so the core titles it
+        // from its rolling task and the switcher row reads that title (PRD
+        // D-16, B18).
+        try await eventually("one-agent tab is titled by its task") {
+            model.recentSurfaces.values.first?.item.agentIdentity?.label == "Connecting Rust bytes"
         }
         let seeded = try #require(model.recentSurfaces.values.first)
-        #expect(RecentSurfacePresentation.title(seeded) == "working")
+        #expect(RecentSurfacePresentation.title(seeded) == "Connecting Rust bytes")
         #expect(seeded.item.agentIdentity?.symbol == "●")
         bridge.dispatch(kind: "session_snapshot", payload: [
             "focused_pane_id": "fixture-working",

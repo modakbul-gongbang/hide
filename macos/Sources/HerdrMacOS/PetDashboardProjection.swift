@@ -32,7 +32,7 @@ struct PetDashboardRow: Identifiable, Equatable {
     let emphasized: Bool
     let symbol: String
     let statusLabel: String
-    /// The stable name and the state line, as the core chose them for the
+    /// The canonical title and the state line, as the core chose them for the
     /// sidebar row; the dashboard draws the same row.
     let identityLabel: String
     let detail: String?

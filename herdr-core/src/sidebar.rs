@@ -615,7 +615,7 @@ pub fn apply_lineage(
         let spawn_parent = spawned_from
             .as_ref()
             .and_then(|pane| by_pane.get(pane))
-            .map(|parent| agent_identity_label(&agents[*parent]));
+            .map(|parent| agents[*parent].identity_label.clone());
         let hint = spawned_from.as_ref().map(|_| match &spawn_parent {
             Some(name) => format!("↳ from {name}"),
             None => "↳ from an agent Hide can't see".to_owned(),
@@ -683,25 +683,6 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
         status_label: agent.status_label.clone(),
         delegated: agent.delegated,
     }
-}
-
-/// The stable, user-facing identity shared by lineage surfaces.
-///
-/// The ladder is `name token → Herdr agent name → task → workspace label`
-/// (PRD D-01, D-03). The `name` token is the session name the label plugin
-/// read off the agent's own session file when Herdr refused it as an agent
-/// name; the Herdr agent name is the one the operator or the plugin gave. `task` is the
-/// plugin's rolling title, which moves between turns, so it stands in only
-/// when no name exists at all. A pane id is a transport handle, never a
-/// name: a report-only pane whose `id` is its pane id falls through to the
-/// workspace label.
-fn agent_identity_label(agent: &SidebarAgentSnapshot) -> String {
-    agent
-        .name
-        .clone()
-        .or_else(|| (agent.id != agent.pane_id).then(|| agent.id.clone()))
-        .or_else(|| agent.task.clone())
-        .unwrap_or_else(|| agent.workspace_label.clone())
 }
 
 /// What a row's second line says, decided by the row's group (PRD D-06).
@@ -962,10 +943,9 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         })
         .unwrap_or("workspace")
         .to_owned();
-    // The three label-plugin sentences, each one line. The plugin already
+    // The label-plugin title and sentences, each one line. The plugin already
     // bounds them; the cut here is the same bound applied once more so a
     // value that outran it cannot reach a row.
-    let name = token_text(&agent.tokens, "name", MAX_TOKEN_TEXT_CHARS);
     let task = token_text(&agent.tokens, "task", MAX_TOKEN_TEXT_CHARS);
     let progress = token_text(&agent.tokens, "progress", MAX_TOKEN_TEXT_CHARS);
     let expected_reply = token_text(&agent.tokens, "expected_reply", MAX_EXPECTED_REPLY_CHARS);
@@ -973,7 +953,8 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         .filter(|value| valid_elapsed(value))
         .unwrap_or_else(|| "0s".to_owned());
 
-    let mut projected = SidebarAgentSnapshot {
+    let identity_label = task.unwrap_or_else(|| workspace_label.clone());
+    let projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         pane_id,
         workspace_label,
@@ -994,9 +975,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         status_label: String::new(),
         requires_close_confirmation: false,
         requires_close_status_check: false,
-        identity_label: String::new(),
-        name,
-        task,
+        identity_label,
         progress,
         expected_reply,
         detail: None,
@@ -1027,7 +1006,6 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         spawn_origin_pane_id: None,
         lineage_collapsed: false,
     };
-    projected.identity_label = agent_identity_label(&projected);
     Ok(projected)
 }
 
@@ -1823,14 +1801,15 @@ mod tests {
         );
     }
 
-    /// PRD D-01, D-03: the name ladder, one rung at a time, top to bottom.
+    /// PRD D-01: the rolling task is the title and the workspace is the final
+    /// fallback. Herdr's agent name and the retired `name` token are control
+    /// identifiers, not display titles.
     #[test]
-    fn identity_ladder_prefers_name_then_herdr_name_then_task() {
+    fn identity_ladder_uses_task_then_workspace_and_ignores_names() {
         let projected = projected(json!([
             {"pane_id":"p2","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000002","name":"Hook 버그 확인","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p3","id":"impl-x","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}},
-            {"pane_id":"p5","id":"p5","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000005"}}
+            {"pane_id":"p3","id":"sasu-implementor","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000003","name":"첫 프롬프트"}},
+            {"pane_id":"p4","id":"p4","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000004","task":"hook 보고 경로 수정"}}
         ]));
         let labels = projected
             .iter()
@@ -1838,7 +1817,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             labels,
-            ["Hook 버그 확인", "impl-x", "hook 보고 경로 수정", "hide"]
+            ["hook 보고 경로 수정", "hide", "hook 보고 경로 수정"]
         );
     }
 
@@ -1916,7 +1895,7 @@ mod tests {
     #[test]
     fn projected_rows_carry_the_second_line_and_the_chip_repeats_it() {
         let projected = projected(json!([
-            {"pane_id":"p1","id":"p1","workspace_label":"hide","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000001","name":"Hook 버그 확인","progress":"hook 보고 경로를 소켓 호출로 교체 중","expected_reply":"무시됨"}},
+            {"pane_id":"p1","id":"p1","workspace_label":"hide","agent_status":"working","tokens":{"status_working":"●","activity":"0000000000001","task":"Hook 버그 확인","progress":"hook 보고 경로를 소켓 호출로 교체 중","expected_reply":"무시됨"}},
             {"pane_id":"p2","id":"p2","workspace_label":"hide","tokens":{"status_question_new":"?","activity":"0000000000002","progress":"푸시 완료","expected_reply":"A/B 선택"}},
             {"pane_id":"p3","id":"p3","workspace_label":"hide","tokens":{"status_idle":"○","activity":"0000000000003"}}
         ]));

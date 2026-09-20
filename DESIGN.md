@@ -146,7 +146,8 @@ Project-view number shortcuts skip agents hidden by workspace disclosure.
 `agentMarkWidth` (12pt) and `checkoutIconWidth` (14pt) define the status and branch columns.
 `compactAgentLeadingInset` derives the root agent status center from the Workspace branch center, accounting for the lineage chevron gutter.
 Compact agent rows use `spacingXS` (4pt) between the status, provider icon, and title.
-An agent row's title is the core's `identity_label` at both densities: the session name the label plugin derived (Claude's `ai-title`, Codex's first turn), or the Herdr agent name, or the rolling task, or the workspace label, in that order; a prominent row keeps its project context as a qualifier on a third line, `Typography.micro` in `muted`, because beside the sentence it took the width the sentence needed.
+An agent row's title is the core's `identity_label` at both densities: the rolling task, or the workspace label when no task exists; a Herdr agent name remains a control identifier and never becomes display copy.
+A prominent row keeps its project context as a qualifier on a third line, `Typography.micro` in `muted`, because beside the sentence it took the width the sentence needed.
 The second line is chosen by the core from the row's group and drawn as given, so no view decides it twice ([status model](docs/status-model.md#the-second-line)):
 
 | Group | Sentence |
@@ -193,7 +194,7 @@ The sidebar runtime version stays on one line with middle truncation; its toolti
 ## Pane header lineage and ownership
 
 The pane header keeps one 28pt identity row.
-Its title is `name · sentence` on one line, or `name · word` when the row has no sentence: the identity in caption semibold `primary`, ` · ` in `muted`, the status word in caption medium in the mark's color when the row shows it, and the sentence in caption regular with the row's emphasis color, tail-truncated to no less than `Layout.paneHeaderSentenceMinWidth` (120pt).
+Its title is `title · sentence` on one line, or `title · word` when the row has no sentence: the identity in caption semibold `primary`, ` · ` in `muted`, the status word in caption medium in the mark's color when the row shows it, and the sentence in caption regular with the row's emphasis color, tail-truncated to no less than `Layout.paneHeaderSentenceMinWidth` (120pt).
 When the header is narrower than that, `ViewThatFits` drops the sentence first and the word second, so the identity is what survives a three-way split.
 A shell operation string (`forking…`, `reopening…`) takes the sentence's slot while it runs.
 The header and the sidebar row call a pane by the same name, and the header's accessibility label carries the status word in the same order as the row's.
@@ -388,7 +389,7 @@ Empty projects show “No open tabs”; a project without an available checkout 
 ### Search keyboard navigation
 
 Command+K opens agent/workspace search and Command+P opens file search with the same focused query field and first-result selection behavior.
-An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling to the rolling task when the state chose no sentence (unless that is already the title) and then to the status word; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
+An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling to the status word when the state chose no sentence; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
 Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
 Return executes the highlighted result through the existing agent, checkout, or file-opening action; Escape closes the sheet.
 The selected row uses the existing accent emphasis fill and scrolls into view.
@@ -515,12 +516,12 @@ The chevron folds the group's rows and shares the sidebar's collapsed set.
 Groups sit in one fixed order, the primary checkout first, then linked worktrees oldest first by the time they were added, then a `› Inactive N` fold that shares the sidebar's fold state; an unfolded inactive checkout is a header line with no rows.
 No agent state and no search reorders a group.
 
-An agent row is mark · badge · name · task · `↗`, at the pane header's 28pt height, and the whole row is the button: a click shows that pane, and the `↗` says so.
+An agent row is mark · badge · title · optional detail · `↗`, at the pane header's 28pt height, and the whole row is the button: a click shows that pane, and the `↗` says so.
 A delegated child is indented under its parent with `↳`; a child delegated into another worktree stands in its own group with the caption `↳ from <parent> · <parent branch>` under it.
 An empty group has one row, `No agent · Start agent…`, whose menu is the same `Terminal only / Claude / Codex` choice the header's `New agent here ▸` offers.
 The header's context menu is `New agent here ▸`, `New worktree…`, `Set as base branch`, then `Open pull request #N` when there is one and `Open in History`, then `Copy Path` and `Open in ▸`, then the destructive `Delete worktree…` behind the sidebar's gate and wording.
 An agent row's context menu is `Open pane`, `Reveal in sidebar`, `Copy pane id` and the destructive `Close pane…`, with the same confirmation the pane header uses.
-Search matches an agent's name, its task and a branch; it keeps the matching rows with their group header, and no match reads `No matching agents or workspaces` with a `Clear search` action.
+Search matches an agent's title, its state sentence and a branch; it keeps the matching rows with their group header, and no match reads `No matching agents or workspaces` with a `Clear search` action.
 
 Loading, local-only, no-workspace, disconnected and unreadable states are distinct and each is drawn in its smallest form.
 While the live agent projection is unavailable a caption above the search says so and the last known rows stay clickable; a value Hide cannot read is `?` and never a zero.

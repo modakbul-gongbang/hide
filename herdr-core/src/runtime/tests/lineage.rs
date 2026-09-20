@@ -4,10 +4,10 @@ use super::*;
 // independently of how the projector builds its parent index.
 fn lineage_rows() -> Vec<SidebarAgentSnapshot> {
     project_agents(serde_json::from_value(serde_json::json!({"agents": [
-        {"id":"Parent","pane_id":"parent","agent_status":"working","state_change_seq":1},
-        {"id":"Child","pane_id":"child","spawned_from_pane_id":"parent","agent_status":"working","state_change_seq":2},
-        {"id":"Grandchild","pane_id":"grandchild","spawned_from_pane_id":"child","agent_status":"working","state_change_seq":3},
-        {"id":"Newer sibling","pane_id":"sibling","spawned_from_pane_id":"parent","agent_status":"working","state_change_seq":4}
+        {"id":"observer-control","pane_id":"parent","agent_status":"working","state_change_seq":1,"tokens":{"task":"Parent"}},
+        {"id":"implementor-control","pane_id":"child","spawned_from_pane_id":"parent","agent_status":"working","state_change_seq":2,"tokens":{"task":"Child"}},
+        {"id":"reviewer-control","pane_id":"grandchild","spawned_from_pane_id":"child","agent_status":"working","state_change_seq":3,"tokens":{"task":"Grandchild"}},
+        {"id":"sibling-control","pane_id":"sibling","spawned_from_pane_id":"parent","agent_status":"working","state_change_seq":4,"tokens":{"task":"Newer sibling"}}
     ]})).unwrap()).agents
 }
 
@@ -337,7 +337,7 @@ fn the_breadcrumb_path_and_each_steps_siblings_come_out_of_the_lineage() {
 }
 
 #[test]
-fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
+fn lineage_identity_uses_tasks_even_when_herdr_names_exist() {
     let mut rows = project_agents(
         serde_json::from_value(serde_json::json!({"agents": [
             {
@@ -345,15 +345,14 @@ fn lineage_identity_prefers_user_facing_titles_over_transport_names() {
                 "agent_status":"working",
                 "state_change_seq":1,
                 "workspace_label":"Workspace",
-                "tokens":{"name":"Project coordinator"}
+                "tokens":{"task":"Project coordinator"}
             },
             {
-                "id":"qa-lineage-child",
                 "pane_id":"w1:p2",
                 "spawned_from_pane_id":"w1:p1",
                 "agent_status":"working",
                 "state_change_seq":2,
-                "tokens":{"name":"Hide design QA"}
+                "tokens":{"task":"Hide design QA"}
             }
         ]}))
         .unwrap(),
@@ -415,11 +414,14 @@ fn hook_status_of(
 fn instrumented_rows(agent_kind: &str) -> Vec<SidebarAgentSnapshot> {
     let mut rows = project_agents(
         serde_json::from_value(serde_json::json!({"agents": [
-            {"id":"Observer","pane_id":"parent","agent":agent_kind,"agent_status":"working","state_change_seq":1},
+            {"id":"Observer","pane_id":"parent","agent":agent_kind,"agent_status":"working","state_change_seq":1,
+             "tokens":{"task":"Coordinate delegated work"}},
             {"id":"Worker","pane_id":"child","agent":agent_kind,"spawned_from_pane_id":"parent",
-             "agent_status":"idle","state_change_seq":2,"tokens":{"status_error_new":"x"}},
+             "agent_status":"idle","state_change_seq":2,
+             "tokens":{"status_error_new":"x","task":"Resolve hook failure"}},
             {"id":"Runner","pane_id":"sibling","agent":agent_kind,"spawned_from_pane_id":"parent",
-             "agent_status":"working","state_change_seq":3}
+             "agent_status":"working","state_change_seq":3,
+             "tokens":{"task":"Run verification"}}
         ]}))
         .unwrap(),
     )
@@ -452,13 +454,16 @@ fn a_pane_with_children_lists_them_and_names_the_one_that_speaks_for_them() {
         .collect();
     assert_eq!(
         labels,
-        ["Runner", "Worker"],
+        ["Run verification", "Resolve hook failure"],
         "chips follow the lineage's own child order"
     );
     assert!(children.chips.iter().all(|chip| chip.delegated));
     // An unread error outranks a working sibling, by the same rule the
     // Workspace summary chip uses.
-    assert_eq!(children.representative.as_ref().unwrap().label, "Worker");
+    assert_eq!(
+        children.representative.as_ref().unwrap().label,
+        "Resolve hook failure"
+    );
     assert_eq!(children.representative.as_ref().unwrap().symbol, "\u{d7}");
 
     // In-process subagents are summarised separately and never folded into
@@ -597,10 +602,11 @@ fn split_lineage_payload() -> crate::sidebar::SessionSnapshotPayload {
     serde_json::from_value(serde_json::json!({
         "agents": [
             {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
-             "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture"},
+             "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture",
+             "tokens":{"task":"Coordinate implementation"}},
             {"id":"Implementor","pane_id":"w1:p2","agent":"claude","agent_status":"working",
              "state_change_seq":2,"cwd":"/fixture","workspace_label":"Fixture",
-             "spawned_from_pane_id":"w1:p1"}
+             "spawned_from_pane_id":"w1:p1","tokens":{"task":"Implement approved change"}}
         ],
         "panes": [
             {"pane_id":"w1:p1","cwd":"/fixture"},
@@ -725,7 +731,7 @@ fn a_strip_entry_carries_its_one_agents_identity_and_mark() {
         .expect("the parent's tab")
         .agent_identity
         .expect("one agent names the tab");
-    assert_eq!(identity.label, "Observer");
+    assert_eq!(identity.label, "Coordinate implementation");
     assert_eq!(identity.pane_id, "w1:p1");
     assert_eq!(identity.symbol, "\u{25cf}");
     assert_eq!(identity.activity, "working");
@@ -749,7 +755,7 @@ fn a_strip_entry_carries_its_one_agents_identity_and_mark() {
             .unwrap()
             .agent_identity
             .map(|chip| chip.label),
-        Some("Observer".to_owned()),
+        Some("Coordinate implementation".to_owned()),
         "a rebuilt strip is named again before it is published"
     );
 }
@@ -799,9 +805,10 @@ fn a_move_herdr_declined_is_an_error_rather_than_a_silent_success() {
 fn one_child_rows() -> Vec<SidebarAgentSnapshot> {
     let mut rows = project_agents(
         serde_json::from_value(serde_json::json!({"agents": [
-            {"id":"Parent","pane_id":"parent","agent_status":"working","state_change_seq":1},
-            {"id":"Child","pane_id":"child","spawned_from_pane_id":"parent",
-             "agent_status":"working","state_change_seq":2}
+            {"id":"observer-control","pane_id":"parent","agent_status":"working","state_change_seq":1,
+             "tokens":{"task":"Parent"}},
+            {"id":"implementor-control","pane_id":"child","spawned_from_pane_id":"parent",
+             "agent_status":"working","state_change_seq":2,"tokens":{"task":"Child"}}
         ]}))
         .unwrap(),
     )
@@ -1081,10 +1088,10 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
     let mut runtime = runtime();
     runtime.ingest_session(Ok(serde_json::from_value(serde_json::json!({
         "agents": [
-            {"id":"Instrumented","pane_id":"w1:p1","agent":"claude","agent_status":"working",
-             "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture"},
-            {"id":"Older","pane_id":"w1:p2","agent":"claude","agent_status":"working",
-             "state_change_seq":2,"cwd":"/fixture","workspace_label":"Fixture"}
+            {"id":"instrumented-control","pane_id":"w1:p1","agent":"claude","agent_status":"working",
+             "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture","tokens":{"task":"Check hook reports"}},
+            {"id":"older-control","pane_id":"w1:p2","agent":"claude","agent_status":"working",
+             "state_change_seq":2,"cwd":"/fixture","workspace_label":"Fixture","tokens":{"task":"Restore hook visibility"}}
         ],
         "panes": [
             {"pane_id":"w1:p1","cwd":"/fixture","tokens":{"hide_hooks":"1","hide_sub_done":"2"}},
@@ -1163,7 +1170,10 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
         "got {:?}",
         hooks.sessions_predating_install[0].message
     );
-    assert_eq!(hooks.sessions_predating_install[0].label, "Older");
+    assert_eq!(
+        hooks.sessions_predating_install[0].label,
+        "Restore hook visibility"
+    );
     assert_eq!(
         hooks.last_report_failure, None,
         "a hook whose last report landed has no failure to show"
@@ -1368,20 +1378,21 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         "agents": [
             {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
              "state_change_seq":1,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"progress":"delegating the orchestrator work"}},
+             "tokens":{"task":"Coordinate lineage work","progress":"delegating the orchestrator work"}},
             {"id":"Implementor","pane_id":"w1:p2","agent":"claude","agent_status":"working",
              "state_change_seq":2,"cwd":"/fixture","workspace_label":"hide",
-             "spawned_from_pane_id":"w1:p1","tokens":{"progress":"구현 중: 계보 투영과 위임 표시"}},
+             "spawned_from_pane_id":"w1:p1",
+             "tokens":{"task":"Implement lineage projection","progress":"구현 중: 계보 투영과 위임 표시"}},
             {"id":"Reviewer","pane_id":"w1:p3","agent":"claude","agent_status":"idle",
              "state_change_seq":3,"cwd":"/fixture","workspace_label":"hide",
              "spawned_from_pane_id":"w1:p1",
-             "tokens":{"status_question_new":"?","progress":"정체 임계값을 물어보는 중"}},
+             "tokens":{"task":"Review lineage behavior","status_question_new":"?","progress":"정체 임계값을 물어보는 중"}},
             {"id":"Uninstrumented","pane_id":"w1:p4","agent":"claude","agent_status":"working",
              "state_change_seq":4,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"progress":"started before the hook was installed"}},
+             "tokens":{"task":"Restore hook visibility","progress":"started before the hook was installed"}},
             {"id":"Alone","pane_id":"w1:p5","agent":"claude","agent_status":"working",
              "state_change_seq":5,"cwd":"/fixture","workspace_label":"hide",
-             "tokens":{"progress":"working with no children"}}
+             "tokens":{"task":"Verify solo agent state","progress":"working with no children"}}
         ],
         "panes": [
             {"pane_id":"w1:p1","cwd":"/fixture",
@@ -1495,8 +1506,8 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
             .iter()
             .map(|chip| chip.label.as_str())
             .collect::<Vec<_>>(),
-        ["Reviewer", "Implementor"],
-        "chips follow the lineage's own child order and carry the Herdr name (PRD D-01)"
+        ["Review lineage behavior", "Implement lineage projection"],
+        "chips follow the lineage's own child order and carry the rolling task (PRD D-01)"
     );
     assert_eq!(
         parent
@@ -1507,7 +1518,10 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         [None, Some("구현 중: 계보 투영과 위임 표시")],
         "a delegated question is Seen and says nothing more; a delegated worker keeps its progress (PRD D-06)"
     );
-    assert_eq!(parent.representative.as_ref().unwrap().label, "Reviewer");
+    assert_eq!(
+        parent.representative.as_ref().unwrap().label,
+        "Review lineage behavior"
+    );
     assert_eq!(
         (parent.subagents.working, parent.subagents.done),
         (Some(2), Some(4))
@@ -1516,7 +1530,7 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         pane("w1:p2")
             .lineage_path
             .iter()
-            .any(|step| step.label == "Observer")
+            .any(|step| step.label == "Coordinate lineage work")
     );
 
     // A pane Hide cannot see into, and the reason a restart would fix it.
@@ -1546,7 +1560,7 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
             .iter()
             .map(|pane| pane.label.as_str())
             .collect::<Vec<_>>(),
-        ["Uninstrumented"]
+        ["Restore hook visibility"]
     );
 
     // Overview reads the same rows. A catalog is handed in directly because

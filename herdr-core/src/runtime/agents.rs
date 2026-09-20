@@ -1039,7 +1039,7 @@ impl Runtime {
                     label: agents
                         .iter()
                         .find(|agent| agent.pane_id == pane.id)
-                        .map(|agent| agent.id.clone())
+                        .map(|agent| agent.identity_label.clone())
                         .unwrap_or_else(|| pane.id.clone()),
                     message: children.uninstrumented_reason.clone().unwrap_or_default(),
                 });
@@ -1191,7 +1191,7 @@ impl Runtime {
                 .first()
                 .cloned()
                 .unwrap_or_else(|| agent.pane_id.clone());
-            let name = agent.id.clone();
+            let name = agent.identity_label.clone();
             let notice = format!(
                 "{name} has been waiting {} minutes on {}",
                 elapsed / 60_000,
