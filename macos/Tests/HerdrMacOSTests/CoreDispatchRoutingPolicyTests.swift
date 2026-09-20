@@ -164,6 +164,33 @@ struct LocalHerdrMutationDispatchPolicyTests {
         #expect(presented == 1)
     }
 
+    @Test func persistedPaneRestoreWaitsForConnectionAndThenRunsOnce() {
+        #expect(PersistedPaneRestorePolicy.evaluate(
+            alreadyRestored: false,
+            herdrState: "socket_missing",
+            terminalPaneID: nil,
+            persistedPaneID: "w1:p3"
+        ) == .waitForConnection)
+        #expect(PersistedPaneRestorePolicy.evaluate(
+            alreadyRestored: false,
+            herdrState: "connected",
+            terminalPaneID: nil,
+            persistedPaneID: "w1:p3"
+        ) == .focus("w1:p3"))
+        #expect(PersistedPaneRestorePolicy.evaluate(
+            alreadyRestored: true,
+            herdrState: "connected",
+            terminalPaneID: nil,
+            persistedPaneID: "w1:p3"
+        ) == .complete)
+        #expect(PersistedPaneRestorePolicy.evaluate(
+            alreadyRestored: false,
+            herdrState: "connected",
+            terminalPaneID: "w1:p3",
+            persistedPaneID: "w1:p3"
+        ) == .complete)
+    }
+
     @Test func localOnlyAndRemoteEventsRemainAvailableDuringRecovery() {
         for kind in [
             "editor_text_scale",

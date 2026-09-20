@@ -174,6 +174,7 @@ Every invocation, including cleanup, must use the same explicit routing environm
 | `HERDR_ENV` | Clear inherited nesting marker when starting the standalone reference TUI |
 | Hide `--state-path`, `--workspace-root` | Explicit run-owned app state file and disposable checkout; the state file also holds the SSH devices, so a private one registers none |
 
+The shell forwards `HERDR_SESSION`, `HERDR_CONFIG_PATH`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and its resolved socket to every child Herdr process, so the server it starts and the core that reads it stay inside the same routing boundary.
 Check the pinned runtime's path behavior when updating it.
 The tested session layout stores sessions under `<XDG_CONFIG_HOME>/herdr/sessions/<HERDR_SESSION>`; changing `HERDR_CONFIG_PATH` alone does not isolate session data.
 The client socket inserts `-client` before `.sock`; allow room for that suffix in the platform's Unix socket path limit.

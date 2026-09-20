@@ -31,6 +31,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     nonisolated(unsafe) private var core: OpaquePointer?
     private var launchedHerdrServer: Process?
+    private var herdrServerRecoveryTask: Task<Void, Never>?
+    private var herdrServerRecoveryAttempt = 0
+    private var herdrServerSocketPath: String?
+    private var herdrServerEnvironment: [String: String]?
+    private static let herdrServerRecoveryDelays: [UInt64] = [
+        0,
+        250_000_000,
+        500_000_000,
+        1_000_000_000,
+        2_000_000_000,
+    ]
     private let statePath: String
     private let fixtureMode: Bool
     #if DEBUG
@@ -196,6 +207,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
             let socketExists = FileManager.default.fileExists(atPath: socketPath)
             self.runtimeSelection = preparation.selection
+            self.herdrServerSocketPath = socketPath
+            self.herdrServerEnvironment = preparation.environment
             guard self.adoptCore(herdrBinaryPath: preparation.selection?.path) else {
                 self.setStartupDiagnostic(
                     "Hide could not initialize its Herdr connection. Reopen the app to retry."
@@ -217,33 +230,100 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             }
 
             self.setStartupDiagnostic(nil)
-            switch HerdrRuntimeResolver.startServerIfNeeded(
-                selection: preparation.selection,
-                socketPath: socketPath,
-                environment: preparation.environment
-            ) {
-            case .notNeeded:
-                HideLaunchTrace.mark("runtime_initialization.server_not_needed")
-            case .started(let process):
-                self.launchedHerdrServer = process
-                process.terminationHandler = { [weak self] process in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.launchedHerdrServer != nil else { return }
-                        self.launchedHerdrServer = nil
-                        self.setStartupDiagnostic(
-                            HideStartupDiagnostic.serverExited(status: process.terminationStatus)
-                        )
-                        HideLaunchTrace.mark(
-                            "runtime_initialization.server_exited",
-                            detail: "status_\(process.terminationStatus)"
-                        )
-                    }
-                }
-                HideLaunchTrace.mark("runtime_initialization.server_started")
-            case .failed(let message):
-                self.setStartupDiagnostic(message)
-                HideLaunchTrace.mark("runtime_initialization.server_failed", detail: "launch_error")
+            self.ensureHerdrServerRunning(reason: "launch")
+        }
+    }
+
+    /// Ensures that the socket answers before deciding a server already
+    /// exists. One task owns the attempt series, and the bounded backoff is
+    /// re-armed only after a real connected snapshot.
+    private func ensureHerdrServerRunning(reason: String) {
+        guard herdrServerRecoveryTask == nil,
+              herdrServerRecoveryAttempt < Self.herdrServerRecoveryDelays.count,
+              let selection = runtimeSelection,
+              let socketPath = herdrServerSocketPath,
+              let environment = herdrServerEnvironment
+        else { return }
+
+        let attempt = herdrServerRecoveryAttempt
+        herdrServerRecoveryAttempt += 1
+        let delay = Self.herdrServerRecoveryDelays[attempt]
+        HideLaunchTrace.mark(
+            "herdr_server.ensure_scheduled",
+            detail: "reason_\(reason) attempt_\(attempt + 1)"
+        )
+        herdrServerRecoveryTask = Task { @MainActor [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: delay)
             }
+            guard !Task.isCancelled else { return }
+            let result = await Task.detached(priority: .userInitiated) {
+                HerdrRuntimeResolver.startServerIfNeeded(
+                    selection: selection,
+                    socketPath: socketPath,
+                    environment: environment
+                )
+            }.value
+            guard let self, !Task.isCancelled else { return }
+            self.herdrServerRecoveryTask = nil
+            self.handleHerdrServerEnsureResult(result, reason: reason, attempt: attempt + 1)
+        }
+    }
+
+    private func handleHerdrServerEnsureResult(
+        _ result: HerdrServerStartResult,
+        reason: String,
+        attempt: Int
+    ) {
+        switch result {
+        case .notNeeded:
+            setStartupDiagnostic(nil)
+            HideLaunchTrace.mark(
+                "herdr_server.ensure_completed",
+                detail: "reason_\(reason) attempt_\(attempt) already_running"
+            )
+        case .started(let process):
+            setStartupDiagnostic(nil)
+            launchedHerdrServer = process
+            process.terminationHandler = { [weak self] process in
+                Task { @MainActor [weak self] in
+                    guard let self, self.launchedHerdrServer === process else { return }
+                    self.launchedHerdrServer = nil
+                    HideLaunchTrace.mark(
+                        "herdr_server.process_exited",
+                        detail: "status_\(process.terminationStatus)"
+                    )
+                    self.ensureHerdrServerRunning(reason: "process_exit")
+                }
+            }
+            HideLaunchTrace.mark(
+                "herdr_server.ensure_completed",
+                detail: "reason_\(reason) attempt_\(attempt) started"
+            )
+        case .failed(let message):
+            setStartupDiagnostic(message)
+            HideLaunchTrace.mark(
+                "herdr_server.ensure_failed",
+                detail: "reason_\(reason) attempt_\(attempt)"
+            )
+            ensureHerdrServerRunning(reason: reason)
+        }
+    }
+
+    private func observeHerdrServerState(_ state: String) {
+        switch state {
+        case "connected":
+            herdrServerRecoveryTask?.cancel()
+            herdrServerRecoveryTask = nil
+            herdrServerRecoveryAttempt = 0
+            setStartupDiagnostic(nil)
+        case "socket_missing", "unreachable", "stale":
+            ensureHerdrServerRunning(reason: state)
+        default:
+            // A responding but malformed or protocol-incompatible server must
+            // never be replaced automatically; its panes may belong to
+            // another client and the existing recovery UI owns that outcome.
+            break
         }
     }
 
@@ -293,11 +373,17 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     private func setStartupDiagnostic(_ message: String?) {
+        let previous = startupDiagnostic
         startupDiagnostic = message
-        bridgeError = message
+        if let message {
+            bridgeError = message
+        } else if bridgeError == previous {
+            bridgeError = nil
+        }
     }
 
     deinit {
+        herdrServerRecoveryTask?.cancel()
         #if DEBUG
         verificationSnapshotWatcher?.cancel()
         #endif
@@ -1337,6 +1423,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         bridgeError = routingError
             ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
             ?? startupDiagnostic
+        observeHerdrServerState(decoded.status.herdr.state)
         restorePaneSelectionIfNeeded(decoded)
         let authoritativeFocusedPaneID = decoded.focusedPaneID
         if authoritativeFocusedPaneID != previousFocusedPaneID,
@@ -1351,11 +1438,21 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     /// reattaches to the pane the user last worked in. A pane that no longer
     /// exists fails through the normal attach error path.
     private func restorePaneSelectionIfNeeded(_ decoded: CoreSnapshot) {
-        guard !restoredPaneSelection else { return }
-        restoredPaneSelection = true
-        guard decoded.terminal.paneID == nil,
-              let persisted = decoded.uiState.selectedPaneID else { return }
-        focusPane(persisted, origin: .restore)
+        switch PersistedPaneRestorePolicy.evaluate(
+            alreadyRestored: restoredPaneSelection,
+            herdrState: decoded.status.herdr.state,
+            terminalPaneID: decoded.terminal.paneID,
+            persistedPaneID: decoded.uiState.selectedPaneID
+        ) {
+        case .waitForConnection:
+            return
+        case .complete:
+            restoredPaneSelection = true
+        case .focus(let paneID):
+            if focusPane(paneID, origin: .restore) == .accepted {
+                restoredPaneSelection = true
+            }
+        }
     }
 
     private func drainPendingTerminalBytes(for paneID: String) {
