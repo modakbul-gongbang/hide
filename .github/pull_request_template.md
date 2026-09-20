@@ -12,7 +12,7 @@ Related: <!-- 이슈 #, 선행·의존 PR #, `agents/prd/<slug>/prd.md`. 없으�
 
 <!--
 사용자가 보는 것이 바뀌었으면 여기에 스크린샷 2~3장, 각각 캡션 한 줄. GitHub에 붙여넣으면 user-attachments로 인라인 렌더링됩니다.
-로컬 경로(/Users/..., file://)와 raw.githubusercontent.com 링크는 리뷰어에게 보이지 않습니다.
+로컬 파일 경로와 file:// 링크, raw.githubusercontent.com 링크는 리뷰어에게 보이지 않습니다.
 캡처에 워크스테이션의 사용자·호스트명이 찍히면 패널만 크롭하세요.
 -->
 
