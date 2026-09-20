@@ -192,7 +192,7 @@ The second line is chosen by the core from the row's group and drawn as given, s
 
 | Group | Sentence |
 | --- | --- |
-| Needs You, unread Done | `expected_reply`, else `progress`, caption regular in `primary` |
+| Needs You, unread reported completion (Done) | `expected_reply`, else `progress`, caption regular in `primary` |
 | Working | `progress`, caption regular in `secondary` |
 | Seen, unknown | none - the row is one line |
 
@@ -258,7 +258,7 @@ Pending navigation disables child changes; Retry remains attached to the inspect
 The relationship sheet inspects on row selection and navigates only through its explicit Open action.
 A relationship Open or parent Return publishes one request-scoped pending state from the existing control and the retained canvas.
 The same target cannot dispatch again while that request is pending.
-Target retirement before dispatch and core-owned refusal, timeout, or remote-control failure keep the current pane geometry and tab topology, show the scoped reason, and offer Retry when the outcome is retryable.
+Target retirement before dispatch and core-owned refusal, timeout, or remote-control failure keep the current pane geometry and tab topology, show the scoped reason, offer Retry when the outcome is retryable, and offer Dismiss to clear only the notice.
 Retry creates a new request ID only after the prior request has settled.
 The shell never derives success from an old focused layout or optimistic remote selection, never attributes an unrelated global error to the control, and never sends a second focus event as rollback.
 A canvas notice preserves pending and failed feedback after successful navigation removes the source header or sheet from view.

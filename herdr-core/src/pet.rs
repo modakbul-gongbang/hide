@@ -266,6 +266,7 @@ mod tests {
                 "stopped"
             }
             .to_owned(),
+            completed: group == "done",
             unread: group != "seen",
             blocked: false,
             group: group.to_owned(),

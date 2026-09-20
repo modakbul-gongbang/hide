@@ -1770,6 +1770,70 @@ impl Runtime {
         changed |= self.track_visible_tab_attachments();
         changed | self.refresh_pet()
     }
+    /// Moves the navigator to the checkout that owns a pane without emitting
+    /// a second Herdr command.
+    ///
+    /// A relationship action is one intent. If its child belongs to another
+    /// checkout, changing only the pane leaves reconciliation scoped to the
+    /// old checkout and the next session event rejects Herdr's confirmation.
+    /// Moving the local context here lets the following `pane.focus` remain
+    /// the single external effect.
+    fn focus_context_for_pane(&mut self, pane_id: &str) -> bool {
+        let Some((workspace_id, checkout_id, checkout_path)) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| {
+                        checkout
+                            .tabs
+                            .iter()
+                            .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+                    })
+                    .map(|checkout| {
+                        (
+                            workspace.id.clone(),
+                            checkout.id.clone(),
+                            checkout.path.clone(),
+                        )
+                    })
+            })
+        else {
+            return false;
+        };
+        if self.snapshot.navigator.focused_workspace_id.as_deref() == Some(workspace_id.as_str())
+            && self.snapshot.navigator.focused_checkout_id.as_deref() == Some(checkout_id.as_str())
+        {
+            return false;
+        }
+        let from_workspace_id = self.snapshot.navigator.focused_workspace_id.clone();
+        let from_checkout_id = self.snapshot.navigator.focused_checkout_id.clone();
+        self.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
+        self.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+        self.snapshot.navigator.root_path = Some(checkout_path);
+        self.refresh_inactive_groups();
+        self.remeasure_disk();
+        self.deactivate_editor_tab();
+        crate::diagnostic!(serde_json::json!({
+            "component": "view_state",
+            "kind": "pane.focus_context_changed",
+            "pane_id": pane_id,
+            "from_workspace_id": from_workspace_id,
+            "from_checkout_id": from_checkout_id,
+            "to_workspace_id": workspace_id,
+            "to_checkout_id": checkout_id,
+        }));
+        self.push_diagnostic(
+            "pane.focus_context_changed",
+            format!("Pane {pane_id} moved focus to checkout {checkout_id}"),
+        );
+        true
+    }
+
     /// Moves the keyboard focus to a pane and tells Herdr afterwards.
     ///
     /// Hide owns the focused pane, so the focus ring and the first responder
@@ -1830,17 +1894,21 @@ impl Runtime {
                 return;
             }
         }
-        let already_focused = self.snapshot.focused.pane_id.as_deref() == Some(pane_id.as_str());
-        self.snapshot.terminal.pane_id = Some(pane_id.clone());
-        self.snapshot.focused.surface = Surface::Terminal;
-        self.snapshot.focused.pane_id = Some(pane_id.clone());
+        let context_changed = self.focus_context_for_pane(&pane_id);
+        let already_focused =
+            !context_changed && self.snapshot.focused.pane_id.as_deref() == Some(pane_id.as_str());
         // The persisted selection follows the ring. The shell echoes this
         // field back on every UI-state save, and a stale value there put the
         // keyboard back on the previous pane when the sidebar was toggled.
-        self.snapshot.ui_state.selected_pane_id = Some(pane_id.clone());
-        self.sync_focused_terminal_projection();
+        self.select_terminal_pane(Some(pane_id.clone()));
+        if context_changed {
+            self.sync_active_tab_projection();
+        }
         // A pane in a tab the checkout is not showing brings its tab forward.
         self.align_visible_tab_with_selected_pane();
+        if context_changed {
+            self.persist_current_ui_state();
+        }
         let Some(context) = self.live.as_ref().cloned() else {
             let message = "Pane focus requires a live Herdr connection".to_owned();
             self.finish_pane_focus_request(
@@ -2599,8 +2667,11 @@ impl Runtime {
                 created_tab_id,
                 created_pane_id,
             }) => {
-                if matches!(action, RemoteControlAction::CreateTab { .. })
-                    && let Some(pane_id) = created_pane_id.as_ref()
+                if matches!(
+                    action,
+                    RemoteControlAction::CreateTab { .. }
+                        | RemoteControlAction::CreateWorkspace { .. }
+                ) && let Some(pane_id) = created_pane_id.as_ref()
                 {
                     // tab.create returns the authoritative root pane before
                     // the ordered event projection catches up. Preserve that

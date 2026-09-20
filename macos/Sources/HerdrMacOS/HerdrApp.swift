@@ -334,6 +334,11 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                     self.model.showSettings = true
                 case "file-search": self.model.showFileSearch = true
                 case "add-device": self.presentVerificationAddDeviceSheet()
+                case "pane-selection-failure":
+                    self.model.requestPaneSelection(
+                        from: "fixture-working",
+                        to: "fixture-retired"
+                    )
                 default:
                     self.model.interactionNotice = "Unknown verification scene: \(scene)"
                 }

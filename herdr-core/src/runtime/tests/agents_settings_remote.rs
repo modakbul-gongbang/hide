@@ -1652,6 +1652,15 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
             "tokens": {"status_idle": "\u{25cb}", "activity": "0000000000001"}
         })
     };
+    let done = |pane_id: &str| {
+        serde_json::json!({
+            "pane_id": pane_id,
+            "workspace_label": "Fixture",
+            "agent": "codex",
+            "agent_status": "done",
+            "tokens": {"status_done_new": "●", "activity": "0000000000001"}
+        })
+    };
     let checkout_path = "/private/tmp/hide-read-record-pane-tree";
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
         id: "workspace:read-record".to_owned(),
@@ -1688,7 +1697,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         })
     };
     let payload: SessionSnapshotPayload = serde_json::from_value(serde_json::json!({
-        "agents": [idle("plain:p1"), idle("plain:p2")],
+        "agents": [idle("plain:p1"), done("plain:p2")],
         "focused_pane_id": "plain:p1",
         "panes": [
             {"pane_id": "plain:p1", "cwd": checkout_path},

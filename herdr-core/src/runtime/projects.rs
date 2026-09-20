@@ -1329,7 +1329,7 @@ impl Runtime {
             );
             return true;
         };
-        let (workspace_path, label, session_workspace_id) = {
+        let (workspace_path, checkout_label, next_tab_label) = {
             let workspace = self
                 .snapshot
                 .navigator
@@ -1342,32 +1342,17 @@ impl Runtime {
                 .iter()
                 .find(|checkout| checkout.id == checkout_id)
                 .expect("local_checkout_ids named a listed checkout");
-            // The checkout's own workspace is the one its visible tab is in;
-            // a checkout with no pane has none and gets a workspace of its own.
-            let session_workspace_id = self
-                .visible_tab_ids
-                .get(&checkout_id)
-                .and_then(|tab_id| {
-                    self.snapshot
-                        .pane_layouts
-                        .iter()
-                        .find(|layout| &layout.tab_id == tab_id)
-                })
-                .map(|layout| layout.workspace_id.clone())
-                .or_else(|| {
-                    checkout
-                        .tabs
-                        .iter()
-                        .find_map(|tab| tab.workspace_id.clone())
-                })
-                .filter(|id| workspace.session_workspace_ids.contains(id));
-            let label = if session_workspace_id.is_some() {
-                checkout.next_tab_label.clone()
-            } else {
-                format!("hide {}", checkout.label)
-            };
-            (workspace.path.clone(), label, session_workspace_id)
+            (
+                workspace.path.clone(),
+                checkout.label.clone(),
+                checkout.next_tab_label.clone(),
+            )
         };
+        let session_workspace_id = self.reusable_session_workspace_id(&workspace_id, &checkout_id);
+        let label = session_workspace_id
+            .as_ref()
+            .map(|_| next_tab_label)
+            .unwrap_or_else(|| format!("hide {checkout_label}"));
         let id = match self.begin_task_operation(
             "agent_start",
             Some(workspace_path),
@@ -1414,6 +1399,62 @@ impl Runtime {
                     .find(|checkout| checkout.path == checkout_path)
                     .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
             })
+    }
+
+    /// Returns a live Herdr workspace that belongs only to this Hide project.
+    ///
+    /// A Herdr workspace can contain panes from several repository roots. Its
+    /// label and future tabs then belong to none of those projects reliably,
+    /// so opening another tab there would carry a neighboring project's name
+    /// and keep mixing the two catalogs. Prefer the checkout's visible tab,
+    /// then its other tabs, then the project's remaining session workspaces,
+    /// but reuse a candidate only while this project is its sole owner.
+    pub(super) fn reusable_session_workspace_id(
+        &self,
+        project_id: &str,
+        checkout_id: &str,
+    ) -> Option<String> {
+        let project = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == project_id)?;
+        let checkout = project
+            .checkouts
+            .iter()
+            .find(|checkout| checkout.id == checkout_id)?;
+        let mut candidates = Vec::new();
+        if let Some(workspace_id) = self
+            .visible_tab_ids
+            .get(checkout_id)
+            .and_then(|tab_id| {
+                self.snapshot
+                    .pane_layouts
+                    .iter()
+                    .find(|layout| &layout.tab_id == tab_id)
+            })
+            .map(|layout| layout.workspace_id.clone())
+        {
+            candidates.push(workspace_id);
+        }
+        candidates.extend(
+            checkout
+                .tabs
+                .iter()
+                .filter_map(|tab| tab.workspace_id.clone()),
+        );
+        candidates.extend(project.session_workspace_ids.iter().cloned());
+        candidates.into_iter().find(|candidate| {
+            project.session_workspace_ids.contains(candidate)
+                && self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| workspace.session_workspace_ids.contains(candidate))
+                    .all(|workspace| workspace.id == project_id)
+        })
     }
 
     pub(super) fn migrate_main_branch(&mut self, payload: MigrateMainBranchPayload) -> bool {
