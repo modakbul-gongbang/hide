@@ -1,7 +1,7 @@
 # Background AI providers
 
 `hide-ai/` is the one boundary through which a Hide feature asks a language model for something in the background.
-The first consumer is the context-label plugin under `plugins/agent-context-labels/`; later features (naming, summarising, classifying) reuse the same boundary rather than a provider client of their own.
+Its consumers are the context-label plugin under `plugins/agent-context-labels/` and Project Memory extraction under `hide-memory/`; later features reuse the same boundary rather than a provider client of their own.
 This guide owns the boundary's rules; the code under `hide-ai/src/` and the tests under `hide-ai/tests/` are its executable authority.
 
 ## Ownership split
@@ -12,6 +12,13 @@ There is no output token ceiling in the request, because no provider contract ho
 
 `hide-ai` owns everything about providers: which are installed and logged in, the child process and its protocol, timeouts and cancellation, the retry policy, fallback between providers, duplicate suppression, and the structured error a caller branches on.
 No feature type lives in the crate, and no provider detail leaks out of it.
+
+Project Memory uses feature id `project_memory` and a pinned Mem0-compatible strict schema for candidate text, kind, confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
+It sends only locally redacted, normalized human and assistant events after the durable session cursor, with a 64 KiB request-input cap.
+The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
+Memory analysis reuses this boundary's selected provider, availability, bounded retry, duplicate suppression, process ownership, cancellation, and budgets.
+Not-authenticated, unavailable, usage-limited, and exhausted outcomes pause new analysis without disabling existing local Memory search or Sessions browsing.
+Logs retain request, feature, provider, Project/session subject IDs, counts, duration, and outcome, but never transcript text, prompt text, Memory body, file path, credential, or provider thread ID.
 
 ## Providers
 
