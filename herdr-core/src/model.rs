@@ -1230,13 +1230,14 @@ pub struct UiStateSnapshot {
 /// the pane held keyboard focus.
 ///
 /// A pane is unread when its current state does not match this record, so a
-/// missing record means unread. Equality rather than "newer than" is
-/// deliberate: a Herdr server restart can reset the sequence, and showing a
-/// pane as unread is the safe answer when the record can no longer be trusted.
+/// missing record means unread. The session id distinguishes a new agent in a
+/// reused pane from the same agent restored by a new Herdr server.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PaneReadRecord {
     #[serde(default)]
     pub state_change_seq: Option<u64>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub demand: String,
     pub activity: String,
 }
