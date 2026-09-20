@@ -55,6 +55,25 @@ fn focusing_a_checkout_refreshes_an_already_visible_sessions_panel() {
 }
 
 #[test]
+fn a_catalog_change_refreshes_an_already_visible_sessions_panel() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let project = runtime.snapshot.navigator.workspaces[0].clone();
+    runtime.focus_checkout(&project.id, &project.checkouts[0].id);
+    runtime.snapshot.ui_state.right_panel_visible = true;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Sessions;
+    runtime.snapshot.sessions.unavailable_reason =
+        Some("Choose a local Project to view sessions".to_owned());
+
+    assert!(runtime.refresh_sessions_after_catalog_change(true));
+
+    assert_eq!(
+        runtime.snapshot.sessions.unavailable_reason.as_deref(),
+        Some("Session reader is unavailable")
+    );
+}
+
+#[test]
 fn reopening_an_archive_tab_replaces_its_cached_memory_detail() {
     let mut runtime = runtime();
     let detail = |revision: u64, body: &str| ArchiveDetailSnapshot {

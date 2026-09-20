@@ -1846,6 +1846,7 @@ impl Runtime {
         changed |= self.refresh_worktree_projection();
         changed |= self.align_visible_tab_with_selected_pane();
         changed |= self.track_visible_tab_attachments();
+        changed |= self.refresh_sessions_after_catalog_change(catalog_changed);
         changed | self.refresh_pet()
     }
     /// Moves the navigator to the checkout that owns a pane without emitting

@@ -175,6 +175,20 @@ impl Runtime {
             })
     }
 
+    pub(super) fn refresh_sessions_after_catalog_change(&mut self, catalog_changed: bool) -> bool {
+        if catalog_changed
+            && self.snapshot.ui_state.right_panel_visible
+            && matches!(
+                self.snapshot.ui_state.right_panel_section,
+                crate::model::RightPanelSection::Sessions
+            )
+        {
+            self.request_sessions_refresh()
+        } else {
+            false
+        }
+    }
+
     fn ingest_sessions_load(&mut self, result: Result<SessionsLoad, String>) -> bool {
         self.snapshot.sessions.loading = false;
         match result {
