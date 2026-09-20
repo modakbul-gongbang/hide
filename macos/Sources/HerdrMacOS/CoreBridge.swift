@@ -398,10 +398,14 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         #if DEBUG
         verificationSnapshotWatcher?.cancel()
         #endif
-        if let core {
-            herdr_core_on_change(core, nil, nil)
-            herdr_core_destroy(core)
+        if let ownedCore = core {
+            destroyCore(ownedCore)
         }
+    }
+
+    nonisolated private func destroyCore(_ ownedCore: OpaquePointer) {
+        herdr_core_on_change(ownedCore, nil, nil)
+        herdr_core_destroy(ownedCore)
     }
 
     /// Ends every core-owned worker while the application is still alive.
@@ -418,8 +422,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         #endif
         guard let ownedCore = core else { return }
         core = nil
-        herdr_core_on_change(ownedCore, nil, nil)
-        herdr_core_destroy(ownedCore)
+        destroyCore(ownedCore)
     }
 
     nonisolated func receiveCoreChange() {
