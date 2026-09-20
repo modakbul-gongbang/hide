@@ -12,7 +12,8 @@ fn suppress_unconfirmed_created_purposes(
         .iter_mut()
         .flat_map(|workspace| workspace.checkouts.iter_mut())
     {
-        let Some(unconfirmed) = pending.get(&checkout.path) else {
+        let path = workspace::normalized_for_comparison(Path::new(&checkout.path));
+        let Some(unconfirmed) = pending.get(&path) else {
             continue;
         };
         if checkout.purpose.as_ref().is_some_and(|purpose| {
@@ -28,24 +29,21 @@ fn suppress_unconfirmed_created_purposes(
     changed
 }
 
-pub(super) fn retain_live_created_purpose_suppressions(
-    pending: &mut HashMap<String, String>,
-    workspaces: &[crate::model::WorkspaceSnapshot],
-) {
-    pending.retain(|path, unconfirmed| {
-        workspaces
-            .iter()
-            .flat_map(|workspace| workspace.checkouts.iter())
-            .find(|checkout| checkout.path == *path)
-            .and_then(|checkout| checkout.purpose.as_ref())
-            .is_some_and(|purpose| {
-                purpose.origin == crate::model::CheckoutPurposeOrigin::Token
-                    && purpose.text == *unconfirmed
-            })
-    });
-}
-
 impl Runtime {
+    pub(crate) fn unconfirmed_created_purpose_values(&self) -> HashMap<String, String> {
+        let mut suppressions = self.unconfirmed_created_purposes.clone();
+        suppressions.extend(self.created_purpose_writes_in_flight.clone());
+        suppressions
+    }
+
+    /// Registers the exact value a creation worker is about to write before
+    /// the Herdr token request can publish an event to the purpose mirror.
+    pub(crate) fn begin_created_purpose_write(&mut self, path: &str, purpose: &str) {
+        let path = workspace::normalized_for_comparison(Path::new(path));
+        self.created_purpose_writes_in_flight
+            .insert(path, purpose.to_owned());
+    }
+
     /// Groups the session's working directories under the Herdr workspace that
     /// owns them. Shared with the session-sync coordinator so a catalog
     /// precomputed outside the runtime lock is built from the same inputs.
@@ -381,12 +379,9 @@ impl Runtime {
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );
-        retain_live_created_purpose_suppressions(
-            &mut self.unconfirmed_created_purposes,
-            &workspaces,
-        );
+        let created_purpose_suppressions = self.unconfirmed_created_purpose_values();
         suppress_unconfirmed_created_purposes(
-            &self.unconfirmed_created_purposes,
+            &created_purpose_suppressions,
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );
@@ -2410,14 +2405,18 @@ impl Runtime {
                     self.snapshot.focused.pane_id = Some(pane_id.clone());
                     self.snapshot.ui_state.selected_pane_id = Some(pane_id);
                 }
+                let normalized = workspace::normalized_for_comparison(Path::new(&path));
+                self.created_purpose_writes_in_flight.remove(&normalized);
                 if let Some(unconfirmed) = unconfirmed_purpose_token {
                     self.unconfirmed_created_purposes
-                        .insert(path.clone(), unconfirmed);
+                        .insert(normalized, unconfirmed);
                     suppress_unconfirmed_created_purposes(
                         &self.unconfirmed_created_purposes,
                         &mut self.snapshot.navigator.workspaces,
                         &self.snapshot.navigator.agents,
                     );
+                } else {
+                    self.unconfirmed_created_purposes.remove(&normalized);
                 }
                 if let Some(detail) = purpose_error {
                     self.push_diagnostic(
@@ -2538,7 +2537,8 @@ impl Runtime {
                 })
                 .map(|checkout| checkout.path.clone())
         {
-            self.unconfirmed_created_purposes.remove(&path);
+            let normalized = workspace::normalized_for_comparison(Path::new(&path));
+            self.unconfirmed_created_purposes.remove(&normalized);
         }
         if let Some((purpose, token_written)) = visible_purpose {
             let next = (!purpose.is_empty()).then_some(crate::model::CheckoutPurposeSnapshot {
@@ -3147,12 +3147,9 @@ impl Runtime {
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );
-        retain_live_created_purpose_suppressions(
-            &mut self.unconfirmed_created_purposes,
-            &workspaces,
-        );
+        let created_purpose_suppressions = self.unconfirmed_created_purpose_values();
         suppress_unconfirmed_created_purposes(
-            &self.unconfirmed_created_purposes,
+            &created_purpose_suppressions,
             &mut workspaces,
             &self.snapshot.navigator.agents,
         );

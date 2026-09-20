@@ -1,6 +1,6 @@
 //! Worktree actions cross the socket boundary before publishing removal readiness.
 use super::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
@@ -251,7 +251,12 @@ impl PurposeMirror {
         )
     }
 
-    pub fn sync(&mut self, spaces: &[workspace::SessionSpace], workspaces: &[WorkspaceSnapshot]) {
+    pub fn sync(
+        &mut self,
+        spaces: &[workspace::SessionSpace],
+        workspaces: &[WorkspaceSnapshot],
+        unconfirmed_created_purposes: &HashMap<String, String>,
+    ) {
         let mut current = BTreeSet::new();
         for workspace in workspaces {
             for checkout in &workspace.checkouts {
@@ -269,8 +274,19 @@ impl PurposeMirror {
                     branch.to_owned(),
                 );
                 current.insert(key.clone());
-                let previous = self.observed.get(&key);
                 let purpose = effective.purpose.map(str::to_owned);
+                if purpose.as_deref().is_some_and(|purpose| {
+                    unconfirmed_created_purposes
+                        .get(&key.1)
+                        .is_some_and(|unconfirmed| unconfirmed == purpose)
+                }) {
+                    // Do not remember the suppressed value as mirrored. Once
+                    // Herdr confirms a clear or replacement, the next sync
+                    // must treat that visible value as new work.
+                    self.observed.remove(&key);
+                    continue;
+                }
+                let previous = self.observed.get(&key);
                 let first_live_value =
                     previous.is_none() && (purpose.is_some() || effective.has_shadowed_purpose);
                 let changed_value = previous.is_some_and(|value| value != &purpose);
@@ -324,7 +340,19 @@ pub fn spawn_worktree_create(
         .spawn(move || {
             let result =
                 reject_existing_unchecked_out_branch(&request.repository_root, &request.branch)
-                    .and_then(|()| create_worktree(context.api_connector.as_ref(), &request));
+                    .and_then(|()| {
+                        create_worktree_observing_purpose(
+                            context.api_connector.as_ref(),
+                            &request,
+                            |path, purpose| {
+                                if let Some(runtime) = context.runtime.upgrade()
+                                    && let Ok(mut guard) = runtime.lock()
+                                {
+                                    guard.begin_created_purpose_write(path, purpose);
+                                }
+                            },
+                        )
+                    });
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
                     guard.ingest_task_operation_result(request.id, result);
@@ -474,6 +502,14 @@ fn create_worktree(
     connector: &dyn ApiConnector,
     request: &WorktreeTaskRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
+    create_worktree_observing_purpose(connector, request, |_, _| {})
+}
+
+fn create_worktree_observing_purpose(
+    connector: &dyn ApiConnector,
+    request: &WorktreeTaskRequest,
+    on_purpose_write: impl FnOnce(&str, &str),
+) -> Result<WorktreeTaskOutcome, String> {
     let params = wire::worktree_create_params(
         &request.repository_root,
         &request.branch,
@@ -499,6 +535,7 @@ fn create_worktree(
             .is_some_and(|path| same_checkout_path(path, &created.path));
     if identity_matches {
         let purpose_failure = request.purpose.as_ref().and_then(|purpose| {
+            on_purpose_write(&created.path, purpose);
             let git = SystemGit;
             let purpose_request = PurposeTaskRequest {
                 id: request.id,
@@ -1275,9 +1312,24 @@ mod tests {
             removal: Default::default(),
         };
 
+        let suppressed = HashMap::from([(
+            workspace::normalized_for_comparison(Path::new("/fixture/repo/worktrees/topic")),
+            "Initial purpose".to_owned(),
+        )]);
         mirror.sync(
             std::slice::from_ref(&space),
             std::slice::from_ref(&checkout),
+            &suppressed,
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "an unconfirmed creation token is never mirrored back into Git"
+        );
+
+        mirror.sync(
+            std::slice::from_ref(&space),
+            std::slice::from_ref(&checkout),
+            &HashMap::new(),
         );
         let PurposeMirrorMessage::Write(initial) = receiver.recv().unwrap() else {
             panic!("initial purpose is a write")
@@ -1290,6 +1342,7 @@ mod tests {
         mirror.sync(
             std::slice::from_ref(&space),
             std::slice::from_ref(&checkout),
+            &HashMap::new(),
         );
         assert!(
             receiver.try_recv().is_err(),
@@ -1300,6 +1353,7 @@ mod tests {
         mirror.sync(
             std::slice::from_ref(&space),
             std::slice::from_ref(&checkout),
+            &HashMap::new(),
         );
         let PurposeMirrorMessage::Write(changed) = receiver.recv().unwrap() else {
             panic!("changed purpose is a write")
@@ -1310,6 +1364,7 @@ mod tests {
         mirror.sync(
             std::slice::from_ref(&space),
             std::slice::from_ref(&checkout),
+            &HashMap::new(),
         );
         let PurposeMirrorMessage::Write(cleared) = receiver.recv().unwrap() else {
             panic!("cleared purpose is a write")
@@ -1371,7 +1426,7 @@ mod tests {
             removal: Default::default(),
         };
 
-        mirror.sync(&spaces, std::slice::from_ref(&project));
+        mirror.sync(&spaces, std::slice::from_ref(&project), &HashMap::new());
 
         let PurposeMirrorMessage::Write(write) = receiver.recv().unwrap() else {
             panic!("the authoritative purpose is a write")
@@ -1426,7 +1481,11 @@ mod tests {
             removal: Default::default(),
         };
 
-        mirror.sync(std::slice::from_ref(&first), std::slice::from_ref(&project));
+        mirror.sync(
+            std::slice::from_ref(&first),
+            std::slice::from_ref(&project),
+            &HashMap::new(),
+        );
         let PurposeMirrorMessage::Write(initial) = receiver.recv().unwrap() else {
             panic!("initial purpose is written")
         };
@@ -1437,6 +1496,7 @@ mod tests {
         mirror.sync(
             &[first.clone(), later_without_token],
             std::slice::from_ref(&project),
+            &HashMap::new(),
         );
         let PurposeMirrorMessage::Write(cleared) = receiver.recv().unwrap() else {
             panic!("later explicit absence clears the mirror")
@@ -1445,7 +1505,11 @@ mod tests {
         assert!(cleared.purpose.is_none());
 
         project.session_workspace_ids.pop();
-        mirror.sync(std::slice::from_ref(&first), std::slice::from_ref(&project));
+        mirror.sync(
+            std::slice::from_ref(&first),
+            std::slice::from_ref(&project),
+            &HashMap::new(),
+        );
         let PurposeMirrorMessage::Write(restored) = receiver.recv().unwrap() else {
             panic!("removing the later workspace restores the earlier value")
         };

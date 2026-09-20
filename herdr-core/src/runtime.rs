@@ -1005,10 +1005,14 @@ pub struct Runtime {
     /// `status.remote[].session`, not the local navigator, so the operation
     /// carries this target separately from its shell-facing receipt.
     purpose_operation_target: Option<PurposeOperationTarget>,
+    /// Creation purpose writes registered after Herdr confirms the checkout
+    /// but before the token request starts. This closes the event-ordering
+    /// window where the mirror could observe the token before the task worker
+    /// reports whether Git accepted it.
+    created_purpose_writes_in_flight: HashMap<String, String>,
     /// Creation values whose token write succeeded but whose Git mirror and
-    /// compensating token clear both failed. Keyed by checkout path so the
-    /// row shows its fallback until Herdr confirms the token changed or a
-    /// later Set purpose operation resolves it.
+    /// compensating token clear both failed. Kept only for this process so the
+    /// row shows its fallback until the user tries Set purpose again.
     unconfirmed_created_purposes: HashMap<String, String>,
     next_explorer_operation_id: u64,
     delta: snapshot_delta::DeltaState,
@@ -1163,6 +1167,7 @@ impl Runtime {
             workspace_removals_in_flight: HashSet::new(),
             next_task_operation_id: 0,
             purpose_operation_target: None,
+            created_purpose_writes_in_flight: HashMap::new(),
             unconfirmed_created_purposes: HashMap::new(),
             next_explorer_operation_id: 0,
             delta: snapshot_delta::DeltaState::default(),

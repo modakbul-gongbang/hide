@@ -1105,6 +1105,15 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
             None,
         )
         .expect("creation operation");
+    runtime.begin_created_purpose_write(path, "Unconfirmed creation purpose");
+    assert_eq!(
+        runtime
+            .unconfirmed_created_purpose_values()
+            .get(&workspace::normalized_for_comparison(Path::new(path)))
+            .map(String::as_str),
+        Some("Unconfirmed creation purpose"),
+        "the mirror sees the suppression before the token write can publish"
+    );
     assert!(runtime.ingest_task_operation_result(
         id,
         Ok(live::WorktreeTaskOutcome {
@@ -1124,21 +1133,11 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
     assert_eq!(
         runtime
             .unconfirmed_created_purposes
-            .get(path)
+            .get(&workspace::normalized_for_comparison(Path::new(path)))
             .map(String::as_str),
         Some("Unconfirmed creation purpose")
     );
-
-    runtime.snapshot.navigator.workspaces[0].checkouts[1].purpose =
-        Some(crate::model::CheckoutPurposeSnapshot {
-            text: "Confirmed replacement".to_owned(),
-            origin: crate::model::CheckoutPurposeOrigin::Token,
-        });
-    super::super::session::retain_live_created_purpose_suppressions(
-        &mut runtime.unconfirmed_created_purposes,
-        &runtime.snapshot.navigator.workspaces,
-    );
-    assert!(runtime.unconfirmed_created_purposes.is_empty());
+    assert!(runtime.created_purpose_writes_in_flight.is_empty());
 
     let created_id = workspace::checkout_id_for_path("workspace-fixture", Path::new(path));
     assert!(

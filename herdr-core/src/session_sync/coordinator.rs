@@ -880,10 +880,11 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (registrations, worktrees) = match runtime.lock() {
+    let (registrations, worktrees, unconfirmed_created_purposes) = match runtime.lock() {
         Ok(guard) => (
             guard.snapshot().ui_state.workspace_registrations.clone(),
             guard.worktree_catalog(),
+            guard.unconfirmed_created_purpose_values(),
         ),
         Err(_) => return false,
     };
@@ -912,7 +913,11 @@ fn publish_replica(
         .as_ref()
         .expect("catalog cache is filled on a miss");
     if let Some(mirror) = purpose_mirror.as_mut() {
-        mirror.sync(&cache.spaces, &cache.workspaces);
+        mirror.sync(
+            &cache.spaces,
+            &cache.workspaces,
+            &unconfirmed_created_purposes,
+        );
     }
     let precomputed = PrecomputedCatalog {
         registrations,
