@@ -648,9 +648,13 @@ impl Runtime {
                             match result {
                                 Ok(outcome) => {
                                     guard.snapshot.sessions.notice = outcome.notice;
-                                    if let Some(analysis) = outcome.analysis {
-                                        guard.snapshot.sessions.analysis = analysis;
-                                    }
+                                    let current =
+                                        std::mem::take(&mut guard.snapshot.sessions.analysis);
+                                    guard.snapshot.sessions.analysis = settled_analysis_snapshot(
+                                        analyzes,
+                                        current,
+                                        outcome.analysis,
+                                    );
                                     guard.request_sessions_refresh();
                                     if action == "delete" {
                                         guard.close_memory_archive_tabs();
@@ -693,7 +697,8 @@ impl Runtime {
 
 #[cfg(test)]
 mod scope_tests {
-    use super::sessions_load_matches_scope;
+    use super::{sessions_load_matches_scope, settled_analysis_snapshot};
+    use crate::model::MemoryAnalysisSnapshot;
 
     #[test]
     fn reversed_session_load_completion_cannot_replace_the_newer_generation() {
@@ -720,6 +725,36 @@ mod scope_tests {
             Some("/project/beta"),
         ));
     }
+
+    #[test]
+    fn successful_analysis_with_no_pending_content_clears_preparing_state() {
+        let preparing = MemoryAnalysisSnapshot {
+            state: "analyzing".to_owned(),
+            discovered: 5,
+            message: Some("Analyzing 0 of 5 sessions".to_owned()),
+            ..MemoryAnalysisSnapshot::default()
+        };
+
+        let settled = settled_analysis_snapshot(true, preparing, None);
+
+        assert!(settled.state.is_empty());
+        assert!(settled.message.is_none());
+    }
+
+    #[test]
+    fn non_analysis_mutations_do_not_hide_an_existing_actionable_failure() {
+        let paused = MemoryAnalysisSnapshot {
+            state: "paused".to_owned(),
+            message: Some("Analysis paused".to_owned()),
+            action: Some("retry".to_owned()),
+            ..MemoryAnalysisSnapshot::default()
+        };
+
+        assert_eq!(
+            settled_analysis_snapshot(false, paused.clone(), None),
+            paused
+        );
+    }
 }
 
 struct MemoryMutationOutcome {
@@ -733,6 +768,18 @@ impl MemoryMutationOutcome {
             notice,
             analysis: None,
         }
+    }
+}
+
+fn settled_analysis_snapshot(
+    analyzed_project: bool,
+    current: MemoryAnalysisSnapshot,
+    outcome: Option<MemoryAnalysisSnapshot>,
+) -> MemoryAnalysisSnapshot {
+    match (analyzed_project, outcome) {
+        (_, Some(snapshot)) => snapshot,
+        (true, None) => MemoryAnalysisSnapshot::default(),
+        (false, None) => current,
     }
 }
 
