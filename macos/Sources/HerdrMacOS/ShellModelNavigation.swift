@@ -193,39 +193,127 @@ enum TabShortcutNumbering {
     }
 }
 
-/// Where a dragged tab lands when the operator lets go.
-///
-/// Tabs are as wide as their labels, so the destination cannot be a fixed
-/// step: it is decided by how far the drag has carried the tab across the
-/// neighbours beside it. A tab has taken a neighbour's slot once it has moved
-/// past the middle of that neighbour, which is the point where the two would
-/// visually trade places.
-enum TabDragPlacement {
-    static func destinationIndex(
-        from index: Int,
-        translation: CGFloat,
-        widths: [CGFloat]
-    ) -> Int {
-        guard widths.indices.contains(index) else { return index }
-        var destination = index
-        var travelled: CGFloat = 0
+/// One deterministic answer for what the tab strip draws and where a dragged
+/// tab lands. The view never measures individual labels, so rendering and
+/// reordering cannot disagree for one frame while the window changes size.
+struct AdaptiveTabStripPresentation: Equatable {
+    enum Density: Equatable {
+        case standard
+        case compressed
+        case icon
+    }
+
+    struct Slot: Equatable {
+        let tabIndex: Int
+        let start: CGFloat
+        let width: CGFloat
+
+        var midpoint: CGFloat { start + width / 2 }
+    }
+
+    let density: Density
+    let slots: [Slot]
+    let hiddenIndices: [Int]
+    let tabIDs: [String]
+
+    var visibleRange: Range<Int> {
+        guard let first = slots.first, let last = slots.last else { return 0..<0 }
+        return first.tabIndex..<(last.tabIndex + 1)
+    }
+    var showsOverflow: Bool { !hiddenIndices.isEmpty }
+
+    static func leadingInset(leftSidebarVisible: Bool) -> CGFloat {
+        leftSidebarVisible ? HideTheme.spacingNone : HideTheme.Layout.trafficLightInset
+    }
+
+    init(availableWidth: CGFloat, tabIDs: [String], activeTabID: String?) {
+        self.tabIDs = tabIDs
+        guard !tabIDs.isEmpty, availableWidth.isFinite, availableWidth > 0 else {
+            density = .standard
+            slots = []
+            hiddenIndices = Array(tabIDs.indices)
+            return
+        }
+
+        let count = tabIDs.count
+        let equalWidth = availableWidth / CGFloat(count)
+        if equalWidth >= HideTheme.Layout.tabPreferredWidth {
+            density = .standard
+            slots = Self.slots(
+                for: 0..<count,
+                widths: Array(repeating: HideTheme.Layout.tabPreferredWidth, count: count)
+            )
+            hiddenIndices = []
+            return
+        }
+        if equalWidth >= HideTheme.Layout.tabTitleMinimumWidth {
+            density = .compressed
+            slots = Self.slots(for: 0..<count, widths: Array(repeating: equalWidth, count: count))
+            hiddenIndices = []
+            return
+        }
+
+        let activeIndex = activeTabID.flatMap { tabIDs.firstIndex(of: $0) } ?? 0
+        let compactWidths = tabIDs.indices.map { index in
+            Self.compactWidth(isActive: index == activeIndex)
+        }
+        if compactWidths.reduce(0, +) <= availableWidth {
+            density = .icon
+            slots = Self.slots(for: 0..<count, widths: compactWidths)
+            hiddenIndices = []
+            return
+        }
+
+        let tabWidth = max(0, availableWidth - HideTheme.Layout.tabOverflowControlWidth)
+        let activeWidth = Self.compactWidth(isActive: true)
+        let remainingWidth = max(0, tabWidth - activeWidth)
+        let visibleCount = min(count, 1 + Int(remainingWidth / HideTheme.Layout.tabIconIdentityWidth))
+        let centeredStart = activeIndex - visibleCount / 2
+        let start = min(max(0, centeredStart), count - visibleCount)
+        let range = start..<(start + visibleCount)
+
+        density = .icon
+        slots = Self.slots(
+            for: range,
+            widths: range.map { compactWidths[$0] }
+        )
+        hiddenIndices = tabIDs.indices.filter { !range.contains($0) }
+    }
+
+    func slot(at tabIndex: Int) -> Slot? {
+        slots.first { $0.tabIndex == tabIndex }
+    }
+
+    /// A carried tab may trade places only with tabs in the same visible
+    /// segment. Hidden tabs keep their relative order until the operator
+    /// selects one and brings it into that segment.
+    func destinationIndex(from sourceIndex: Int, translation: CGFloat) -> Int {
+        guard let sourceSlot = slot(at: sourceIndex) else { return sourceIndex }
+        var destination = sourceIndex
         if translation > 0 {
-            var candidate = index + 1
-            while candidate < widths.count {
-                travelled += widths[candidate]
-                guard translation >= travelled - widths[candidate] / 2 else { break }
-                destination = candidate
-                candidate += 1
+            for target in slots where target.tabIndex > sourceIndex {
+                guard translation >= target.midpoint - (sourceSlot.start + sourceSlot.width) else { break }
+                destination = target.tabIndex
             }
         } else if translation < 0 {
-            var candidate = index - 1
-            while candidate >= 0 {
-                travelled += widths[candidate]
-                guard -translation >= travelled - widths[candidate] / 2 else { break }
-                destination = candidate
-                candidate -= 1
+            for target in slots.reversed() where target.tabIndex < sourceIndex {
+                guard -translation >= sourceSlot.start - target.midpoint else { break }
+                destination = target.tabIndex
             }
         }
         return destination
+    }
+
+    private static func compactWidth(isActive: Bool) -> CGFloat {
+        HideTheme.Layout.tabIconIdentityWidth
+            + (isActive ? HideTheme.IconButton.toolbarSize.width : 0)
+    }
+
+    private static func slots(for range: Range<Int>, widths: [CGFloat]) -> [Slot] {
+        var start: CGFloat = 0
+        return zip(range, widths).map { index, width in
+            defer { start += width }
+            return Slot(tabIndex: index, start: start, width: width)
+        }
     }
 }

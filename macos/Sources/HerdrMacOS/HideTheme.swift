@@ -274,7 +274,6 @@ enum HideTheme {
     /// Align the root agent mark center with the checkout branch center.
     static let compactAgentLeadingInset = spacingSM + agentMarkWidth + spacingSM
         + checkoutIconWidth / 2 - lineageChevronWidth - agentMarkWidth / 2
-    static let tabTitleMaxWidth: CGFloat = 200
     /// A descendant's inset in the agent tree: one column per level.
     ///
     /// The step used to shrink after two levels to keep a deep lineage on
@@ -363,6 +362,16 @@ enum HideTheme {
         /// rather than a click. Below this a tremor while selecting a tab
         /// would carry it out of its slot.
         static let tabDragActivationDistance: CGFloat = 6
+        /// Browser-style tab widths. Tabs begin at the preferred width, share
+        /// the available strip width down to the title boundary, then keep a
+        /// compact identity at the leading edge. Only the active tab adds the
+        /// existing 24pt toolbar close control. The final control opens the
+        /// ordered overflow menu.
+        static let tabPreferredWidth: CGFloat = 180
+        static let tabTitleMinimumWidth: CGFloat = 104
+        static let tabIconIdentityWidth: CGFloat = 40
+        static let tabOverflowControlWidth: CGFloat = 28
+        static let tabStatusDotSize: CGFloat = 5
         /// The window's first row. A tab, the new-tab control, and the strip
         /// itself are all this tall, so the row cannot grow taller than the
         /// thing inside it.

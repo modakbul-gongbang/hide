@@ -112,6 +112,18 @@ private func focusOutcome(
 /// visible tab. This is presentation evidence only; core outcome semantics
 /// are covered by the request-correlation tests above and in Rust.
 @Test @MainActor func relationshipOutcomeRemainsRenderableWithoutItsSourcePane() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("hide-relationship-notice-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bridge = CoreBridge(arguments: [
+        "HerdrMacOS",
+        "--verification-ui-fixture",
+        "--workspace-root", root.path,
+        "--state-path", root.appendingPathComponent("state.json").path,
+    ])
+    let model = ShellModel(core: bridge)
+    let tooltips = HideTooltipController()
     var retries = 0
     let pending = PaneSelectionOperation(
         requestID: "relationship-hosted-pending",
@@ -120,10 +132,15 @@ private func focusOutcome(
         targetLabel: "Hide design QA",
         phase: .pending
     )
-    let pendingHost = NSHostingView(rootView: PaneSelectionOutcomeNotice(
-        operation: pending,
-        onRetry: { retries += 1 }
-    ))
+    let pendingHost = NSHostingView(rootView:
+        PaneSelectionOutcomeNotice(
+            operation: pending,
+            onRetry: { retries += 1 },
+            onDismiss: {}
+        )
+        .environmentObject(model)
+        .environmentObject(tooltips)
+    )
     pendingHost.frame = NSRect(x: 0, y: 0, width: 420, height: 96)
     pendingHost.layoutSubtreeIfNeeded()
     #expect(pendingHost.fittingSize.width > 0)
@@ -136,10 +153,15 @@ private func focusOutcome(
         targetLabel: "Hide design QA",
         phase: .failed(reason: "The target pane is unavailable.", retryable: true)
     )
-    let failedHost = NSHostingView(rootView: PaneSelectionOutcomeNotice(
-        operation: failed,
-        onRetry: { retries += 1 }
-    ))
+    let failedHost = NSHostingView(rootView:
+        PaneSelectionOutcomeNotice(
+            operation: failed,
+            onRetry: { retries += 1 },
+            onDismiss: {}
+        )
+        .environmentObject(model)
+        .environmentObject(tooltips)
+    )
     failedHost.frame = NSRect(x: 0, y: 0, width: 420, height: 120)
     failedHost.layoutSubtreeIfNeeded()
     #expect(failedHost.fittingSize.width > 0)
@@ -149,6 +171,11 @@ private func focusOutcome(
     #expect(bitmap.pixelsWide > 0)
     #expect(bitmap.pixelsHigh > 0)
     #expect(retries == 0, "rendering outcome state never retries by itself")
+
+    model.requestPaneSelection(from: "source", to: "retired-target")
+    #expect(model.paneSelectionOperation != nil)
+    model.dismissPaneSelection()
+    #expect(model.paneSelectionOperation == nil, "Dismiss clears the failed notice")
 }
 
 @Test func directParentExcludesTheCurrentBreadcrumbLayer() {

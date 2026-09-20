@@ -387,8 +387,8 @@ fn pet_state_rides_the_snapshot_and_reflects_agent_status() {
     assert_eq!(working["pet"]["badges"]["working"], 2);
     assert_eq!(working["pet"]["badges"]["needs_you"], 0);
     assert_eq!(
-        working["pet"]["badges"]["done"], 1,
-        "the idle pane nobody has focused is unread, so it is Done"
+        working["pet"]["badges"]["done"], 0,
+        "a newly opened idle pane is ready, not completed"
     );
     assert_eq!(working["pet"]["connection"], "connected");
 

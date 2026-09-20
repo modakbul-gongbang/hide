@@ -167,9 +167,9 @@ impl AgentDemand {
 
 /// Whether an agent is running.
 ///
-/// Herdr's `done` and `idle` are the same underlying stopped state; `done` only
-/// adds Herdr's own tab-scoped judgment that nobody has looked yet, which Hide
-/// does not use.
+/// Herdr's `done` and `idle` are the same underlying stopped state. Completion
+/// is recorded on its own axis; Herdr's tab-scoped seen judgment never becomes
+/// Hide's pane-level read state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AgentActivity {
     Working,
@@ -244,6 +244,7 @@ pub enum Ownership {
 pub fn agent_group_for(
     demand: AgentDemand,
     activity: AgentActivity,
+    completed: bool,
     unread: bool,
     blocked: bool,
     ownership: Ownership,
@@ -259,7 +260,11 @@ pub fn agent_group_for(
     }
     if blocked || ownership == Ownership::Escalated || (demand != AgentDemand::None && unread) {
         AgentGroup::NeedsYou
-    } else if demand == AgentDemand::None && activity == AgentActivity::Stopped && unread {
+    } else if demand == AgentDemand::None
+        && activity == AgentActivity::Stopped
+        && completed
+        && unread
+    {
         AgentGroup::Done
     } else if activity == AgentActivity::Working {
         AgentGroup::Working
@@ -269,14 +274,19 @@ pub fn agent_group_for(
 }
 
 /// The mark drawn for a row, matching the label plugin's own symbol table.
-fn agent_symbol(demand: AgentDemand, activity: AgentActivity, unread: bool) -> &'static str {
+fn agent_symbol(
+    demand: AgentDemand,
+    activity: AgentActivity,
+    completed: bool,
+    unread: bool,
+) -> &'static str {
     match demand {
         AgentDemand::Error => "\u{d7}",
         AgentDemand::Question => "?",
         AgentDemand::Approval => "!",
         AgentDemand::None => match activity {
             AgentActivity::Working => "\u{25cf}",
-            AgentActivity::Stopped if unread => "✓",
+            AgentActivity::Stopped if completed && unread => "✓",
             AgentActivity::Stopped => "\u{25cb}",
             AgentActivity::Unknown => "~",
         },
@@ -316,7 +326,14 @@ fn rank_within(agent: &SidebarAgentSnapshot, ownership: Ownership) -> (u8, u8) {
         AgentDemand::None if agent.activity == "unknown" => 3,
         AgentDemand::None => 4,
     };
-    let group = agent_group_for(demand, activity, unread, agent.blocked, ownership);
+    let group = agent_group_for(
+        demand,
+        activity,
+        agent.completed,
+        unread,
+        agent.blocked,
+        ownership,
+    );
     (group.rank(), demand_rank)
 }
 
@@ -418,17 +435,23 @@ pub fn sync_checkout_agent_summaries(
     changed
 }
 
-/// The one short word a row shows. A stopped agent the operator has not read
-/// is `Done`; once read, the same agent is `Idle`. No view ever shows an axis
-/// value, so nothing underscored can reach the screen.
-fn agent_status_label(demand: AgentDemand, activity: AgentActivity, unread: bool) -> &'static str {
+/// The one short word a row shows. A reported completion the operator has not
+/// read is `Done`; an ordinary stopped pane and a read completion are `Idle`.
+/// No view ever shows an axis value, so nothing underscored can reach the
+/// screen.
+fn agent_status_label(
+    demand: AgentDemand,
+    activity: AgentActivity,
+    completed: bool,
+    unread: bool,
+) -> &'static str {
     match demand {
         AgentDemand::Error => "Error",
         AgentDemand::Question => "Question",
         AgentDemand::Approval => "Approval",
         AgentDemand::None => match activity {
             AgentActivity::Working => "Working",
-            AgentActivity::Stopped if unread => "Done",
+            AgentActivity::Stopped if completed && unread => "Done",
             AgentActivity::Stopped => "Idle",
             AgentActivity::Unknown => "Unknown",
         },
@@ -844,9 +867,9 @@ pub fn prune_lineage_collapse(
 ///
 /// It runs after the read axis, never inside `project_agents`: a row's group
 /// depends on whether the operator has read it, and a projection that has not
-/// met the read record ledger believes every stopped row is Done. The label
-/// plugin's `sort_rank` token is not read at all, so the order Hide shows is
-/// Hide's own.
+/// met the read record ledger treats every completion as unread. Ordinary idle
+/// rows still stay Seen. The label plugin's `sort_rank` token is not read at
+/// all, so the order Hide shows is Hide's own.
 fn sort_agents(agents: &mut [SidebarAgentSnapshot]) {
     agents.sort_by(|left, right| {
         group_of(left)
@@ -856,7 +879,7 @@ fn sort_agents(agents: &mut [SidebarAgentSnapshot]) {
     });
 }
 
-/// Reads the three axes back off a row.
+/// Reads the demand, activity and read axes back off a row.
 ///
 /// `derive_from_axes` is the only writer of those fields and writes them from
 /// these same enums, so the round trip is total.
@@ -888,7 +911,14 @@ pub fn ownership_of(agent: &SidebarAgentSnapshot) -> Ownership {
 
 pub fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
     let (demand, activity, unread) = axes_of(agent);
-    agent_group_for(demand, activity, unread, agent.blocked, ownership_of(agent))
+    agent_group_for(
+        demand,
+        activity,
+        agent.completed,
+        unread,
+        agent.blocked,
+        ownership_of(agent),
+    )
 }
 
 /// The demand axis of a projected row, for callers outside this module.
@@ -900,19 +930,26 @@ pub fn demand_of(agent: &SidebarAgentSnapshot) -> AgentDemand {
     axes_of(agent).0
 }
 
-/// Fills in every value the shell draws from the three axes.
+/// Fills in every value the shell draws from the lifecycle axes.
 ///
 /// Called again whenever the read axis moves, so the derived values can never
 /// describe a different read state than the row they sit on.
 fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     let (demand, activity, unread) = axes_of(agent);
-    let group = agent_group_for(demand, activity, unread, agent.blocked, ownership_of(agent));
+    let group = agent_group_for(
+        demand,
+        activity,
+        agent.completed,
+        unread,
+        agent.blocked,
+        ownership_of(agent),
+    );
     agent.group = group.name().to_owned();
-    agent.symbol = agent_symbol(demand, activity, unread).to_owned();
+    agent.symbol = agent_symbol(demand, activity, agent.completed, unread).to_owned();
     // A row the operator still has to deal with is drawn bright; everything
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
-    agent.status_label = agent_status_label(demand, activity, unread).to_owned();
+    agent.status_label = agent_status_label(demand, activity, agent.completed, unread).to_owned();
     let (status_word_visible, detail) = agent_second_line(
         group,
         agent.expected_reply.as_deref(),
@@ -933,6 +970,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let last_activity = projected_last_activity(&agent, &pane_id)?;
     let demand = agent_demand(&agent);
     let activity = agent_activity(&agent);
+    let completed = agent_completed(&agent);
     let blocked = agent.agent_status.as_deref() == Some("blocked");
     let workspace_label = non_empty(agent.workspace_label.as_deref())
         .or_else(|| {
@@ -964,6 +1002,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .to_owned(),
         demand: demand.name().to_owned(),
         activity: activity.name().to_owned(),
+        completed,
         // Every agent is projected unread; the read axis and everything
         // derived from it are set once, by `apply_read_state`, where the
         // pane read record lives.
@@ -1062,6 +1101,7 @@ fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
         session_id: agent.session_id.clone(),
         demand: agent.demand.clone(),
         activity: agent.activity.clone(),
+        completed: agent.completed,
     }
 }
 
@@ -1095,6 +1135,7 @@ pub fn reconcile_read_records(
             || !session_matches
             || record.demand != agent.demand
             || record.activity != agent.activity
+            || record.completed != agent.completed
         {
             continue;
         }
@@ -1225,6 +1266,16 @@ fn agent_activity(agent: &SessionAgentPayload) -> AgentActivity {
     } else {
         AgentActivity::Unknown
     }
+}
+
+/// Whether this stopped pane has actually completed work.
+///
+/// This is deliberately separate from activity and read state. `idle` plus an
+/// idle token is the ready state of a newly opened agent; `done` or either
+/// completion token form is evidence that a turn finished. Herdr's tab-scoped
+/// seen value still never decides Hide's pane-level read axis.
+fn agent_completed(agent: &SessionAgentPayload) -> bool {
+    agent.agent_status.as_deref() == Some("done") || demand_token(&agent.tokens, "status_done")
 }
 
 fn projected_last_activity(agent: &SessionAgentPayload, pane_id: &str) -> Result<String, String> {
@@ -1370,7 +1421,7 @@ mod tests {
         let mut agents = project_agents(payload(json!([
             {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},
             {"pane_id":"question", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_question":"?"}},
-            {"pane_id":"done", "state_change_seq":1, "agent_status":"idle"},
+            {"pane_id":"done", "state_change_seq":1, "agent_status":"done"},
             {"pane_id":"working", "state_change_seq":1, "agent_status":"working"},
             {"pane_id":"unknown", "state_change_seq":1, "agent_status":"unknown"},
             {"pane_id":"child", "state_change_seq":1, "agent_status":"blocked", "spawned_from_pane_id":"working"}
@@ -1473,7 +1524,12 @@ mod tests {
                 "stopped",
                 "✓",
             ),
-            (json!({"status_idle": "\u{25cb}"}), "none", "stopped", "✓"),
+            (
+                json!({"status_idle": "\u{25cb}"}),
+                "none",
+                "stopped",
+                "\u{25cb}",
+            ),
             (json!({"status_unknown": "~"}), "none", "unknown", "~"),
         ];
         let agents = cases
@@ -1505,9 +1561,10 @@ mod tests {
     }
 
     /// AC1. Herdr's own lifecycle words, with no plugin token at all. Blocked
-    /// is an approval, and `done` and `idle` produce the same activity: the
-    /// difference between them is Herdr's tab-scoped read judgment, which Hide
-    /// does not use.
+    /// is an approval, and `done` and `idle` produce the same activity. They
+    /// differ on completion evidence: an idle agent is merely ready, while a
+    /// done agent has a result to review. Neither lifecycle decides Hide's
+    /// pane-level read state.
     #[test]
     fn axes_map_herdr_lifecycles_with_blocked_as_approval() {
         let projection = project_agents(payload(json!([
@@ -1525,19 +1582,43 @@ mod tests {
             .map(|agent| {
                 (
                     agent.pane_id.as_str(),
-                    (agent.demand.as_str(), agent.activity.as_str()),
+                    (
+                        agent.demand.as_str(),
+                        agent.activity.as_str(),
+                        agent.completed,
+                    ),
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        assert_eq!(axes["working"], ("none", "working"));
-        assert_eq!(axes["blocked"], ("approval", "unknown"));
-        assert_eq!(axes["done"], ("none", "stopped"));
-        assert_eq!(axes["idle"], ("none", "stopped"));
-        assert_eq!(axes["unknown"], ("none", "unknown"));
+        assert_eq!(axes["working"], ("none", "working", false));
+        assert_eq!(axes["blocked"], ("approval", "unknown", false));
+        assert_eq!(axes["done"], ("none", "stopped", true));
+        assert_eq!(axes["idle"], ("none", "stopped", false));
+        assert_eq!(axes["unknown"], ("none", "unknown", false));
         assert_eq!(
-            axes["done"], axes["idle"],
-            "done and idle differ only by Herdr's tab-scoped seen, which Hide does not read"
+            axes["done"].1, axes["idle"].1,
+            "done and idle are both stopped"
         );
+        assert_ne!(
+            axes["done"].2, axes["idle"].2,
+            "only a reported completion can become Done"
+        );
+        let idle = projection
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == "idle")
+            .expect("idle agent");
+        assert_eq!(idle.group, "seen");
+        assert_eq!(idle.status_label, "Idle");
+        assert_eq!(idle.symbol, "○");
+        let done = projection
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == "done")
+            .expect("completed agent");
+        assert_eq!(done.group, "done");
+        assert_eq!(done.status_label, "Done");
+        assert_eq!(done.symbol, "✓");
         assert_eq!(
             projection.agents.len(),
             5,
@@ -1554,6 +1635,7 @@ mod tests {
                 AgentDemand::Approval,
                 AgentActivity::Unknown,
                 false,
+                false,
                 true,
                 Ownership::Operator
             ),
@@ -1563,6 +1645,7 @@ mod tests {
             agent_group_for(
                 AgentDemand::Approval,
                 AgentActivity::Unknown,
+                false,
                 false,
                 false,
                 Ownership::Operator
@@ -1635,7 +1718,14 @@ mod tests {
             ),
         ];
         for (demand, activity, unread, blocked, expected, status_check) in cases {
-            let _group = agent_group_for(demand, activity, unread, blocked, Ownership::Operator);
+            let _group = agent_group_for(
+                demand,
+                activity,
+                false,
+                unread,
+                blocked,
+                Ownership::Operator,
+            );
             assert_eq!(
                 agent_requires_close_confirmation(activity, demand, blocked),
                 expected,
@@ -1710,23 +1800,62 @@ mod tests {
             (
                 AgentDemand::Question,
                 AgentActivity::Unknown,
+                false,
                 true,
                 "Question",
             ),
             (
                 AgentDemand::Approval,
                 AgentActivity::Unknown,
+                false,
                 true,
                 "Approval",
             ),
-            (AgentDemand::Error, AgentActivity::Unknown, true, "Error"),
-            (AgentDemand::None, AgentActivity::Working, true, "Working"),
-            (AgentDemand::None, AgentActivity::Stopped, true, "Done"),
-            (AgentDemand::None, AgentActivity::Stopped, false, "Idle"),
-            (AgentDemand::None, AgentActivity::Unknown, true, "Unknown"),
+            (
+                AgentDemand::Error,
+                AgentActivity::Unknown,
+                false,
+                true,
+                "Error",
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Working,
+                false,
+                true,
+                "Working",
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Stopped,
+                true,
+                true,
+                "Done",
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Stopped,
+                false,
+                true,
+                "Idle",
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Stopped,
+                true,
+                false,
+                "Idle",
+            ),
+            (
+                AgentDemand::None,
+                AgentActivity::Unknown,
+                false,
+                true,
+                "Unknown",
+            ),
         ];
-        for (demand, activity, unread, expected) in labels {
-            let label = agent_status_label(demand, activity, unread);
+        for (demand, activity, completed, unread, expected) in labels {
+            let label = agent_status_label(demand, activity, completed, unread);
             assert_eq!(label, expected);
             assert!(!label.contains('_'), "{label} leaks an axis value");
         }
@@ -1753,7 +1882,7 @@ mod tests {
              "tokens":{"activity":"0000000000003"}}
         ]));
         let mut records = BTreeMap::new();
-        // The operator has looked at `read-idle`, so it drops out of Done.
+        // An ordinary idle pane stays Seen even before a read record exists.
         records.insert(
             "read-idle".to_owned(),
             PaneReadRecord {
@@ -1761,6 +1890,7 @@ mod tests {
                 session_id: None,
                 demand: "none".to_owned(),
                 activity: "stopped".to_owned(),
+                completed: false,
             },
         );
         apply_read_state(&mut agents, &mut records, None);
@@ -1906,9 +2036,9 @@ mod tests {
         assert!(!projected[0].status_word_visible);
         assert_eq!(projected[1].detail.as_deref(), Some("A/B 선택"));
         assert!(!projected[1].status_word_visible);
-        // An unread stopped row with no demand is Done: word kept, no sentence.
+        // A newly opened idle row stays Seen with no second-line sentence.
         assert_eq!(projected[2].detail, None);
-        assert!(projected[2].status_word_visible);
+        assert!(!projected[2].status_word_visible);
         let chip = agent_chip(&projected[0]);
         assert_eq!(chip.label, "Hook 버그 확인");
         assert_eq!(

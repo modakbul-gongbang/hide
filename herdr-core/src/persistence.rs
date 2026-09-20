@@ -266,6 +266,7 @@ mod tests {
                 session_id: Some("session-7".to_owned()),
                 demand: "question".to_owned(),
                 activity: "stopped".to_owned(),
+                completed: false,
             },
         );
         save(&path, &state, &PaneTerminalSizes::new()).expect("state saves");

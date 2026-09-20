@@ -289,14 +289,15 @@ pub struct DeviceTestStageSnapshot {
     pub detail: String,
 }
 
-/// An agent's state on three independent axes, plus the values the shell draws
+/// An agent's state on four independent lifecycle axes, plus the values the shell draws
 /// from them.
 ///
-/// The axes answer three different questions that a single flat state string
+/// The axes answer four different questions that a single flat state string
 /// used to mix: what the agent needs from the operator (`demand`), whether it
-/// is running (`activity`), and whether the operator has looked at it since it
-/// last changed (`unread`). Everything below `unread` is derived here so the
-/// shell only draws (design rule 4).
+/// is running (`activity`), whether it has reported a completion (`completed`),
+/// and whether the operator has looked at it since it last changed (`unread`).
+/// Everything below `unread` is derived here so the shell only draws (design
+/// rule 4).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SidebarAgentSnapshot {
     pub id: String,
@@ -310,9 +311,14 @@ pub struct SidebarAgentSnapshot {
     /// or `none`. Herdr's `blocked` lifecycle is an approval.
     pub demand: String,
     /// Whether the agent is running: `working`, `stopped`, or `unknown`.
-    /// Herdr's `done` and `idle` are the same activity; the difference between
-    /// them is a read judgment Herdr makes per tab, and Hide does not use it.
+    /// Herdr's `done` and `idle` are the same activity. Completion and Hide's
+    /// pane-level read state remain separate axes.
     pub activity: String,
+    /// Whether Herdr or the label plugin reported a completed turn. A newly
+    /// opened agent can be stopped while it waits for its first instruction;
+    /// that ready state is not a completion and must not appear as Done.
+    #[serde(skip_serializing)]
+    pub completed: bool,
     /// Whether this pane has changed since the operator last had it focused.
     /// Owned by Hide per pane, never by Herdr's tab-scoped seen.
     pub unread: bool,
@@ -436,8 +442,9 @@ pub struct WorkspaceSnapshot {
     /// The Herdr workspaces whose panes sit in this project, in Herdr order.
     /// Project identity is the repository path, not a Herdr workspace id, so
     /// Herdr dropping its workspace when the last pane closes leaves the row
-    /// and the persisted focus in place. Commands that need a Herdr workspace
-    /// target the first entry; an empty list means Herdr has none here yet.
+    /// and the persisted focus in place. Commands may reuse an entry only
+    /// while no other project also contains it; an empty list means Herdr has
+    /// none here yet.
     pub session_workspace_ids: Vec<String>,
     /// The newest activity anywhere in this project, in Unix milliseconds:
     /// the latest of its checkouts' last commit and its agents' last activity,
@@ -1232,6 +1239,10 @@ pub struct PaneReadRecord {
     pub session_id: Option<String>,
     pub demand: String,
     pub activity: String,
+    /// Part of the pane-level fingerprint so an idle-to-completed transition
+    /// becomes unread even when Herdr's process-local sequence does not move.
+    #[serde(default)]
+    pub completed: bool,
 }
 
 /// The scale a pane has until the user zooms it.

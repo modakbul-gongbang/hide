@@ -55,7 +55,8 @@ struct HideTerminalSurface: View {
             if let operation = model.paneSelectionOperation {
                 PaneSelectionOutcomeNotice(
                     operation: operation,
-                    onRetry: model.retryPaneSelection
+                    onRetry: model.retryPaneSelection,
+                    onDismiss: model.dismissPaneSelection
                 )
                 .padding(HideTheme.spacingSM)
             }
@@ -71,6 +72,7 @@ struct HideTerminalSurface: View {
 struct PaneSelectionOutcomeNotice: View {
     let operation: PaneSelectionOperation
     let onRetry: () -> Void
+    let onDismiss: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: HideTheme.spacingSM) {
@@ -94,6 +96,12 @@ struct PaneSelectionOutcomeNotice: View {
                     Button("Retry", action: onRetry)
                         .buttonStyle(HideInteractiveButtonStyle())
                 }
+                HideIconButton(
+                    systemImage: "xmark",
+                    help: "Dismiss",
+                    variant: .toolbar,
+                    action: onDismiss
+                )
             }
         }
         .padding(.horizontal, HideTheme.spacingMD)

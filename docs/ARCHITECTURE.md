@@ -28,10 +28,12 @@ Its event loop also receives hook and refresh wakes through a short-lived Unix s
 When the stream ends, the plugin reconnects with bounded exponential backoff and always starts from a fresh pane list; an event is only a prompt to list again, and nothing is read off it but its kind.
 
 The shell holds no authority, but the core does not hand all of it to Herdr either.
-Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
+Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns the focused project and checkout, each checkout's visible tab, the keyboard focus pane, panel visibility and text scale.
 The core also owns which Claude and Codex panes show their conversation ledger in place of the terminal (`ui_state.conversation_pane_ids`): a pane opens on its terminal, enters the set only through `toggle_conversation`, and leaves it with the pane, so a refresh never turns a pane back into a conversation the operator did not ask for.
 A core-owned value changes on the event that asked for it and Herdr is told afterwards, so the canvas and the focus ring never wait for a round trip.
-While that notification is pending, the Herdr workspace that owns the target showing it is read as its confirmation, whichever workspace holds Herdr's keyboard, because a checkout is keyed by path and can hold tabs from several Herdr workspaces; with nothing pending, a move of Herdr's focused tab or pane to another value is followed and a diagnostic records the ids and the origin; a refusal or a timeout keeps the core's value and records a diagnostic, and nothing is presented to the operator.
+Selecting a pane first moves the core-owned project, checkout and visible tab to the context that owns that pane, then sends one `pane.focus` request to Herdr; splitting that user action into project, tab and pane requests would expose intermediate frames and make partial refusal possible.
+While that notification is pending, the Herdr workspace that owns the target showing it is read as its confirmation, whichever workspace holds Herdr's keyboard, because a checkout is keyed by path and can hold tabs from several Herdr workspaces; with nothing pending, a move of Herdr's focused tab or pane to another value is followed and a diagnostic records the ids and the origin.
+A refusal or timeout keeps the core-owned context at the requested target, records a diagnostic and resolves the correlated shell request as a retryable failure; the shell presents Retry and Dismiss, and Dismiss clears only that notice.
 A non-focused workspace's active tab is that workspace's memory, never a focus to follow: folding every workspace's active tab into one value per checkout let the last one overwrite the rest, and every tab focus on the other workspace timed out and snapped back.
 Herdr moves that memory silently: a close that removes a workspace's active tab is followed by `tab_focused` only when the workspace holds Herdr's keyboard focus, and by nothing at all otherwise.
 The replica therefore asks `workspace.get` for the replacement the moment such a close is applied and on each operation tick while the answer names a tab the stream has not delivered yet; a workspace still waiting after a bounded number of reads is a replica that cannot converge, and it is rebuilt from a fresh snapshot.
@@ -60,13 +62,14 @@ Herdr owns split geometry and the PTY size, so a delegated child pane is really 
 Detection is the same on every pass, so a child that arrives while Hide is running and one already split when Hide started take the same path, and a refusal is retried on a fixed interval rather than assumed to have worked.
 Herdr reports a refusal as an unchanged move with a reason rather than as an error, so the decision reads `changed` instead of trusting a successful request.
 
-Ownership is the fourth derived status axis and it is read off the lineage, never stored.
+Ownership is the fifth derived status axis and it is read off the lineage, never stored.
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; a per-child stall clock is what brings work back when it stops being anybody's problem.
 `docs/status-model.md` owns both rules.
 The Agents `My Work` view filters only the core-final Delegated answer and leaves hard escalations and visible orphans in operator-owned groups; `All` changes only the shell's session-local visibility projection.
 Overview groups the same canonical agents by the checkout their pane is in and nests a child under its parent only from authoritative child IDs; a parent in another worktree is named in a caption, never inferred.
 The Overview has no selection of its own: a row click dispatches the existing pane-selection event, a header click the checkout-focus event, and the `N files` chip one `overview_open_section` event that focuses the checkout and switches the panel to History together, so a refusal cannot leave the screen half moved.
-`agent_start_in_checkout` creates a tab in the checkout's workspace through the task-operation slot that `create_worktree` already uses, and the shell starts the chosen provider in the created pane on the same path.
+`agent_start_in_checkout` creates a tab in a Herdr workspace used exclusively by that project through the task-operation slot that `create_worktree` already uses, and the shell starts the chosen provider in the created pane on the same path.
+When every known Herdr workspace for the checkout is also associated with another registered project, Add Tab and agent start create a fresh workspace with the checkout path instead of leaking the other project's label and tabs into the new surface.
 
 What an agent has spawned in-process is not on Herdr's wire at all.
 The hook helper reports it through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata, and the core reads it back out of the pane tokens its ordinary snapshot already carries; `herdr-core/src/agent_hooks.rs` is the only place that reads those tokens.

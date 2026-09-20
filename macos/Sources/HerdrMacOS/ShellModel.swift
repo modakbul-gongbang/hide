@@ -991,6 +991,13 @@ final class ShellModel: ObservableObject {
         )
     }
 
+    func dismissPaneSelection() {
+        guard let operation = paneSelectionOperation,
+              case .failed = operation.phase
+        else { return }
+        paneSelectionOperation = nil
+    }
+
     private func allPaneMetadata() -> [CorePaneSnapshot] {
         Array(workspaces.lazy.flatMap(\.checkouts).flatMap(\.tabs).flatMap(\.panes))
     }
