@@ -151,6 +151,7 @@ final class ShellModel: ObservableObject {
     @Published var projectHomeVisible = false
     @Published var projectHomeView: ProjectHomeViewKind = .tasks
     @Published var projectHomeIssuePopover = false
+    @Published private(set) var projectHomeIssueResult: CoreTaskOperation?
     @Published var activeSurface: ShellSurface = .terminal
     @Published private(set) var sidebarContent: SidebarContent = .projects
     @Published var agentListScope: AgentListScope = .mine
@@ -1884,6 +1885,12 @@ final class ShellModel: ObservableObject {
         defer {
             core.dispatch(kind: "task_operation_ack", payload: ["id": operation.id])
         }
+        if operation.kind == "checkout_issue" {
+            // Metadata writes create neither a pane nor a path. Keep the
+            // result until the popover consumes it, even after the core ack.
+            projectHomeIssueResult = operation
+            return
+        }
         if operation.kind == "checkout_purpose" {
             if operation.phase == "failed" {
                 purposeError = WorktreeSubmissionPresentation.oneLine(
@@ -2346,6 +2353,13 @@ final class ShellModel: ObservableObject {
     }
 
     func closeProjectHome() { projectHomeVisible = false }
+
+    func saveProjectHomeIssue(checkoutID: String, value: String) -> Bool {
+        guard core.snapshot?.taskOperation?.phase != "working",
+              requireLocalHerdrMutationReadiness() else { return false }
+        core.dispatch(kind: "set_checkout_issue", payload: ["checkout_id": checkoutID, "text": value])
+        return true
+    }
 
     func toggleRightPanel() {
         core.persistUIState(rightPanelVisible: !rightPanelVisible)

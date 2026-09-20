@@ -186,16 +186,17 @@ private struct ProjectHomeCardView: View {
                     .accessibilityIdentifier("project-home-issue-input")
                 if let inputError { Text(inputError).foregroundStyle(HideTheme.danger).hideFont(size: HideTheme.Typography.caption) }
                 Button(submitted ? "저장 중…" : "저장", action: submitIssue)
-                    .buttonStyle(HideTextButtonStyle(appearance: .prominent)).disabled(submitted)
+                    .buttonStyle(HideTextButtonStyle(appearance: .prominent))
+                    .disabled(submitted || model.core.snapshot?.taskOperation?.phase == "working")
             }
             .padding(HideTheme.spacingMD).frame(width: HideTheme.Home.columnWidth)
         }
         .onChange(of: linkPresented) { _, presented in model.projectHomeIssuePopover = presented }
         .onDisappear { if linkPresented { model.projectHomeIssuePopover = false } }
-        .onChange(of: model.core.snapshot?.taskOperation?.phase) { _, phase in
-            guard submitted, model.core.snapshot?.taskOperation?.kind == "checkout_issue" else { return }
-            if phase == "ready" { submitted = false; linkPresented = false }
-            if phase == "failed" { submitted = false }
+        .onChange(of: model.projectHomeIssueResult?.id) { _, _ in
+            guard submitted else { return }
+            submitted = false
+            if model.projectHomeIssueResult?.phase == "ready" { linkPresented = false }
         }
     }
 
@@ -281,8 +282,7 @@ private struct ProjectHomeCardView: View {
     }
     private func saveIssue(_ value: String) {
         guard let checkout = card.checkout else { return }
-        submitted = true
-        model.core.dispatch(kind: "set_checkout_issue", payload: ["checkout_id": checkout.id, "text": value])
+        submitted = model.saveProjectHomeIssue(checkoutID: checkout.id, value: value)
     }
 }
 

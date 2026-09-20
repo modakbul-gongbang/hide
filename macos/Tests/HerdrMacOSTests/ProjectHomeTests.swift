@@ -16,6 +16,33 @@ struct ProjectHomeTests {
                               expanded: true, deviceID: "local", repoName: "Project", isGit: git,
                               defaultBranch: "main", registered: true, temporary: false, checkouts: checkouts)
     }
+    @Test @MainActor func issueWriteCompletionNeverOpensAPaneCreationAlert() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("hide-issue-result-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recording = root.appendingPathComponent("recording.json")
+        let seed = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
+            "--workspace-root", root.path, "--state-path", root.appendingPathComponent("seed.json").path,
+            "--verification-snapshot-output", recording.path])
+        for _ in 0..<100 where seed.snapshot == nil { try await Task.sleep(for: .milliseconds(20)) }
+        var payload = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: recording)) as? [String: Any])
+        var rest = try #require(payload["rest"] as? [String: Any])
+        for (index, phase) in ["ready", "failed"].enumerated() {
+            let id = index + 700
+            rest["task_operation"] = ["id": id, "kind": "checkout_issue", "phase": phase]
+            payload["rest"] = rest
+            let replay = root.appendingPathComponent("\(phase).json")
+            try JSONSerialization.data(withJSONObject: payload).write(to: replay)
+            let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
+                "--workspace-root", root.path, "--state-path", root.appendingPathComponent("\(phase)-state.json").path,
+                "--verification-snapshot", replay.path])
+            let model = ShellModel(core: bridge)
+            for _ in 0..<100 where model.projectHomeIssueResult == nil { try await Task.sleep(for: .milliseconds(20)) }
+            #expect(model.projectHomeIssueResult?.id == UInt64(id))
+            #expect(model.projectHomeIssueResult?.phase == phase)
+            #expect(model.interactionNotice == nil)
+        }
+    }
     @Test func gitStagePriorityDoesNotDependOnAgentOrProjectStatus() throws {
         let open = try JSONDecoder().decode(CorePullRequest.self, from: Data(#"{"number":7,"head_branch":"task","base_branch":"main","url":"https://github.com/acme/project/pull/7","badge":"open","is_draft":false}"#.utf8))
         let merged = try JSONDecoder().decode(CorePullRequest.self, from: Data(#"{"number":7,"head_branch":"task","base_branch":"main","url":"https://github.com/acme/project/pull/7","badge":"merged","is_draft":false}"#.utf8))
