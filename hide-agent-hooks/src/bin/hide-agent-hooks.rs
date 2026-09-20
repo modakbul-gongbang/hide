@@ -64,7 +64,7 @@ fn run_hook(arguments: &[String]) {
     let runtime =
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
     let Some(home) = home_directory() else { return };
-    let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_DEADLINE_MS);
+    let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
     if let Some(runtime) = runtime.filter(|_| {
         arguments
             .iter()

@@ -31,3 +31,8 @@ pub const SESSION_START_ITEM_LIMIT: usize = 5;
 pub const PROMPT_ITEM_LIMIT: usize = 3;
 pub const INJECTION_TOKEN_LIMIT: usize = 600;
 pub const HOOK_DEADLINE_MS: u64 = 100;
+/// Budget available after the helper reaches Rust code.
+///
+/// The public hook contract measures from process launch, so production keeps
+/// startup, scheduling, stdout flush, and teardown inside the remaining 25 ms.
+pub const HOOK_PROCESS_BUDGET_MS: u64 = 75;

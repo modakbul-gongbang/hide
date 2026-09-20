@@ -47,5 +47,8 @@ fn blocked_stdin_cannot_hold_the_agent_hook_past_its_hard_deadline() {
         payload["hookSpecificOutput"]["additionalContext"],
         hide_agent_hooks::runtime::PURPOSE_CONTEXT
     );
+    // This target is an unoptimised Cargo test binary, so its process startup
+    // is not the production hook timing surface. The signed release helper's
+    // caller-visible 100 ms boundary is measured in native acceptance.
     assert!(started.elapsed() < Duration::from_millis(1_500));
 }
