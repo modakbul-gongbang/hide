@@ -329,7 +329,7 @@ The accessibility label of a row and of a header always carries the status word,
 
 ### Search and Recent Panels
 
-The ⌘K sheet's agent row is titled by the identity and subtitled by the second line above; when the state chose no sentence it falls to the rolling `task`, unless that is already the title, and then to the status word.
+The ⌘K sheet's agent row is titled by the identity and subtitled by the second line above; when the state chose no sentence it falls to the status word because the rolling `task` is already the title.
 The pane id is no longer printed on the row but still matches the query and is read by accessibility.
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
 Neither the core nor the plugin renames the Herdr tab for this; the Recent Panels label is projection only.
