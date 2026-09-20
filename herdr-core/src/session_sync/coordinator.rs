@@ -94,6 +94,10 @@ fn run_coordinator(
                     subscription: next_subscription,
                     snapshot_at,
                 }) => {
+                    if context.is_local() && !begin_local_read_record_reconciliation(&context) {
+                        stop_subscription(&mut subscription);
+                        return;
+                    }
                     replica = Some(next_replica);
                     subscription = Some(next_subscription);
                     reconcile_until = snapshot_at + RECONCILE_GRACE;
@@ -881,6 +885,21 @@ fn publish_replica(
     if changed {
         context.notifier.notify();
     }
+    true
+}
+
+/// Marks persisted read records before the first projection from a fresh
+/// connection. Restored topology and agent detection can arrive on different
+/// ticks, so the runtime keeps this bounded set until each pane is observed or
+/// the authoritative topology drops it.
+fn begin_local_read_record_reconciliation(context: &SessionSyncContext) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let Ok(mut guard) = runtime.lock() else {
+        return false;
+    };
+    guard.begin_local_read_record_reconciliation();
     true
 }
 

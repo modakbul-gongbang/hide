@@ -882,6 +882,9 @@ pub struct Runtime {
     /// operator's behalf arms this, and it is memory only: a launch starts
     /// with the operator having looked at nothing.
     operator_focused_pane_id: Option<String>,
+    /// Persisted records waiting to compare against an agent after a fresh
+    /// Herdr connection. Agent detection can trail restored pane topology.
+    pending_read_record_reconciliation: HashSet<String>,
     /// The tab Hide is showing in each checkout it has been asked about.
     ///
     /// Hide owns the visible tab. The navigator is rebuilt from Herdr's
@@ -1113,6 +1116,7 @@ impl Runtime {
             pet_waking_until_unix_ms: 0,
             pet_dragging: false,
             operator_focused_pane_id: None,
+            pending_read_record_reconciliation: HashSet::new(),
             visible_tab_ids: BTreeMap::new(),
             pending_tab_focus: None,
             herdr_focused_tab_seen: None,

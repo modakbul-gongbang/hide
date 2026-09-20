@@ -1282,6 +1282,45 @@ fn read_record_is_written_for_the_operator_focused_pane_and_evicted_when_it_disa
     let _ = std::fs::remove_file(&state_path);
 }
 
+/// A restarted server restores pane topology before agent detection has
+/// necessarily caught up. The transient empty list must keep the pane's read
+/// record, and the same stopped agent must not return to Done only because the
+/// new server assigned a different process-local sequence.
+#[test]
+fn restored_pane_keeps_its_read_record_through_delayed_agent_detection() {
+    let mut runtime = live_runtime();
+    let original = [
+        ("w1:p1", 6018_u64),
+        ("w1:p2", 6019_u64),
+        ("w1:p3", 6020_u64),
+    ];
+    runtime.ingest_session(Ok(finished_tab_payload(&original, "w1:p1")));
+    assert!(runtime.dispatch_json(&operator_focus_event("w1:p1")));
+    assert_eq!(unread_panes(&runtime), vec!["w1:p2", "w1:p3"]);
+
+    runtime.begin_local_read_record_reconciliation();
+    let mut topology_first = finished_tab_payload(&original, "w1:p1");
+    topology_first.agents.clear();
+    runtime.ingest_session(Ok(topology_first));
+    assert!(
+        runtime
+            .snapshot()
+            .ui_state
+            .pane_read_records
+            .contains_key("w1:p1"),
+        "an incomplete agent list cannot evict a live pane's record"
+    );
+
+    let restored = [("w1:p1", 3_u64), ("w1:p2", 4_u64), ("w1:p3", 5_u64)];
+    runtime.ingest_session(Ok(finished_tab_payload(&restored, "w1:p1")));
+    assert!(
+        unread_panes(&runtime)
+            .iter()
+            .all(|pane_id| pane_id != "w1:p1"),
+        "the restored stopped agent stays Seen after sequence rebasing"
+    );
+}
+
 /// AC2, AC7, SC1. The defect the PRD was written against, from the other
 /// side: one click on a Done row clears that row and nothing else, even
 /// though Herdr reports the whole tab seen and names its own focused pane.
