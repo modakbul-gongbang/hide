@@ -160,6 +160,7 @@ private struct HideTabStrip: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(HideInteractiveButtonStyle())
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             // A double-click on the title keeps a preview tab; the button's
             // own click still focuses it on the first click.
             .simultaneousGesture(TapGesture(count: 2).onEnded { model.keepUnifiedTabOpen(tab) })
@@ -241,6 +242,7 @@ private struct HideTabStrip: View {
                     )
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
                 if !compressed, let notice = model.tabNotice(for: tab) {
                     Image(systemName: "exclamationmark.triangle")
                         .hideFont(size: HideTheme.Typography.caption, weight: .semibold)
