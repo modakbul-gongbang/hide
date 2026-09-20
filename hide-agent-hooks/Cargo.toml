@@ -22,6 +22,9 @@ serde = { version = "=1.0.229", features = ["derive"] }
 # only supposed to append to.
 serde_json = { version = "=1.0.151", features = ["preserve_order"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
 [dev-dependencies]
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 tempfile = "=3.27.0"

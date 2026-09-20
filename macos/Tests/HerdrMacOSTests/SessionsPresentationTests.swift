@@ -72,6 +72,28 @@ struct SessionsPresentationTests {
         #expect(SessionsPresentation.sessions(snapshot(rows: [session], total: 1), remote: false) == .rows)
     }
 
+    @Test func anUnreadableSessionDoesNotReplaceReadableRowsWithAFailureScreen() {
+        let unavailable = CoreSessionRowSnapshot(
+            id: "session-2",
+            provider: "claude",
+            providerLabel: "Claude Code",
+            locator: "/fixture/moved.jsonl",
+            checkoutPath: "/fixture/project",
+            firstHumanRequest: "한글 English source를 확인해줘",
+            startedAtUnixMS: 2,
+            updatedAtUnixMS: 2,
+            title: nil,
+            unavailableReason: "Session source moved"
+        )
+
+        #expect(SessionsPresentation.sessions(
+            snapshot(rows: [session, unavailable], total: 2),
+            remote: false
+        ) == .rows)
+        #expect(SessionsPresentation.sessionAccessibility(unavailable).hasSuffix(", Session unavailable"))
+        #expect(SessionsPresentation.sessionAccessibility(unavailable).contains("한글 English source를 확인해줘"))
+    }
+
     @Test func memoryStatesSeparateOffEmptyNoMatchAndRows() {
         #expect(SessionsPresentation.memory(snapshot()) == .off)
         #expect(SessionsPresentation.memory(snapshot(enabled: true)) == .empty)
@@ -99,6 +121,14 @@ struct SessionsPresentationTests {
             state: "complete", discovered: 4, analyzed: 3, failed: 1,
             message: "3 analyzed · 1 failed", action: "retry"
         )) == "3 analyzed · 1 failed")
+    }
+
+    @Test func normalIdleAndZeroAnalysisDoNotProduceAnActionableNotice() {
+        #expect(SessionsPresentation.analysisLabel(.idle) == nil)
+        #expect(SessionsPresentation.analysisLabel(.init(
+            state: "complete", discovered: 0, analyzed: 0, failed: 0,
+            message: "0 analyzed", action: nil
+        )) == nil)
     }
 
     @Test func accessibilityReadsFieldsInTheContractOrder() {

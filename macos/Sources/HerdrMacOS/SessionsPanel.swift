@@ -40,7 +40,13 @@ enum SessionsPresentation {
         count > 0 ? "Project Memory ready · \(count)" : nil
     }
 
-    static func analysisLabel(_ analysis: CoreMemoryAnalysisSnapshot) -> String {
+    static func analysisLabel(_ analysis: CoreMemoryAnalysisSnapshot) -> String? {
+        if analysis.state.isEmpty || analysis.state == "idle" {
+            return nil
+        }
+        if analysis.state == "complete", analysis.analyzed == 0, analysis.failed == 0 {
+            return nil
+        }
         if analysis.state == "analyzing", analysis.discovered > 0 {
             return "Analyzing \(analysis.analyzed) of \(analysis.discovered) sessions"
         }
@@ -274,12 +280,14 @@ struct SessionsPanel: View {
         }
     }
 
+    @ViewBuilder
     private var analysisNotice: some View {
-        let progress = SessionsPresentation.analysisLabel(state.analysis)
-        return actionNotice(progress, action: state.analysis.action.map(actionTitle)) {
-            if state.analysis.action == "update_hooks" { showHookConfirmation = true }
-            else if state.analysis.action == "open_settings" || state.analysis.action == "sign_in" { model.showSettings = true }
-            else { model.applyMemoryAction("retry") }
+        if let progress = SessionsPresentation.analysisLabel(state.analysis) {
+            actionNotice(progress, action: state.analysis.action.map(actionTitle)) {
+                if state.analysis.action == "update_hooks" { showHookConfirmation = true }
+                else if state.analysis.action == "open_settings" || state.analysis.action == "sign_in" { model.showSettings = true }
+                else { model.applyMemoryAction("retry") }
+            }
         }
     }
 

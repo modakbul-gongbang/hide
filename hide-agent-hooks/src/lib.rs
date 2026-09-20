@@ -26,7 +26,9 @@ pub mod report;
 pub mod runtime;
 
 pub use counters::PaneCounters;
-pub use diagnosis::{Diagnosis, PaneInstrumentation, RuntimeDiagnosis, UninstrumentedReason};
+pub use diagnosis::{
+    Diagnosis, MemoryCompatibility, PaneInstrumentation, RuntimeDiagnosis, UninstrumentedReason,
+};
 pub use install::{
     HookStatus, InstallFailure, InstallOutcome, RemoveOutcome, claim_first_run, helper_for,
     install, remove,

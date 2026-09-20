@@ -1118,6 +1118,7 @@ dependencies = [
  "hide-herdr-client",
  "hide-memory",
  "hide-project",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

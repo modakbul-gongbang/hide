@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub const MEMORY_DATABASE_ENV: &str = "HIDE_MEMORY_DATABASE_PATH";
+pub const MEMORY_TESTING_ENV: &str = "HIDE_PROJECT_MEMORY_TESTING";
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum HookMemoryOutcome {
@@ -33,12 +34,12 @@ pub struct HookMemoryResult {
 struct HookInput {
     cwd: Option<PathBuf>,
     prompt: Option<String>,
-    #[serde(default)]
-    recent_human_turns: Vec<String>,
+    session_id: Option<String>,
 }
 
-/// Drains the whole stdin stream while retaining only the bounded prefix.
-/// The boolean is true when bytes beyond the cap were observed.
+/// Retains only the bounded stdin prefix and stops as soon as overflow is
+/// observed. The installed binary additionally puts this read behind the
+/// hook's absolute process deadline.
 pub fn read_bounded(mut input: impl Read) -> io::Result<(Vec<u8>, bool)> {
     let mut retained = Vec::with_capacity(HOOK_INPUT_LIMIT_BYTES.min(16 * 1024));
     let mut buffer = [0_u8; 8192];
@@ -52,15 +53,22 @@ pub fn read_bounded(mut input: impl Read) -> io::Result<(Vec<u8>, bool)> {
         let keep = remaining.min(read);
         retained.extend_from_slice(&buffer[..keep]);
         exceeded |= keep < read;
+        if exceeded {
+            break;
+        }
     }
     Ok((retained, exceeded))
 }
 
 pub fn database_path(home: &Path) -> PathBuf {
-    std::env::var_os(MEMORY_DATABASE_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join("Library/Application Support/hide/project-memory.sqlite3"))
+    let testing = std::env::var(MEMORY_TESTING_ENV).as_deref() == Ok("1");
+    if testing {
+        if let Some(path) = std::env::var_os(MEMORY_DATABASE_ENV).filter(|value| !value.is_empty())
+        {
+            return PathBuf::from(path);
+        }
+    }
+    home.join("Library/Application Support/hide/project-memory.sqlite3")
 }
 
 pub fn project_memory_output(
@@ -70,7 +78,24 @@ pub fn project_memory_output(
     exceeded: bool,
     home: &Path,
 ) -> HookMemoryResult {
-    let started = Instant::now();
+    project_memory_output_until(
+        runtime,
+        event,
+        bytes,
+        exceeded,
+        home,
+        Instant::now() + Duration::from_millis(HOOK_DEADLINE_MS),
+    )
+}
+
+pub fn project_memory_output_until(
+    runtime: AgentRuntime,
+    event: HookEvent,
+    bytes: &[u8],
+    exceeded: bool,
+    home: &Path,
+    deadline: Instant,
+) -> HookMemoryResult {
     let base = || HookMemoryResult {
         stdout: crate::runtime::hook_stdout(runtime, event),
         outcome: HookMemoryOutcome::Unavailable,
@@ -96,56 +121,82 @@ pub fn project_memory_output(
             ..base()
         };
     };
-    if started.elapsed() >= Duration::from_millis(HOOK_DEADLINE_MS) {
+    if Instant::now() >= deadline {
         return HookMemoryResult {
             outcome: HookMemoryOutcome::Deadline,
             ..base()
         };
     }
-    let Ok(store) = MemoryStore::open_hook_read_only(&database_path(home)) else {
+    let Ok(store) = MemoryStore::open_hook_read_only_with_deadline(&database_path(home), deadline)
+    else {
+        if Instant::now() >= deadline {
+            return HookMemoryResult {
+                outcome: HookMemoryOutcome::Deadline,
+                ..base()
+            };
+        }
         return base();
     };
     let query = match event {
         HookEvent::SessionStart => RetrievalQuery::session_start(&project.id),
         HookEvent::UserPromptSubmit => {
             let mut text = input.prompt.unwrap_or_default();
-            for turn in input.recent_human_turns.into_iter().rev().take(2).rev() {
-                text.push('\n');
-                text.push_str(&turn);
+            let runtime_id = match runtime {
+                AgentRuntime::Codex => "codex",
+                AgentRuntime::ClaudeCode => "claude",
+            };
+            let session_id = input.session_id.as_deref().unwrap_or_default();
+            if !session_id.is_empty() {
+                if let Ok(topics) = store.recent_session_topics(&project.id, runtime_id, session_id)
+                {
+                    for topic in topics {
+                        text.push('\n');
+                        text.push_str(&topic);
+                    }
+                }
             }
             text.push('\n');
             text.push_str(&cwd.to_string_lossy());
-            let excluded = store
-                .retrieve(&RetrievalQuery::session_start(&project.id))
-                .map(|value| value.items.into_iter().map(|item| item.0).collect())
-                .unwrap_or_default();
+            let excluded = if session_id.is_empty() {
+                Vec::new()
+            } else {
+                store
+                    .session_start_receipt_ids(&project.id, runtime_id, session_id)
+                    .unwrap_or_default()
+            };
             RetrievalQuery::prompt(&project.id, text, excluded)
         }
         HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Stop => return base(),
     };
-    if started.elapsed() >= Duration::from_millis(HOOK_DEADLINE_MS) {
+    if Instant::now() >= deadline {
         return HookMemoryResult {
             outcome: HookMemoryOutcome::Deadline,
             ..base()
         };
     }
-    let remaining = Duration::from_millis(HOOK_DEADLINE_MS).saturating_sub(started.elapsed());
+    let remaining = deadline.saturating_duration_since(Instant::now());
     let mut query = query;
     query.deadline = remaining;
     let Ok(injection) = store.retrieve(&query) else {
+        if Instant::now() >= deadline {
+            return HookMemoryResult {
+                outcome: HookMemoryOutcome::Deadline,
+                ..base()
+            };
+        }
         return base();
     };
-    render(runtime, event, injection, started, base)
+    render(runtime, event, injection, deadline, base)
 }
 
 fn render(
     runtime: AgentRuntime,
     event: HookEvent,
     injection: Injection,
-    started: Instant,
+    deadline: Instant,
     base: impl Fn() -> HookMemoryResult,
 ) -> HookMemoryResult {
-    if started.elapsed() >= Duration::from_millis(HOOK_DEADLINE_MS) {
+    if Instant::now() >= deadline {
         return HookMemoryResult {
             outcome: HookMemoryOutcome::Deadline,
             ..base()
@@ -173,7 +224,8 @@ fn render(
         .collect::<Vec<_>>()
         .join(",");
     context.push_str(&format!(
-        "<hide-memory-receipt count=\"{}\" items=\"{}\" />\n",
+        "<hide-memory-receipt event=\"{}\" count=\"{}\" items=\"{}\" />\n",
+        event.name(),
         injection.items.len(),
         receipt
     ));
@@ -188,6 +240,9 @@ mod tests {
     use super::*;
     use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation};
     use std::fs;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn oversized_input_is_drained_but_never_parsed() {
@@ -198,7 +253,26 @@ mod tests {
     }
 
     #[test]
-    fn prompt_lookup_is_read_only_bounded_and_omits_the_session_capsule() {
+    fn production_hook_ignores_a_database_path_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = Path::new("/fixture/home");
+        // SAFETY: this module serializes its environment-mutating tests.
+        unsafe {
+            std::env::set_var(MEMORY_DATABASE_ENV, "/tmp/attacker.sqlite3");
+            std::env::remove_var(MEMORY_TESTING_ENV);
+        }
+        assert_eq!(
+            database_path(home),
+            home.join("Library/Application Support/hide/project-memory.sqlite3")
+        );
+        // SAFETY: guarded by ENV_LOCK and restored before the test returns.
+        unsafe {
+            std::env::remove_var(MEMORY_DATABASE_ENV);
+        }
+    }
+
+    #[test]
+    fn prompt_lookup_omits_only_items_from_the_actual_session_start_receipt() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
         let project_root = temp.path().join("project");
@@ -219,6 +293,7 @@ mod tests {
                         id: format!("b{index}"),
                         project_id: project.id.clone(),
                         provider: "codex".into(),
+                        analysis_provider: "codex".into(),
                         session_id: "s".into(),
                         content_hash: format!("h{index}"),
                         created_at_unix_ms: index,
@@ -235,10 +310,36 @@ mod tests {
                 )
                 .unwrap();
         }
+        let session_start_item = store
+            .list_memories(&project.id, "")
+            .unwrap()
+            .into_iter()
+            .find(|memory| memory.body.starts_with("Rule 0 "))
+            .unwrap();
+        store
+            .record_injection(
+                &project.id,
+                "codex",
+                "fixture-session",
+                None,
+                &hide_memory::Injection {
+                    outcome: hide_memory::InjectionOutcome::Provided,
+                    items: vec![(
+                        session_start_item.id,
+                        session_start_item.revision,
+                        session_start_item.body,
+                    )],
+                    token_count: 6,
+                },
+            )
+            .unwrap();
         drop(store);
-        let payload =
-            serde_json::to_vec(&serde_json::json!({"cwd":project_root,"prompt":"durable hooks"}))
-                .unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "cwd": project_root,
+            "session_id": "fixture-session",
+            "prompt": "durable hooks"
+        }))
+        .unwrap();
         let result = project_memory_output(
             AgentRuntime::Codex,
             HookEvent::UserPromptSubmit,
@@ -246,11 +347,11 @@ mod tests {
             false,
             &home,
         );
-        assert_eq!(result.outcome, HookMemoryOutcome::Provided { count: 1 });
+        assert_eq!(result.outcome, HookMemoryOutcome::Provided { count: 3 });
         let output = result.stdout.unwrap();
         assert!(
-            output.contains("Rule 5"),
-            "the capsule's first five are excluded: {output}"
+            output.contains("Rule 1"),
+            "unseen items remain eligible: {output}"
         );
         assert!(!output.contains("Rule 0"));
     }

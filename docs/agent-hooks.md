@@ -39,8 +39,11 @@ This stdout is advisory context for the agent and is independent of the best-eff
 
 The prompt path performs no provider or embedding call, transcript scan, child-process launch, or database write.
 Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context and still exit zero.
-The local deadline is 100 ms and candidate, item, and token counts are hard bounded.
-Current Claude Code and Codex `UserPromptSubmit` input and output shapes are fixed by sanitized fixtures in `hide-agent-hooks/tests/fixtures/`; a runtime whose installed shape is unsupported is diagnosed as update-required without disabling the other runtime or Sessions browsing.
+The local deadline is 100 ms from process entry, including stdin collection and SQLite work, and candidate, item, and token counts are hard bounded.
+Stdin is read through a nonblocking descriptor until EOF, the size cap, or the absolute deadline, and SQLite receives the same deadline through its progress handler.
+Current Claude Code and Codex `UserPromptSubmit` input and output shapes are fixed by sanitized fixtures in `hide-agent-hooks/tests/fixtures/`.
+The app probes the installed runtime binaries with a 750 ms bounded version check and currently requires Claude Code 2.1.278 or Codex 0.155.1 for Memory injection.
+A runtime below that capability is diagnosed as `Update required` without disabling a supported installed runtime or Sessions browsing.
 
 The helper is stateless, as a hook script must be.
 The count lives in `~/.hide/agent-hooks/panes/`, keyed by `$HERDR_PANE_ID`, and is republished after every event through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata.
@@ -65,7 +68,8 @@ A token that is not a count is dropped rather than coerced.
 `Stop` sweeps `working` to zero, because the turn is over and a `SubagentStop` that never arrived cannot leave a count behind.
 A pane Herdr has stopped listing has its record swept on the next session bootstrap.
 
-The helper always exits zero and drains its bounded standard input after writing applicable context.
+The helper always exits zero and reads no more than its bounded standard-input prefix before writing applicable context.
+A producer that never closes stdin is released at the same absolute Memory deadline.
 A hook that fails must never be what breaks the operator's agent.
 
 Exiting zero is not the same as saying nothing.

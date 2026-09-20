@@ -1272,6 +1272,9 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
                     version: hide_agent_hooks::HOOK_VERSION,
                 },
                 current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "999.0.0".to_owned(),
+                },
             },
             hide_agent_hooks::diagnosis::RuntimeDiagnosis {
                 runtime: hide_agent_hooks::AgentRuntime::Codex,
@@ -1279,6 +1282,9 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
                 path: "/fixture/.codex/hooks.json".to_owned(),
                 status: hide_agent_hooks::HookStatus::NotInstalled,
                 current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "999.0.0".to_owned(),
+                },
             },
         ],
         last_report_failure: None,
@@ -1617,6 +1623,9 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
                     version: hide_agent_hooks::HOOK_VERSION,
                 },
                 current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "999.0.0".to_owned(),
+                },
             },
             hide_agent_hooks::diagnosis::RuntimeDiagnosis {
                 runtime: hide_agent_hooks::AgentRuntime::Codex,
@@ -1624,6 +1633,9 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
                 path: "/fixture/.codex/hooks.json".to_owned(),
                 status: hide_agent_hooks::HookStatus::NotInstalled,
                 current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "999.0.0".to_owned(),
+                },
             },
         ],
         last_report_failure: None,

@@ -4,7 +4,7 @@ use crate::model::{
     MemoryRevisionSnapshot, MemoryRowSnapshot, MemorySourceSnapshot, SessionsMode,
     SessionsProviderFilter, SessionsSnapshot,
 };
-use hide_agent_hooks::HookStatus;
+use hide_agent_hooks::{HookEvent, HookStatus};
 use hide_ai::{AiError, CancelToken};
 use hide_memory::{
     AnalysisBatch, Candidate, ConflictChoice, Injection, InjectionOutcome, Mem0Adapter,
@@ -25,6 +25,15 @@ struct SessionsLoad {
     rows: Vec<SessionRowSnapshot>,
     memories: Vec<MemoryRowSnapshot>,
     state: Option<hide_memory::ProjectMemoryState>,
+}
+
+fn sessions_load_matches_scope(
+    generation: u64,
+    current_generation: u64,
+    checkout_path: &str,
+    focused_path: Option<&str>,
+) -> bool {
+    generation == current_generation && focused_path == Some(checkout_path)
 }
 
 impl Runtime {
@@ -78,6 +87,12 @@ impl Runtime {
                 let changed = match runtime.lock() {
                     Ok(mut guard) => {
                         guard.memory_poll_in_flight = false;
+                        let still_focused = guard
+                            .focused_memory_context()
+                            .is_some_and(|(_, _, path)| path == checkout_path);
+                        if !still_focused {
+                            return;
+                        }
                         match due {
                             Err(_) => {
                                 guard.push_diagnostic(
@@ -93,10 +108,7 @@ impl Runtime {
                                 true
                             }
                             Ok(due) => {
-                                let still_focused = guard
-                                    .focused_memory_context()
-                                    .is_some_and(|(_, _, path)| path == checkout_path);
-                                if due && still_focused && !guard.memory_operation_in_flight {
+                                if due && !guard.memory_operation_in_flight {
                                     guard.apply_memory_action(events::MemoryActionPayload {
                                         action: "retry".to_owned(),
                                         item_id: None,
@@ -137,6 +149,13 @@ impl Runtime {
             };
             return true;
         };
+        if self.memory_operation_in_flight
+            && self.memory_operation_checkout_path.as_deref() != Some(checkout_path.as_str())
+        {
+            if let Some(cancel) = &self.memory_cancel {
+                cancel.cancel();
+            }
+        }
         let Some(context) = self.worker_context.clone() else {
             self.snapshot.sessions.loading = false;
             self.snapshot.sessions.unavailable_reason =
@@ -145,6 +164,15 @@ impl Runtime {
         };
         self.snapshot.sessions.loading = true;
         self.snapshot.sessions.unavailable_reason = None;
+        self.memory_sessions_load_generation =
+            self.memory_sessions_load_generation.saturating_add(1);
+        let generation = self.memory_sessions_load_generation;
+        if self.memory_sessions_load_in_flight {
+            self.memory_sessions_load_pending = true;
+            return true;
+        }
+        self.memory_sessions_load_in_flight = true;
+        self.memory_sessions_load_pending = false;
         let home = self.home_path.clone();
         let database = self.memory_database_path();
         thread::Builder::new()
@@ -158,7 +186,7 @@ impl Runtime {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_sessions_load(result),
+                    Ok(mut guard) => guard.ingest_sessions_load(generation, &checkout_path, result),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -168,6 +196,7 @@ impl Runtime {
             })
             .map(|_| true)
             .unwrap_or_else(|error| {
+                self.memory_sessions_load_in_flight = false;
                 self.snapshot.sessions.loading = false;
                 self.snapshot.sessions.unavailable_reason =
                     Some(format!("Session reader could not start: {error}"));
@@ -189,7 +218,29 @@ impl Runtime {
         }
     }
 
-    fn ingest_sessions_load(&mut self, result: Result<SessionsLoad, String>) -> bool {
+    fn ingest_sessions_load(
+        &mut self,
+        generation: u64,
+        checkout_path: &str,
+        result: Result<SessionsLoad, String>,
+    ) -> bool {
+        self.memory_sessions_load_in_flight = false;
+        let current_path = self.focused_memory_context().map(|(_, _, path)| path);
+        if !sessions_load_matches_scope(
+            generation,
+            self.memory_sessions_load_generation,
+            checkout_path,
+            current_path.as_deref(),
+        ) {
+            let pending = self.memory_sessions_load_pending;
+            self.memory_sessions_load_pending = false;
+            return if pending {
+                self.request_sessions_refresh()
+            } else {
+                false
+            };
+        }
+        self.memory_sessions_load_pending = false;
         self.snapshot.sessions.loading = false;
         match result {
             Err(message) => {
@@ -451,10 +502,18 @@ impl Runtime {
 
     pub(super) fn hooks_support_memory(&self) -> bool {
         self.hook_diagnosis.as_ref().is_some_and(|diagnosis| {
-            diagnosis.runtimes.iter().all(|row| match row.status {
-                HookStatus::RuntimeAbsent => true,
-                HookStatus::Installed { version } => version >= hide_agent_hooks::HOOK_VERSION,
-                _ => false,
+            diagnosis.runtimes.iter().any(|row| {
+                row.memory_compatibility.supports_injection()
+                    && matches!(row.status, HookStatus::Installed { version } if version >= hide_agent_hooks::HOOK_VERSION)
+            })
+        })
+    }
+
+    fn has_memory_compatible_runtime(&self) -> bool {
+        self.hook_diagnosis.as_ref().is_some_and(|diagnosis| {
+            diagnosis.runtimes.iter().any(|row| {
+                !matches!(row.status, HookStatus::RuntimeAbsent)
+                    && row.memory_compatibility.supports_injection()
             })
         })
     }
@@ -468,7 +527,9 @@ impl Runtime {
                     diagnosis
                         .runtimes
                         .iter()
-                        .filter(|row| row.offers_install())
+                        .filter(|row| {
+                            row.memory_compatibility.supports_injection() && row.offers_install()
+                        })
                         .map(|row| row.runtime)
                         .collect::<Vec<_>>()
                 })
@@ -494,10 +555,15 @@ impl Runtime {
             return true;
         }
         if payload.action == "enable" && !self.hooks_support_memory() {
+            let compatible_runtime = self.has_memory_compatible_runtime();
             self.snapshot.sessions.analysis = MemoryAnalysisSnapshot {
                 state: "hooks_need_update".to_owned(),
-                message: Some("Hooks need update before Memory can turn on".to_owned()),
-                action: Some("update_hooks".to_owned()),
+                message: Some(if compatible_runtime {
+                    "Hooks need update before Memory can turn on".to_owned()
+                } else {
+                    "Update Claude Code or Codex before Memory can turn on".to_owned()
+                }),
+                action: compatible_runtime.then(|| "update_hooks".to_owned()),
                 ..MemoryAnalysisSnapshot::default()
             };
             return true;
@@ -530,6 +596,7 @@ impl Runtime {
         self.memory_operation_in_flight = true;
         self.memory_operation_generation = self.memory_operation_generation.saturating_add(1);
         let generation = self.memory_operation_generation;
+        self.memory_operation_checkout_path = Some(checkout_path.clone());
         let action = payload.action.clone();
         let analyzes = matches!(action.as_str(), "enable" | "retry");
         let cancel = CancelToken::new();
@@ -573,23 +640,33 @@ impl Runtime {
                         }
                         guard.memory_operation_in_flight = false;
                         guard.memory_cancel = None;
-                        match result {
-                            Ok(outcome) => {
-                                guard.snapshot.sessions.notice = outcome.notice;
-                                if let Some(analysis) = outcome.analysis {
-                                    guard.snapshot.sessions.analysis = analysis;
+                        guard.memory_operation_checkout_path = None;
+                        let still_focused = guard
+                            .focused_memory_context()
+                            .is_some_and(|(_, _, path)| path == checkout_path);
+                        if still_focused {
+                            match result {
+                                Ok(outcome) => {
+                                    guard.snapshot.sessions.notice = outcome.notice;
+                                    if let Some(analysis) = outcome.analysis {
+                                        guard.snapshot.sessions.analysis = analysis;
+                                    }
+                                    guard.request_sessions_refresh();
+                                    if action == "delete" {
+                                        guard.close_memory_archive_tabs();
+                                    } else if matches!(
+                                        action.as_str(),
+                                        "edit" | "forget" | "undo" | "resolve_conflict"
+                                    ) {
+                                        guard.refresh_active_memory_detail();
+                                    }
                                 }
-                                guard.request_sessions_refresh();
-                                if action == "delete" {
-                                    guard.close_memory_archive_tabs();
-                                } else if matches!(
-                                    action.as_str(),
-                                    "edit" | "forget" | "undo" | "resolve_conflict"
-                                ) {
-                                    guard.refresh_active_memory_detail();
+                                Err(message) => {
+                                    guard.set_error("memory.action_failed", message, true)
                                 }
                             }
-                            Err(message) => guard.set_error("memory.action_failed", message, true),
+                        } else {
+                            guard.request_sessions_refresh();
                         }
                         true
                     }
@@ -603,6 +680,7 @@ impl Runtime {
             .map(|_| true)
             .unwrap_or_else(|error| {
                 self.memory_operation_in_flight = false;
+                self.memory_operation_checkout_path = None;
                 self.set_error(
                     "memory.worker_failed",
                     format!("The Project Memory writer could not start: {error}"),
@@ -610,6 +688,37 @@ impl Runtime {
                 );
                 true
             })
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::sessions_load_matches_scope;
+
+    #[test]
+    fn reversed_session_load_completion_cannot_replace_the_newer_generation() {
+        assert!(!sessions_load_matches_scope(
+            7,
+            8,
+            "/project/main",
+            Some("/project/main"),
+        ));
+        assert!(sessions_load_matches_scope(
+            8,
+            8,
+            "/project/main",
+            Some("/project/main"),
+        ));
+    }
+
+    #[test]
+    fn a_session_load_for_the_previous_project_cannot_land_after_focus_moves() {
+        assert!(!sessions_load_matches_scope(
+            3,
+            3,
+            "/project/alpha",
+            Some("/project/beta"),
+        ));
     }
 }
 
@@ -630,13 +739,19 @@ impl MemoryMutationOutcome {
 fn report_analysis(
     context: &RuntimeWorkerContext,
     generation: u64,
+    checkout_path: &str,
     analysis: MemoryAnalysisSnapshot,
 ) {
     let Some(runtime) = context.runtime.upgrade() else {
         return;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) if guard.memory_operation_generation == generation => {
+        Ok(mut guard)
+            if guard.memory_operation_generation == generation
+                && guard
+                    .focused_memory_context()
+                    .is_some_and(|(_, _, path)| path == checkout_path) =>
+        {
             guard.snapshot.sessions.analysis = analysis;
             true
         }
@@ -664,7 +779,7 @@ fn analyze_project(
         settings,
         cancel,
         |snapshot| {
-            report_analysis(context, generation, snapshot);
+            report_analysis(context, generation, checkout_path, snapshot);
         },
     );
     match result {
@@ -730,12 +845,15 @@ fn analyze_project_inner(
                 provider: session.agent.as_str().to_owned(),
                 locator: session.locator.to_string_lossy().into_owned(),
                 checkout_path: session.checkout_path.to_string_lossy().into_owned(),
-                first_human_request: session.first_human_request.clone(),
                 started_at_unix_ms: session.started_at_unix_ms,
                 updated_at_unix_ms: session.updated_at_unix_ms,
                 unavailable_reason: availability.clone(),
             })
             .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
+        if availability.is_none() {
+            update_hook_projection(&mut store, &identity.id, &session)
+                .map_err(AnalysisFailure::Local)?;
+        }
         if availability.is_some() {
             failed += 1;
             progress(analysis_progress(discovered, analyzed, failed));
@@ -791,17 +909,13 @@ fn analyze_project_inner(
             ),
             undo_batch_id: (!undo_batches.is_empty()).then(|| undo_batches.join(",")),
         }),
-        analysis: Some(MemoryAnalysisSnapshot {
+        analysis: (failed > 0).then(|| MemoryAnalysisSnapshot {
             state: "complete".to_owned(),
             discovered,
             analyzed,
             failed,
-            message: Some(if failed == 0 {
-                format!("{analyzed} analyzed")
-            } else {
-                format!("{analyzed} analyzed · {failed} failed")
-            }),
-            action: (failed > 0).then(|| "retry".to_owned()),
+            message: Some(format!("{analyzed} analyzed · {failed} failed")),
+            action: Some("retry".to_owned()),
         }),
     })
 }
@@ -869,7 +983,7 @@ fn memory_analysis_due(
     }
     let identity = hide_project::resolve(Path::new(checkout_path), workspace::LOCAL_DEVICE_ID)
         .map_err(|error| error.to_string())?;
-    let store = MemoryStore::open_hook_read_only(database).map_err(|error| error.to_string())?;
+    let mut store = MemoryStore::open(database).map_err(|error| error.to_string())?;
     let state = match store.project_state(&identity.id) {
         Ok(state) => state,
         Err(hide_memory::MemoryError::ProjectMissing) => return Ok(false),
@@ -882,9 +996,23 @@ fn memory_analysis_due(
         .project_sessions(&identity)
         .map_err(|error| error.to_string())?;
     for session in sessions {
-        if !matches!(&session.availability, SessionAvailability::Available)
-            || !session_is_quiescent(&session, now_unix_ms)
-        {
+        if !matches!(&session.availability, SessionAvailability::Available) {
+            continue;
+        }
+        store
+            .upsert_session_source(&SessionSourceRecord {
+                id: session.id.clone(),
+                project_id: identity.id.clone(),
+                provider: session.agent.as_str().to_owned(),
+                locator: session.locator.to_string_lossy().into_owned(),
+                checkout_path: session.checkout_path.to_string_lossy().into_owned(),
+                started_at_unix_ms: session.started_at_unix_ms,
+                updated_at_unix_ms: session.updated_at_unix_ms,
+                unavailable_reason: None,
+            })
+            .map_err(|error| error.to_string())?;
+        update_hook_projection(&mut store, &identity.id, &session)?;
+        if !session_is_quiescent(&session, now_unix_ms) {
             continue;
         }
         if session_has_pending_analysis(&store, &identity.id, &session)? {
@@ -892,6 +1020,89 @@ fn memory_analysis_due(
         }
     }
     Ok(false)
+}
+
+fn update_hook_projection(
+    store: &mut MemoryStore,
+    project_id: &str,
+    session: &hide_session::ProjectSession,
+) -> Result<(), String> {
+    let provider = session.agent.as_str();
+    let saved = store
+        .load_hook_projection_cursor(project_id, provider, &session.id)
+        .map_err(|error| error.to_string())?;
+    let mut cursor = match saved.as_ref() {
+        Some(record) if !record.checkpoint.is_empty() => {
+            SessionCursor::restore_checkpoint(&record.checkpoint)
+                .map_err(|error| error.to_string())?
+        }
+        _ => SessionCursor::new(),
+    };
+    let chunk = cursor
+        .read(&session.locator)
+        .map_err(|error| error.to_string())?;
+    let checkpoint = cursor
+        .encode_checkpoint()
+        .map_err(|error| error.to_string())?;
+    let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
+    for (event, stable_offset) in parsed.events.into_iter().zip(parsed.event_offsets) {
+        if let Some(receipt) = memory_receipt(&event.text) {
+            let turn_id = (receipt.event != HookEvent::SessionStart.name())
+                .then(|| format!("event:{stable_offset}"));
+            store
+                .record_injection(
+                    project_id,
+                    provider,
+                    &session.id,
+                    turn_id.as_deref(),
+                    &Injection {
+                        outcome: if receipt.count == 0 {
+                            InjectionOutcome::Empty
+                        } else {
+                            InjectionOutcome::Provided
+                        },
+                        items: receipt
+                            .items
+                            .into_iter()
+                            .map(|(id, revision)| (id, revision, String::new()))
+                            .collect(),
+                        token_count: 0,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        if event.kind == EventKind::Human {
+            let topic = normalized_topic_terms(&strip_memory_receipt(&event.text));
+            store
+                .record_session_topic(project_id, provider, &session.id, stable_offset, &topic)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    store
+        .save_hook_projection_cursor(&SessionCursorRecord {
+            project_id: project_id.to_owned(),
+            provider: provider.to_owned(),
+            session_id: session.id.clone(),
+            byte_offset: cursor.offset(),
+            checkpoint,
+            last_content_hash: (!chunk.contents.is_empty()).then(|| digest(&[&chunk.contents])),
+            updated_at_unix_ms: now_ms(),
+        })
+        .map_err(|error| error.to_string())
+}
+
+fn normalized_topic_terms(text: &str) -> String {
+    hide_memory::redact(text)
+        .text
+        .to_lowercase()
+        .split(|character: char| {
+            !character.is_alphanumeric() && character != '_' && character != '-'
+        })
+        .filter(|term| term.chars().count() >= 2)
+        .take(24)
+        .map(|term| term.chars().take(64).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn session_has_pending_analysis(
@@ -967,15 +1178,17 @@ fn analyze_session(
     let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
     let mut events = Vec::with_capacity(parsed.events.len());
     for (event, stable_offset) in parsed.events.into_iter().zip(parsed.event_offsets) {
-        if let Some((count, items)) = memory_receipt(&event.text) {
-            let turn_id = format!("event:{stable_offset}");
+        if let Some(receipt) = memory_receipt(&event.text) {
+            let turn_id = (receipt.event != HookEvent::SessionStart.name())
+                .then(|| format!("event:{stable_offset}"));
             let injection = Injection {
-                outcome: if count == 0 {
+                outcome: if receipt.count == 0 {
                     InjectionOutcome::Empty
                 } else {
                     InjectionOutcome::Provided
                 },
-                items: items
+                items: receipt
+                    .items
                     .into_iter()
                     .map(|(id, revision)| (id, revision, String::new()))
                     .collect(),
@@ -986,7 +1199,7 @@ fn analyze_session(
                     project_id,
                     provider,
                     &session.id,
-                    Some(&turn_id),
+                    turn_id.as_deref(),
                     &injection,
                 )
                 .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
@@ -1053,6 +1266,7 @@ fn analyze_session(
                     id: batch_id.clone(),
                     project_id: project_id.to_owned(),
                     provider: provider.to_owned(),
+                    analysis_provider: answer.provider.as_str().to_owned(),
                     session_id: session.id.clone(),
                     content_hash,
                     created_at_unix_ms: now_ms(),
@@ -1086,17 +1300,23 @@ pub(super) fn event_groups(events: &[Value]) -> Result<Vec<Vec<Value>>, String> 
     let mut groups = Vec::new();
     let mut current = Vec::new();
     for event in events {
+        if serde_json::to_vec(event)
+            .map_err(|error| error.to_string())?
+            .len()
+            > EVENT_BUDGET
+        {
+            // Quarantine one oversized event by advancing the durable cursor
+            // without sending a truncated claim to the provider. Later turns
+            // in the same session remain analyzable on this pass and Retry
+            // converges instead of failing on the same event forever.
+            continue;
+        }
         current.push(event.clone());
         let measured = serde_json::to_vec(&current)
             .map_err(|error| error.to_string())?
             .len();
         if measured > EVENT_BUDGET {
             let event = current.pop().expect("the just-pushed event exists");
-            if current.is_empty() {
-                return Err(
-                    "One normalized session event exceeds the analysis input cap".to_owned(),
-                );
-            }
             groups.push(std::mem::take(&mut current));
             current.push(event);
         }
@@ -1251,7 +1471,7 @@ fn persisted_unavailable_session_row(source: SessionSourceRecord) -> SessionRowS
         provider: source.provider,
         locator: source.locator,
         checkout_path: source.checkout_path,
-        first_human_request: source.first_human_request,
+        first_human_request: None,
         started_at_unix_ms: source.started_at_unix_ms,
         updated_at_unix_ms: source.updated_at_unix_ms,
         title: None,
@@ -1330,9 +1550,9 @@ fn load_session_detail(row: SessionRowSnapshot) -> Result<ArchiveDetailSnapshot,
         .into_iter()
         .map(|event| {
             let receipt = memory_receipt(&event.text);
-            let attached = receipt.as_ref().map(|(count, _)| *count);
+            let attached = receipt.as_ref().map(|receipt| receipt.count);
             let item_ids = receipt
-                .map(|(_, items)| items.into_iter().map(|(id, _)| id).collect())
+                .map(|receipt| receipt.items.into_iter().map(|(id, _)| id).collect())
                 .unwrap_or_default();
             ArchiveEventSnapshot {
                 role: event.role.to_owned(),
@@ -1362,7 +1582,13 @@ fn load_session_detail(row: SessionRowSnapshot) -> Result<ArchiveDetailSnapshot,
     })
 }
 
-fn memory_receipt(text: &str) -> Option<(usize, Vec<(String, u64)>)> {
+struct MemoryReceipt {
+    event: String,
+    count: usize,
+    items: Vec<(String, u64)>,
+}
+
+fn memory_receipt(text: &str) -> Option<MemoryReceipt> {
     let marker = text
         .lines()
         .find(|line| line.trim_start().starts_with("<hide-memory-receipt "))?;
@@ -1385,7 +1611,16 @@ fn memory_receipt(text: &str) -> Option<(usize, Vec<(String, u64)>)> {
             })
             .collect::<Option<Vec<_>>>()?
     };
-    (items.len() == count).then_some((count, items))
+    let event = marker
+        .find("event=\"")
+        .and_then(|start| marker[start + "event=\"".len()..].split_once('"'))
+        .map(|(value, _)| value.to_owned())
+        .unwrap_or_else(|| HookEvent::UserPromptSubmit.name().to_owned());
+    (items.len() == count).then_some(MemoryReceipt {
+        event,
+        count,
+        items,
+    })
 }
 
 fn strip_memory_receipt(text: &str) -> String {

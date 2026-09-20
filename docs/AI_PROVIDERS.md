@@ -13,10 +13,14 @@ There is no output token ceiling in the request, because no provider contract ho
 `hide-ai` owns everything about providers: which are installed and logged in, the child process and its protocol, timeouts and cancellation, the retry policy, fallback between providers, duplicate suppression, and the structured error a caller branches on.
 No feature type lives in the crate, and no provider detail leaks out of it.
 
-Project Memory uses feature id `project_memory` and a pinned Mem0-compatible strict schema for candidate text, kind, confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
+Project Memory uses feature id `project_memory` and a pinned native port of the Mem0 OSS v2.1 extraction, update-planning, deduplication, and hybrid search semantics.
+The exact upstream commit, audited source hashes, vendored prompt assets, and prompt-asset hashes live in `hide-memory/mem0-upstream.json`.
+The adapter preserves Mem0's extraction and memory-update prompts, BM25 sigmoid parameters, and additive hybrid-ranking formula, then adds Hide's Project-specific candidate kinds, provenance, lifecycle, privacy, and resource caps.
+Its strict schema carries candidate text, kind, confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
 It sends only locally redacted, normalized human and assistant events after the durable session cursor, with a 64 KiB request-input cap.
 The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
-Memory analysis reuses this boundary's selected provider, availability, bounded retry, duplicate suppression, process ownership, cancellation, and budgets.
+Memory analysis reuses this boundary's selected provider, availability, bounded same-provider retry, duplicate suppression, process ownership, cancellation, and budgets.
+It does not fall through to another provider because the disclosure names the selected provider and the stored analysis batch records which provider answered.
 Not-authenticated, unavailable, usage-limited, and exhausted outcomes pause new analysis without disabling existing local Memory search or Sessions browsing.
 Logs retain request, feature, provider, Project/session subject IDs, counts, duration, and outcome, but never transcript text, prompt text, Memory body, file path, credential, or provider thread ID.
 
@@ -92,8 +96,9 @@ It re-reads the choice on every scan and rotates nothing, so a line per read wou
 A write that fails says so on the same group, because a choice the operator made and the file on disk must not silently disagree.
 A session with no home directory to write to reports that on the group for the same reason: the choice has already left the runtime, so it cannot be dropped quietly.
 
-Choosing a provider reorders the priority and changes nothing else.
-The chosen one leads, the other still follows it, and every retry, cooldown and stickiness constant is still `RouterConfig::default()`'s, so the fallback described below is the same fallback.
+Choosing a provider reorders the ordinary background-feature priority and changes nothing else.
+The context-label feature may fall through to the other provider under the policy below.
+Project Memory narrows that priority to the disclosed provider only, while retaining the same provider's retry, cooldown, cancellation, duplicate-suppression, process, and budget rules.
 
 Settings shows each provider's availability and the models it offers.
 Both come from asking the provider, so no model list is written into the core or the shell; `AiRouter::availability()` and `AiRouter::models()` are the source.

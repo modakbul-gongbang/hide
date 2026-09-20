@@ -247,7 +247,19 @@ fn one_analysis_event_over_the_group_budget_is_rejected() {
         "text": "x".repeat(37 * 1024),
     })];
 
-    assert!(crate::runtime::memory::event_groups(&events).is_err());
+    let groups = crate::runtime::memory::event_groups(&events).unwrap();
+    assert!(groups.is_empty(), "the oversized event is quarantined");
+}
+
+#[test]
+fn an_oversized_event_does_not_block_a_later_valid_turn() {
+    let events = vec![
+        serde_json::json!({"offset": 1, "text": "x".repeat(40 * 1024)}),
+        serde_json::json!({"offset": 2, "text": "Keep later turns analyzable"}),
+    ];
+    let groups = crate::runtime::memory::event_groups(&events).unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0][0]["offset"], 2);
 }
 
 #[test]
@@ -260,6 +272,9 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
             path: "/fixture/.codex/hooks.json".to_owned(),
             status,
             current_version: hide_agent_hooks::HOOK_VERSION,
+            memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                version: "999.0.0".to_owned(),
+            },
         }],
         last_report_failure: None,
     };
@@ -303,5 +318,50 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
             .expect("the approved enable intent resumed")
             .kind,
         "memory.project_unavailable"
+    );
+}
+
+#[test]
+fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
+    let mut runtime = runtime();
+    runtime.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {
+        runtimes: vec![
+            hide_agent_hooks::RuntimeDiagnosis {
+                runtime: hide_agent_hooks::AgentRuntime::ClaudeCode,
+                label: "Claude Code".to_owned(),
+                path: "/fixture/.claude/settings.json".to_owned(),
+                status: hide_agent_hooks::HookStatus::Installed {
+                    version: hide_agent_hooks::HOOK_VERSION,
+                },
+                current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::UpdateRequired {
+                    installed_version: Some("2.1.277".to_owned()),
+                    minimum_version: "2.1.278".to_owned(),
+                },
+            },
+            hide_agent_hooks::RuntimeDiagnosis {
+                runtime: hide_agent_hooks::AgentRuntime::Codex,
+                label: "Codex".to_owned(),
+                path: "/fixture/.codex/hooks.json".to_owned(),
+                status: hide_agent_hooks::HookStatus::Installed {
+                    version: hide_agent_hooks::HOOK_VERSION,
+                },
+                current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "0.155.1".to_owned(),
+                },
+            },
+        ],
+        last_report_failure: None,
+    });
+
+    assert!(runtime.hooks_support_memory());
+    assert_eq!(
+        runtime.snapshot.status.agent_hooks.runtimes[0].headline,
+        "Update required"
+    );
+    assert_eq!(
+        runtime.snapshot.status.agent_hooks.runtimes[1].headline,
+        "Installed (v3)"
     );
 }

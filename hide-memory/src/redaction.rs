@@ -15,7 +15,7 @@ fn patterns() -> &'static [Regex] {
             r#"(?i)\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*['"]?[^\s'"]{8,}"#,
             r"\bsk-[A-Za-z0-9_-]{16,}\b",
             r"\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b",
-            r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+            r"(?s)-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----",
             r"\bAKIA[0-9A-Z]{16}\b",
             r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b",
         ]
@@ -54,6 +54,20 @@ mod tests {
         assert!(result.contains_secret_candidate);
         assert!(!result.text.contains("super-secret"));
         assert!(!result.text.contains("abcdefghijkl"));
+    }
+
+    #[test]
+    fn an_entire_multiline_private_key_is_removed_in_plain_and_json_text() {
+        for source in [
+            "before\n-----BEGIN PRIVATE KEY-----\nYWJjZGVmZ2hpams=\n-----END PRIVATE KEY-----\nafter",
+            r#"{\"text\":\"before\\n-----BEGIN OPENSSH PRIVATE KEY-----\\nYWJjZGVmZ2hpams=\\n-----END OPENSSH PRIVATE KEY-----\\nafter\"}"#,
+        ] {
+            let result = redact(source);
+            assert!(result.contains_secret_candidate);
+            assert!(!result.text.contains("YWJjZGVmZ2hpams"));
+            assert!(!result.text.contains("END PRIVATE KEY"));
+            assert!(!result.text.contains("END OPENSSH PRIVATE KEY"));
+        }
     }
 
     #[test]

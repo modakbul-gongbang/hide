@@ -6,7 +6,10 @@
 //! that matches is the one shown; nothing falls through to an empty value or
 //! an invented cause (PRD B21, B32, D-64).
 
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -173,11 +176,38 @@ pub struct RuntimeDiagnosis {
     pub status: HookStatus,
     /// The version this Hide would install.
     pub current_version: u32,
+    /// Whether this installed runtime supports the hook output shape used by
+    /// Project Memory. This is deliberately separate from hook installation:
+    /// updating Hide's entry cannot upgrade the operator's agent runtime.
+    pub memory_compatibility: MemoryCompatibility,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum MemoryCompatibility {
+    Supported {
+        version: String,
+    },
+    UpdateRequired {
+        installed_version: Option<String>,
+        minimum_version: String,
+    },
+}
+
+impl MemoryCompatibility {
+    pub fn supports_injection(&self) -> bool {
+        matches!(self, Self::Supported { .. })
+    }
 }
 
 impl RuntimeDiagnosis {
     /// The short word beside the runtime's name.
     pub fn headline(&self) -> String {
+        if !matches!(self.status, HookStatus::RuntimeAbsent)
+            && !self.memory_compatibility.supports_injection()
+        {
+            return "Update required".to_owned();
+        }
         match &self.status {
             HookStatus::RuntimeAbsent => "Not on this Mac".to_owned(),
             HookStatus::Installed { version } => format!("Installed (v{version})"),
@@ -195,10 +225,11 @@ impl RuntimeDiagnosis {
     /// Whether the operator can be offered a reinstall for this runtime
     /// (PRD B28).
     pub fn offers_install(&self) -> bool {
-        matches!(
-            self.status,
-            HookStatus::NotInstalled | HookStatus::Outdated { .. } | HookStatus::Failed { .. }
-        )
+        self.memory_compatibility.supports_injection()
+            && matches!(
+                self.status,
+                HookStatus::NotInstalled | HookStatus::Outdated { .. } | HookStatus::Failed { .. }
+            )
     }
 
     /// Whether the operator can be offered a removal (PRD B29).
@@ -238,6 +269,13 @@ impl Diagnosis {
     /// Reads every runtime under `home`. It performs file reads and no
     /// writes, so it is safe to call from a background reader.
     pub fn read(home: &Path) -> Self {
+        Self::read_with_probe(home, runtime_compatibility)
+    }
+
+    fn read_with_probe(
+        home: &Path,
+        probe: impl Fn(AgentRuntime, &Path) -> MemoryCompatibility,
+    ) -> Self {
         Self {
             runtimes: AgentRuntime::ALL
                 .into_iter()
@@ -247,6 +285,7 @@ impl Diagnosis {
                     path: runtime.config_path(home).display().to_string(),
                     status: status(runtime, home),
                     current_version: HOOK_VERSION,
+                    memory_compatibility: probe(runtime, home),
                 })
                 .collect(),
             last_report_failure: last_failure(home),
@@ -289,10 +328,127 @@ impl Diagnosis {
     }
 }
 
+const RUNTIME_VERSION_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
+
+fn runtime_compatibility(runtime: AgentRuntime, home: &Path) -> MemoryCompatibility {
+    let minimum = minimum_memory_version(runtime);
+    let Some(binary) = resolve_runtime_binary(runtime, home) else {
+        return MemoryCompatibility::UpdateRequired {
+            installed_version: None,
+            minimum_version: minimum.to_owned(),
+        };
+    };
+    let Some(output) = version_output(&binary, RUNTIME_VERSION_PROBE_TIMEOUT) else {
+        return MemoryCompatibility::UpdateRequired {
+            installed_version: None,
+            minimum_version: minimum.to_owned(),
+        };
+    };
+    let installed = parse_version(&output);
+    match installed.as_deref() {
+        Some(version) if version_at_least(version, minimum) => MemoryCompatibility::Supported {
+            version: version.to_owned(),
+        },
+        _ => MemoryCompatibility::UpdateRequired {
+            installed_version: installed,
+            minimum_version: minimum.to_owned(),
+        },
+    }
+}
+
+fn minimum_memory_version(runtime: AgentRuntime) -> &'static str {
+    match runtime {
+        AgentRuntime::ClaudeCode => "2.1.278",
+        AgentRuntime::Codex => "0.155.1",
+    }
+}
+
+fn resolve_runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathBuf> {
+    let name = match runtime {
+        AgentRuntime::ClaudeCode => "claude",
+        AgentRuntime::Codex => "codex",
+    };
+    let mut candidates = std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .map(|directory| directory.join(name))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    candidates.extend([
+        home.join(".local/bin").join(name),
+        home.join("Library/pnpm").join(name),
+        home.join(".npm-global/bin").join(name),
+        PathBuf::from("/opt/homebrew/bin").join(name),
+        PathBuf::from("/usr/local/bin").join(name),
+    ]);
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn version_output(binary: &Path, timeout: Duration) -> Option<String> {
+    let mut child = Command::new(binary)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut output = String::new();
+                child.stdout.take()?.read_to_string(&mut output).ok()?;
+                if output.trim().is_empty() {
+                    child.stderr.take()?.read_to_string(&mut output).ok()?;
+                }
+                return status.success().then(|| output.trim().to_owned());
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+fn parse_version(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|word| {
+        let trimmed =
+            word.trim_matches(|character: char| !character.is_ascii_digit() && character != '.');
+        let mut parts = trimmed.split('.');
+        (parts.clone().count() == 3
+            && parts.all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())))
+        .then(|| trimmed.to_owned())
+    })
+}
+
+fn version_at_least(installed: &str, minimum: &str) -> bool {
+    let tuple = |version: &str| {
+        let parts = version
+            .split('.')
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        (parts.len() == 3).then(|| (parts[0], parts[1], parts[2]))
+    };
+    matches!((tuple(installed), tuple(minimum)), (Some(found), Some(required)) if found >= required)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::install::InstallFailure;
+
+    fn compatible(_runtime: AgentRuntime, _home: &Path) -> MemoryCompatibility {
+        MemoryCompatibility::Supported {
+            version: "999.0.0".to_owned(),
+        }
+    }
 
     fn observation(token_version: Option<u32>) -> PaneObservation {
         PaneObservation {
@@ -362,6 +518,7 @@ mod tests {
             path: "/tmp/hooks.json".to_owned(),
             status: HookStatus::Outdated { version: 2 },
             current_version: 3,
+            memory_compatibility: compatible(AgentRuntime::Codex, Path::new("/tmp")),
         };
         assert_eq!(row.headline(), "Update required (v2, current v3)");
         assert!(row.offers_install());
@@ -414,7 +571,7 @@ mod tests {
         let home = std::env::temp_dir().join(format!("hide-diagnosis-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join(".claude")).unwrap();
-        let diagnosis = Diagnosis::read(&home);
+        let diagnosis = Diagnosis::read_with_probe(&home, compatible);
         assert_eq!(diagnosis.runtimes.len(), 2);
         let claude = &diagnosis.runtimes[0];
         assert_eq!(claude.status, HookStatus::NotInstalled);
@@ -424,5 +581,48 @@ mod tests {
         assert!(!codex.offers_install() && !codex.offers_removal());
         assert!(diagnosis.render().contains(".claude/settings.json"));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn runtime_versions_gate_only_the_runtime_with_an_unsupported_hook_schema() {
+        assert_eq!(
+            parse_version("codex-cli 0.155.1"),
+            Some("0.155.1".to_owned())
+        );
+        assert_eq!(
+            parse_version("2.1.278 (Claude Code)"),
+            Some("2.1.278".to_owned())
+        );
+        assert!(version_at_least("0.155.2", "0.155.1"));
+        assert!(!version_at_least("0.154.9", "0.155.1"));
+
+        let supported = RuntimeDiagnosis {
+            runtime: AgentRuntime::Codex,
+            label: "Codex".to_owned(),
+            path: "/tmp/hooks.json".to_owned(),
+            status: HookStatus::Installed {
+                version: HOOK_VERSION,
+            },
+            current_version: HOOK_VERSION,
+            memory_compatibility: MemoryCompatibility::Supported {
+                version: "0.155.1".to_owned(),
+            },
+        };
+        let unsupported = RuntimeDiagnosis {
+            runtime: AgentRuntime::ClaudeCode,
+            label: "Claude Code".to_owned(),
+            path: "/tmp/settings.json".to_owned(),
+            status: HookStatus::Installed {
+                version: HOOK_VERSION,
+            },
+            current_version: HOOK_VERSION,
+            memory_compatibility: MemoryCompatibility::UpdateRequired {
+                installed_version: Some("2.1.277".to_owned()),
+                minimum_version: "2.1.278".to_owned(),
+            },
+        };
+        assert_eq!(supported.headline(), "Installed (v3)");
+        assert_eq!(unsupported.headline(), "Update required");
+        assert!(!unsupported.offers_install());
     }
 }

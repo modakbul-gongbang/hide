@@ -127,11 +127,17 @@ fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
 /// probe describes. The feature owns its prompt and parsing; this retains the
 /// shared provider selection, process, retry, cancellation, and budget caps.
 pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
-    AiRouter::new(
-        backends(&settings.models),
-        settings.router_config(),
-        Arc::new(NoopLogSink),
-    )
+    let config = memory_router_config(settings);
+    AiRouter::new(backends(&settings.models), config, Arc::new(NoopLogSink))
+}
+
+fn memory_router_config(settings: &AiSettings) -> hide_ai::RouterConfig {
+    let mut config = settings.router_config();
+    // Memory disclosure names one selected provider. Unlike an ordinary
+    // background request, transcript content must never fall through to a
+    // different account without a second consent decision.
+    config.priority = vec![settings.provider];
+    config
 }
 
 fn read(router: &AiRouter, models: &BTreeMap<ProviderId, String>) -> BackgroundAiSnapshot {
@@ -219,6 +225,23 @@ mod tests {
 
     fn models() -> BTreeMap<ProviderId, String> {
         AiSettings::default().models
+    }
+
+    #[test]
+    fn project_memory_routes_only_to_the_disclosed_provider() {
+        let settings = AiSettings {
+            provider: ProviderId::Claude,
+            ..AiSettings::default()
+        };
+        let router = memory_router(&settings);
+        assert_eq!(
+            router.provider_state().unwrap().selected,
+            ProviderId::Claude
+        );
+        assert_eq!(
+            memory_router_config(&settings).priority,
+            vec![ProviderId::Claude]
+        );
     }
 
     #[test]
