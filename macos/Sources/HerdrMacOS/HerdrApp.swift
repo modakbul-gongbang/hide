@@ -584,7 +584,7 @@ struct HerdrApp: App {
 
     var body: some Scene {
         Settings {
-            HideSettingsView(model: appDelegate.model)
+            HideSettingsScene(model: appDelegate.model)
         }
         .commands {
             ShellCommands(model: appDelegate.model)

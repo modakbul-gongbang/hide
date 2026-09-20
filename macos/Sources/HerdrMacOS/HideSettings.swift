@@ -9,6 +9,21 @@ import SwiftUI
 /// and made Settings read as a different application. The tokens are the same
 /// ones the sidebar and the tab strip use: the four-step surface ladder,
 /// hairline borders, no shadows, and the spacing and radius scales.
+/// What the menu bar's Settings scene shows: the settings view under the same
+/// model environment the main window gives its content, so a control shared
+/// with the main window (a keycap, a tooltip target) resolves the model in
+/// both hosts. The scene is a second window with no ancestor of its own, and
+/// a view that read the model from the environment trapped there.
+struct HideSettingsScene: View {
+    @ObservedObject var model: ShellModel
+    var initialTab: HideSettingsTab = .general
+
+    var body: some View {
+        HideSettingsView(model: model, initialTab: initialTab)
+            .environmentObject(model)
+    }
+}
+
 struct HideSettingsView: View {
     @ObservedObject var model: ShellModel
     /// The sheet has no title bar, so it carries its own close button. The
@@ -52,7 +67,7 @@ struct HideSettingsView: View {
                             accentHex: $accentHex,
                             fontSize: $fontSize
                         )
-                    case .agents: HideAgentSettings()
+                    case .agents: HideAgentSettings(model: model)
                     case .pet: HidePetSettings(model: model)
                     case .devices: HideDeviceSettings(model: model)
                     case .shortcuts: HideShortcutSettings(model: model)
@@ -438,7 +453,7 @@ private struct HideAppearanceSettings: View {
 }
 
 private struct HideAgentSettings: View {
-    @EnvironmentObject private var model: ShellModel
+    @ObservedObject var model: ShellModel
 
     var body: some View {
         HideSettingsGroup(
