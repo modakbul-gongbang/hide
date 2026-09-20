@@ -132,12 +132,7 @@ pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
 }
 
 fn memory_router_config(settings: &AiSettings) -> hide_ai::RouterConfig {
-    let mut config = settings.router_config();
-    // Memory disclosure names one selected provider. Unlike an ordinary
-    // background request, transcript content must never fall through to a
-    // different account without a second consent decision.
-    config.priority = vec![settings.provider];
-    config
+    settings.router_config()
 }
 
 fn read(router: &AiRouter, models: &BTreeMap<ProviderId, String>) -> BackgroundAiSnapshot {
@@ -228,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn project_memory_routes_only_to_the_disclosed_provider() {
+    fn project_memory_uses_the_existing_selected_provider_and_fallback_policy() {
         let settings = AiSettings {
             provider: ProviderId::Claude,
             ..AiSettings::default()
@@ -240,7 +235,7 @@ mod tests {
         );
         assert_eq!(
             memory_router_config(&settings).priority,
-            vec![ProviderId::Claude]
+            vec![ProviderId::Claude, ProviderId::Codex]
         );
     }
 

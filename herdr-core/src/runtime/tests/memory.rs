@@ -240,26 +240,52 @@ fn analysis_event_groups_preserve_every_event_exactly_once() {
 }
 
 #[test]
-fn one_analysis_event_over_the_group_budget_is_rejected() {
+fn one_analysis_event_over_the_group_budget_is_split_without_text_loss() {
+    let text = format!("{}끝", "x".repeat(37 * 1024));
     let events = vec![serde_json::json!({
         "offset": 1,
         "kind": "human",
-        "text": "x".repeat(37 * 1024),
+        "text": text,
     })];
 
     let groups = crate::runtime::memory::event_groups(&events).unwrap();
-    assert!(groups.is_empty(), "the oversized event is quarantined");
+    let chunks = groups.into_iter().flatten().collect::<Vec<_>>();
+    assert!(chunks.len() > 1);
+    assert_eq!(
+        chunks
+            .iter()
+            .filter_map(|event| event["text"].as_str())
+            .collect::<String>(),
+        text
+    );
+    assert!(chunks.iter().all(|event| event["offset"] == 1));
 }
 
 #[test]
-fn an_oversized_event_does_not_block_a_later_valid_turn() {
+fn an_oversized_event_and_a_later_turn_are_both_preserved() {
     let events = vec![
         serde_json::json!({"offset": 1, "text": "x".repeat(40 * 1024)}),
         serde_json::json!({"offset": 2, "text": "Keep later turns analyzable"}),
     ];
     let groups = crate::runtime::memory::event_groups(&events).unwrap();
-    assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0][0]["offset"], 2);
+    let flattened = groups.into_iter().flatten().collect::<Vec<_>>();
+    assert!(flattened.iter().any(|event| event["offset"] == 1));
+    assert!(flattened.iter().any(|event| event["offset"] == 2));
+}
+
+#[test]
+fn one_event_over_the_analysis_cap_fails_without_advancing() {
+    let events = vec![serde_json::json!({
+        "offset": 1,
+        "kind": "human",
+        "text": "x".repeat(hide_memory::ANALYSIS_INPUT_LIMIT_BYTES + 1),
+    })];
+
+    assert!(
+        crate::runtime::memory::event_groups(&events)
+            .unwrap_err()
+            .contains("analysis limit")
+    );
 }
 
 #[test]
@@ -362,6 +388,6 @@ fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
     );
     assert_eq!(
         runtime.snapshot.status.agent_hooks.runtimes[1].headline,
-        "Installed (v3)"
+        "Installed (v4)"
     );
 }

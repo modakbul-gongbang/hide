@@ -21,7 +21,7 @@ pub const HELPER_BINARY_NAME: &str = "hide-agent-hooks";
 /// changes shape, so an older entry is reported as outdated and the operator
 /// is offered a reinstall rather than being silently left with a hook that
 /// reports nothing.
-pub const HOOK_VERSION: u32 = 3;
+pub const HOOK_VERSION: u32 = 4;
 
 /// The one sentence SessionStart adds to either agent runtime inside Hide.
 /// Both runtimes accept the same `hookSpecificOutput.additionalContext`

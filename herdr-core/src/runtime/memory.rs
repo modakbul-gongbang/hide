@@ -7,14 +7,16 @@ use crate::model::{
 use hide_agent_hooks::{HookEvent, HookStatus};
 use hide_ai::{AiError, CancelToken};
 use hide_memory::{
-    AnalysisBatch, Candidate, ConflictChoice, Injection, InjectionOutcome, Mem0Adapter,
-    MemoryLifecycle, MemoryStore, SessionCursorRecord, SessionSourceRecord,
+    ANALYSIS_INPUT_LIMIT_BYTES, AnalysisBatch, Candidate, CandidateRelation, ConflictChoice,
+    Injection, InjectionOutcome, Mem0Adapter, MemoryStore, RetrievalQuery, SessionCursorRecord,
+    SessionSourceRecord,
 };
 use hide_session::{Agent, EventKind, SessionAvailability, SessionCatalog, SessionCursor};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
+use std::time::Duration;
 
 const MEMORY_QUIESCENCE_MS: u64 = 60_000;
 const MEMORY_POLL_INTERVAL_MS: u64 = 5_000;
@@ -34,6 +36,16 @@ fn sessions_load_matches_scope(
     focused_path: Option<&str>,
 ) -> bool {
     generation == current_generation && focused_path == Some(checkout_path)
+}
+
+fn archive_load_matches_scope(
+    generation: u64,
+    current_generation: u64,
+    workspace_id: &str,
+    checkout_id: &str,
+    focused_scope: Option<(&str, &str)>,
+) -> bool {
+    generation == current_generation && focused_scope == Some((workspace_id, checkout_id))
 }
 
 impl Runtime {
@@ -424,6 +436,8 @@ impl Runtime {
         };
         let id = id.to_owned();
         let kind = kind.to_owned();
+        self.archive_detail_load_generation = self.archive_detail_load_generation.saturating_add(1);
+        let generation = self.archive_detail_load_generation;
         let row = self
             .session_catalog_rows
             .iter()
@@ -456,16 +470,34 @@ impl Runtime {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => match result {
-                        Ok(detail) => {
-                            guard.show_archive_tab(&workspace_id, &checkout_id, detail, preview);
-                            true
+                    Ok(mut guard)
+                        if archive_load_matches_scope(
+                            generation,
+                            guard.archive_detail_load_generation,
+                            &workspace_id,
+                            &checkout_id,
+                            guard.focused_memory_context().as_ref().map(
+                                |(workspace, checkout, _)| (workspace.as_str(), checkout.as_str()),
+                            ),
+                        ) =>
+                    {
+                        match result {
+                            Ok(detail) => {
+                                guard.show_archive_tab(
+                                    &workspace_id,
+                                    &checkout_id,
+                                    detail,
+                                    preview,
+                                );
+                                true
+                            }
+                            Err(message) => {
+                                guard.set_error("archive.open_failed", message, true);
+                                true
+                            }
                         }
-                        Err(message) => {
-                            guard.set_error("archive.open_failed", message, true);
-                            true
-                        }
-                    },
+                    }
+                    Ok(_) => false,
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -565,15 +597,6 @@ impl Runtime {
             };
             return true;
         }
-        let interrupts_analysis = matches!(payload.action.as_str(), "disable" | "delete");
-        if interrupts_analysis {
-            self.memory_enable_after_hook_update = false;
-            if let Some(cancel) = self.memory_cancel.take() {
-                cancel.cancel();
-            }
-        } else if self.memory_operation_in_flight {
-            return false;
-        }
         let Some((_, _, checkout_path)) = self.focused_memory_context() else {
             self.set_error(
                 "memory.project_unavailable",
@@ -582,6 +605,63 @@ impl Runtime {
             );
             return true;
         };
+        if self.worker_context.is_none() {
+            self.set_error(
+                "memory.worker_unavailable",
+                "The Project Memory writer is unavailable",
+                true,
+            );
+            return true;
+        }
+        let interrupts_analysis = matches!(payload.action.as_str(), "disable" | "delete");
+        if interrupts_analysis {
+            self.memory_enable_after_hook_update = false;
+            if let Some(cancel) = &self.memory_cancel {
+                cancel.cancel();
+            }
+            if self.memory_operation_in_flight {
+                self.queue_memory_interrupt(checkout_path, payload);
+                return true;
+            }
+        } else if self.memory_operation_in_flight {
+            return false;
+        }
+        self.begin_memory_action(checkout_path, payload)
+    }
+
+    fn queue_memory_interrupt(
+        &mut self,
+        checkout_path: String,
+        payload: events::MemoryActionPayload,
+    ) {
+        let keep_existing_delete = self
+            .memory_pending_action
+            .as_ref()
+            .is_some_and(|(_, pending)| pending.action == "delete" && payload.action != "delete");
+        if !keep_existing_delete {
+            self.memory_pending_action = Some((checkout_path, payload));
+        }
+        let action = self
+            .memory_pending_action
+            .as_ref()
+            .map(|(_, pending)| pending.action.as_str())
+            .unwrap_or("disable");
+        self.snapshot.sessions.analysis = MemoryAnalysisSnapshot {
+            state: "analyzing".to_owned(),
+            message: Some(if action == "delete" {
+                "Finishing the current write before deleting Memory".to_owned()
+            } else {
+                "Finishing the current write before turning Memory off".to_owned()
+            }),
+            ..MemoryAnalysisSnapshot::default()
+        };
+    }
+
+    fn begin_memory_action(
+        &mut self,
+        checkout_path: String,
+        payload: events::MemoryActionPayload,
+    ) -> bool {
         let Some(context) = self.worker_context.clone() else {
             self.set_error(
                 "memory.worker_unavailable",
@@ -638,10 +718,11 @@ impl Runtime {
                         guard.memory_operation_in_flight = false;
                         guard.memory_cancel = None;
                         guard.memory_operation_checkout_path = None;
+                        let pending = guard.memory_pending_action.take();
                         let still_focused = guard
                             .focused_memory_context()
                             .is_some_and(|(_, _, path)| path == checkout_path);
-                        if still_focused {
+                        if still_focused && pending.is_none() {
                             match result {
                                 Ok(outcome) => {
                                     guard.snapshot.sessions.notice = outcome.notice;
@@ -666,8 +747,22 @@ impl Runtime {
                                     guard.set_error("memory.action_failed", message, true)
                                 }
                             }
-                        } else {
+                        } else if pending.is_none() {
                             guard.request_sessions_refresh();
+                        }
+                        if let Some((pending_checkout, pending_payload)) = pending {
+                            let pending_still_focused = guard
+                                .focused_memory_context()
+                                .is_some_and(|(_, _, path)| path == pending_checkout);
+                            if pending_still_focused {
+                                guard.begin_memory_action(pending_checkout, pending_payload);
+                            } else {
+                                guard.set_error(
+                                    "memory.pending_project_changed",
+                                    "The Project changed before the Memory action could run",
+                                    false,
+                                );
+                            }
                         }
                         true
                     }
@@ -695,10 +790,12 @@ impl Runtime {
 #[cfg(test)]
 mod scope_tests {
     use super::{
-        sessions_load_matches_scope, settled_analysis_snapshot,
-        should_request_memory_due_poll_after_load,
+        archive_load_matches_scope, sessions_load_matches_scope, settled_analysis_snapshot,
+        should_request_memory_due_poll_after_load, validate_candidates,
     };
     use crate::model::MemoryAnalysisSnapshot;
+    use hide_memory::{Candidate, CandidateKind, CandidateRelation};
+    use serde_json::json;
 
     #[test]
     fn reversed_session_load_completion_cannot_replace_the_newer_generation() {
@@ -723,6 +820,31 @@ mod scope_tests {
             3,
             "/project/alpha",
             Some("/project/beta"),
+        ));
+    }
+
+    #[test]
+    fn only_the_latest_archive_request_for_the_focused_checkout_can_land() {
+        assert!(!archive_load_matches_scope(
+            4,
+            5,
+            "workspace",
+            "checkout",
+            Some(("workspace", "checkout")),
+        ));
+        assert!(!archive_load_matches_scope(
+            5,
+            5,
+            "workspace",
+            "checkout",
+            Some(("workspace", "other")),
+        ));
+        assert!(archive_load_matches_scope(
+            5,
+            5,
+            "workspace",
+            "checkout",
+            Some(("workspace", "checkout")),
         ));
     }
 
@@ -773,6 +895,33 @@ mod scope_tests {
             false,
             &MemoryAnalysisSnapshot::default(),
         ));
+    }
+
+    #[test]
+    fn provider_supersede_plans_require_human_conflict_resolution() {
+        let candidates = validate_candidates(
+            vec![Candidate {
+                text: "Use the new boundary".to_owned(),
+                kind: CandidateKind::Decision,
+                confidence: 0.9,
+                salience: 0.8,
+                source_offsets: vec![7],
+                direct_human_source: false,
+                relation: CandidateRelation::Supersedes {
+                    target_id: "existing".to_owned(),
+                },
+            }],
+            &[json!({"offset": 7, "kind": "human"})],
+        )
+        .unwrap();
+
+        assert_eq!(
+            candidates[0].relation,
+            CandidateRelation::Conflicts {
+                target_id: "existing".to_owned()
+            }
+        );
+        assert!(candidates[0].direct_human_source);
     }
 }
 
@@ -1056,7 +1205,7 @@ fn memory_analysis_due(
     }
     let identity = hide_project::resolve(Path::new(checkout_path), workspace::LOCAL_DEVICE_ID)
         .map_err(|error| error.to_string())?;
-    let mut store = MemoryStore::open(database).map_err(|error| error.to_string())?;
+    let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
     let state = match store.project_state(&identity.id) {
         Ok(state) => state,
         Err(hide_memory::MemoryError::ProjectMissing) => return Ok(false),
@@ -1072,19 +1221,6 @@ fn memory_analysis_due(
         if !matches!(&session.availability, SessionAvailability::Available) {
             continue;
         }
-        store
-            .upsert_session_source(&SessionSourceRecord {
-                id: session.id.clone(),
-                project_id: identity.id.clone(),
-                provider: session.agent.as_str().to_owned(),
-                locator: session.locator.to_string_lossy().into_owned(),
-                checkout_path: session.checkout_path.to_string_lossy().into_owned(),
-                started_at_unix_ms: session.started_at_unix_ms,
-                updated_at_unix_ms: session.updated_at_unix_ms,
-                unavailable_reason: None,
-            })
-            .map_err(|error| error.to_string())?;
-        update_hook_projection(&mut store, &identity.id, &session)?;
         if !session_is_quiescent(&session, now_unix_ms) {
             continue;
         }
@@ -1300,7 +1436,8 @@ fn analyze_session(
             .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
         let content_hash = digest(&[project_id, provider, &session.id, &serialized]);
         last_hash = Some(content_hash.clone());
-        let active = active_memories_json(store, project_id).map_err(AnalysisFailure::Local)?;
+        let active =
+            active_memories_json(store, project_id, &serialized).map_err(AnalysisFailure::Local)?;
         let request_id = digest(&[
             "memory-request",
             project_id,
@@ -1373,25 +1510,18 @@ pub(super) fn event_groups(events: &[Value]) -> Result<Vec<Vec<Value>>, String> 
     let mut groups = Vec::new();
     let mut current = Vec::new();
     for event in events {
-        if serde_json::to_vec(event)
-            .map_err(|error| error.to_string())?
-            .len()
-            > EVENT_BUDGET
-        {
-            // Quarantine one oversized event by advancing the durable cursor
-            // without sending a truncated claim to the provider. Later turns
-            // in the same session remain analyzable on this pass and Retry
-            // converges instead of failing on the same event forever.
-            continue;
-        }
-        current.push(event.clone());
-        let measured = serde_json::to_vec(&current)
-            .map_err(|error| error.to_string())?
-            .len();
-        if measured > EVENT_BUDGET {
-            let event = current.pop().expect("the just-pushed event exists");
-            groups.push(std::mem::take(&mut current));
+        for event in bounded_event_chunks(event, EVENT_BUDGET)? {
             current.push(event);
+            let measured = serde_json::to_vec(&current)
+                .map_err(|error| error.to_string())?
+                .len();
+            if measured > EVENT_BUDGET {
+                let event = current.pop().expect("the just-pushed event exists");
+                if !current.is_empty() {
+                    groups.push(std::mem::take(&mut current));
+                }
+                current.push(event);
+            }
         }
     }
     if !current.is_empty() {
@@ -1400,25 +1530,100 @@ pub(super) fn event_groups(events: &[Value]) -> Result<Vec<Vec<Value>>, String> 
     Ok(groups)
 }
 
-fn active_memories_json(store: &MemoryStore, project_id: &str) -> Result<String, String> {
-    const COMPARISON_BUDGET: usize = 20 * 1024;
-    let mut values = Vec::new();
-    for item in store
-        .list_memories(project_id, "")
+fn bounded_event_chunks(event: &Value, budget: usize) -> Result<Vec<Value>, String> {
+    let serialized = serde_json::to_vec(event).map_err(|error| error.to_string())?;
+    if serialized.len() <= budget {
+        return Ok(vec![event.clone()]);
+    }
+    if serialized.len() > ANALYSIS_INPUT_LIMIT_BYTES {
+        return Err(format!(
+            "Memory event exceeds the {ANALYSIS_INPUT_LIMIT_BYTES}-byte analysis limit"
+        ));
+    }
+    let object = event
+        .as_object()
+        .ok_or_else(|| "Memory event must be a JSON object".to_owned())?;
+    let text = object
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Oversized Memory event has no text to split".to_owned())?;
+    let mut base = object.clone();
+    base.remove("text");
+    let base_size = serde_json::to_vec(&base)
         .map_err(|error| error.to_string())?
-    {
-        if item.lifecycle != MemoryLifecycle::Active {
-            continue;
-        }
-        values.push(json!({"id": item.id, "text": item.body}));
-        if serde_json::to_vec(&values)
+        .len();
+    let maximum_text_bytes = budget
+        .checked_sub(base_size.saturating_add(256))
+        .map(|remaining| remaining / 6)
+        .filter(|remaining| *remaining > 0)
+        .ok_or_else(|| "Memory event metadata exceeds the analysis request limit".to_owned())?;
+    let pieces = split_utf8(text, maximum_text_bytes);
+    let count = pieces.len();
+    let mut chunks = Vec::with_capacity(count);
+    for (index, piece) in pieces.into_iter().enumerate() {
+        let mut chunk = base.clone();
+        chunk.insert("text".to_owned(), Value::String(piece.to_owned()));
+        chunk.insert("chunk_index".to_owned(), json!(index));
+        chunk.insert("chunk_count".to_owned(), json!(count));
+        let chunk = Value::Object(chunk);
+        if serde_json::to_vec(&chunk)
             .map_err(|error| error.to_string())?
             .len()
-            > COMPARISON_BUDGET
+            > budget
         {
-            values.pop();
-            break;
+            return Err("Memory event chunk exceeds the analysis request limit".to_owned());
         }
+        chunks.push(chunk);
+    }
+    Ok(chunks)
+}
+
+fn split_utf8(text: &str, maximum_bytes: usize) -> Vec<&str> {
+    if text.is_empty() {
+        return vec![text];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let mut end = (start + maximum_bytes).min(text.len());
+        while end > start && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == start {
+            end = text[start..]
+                .char_indices()
+                .nth(1)
+                .map(|(offset, _)| start + offset)
+                .unwrap_or(text.len());
+        }
+        chunks.push(&text[start..end]);
+        start = end;
+    }
+    chunks
+}
+
+fn active_memories_json(
+    store: &MemoryStore,
+    project_id: &str,
+    source_events: &str,
+) -> Result<String, String> {
+    let injection = store
+        .retrieve(&RetrievalQuery {
+            project_id: project_id.to_owned(),
+            text: source_events.to_owned(),
+            excluded_memory_ids: Vec::new(),
+            maximum_items: 60,
+            maximum_tokens: 5_000,
+            deadline: Duration::from_secs(2),
+        })
+        .map_err(|error| error.to_string())?;
+    let mut values = Vec::with_capacity(injection.items.len());
+    for (id, _, body) in injection.items {
+        let redacted = hide_memory::redact(&body);
+        if redacted.contains_secret_candidate {
+            return Err("Stored Memory failed the outbound secret check".to_owned());
+        }
+        values.push(json!({"id": id, "text": redacted.text}));
     }
     serde_json::to_string(&values).map_err(|error| error.to_string())
 }
@@ -1453,6 +1658,11 @@ fn validate_candidates(
             .source_offsets
             .iter()
             .any(|offset| human.contains(offset));
+        if let CandidateRelation::Supersedes { target_id } = &candidate.relation {
+            candidate.relation = CandidateRelation::Conflicts {
+                target_id: target_id.clone(),
+            };
+        }
     }
     Ok(candidates)
 }

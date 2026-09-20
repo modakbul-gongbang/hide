@@ -5,13 +5,17 @@ use hide_memory::{
     HOOK_DEADLINE_MS, HOOK_INPUT_LIMIT_BYTES, Injection, InjectionOutcome, MemoryStore,
     RetrievalQuery,
 };
-use serde::Deserialize;
-use std::io::{self, Read};
+use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const MEMORY_DATABASE_ENV: &str = "HIDE_MEMORY_DATABASE_PATH";
 pub const MEMORY_TESTING_ENV: &str = "HIDE_PROJECT_MEMORY_TESTING";
+const SESSION_RECEIPT_SLOTS: u64 = 512;
+const SESSION_RECEIPT_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1_000;
+const SESSION_RECEIPT_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum HookMemoryOutcome {
@@ -35,6 +39,15 @@ struct HookInput {
     cwd: Option<PathBuf>,
     prompt: Option<String>,
     session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SessionStartReceipt {
+    project_id: String,
+    runtime: String,
+    session_id: String,
+    item_ids: Vec<String>,
+    created_at_ms: u64,
 }
 
 /// Retains only the bounded stdin prefix and stops as soon as overflow is
@@ -155,13 +168,21 @@ pub fn project_memory_output_until(
             }
             text.push('\n');
             text.push_str(&cwd.to_string_lossy());
-            let excluded = if session_id.is_empty() {
+            let mut excluded = if session_id.is_empty() {
                 Vec::new()
             } else {
                 store
                     .session_start_receipt_ids(&project.id, runtime_id, session_id)
                     .unwrap_or_default()
             };
+            excluded.extend(read_session_start_receipt(
+                home,
+                &project.id,
+                runtime_id,
+                session_id,
+            ));
+            excluded.sort_unstable();
+            excluded.dedup();
             RetrievalQuery::prompt(&project.id, text, excluded)
         }
         HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Stop => return base(),
@@ -184,7 +205,126 @@ pub fn project_memory_output_until(
         }
         return base();
     };
+    if event == HookEvent::SessionStart && !injection.items.is_empty() && Instant::now() < deadline
+    {
+        let runtime_id = match runtime {
+            AgentRuntime::Codex => "codex",
+            AgentRuntime::ClaudeCode => "claude",
+        };
+        if let Some(session_id) = input
+            .session_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            let item_ids = injection
+                .items
+                .iter()
+                .map(|(id, _, _)| id.clone())
+                .collect();
+            let _ =
+                write_session_start_receipt(home, &project.id, runtime_id, session_id, item_ids);
+        }
+    }
     render(runtime, event, injection, deadline, base)
+}
+
+fn receipt_path(home: &Path, project_id: &str, runtime: &str, session_id: &str) -> PathBuf {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    project_id.hash(&mut hasher);
+    runtime.hash(&mut hasher);
+    session_id.hash(&mut hasher);
+    let slot = hasher.finish() % SESSION_RECEIPT_SLOTS;
+    home.join("Library/Application Support/hide/project-memory-receipts")
+        .join(format!("{slot:03}.json"))
+}
+
+fn write_session_start_receipt(
+    home: &Path,
+    project_id: &str,
+    runtime: &str,
+    session_id: &str,
+    item_ids: Vec<String>,
+) -> io::Result<()> {
+    let receipt = SessionStartReceipt {
+        project_id: project_id.to_owned(),
+        runtime: runtime.to_owned(),
+        session_id: session_id.to_owned(),
+        item_ids,
+        created_at_ms: now_ms(),
+    };
+    let bytes = serde_json::to_vec(&receipt).map_err(io::Error::other)?;
+    if bytes.len() > SESSION_RECEIPT_MAX_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "session start receipt exceeds its fixed limit",
+        ));
+    }
+    let path = receipt_path(home, project_id, runtime, session_id);
+    let directory = path.parent().expect("receipt path has a parent");
+    std::fs::create_dir_all(directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let temporary = directory.join(format!(".receipt-{}.tmp", std::process::id()));
+    let result = (|| -> io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        file.write_all(&bytes)?;
+        drop(file);
+        std::fs::rename(&temporary, &path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn read_session_start_receipt(
+    home: &Path,
+    project_id: &str,
+    runtime: &str,
+    session_id: &str,
+) -> Vec<String> {
+    if session_id.is_empty() {
+        return Vec::new();
+    }
+    let path = receipt_path(home, project_id, runtime, session_id);
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return Vec::new();
+    };
+    if metadata.len() as usize > SESSION_RECEIPT_MAX_BYTES {
+        return Vec::new();
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    let Ok(receipt) = serde_json::from_slice::<SessionStartReceipt>(&bytes) else {
+        return Vec::new();
+    };
+    let current = now_ms();
+    if receipt.project_id != project_id
+        || receipt.runtime != runtime
+        || receipt.session_id != session_id
+        || current.saturating_sub(receipt.created_at_ms) > SESSION_RECEIPT_MAX_AGE_MS
+    {
+        return Vec::new();
+    }
+    receipt.item_ids
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn render(
@@ -352,6 +492,86 @@ mod tests {
             "unseen items remain eligible: {output}"
         );
         assert!(!output.contains("Rule 0"));
+    }
+
+    #[test]
+    fn immediate_first_prompt_omits_the_session_start_items_before_transcript_projection() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let path = database_path(&home);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut store = MemoryStore::open(&path).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, "local")
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        for index in 0..8 {
+            store
+                .apply_candidates(
+                    &AnalysisBatch {
+                        id: format!("race-b{index}"),
+                        project_id: project.id.clone(),
+                        provider: "codex".into(),
+                        analysis_provider: "codex".into(),
+                        session_id: "source".into(),
+                        content_hash: format!("race-h{index}"),
+                        created_at_unix_ms: index,
+                    },
+                    &[Candidate {
+                        text: format!("Race rule {index} about durable hooks"),
+                        kind: CandidateKind::Rule,
+                        confidence: 0.9,
+                        salience: 1.0 - index as f64 / 10.0,
+                        source_offsets: vec![index],
+                        direct_human_source: true,
+                        relation: CandidateRelation::New,
+                    }],
+                )
+                .unwrap();
+        }
+        drop(store);
+        let session_id = "immediate-session";
+        let start_payload = serde_json::to_vec(&serde_json::json!({
+            "cwd": project_root,
+            "session_id": session_id
+        }))
+        .unwrap();
+        let start = project_memory_output(
+            AgentRuntime::Codex,
+            HookEvent::SessionStart,
+            &start_payload,
+            false,
+            &home,
+        );
+        assert_eq!(start.outcome, HookMemoryOutcome::Provided { count: 5 });
+        let start_output = start.stdout.unwrap();
+        let started_rules = (0..8)
+            .filter(|index| start_output.contains(&format!("Race rule {index} ")))
+            .collect::<Vec<_>>();
+        assert_eq!(started_rules.len(), 5);
+
+        let prompt_payload = serde_json::to_vec(&serde_json::json!({
+            "cwd": project_root,
+            "session_id": session_id,
+            "prompt": "durable hooks"
+        }))
+        .unwrap();
+        let prompt = project_memory_output(
+            AgentRuntime::Codex,
+            HookEvent::UserPromptSubmit,
+            &prompt_payload,
+            false,
+            &home,
+        );
+        assert_eq!(prompt.outcome, HookMemoryOutcome::Provided { count: 3 });
+        let prompt_output = prompt.stdout.unwrap();
+        for index in started_rules {
+            assert!(!prompt_output.contains(&format!("Race rule {index} ")));
+        }
     }
 
     #[test]

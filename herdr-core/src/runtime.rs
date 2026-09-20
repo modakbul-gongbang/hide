@@ -842,9 +842,11 @@ pub struct Runtime {
     memory_sessions_load_in_flight: bool,
     memory_sessions_load_pending: bool,
     memory_sessions_load_generation: u64,
+    archive_detail_load_generation: u64,
     memory_operation_in_flight: bool,
     memory_operation_generation: u64,
     memory_operation_checkout_path: Option<String>,
+    memory_pending_action: Option<(String, events::MemoryActionPayload)>,
     memory_cancel: Option<hide_ai::CancelToken>,
     /// True only after the operator approves hook updates while enabling
     /// Memory. A diagnosis can finish that intent, but cannot create it.
@@ -1121,9 +1123,11 @@ impl Runtime {
             memory_sessions_load_in_flight: false,
             memory_sessions_load_pending: false,
             memory_sessions_load_generation: 0,
+            archive_detail_load_generation: 0,
             memory_operation_in_flight: false,
             memory_operation_generation: 0,
             memory_operation_checkout_path: None,
+            memory_pending_action: None,
             memory_cancel: None,
             memory_enable_after_hook_update: false,
             memory_poll_in_flight: false,

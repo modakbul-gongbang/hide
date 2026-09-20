@@ -1298,7 +1298,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
             .map(|row| (row.id.as_str(), row.headline.as_str(), row.offers_install))
             .collect::<Vec<_>>(),
         vec![
-            ("claude-code", "Installed (v3)", false),
+            ("claude-code", "Installed (v4)", false),
             ("codex", "Not installed", true),
         ],
         "a runtime that is fine is not offered a reinstall (PRD B28)"

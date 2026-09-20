@@ -512,7 +512,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub(super) struct MemoryActionPayload {
     pub(super) action: String,
     #[serde(default)]

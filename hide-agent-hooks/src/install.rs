@@ -318,7 +318,7 @@ pub fn remove(runtime: AgentRuntime, home: &Path) -> Result<RemoveOutcome, Insta
 /// The entry Hide writes: one command hook, carrying its own marker.
 fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
     let command = format!(
-        "{} hook --runtime {} --event {} --source {}",
+        "{} hook --runtime {} --event {} --memory-injection --source {}",
         shell_quote(&helper.display().to_string()),
         runtime.id(),
         event.name(),
@@ -714,7 +714,8 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(session_start_command.contains("--runtime codex"));
-        assert!(session_start_command.contains("--source hide-subagents@3"));
+        assert!(session_start_command.contains("--memory-injection"));
+        assert!(session_start_command.contains("--source hide-subagents@4"));
     }
 
     #[test]

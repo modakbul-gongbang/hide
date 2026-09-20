@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -113,23 +113,23 @@ impl SessionCatalog {
         project: &ProjectIdentity,
     ) -> Result<Vec<ProjectSession>, SessionCatalogError> {
         let mut files = Vec::new();
+        let mut visited = 0;
         collect_jsonl(
             &self.home.join(".claude/projects"),
             Agent::Claude,
             2,
             &mut files,
+            &mut visited,
+            SESSION_DISCOVERY_LIMIT,
         )?;
         collect_jsonl(
             &self.home.join(".codex/sessions"),
             Agent::Codex,
             4,
             &mut files,
+            &mut visited,
+            SESSION_DISCOVERY_LIMIT,
         )?;
-        if files.len() > SESSION_DISCOVERY_LIMIT {
-            return Err(SessionCatalogError::Capacity {
-                limit: SESSION_DISCOVERY_LIMIT,
-            });
-        }
 
         let mut sessions = Vec::new();
         for (agent, path) in files {
@@ -188,10 +188,9 @@ fn collect_jsonl(
     agent: Agent,
     depth: usize,
     output: &mut Vec<(Agent, PathBuf)>,
+    visited: &mut usize,
+    limit: usize,
 ) -> Result<(), SessionCatalogError> {
-    if output.len() > SESSION_DISCOVERY_LIMIT {
-        return Ok(());
-    }
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -204,6 +203,10 @@ fn collect_jsonl(
         }
     };
     for entry in entries {
+        *visited = visited.saturating_add(1);
+        if *visited > limit {
+            return Err(SessionCatalogError::Capacity { limit });
+        }
         let path = entry
             .map_err(|source| SessionCatalogError::Io {
                 operation: "read_entry",
@@ -212,18 +215,12 @@ fn collect_jsonl(
             })?
             .path();
         if path.is_dir() && depth > 0 {
-            collect_jsonl(&path, agent, depth - 1, output)?;
-            if output.len() > SESSION_DISCOVERY_LIMIT {
-                return Ok(());
-            }
+            collect_jsonl(&path, agent, depth - 1, output, visited, limit)?;
         } else if path
             .extension()
             .is_some_and(|extension| extension == "jsonl")
         {
             output.push((agent, path));
-            if output.len() > SESSION_DISCOVERY_LIMIT {
-                return Ok(());
-            }
         }
     }
     Ok(())
@@ -234,12 +231,14 @@ fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
         Agent::Codex => crate::codex_session_cwd(path).map(PathBuf::from),
         Agent::Claude => {
             let file = File::open(path).ok()?;
-            for line in BufReader::new(file).lines().take(128) {
-                let Ok(line) = line else { continue };
-                if line.len() as u64 > FIRST_LINE_LIMIT_BYTES {
-                    return None;
-                }
-                let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            let mut reader = BufReader::new(file);
+            for _ in 0..128 {
+                let line = match read_bounded_line(&mut reader, FIRST_LINE_LIMIT_BYTES as usize) {
+                    Ok(Some(line)) => line,
+                    Ok(None) => break,
+                    Err(_) => return None,
+                };
+                let Ok(value) = serde_json::from_slice::<Value>(&line) else {
                     continue;
                 };
                 if let Some(cwd) = value.get("cwd").and_then(Value::as_str) {
@@ -249,6 +248,31 @@ fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
             None
         }
     }
+}
+
+fn read_bounded_line(
+    reader: &mut impl BufRead,
+    maximum_bytes: usize,
+) -> io::Result<Option<Vec<u8>>> {
+    let mut line = Vec::with_capacity(maximum_bytes.min(8 * 1024));
+    let mut limited = std::io::Read::take(&mut *reader, maximum_bytes.saturating_add(1) as u64);
+    let read = limited.read_until(b'\n', &mut line)?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if line.len() > maximum_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "session line exceeds its fixed limit",
+        ));
+    }
+    while line
+        .last()
+        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+    {
+        line.pop();
+    }
+    Ok(Some(line))
 }
 
 fn read_project_session(agent: Agent, path: PathBuf, cwd: PathBuf) -> ProjectSession {
@@ -318,13 +342,9 @@ fn session_id(agent: Agent, path: &Path) -> String {
         return stem.to_owned();
     }
     let explicit = File::open(path).ok().and_then(|file| {
-        let mut line = String::new();
-        BufReader::new(file)
-            .take(FIRST_LINE_LIMIT_BYTES)
-            .read_to_string(&mut line)
-            .ok()?;
-        let first = line.lines().next()?;
-        let value: Value = serde_json::from_str(first).ok()?;
+        let mut reader = BufReader::new(file);
+        let line = read_bounded_line(&mut reader, FIRST_LINE_LIMIT_BYTES as usize).ok()??;
+        let value: Value = serde_json::from_slice(&line).ok()?;
         value
             .pointer("/payload/id")
             .and_then(Value::as_str)
@@ -409,5 +429,32 @@ mod tests {
             sessions[0].first_human_request.as_deref(),
             Some("recover me")
         );
+    }
+
+    #[test]
+    fn discovery_capacity_counts_every_directory_entry_not_only_sessions() {
+        let root = tempdir().unwrap();
+        for index in 0..4 {
+            fs::write(
+                root.path().join(format!("unrelated-{index}.txt")),
+                "fixture",
+            )
+            .unwrap();
+        }
+        let mut output = Vec::new();
+        let mut visited = 0;
+
+        assert!(matches!(
+            collect_jsonl(root.path(), Agent::Claude, 0, &mut output, &mut visited, 3,),
+            Err(SessionCatalogError::Capacity { limit: 3 })
+        ));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn bounded_line_reader_refuses_before_allocating_past_the_limit() {
+        let mut reader = BufReader::new(std::io::Cursor::new(b"123456789\nnext\n"));
+        let error = read_bounded_line(&mut reader, 8).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }

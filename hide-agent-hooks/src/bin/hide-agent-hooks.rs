@@ -51,7 +51,7 @@ fn main() -> ExitCode {
 fn usage() -> String {
     "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
      --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop> \
-     [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
+     [--memory-injection] [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
 }
 
@@ -65,7 +65,11 @@ fn run_hook(arguments: &[String]) {
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
     let Some(home) = home_directory() else { return };
     let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_DEADLINE_MS);
-    if let Some(runtime) = runtime {
+    if let Some(runtime) = runtime.filter(|_| {
+        arguments
+            .iter()
+            .any(|argument| argument == "--memory-injection")
+    }) {
         if let Some(output) = memory_output_before_deadline(runtime, event, home.clone(), deadline)
         {
             println!("{output}");
