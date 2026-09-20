@@ -34,6 +34,10 @@ pub enum ResolveError {
         path: PathBuf,
         source: std::io::Error,
     },
+    InvalidGitLink {
+        path: PathBuf,
+        reason: String,
+    },
 }
 
 impl Display for ResolveError {
@@ -45,6 +49,13 @@ impl Display for ResolveError {
                 write!(
                     formatter,
                     "project_path_unreadable:{}:{source}",
+                    path.display()
+                )
+            }
+            Self::InvalidGitLink { path, reason } => {
+                write!(
+                    formatter,
+                    "project_git_link_invalid:{}:{reason}",
                     path.display()
                 )
             }
@@ -72,7 +83,7 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
         path: path.to_path_buf(),
         source,
     })?;
-    let (root, kind) = match git::discover(&canonical) {
+    let (root, kind) = match git::discover(&canonical)? {
         Some(repository) => (repository.main_root(), ProjectKind::Git),
         None => (
             if canonical.is_dir() {
@@ -97,6 +108,7 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
 }
 
 pub mod git {
+    use super::ResolveError;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -137,48 +149,120 @@ pub mod git {
         }
     }
 
-    pub fn discover(path: &Path) -> Option<Repository> {
-        let start = fs::canonicalize(path).ok()?;
+    pub fn discover(path: &Path) -> Result<Option<Repository>, ResolveError> {
+        let start = fs::canonicalize(path).map_err(|error| ResolveError::InvalidGitLink {
+            path: path.to_path_buf(),
+            reason: format!("discovery_path:{error}"),
+        })?;
         let mut directory = if start.is_dir() {
             start.as_path()
         } else {
-            start.parent()?
+            start.parent().ok_or_else(|| ResolveError::InvalidGitLink {
+                path: start.clone(),
+                reason: "path_has_no_parent".to_owned(),
+            })?
         };
         loop {
-            if let Some(git_dir) = git_dir_at(directory) {
-                let common_dir = common_dir_of(&git_dir);
-                return Some(Repository {
+            if let Some((git_dir, common_dir)) = git_dir_at(directory)? {
+                return Ok(Some(Repository {
                     root: directory.to_path_buf(),
                     git_dir,
                     common_dir,
-                });
+                }));
             }
-            directory = directory.parent()?;
+            let Some(parent) = directory.parent() else {
+                return Ok(None);
+            };
+            directory = parent;
         }
     }
 
-    fn git_dir_at(directory: &Path) -> Option<PathBuf> {
+    fn git_dir_at(directory: &Path) -> Result<Option<(PathBuf, PathBuf)>, ResolveError> {
         let dotgit = directory.join(".git");
-        let metadata = fs::metadata(&dotgit).ok()?;
-        let candidate = if metadata.is_dir() {
-            dotgit
-        } else {
-            let text = fs::read_to_string(&dotgit).ok()?;
-            let named = text.strip_prefix("gitdir:")?.trim();
-            absolute(directory, Path::new(named))
+        let metadata = match fs::symlink_metadata(&dotgit) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(invalid(&dotgit, format!("metadata:{error}"))),
         };
-        candidate
-            .join("HEAD")
-            .is_file()
-            .then(|| fs::canonicalize(&candidate).unwrap_or(candidate))
+        if metadata.file_type().is_symlink() {
+            return Err(invalid(&dotgit, "dotgit_symlink"));
+        }
+        if metadata.is_dir() {
+            let candidate = canonical(&dotgit, "git_directory")?;
+            require_regular_file(&candidate.join("HEAD"), "head")?;
+            return Ok(Some((candidate.clone(), candidate)));
+        }
+        if !metadata.is_file() {
+            return Err(invalid(&dotgit, "dotgit_not_file_or_directory"));
+        }
+
+        let text = fs::read_to_string(&dotgit)
+            .map_err(|error| invalid(&dotgit, format!("pointer_read:{error}")))?;
+        let named = text
+            .trim()
+            .strip_prefix("gitdir:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| invalid(&dotgit, "pointer_format"))?;
+        let candidate = canonical(&absolute(directory, Path::new(named)), "git_directory")?;
+        require_regular_file(&candidate.join("HEAD"), "head")?;
+        let common_dir = common_dir_of(&candidate)?;
+
+        let candidate_parent = candidate
+            .parent()
+            .ok_or_else(|| invalid(&candidate, "worktree_entry_has_no_parent"))?;
+        if canonical(candidate_parent, "worktrees_directory")?
+            != canonical(
+                &common_dir.join("worktrees"),
+                "registered_worktrees_directory",
+            )?
+        {
+            return Err(invalid(&dotgit, "unregistered_worktree_entry"));
+        }
+
+        let reciprocal = candidate.join("gitdir");
+        require_regular_file(&reciprocal, "worktree_gitdir")?;
+        let reciprocal_text = fs::read_to_string(&reciprocal)
+            .map_err(|error| invalid(&reciprocal, format!("worktree_gitdir_read:{error}")))?;
+        let reciprocal_target = canonical(
+            &absolute(&candidate, Path::new(reciprocal_text.trim())),
+            "worktree_checkout_pointer",
+        )?;
+        if reciprocal_target != canonical(&directory.join(".git"), "checkout_pointer")? {
+            return Err(invalid(&reciprocal, "worktree_pointer_not_reciprocal"));
+        }
+        Ok(Some((candidate, common_dir)))
     }
 
-    fn common_dir_of(git_dir: &Path) -> PathBuf {
-        let Ok(text) = fs::read_to_string(git_dir.join("commondir")) else {
-            return git_dir.to_path_buf();
-        };
-        let named = absolute(git_dir, Path::new(text.trim()));
-        fs::canonicalize(&named).unwrap_or(named)
+    fn common_dir_of(git_dir: &Path) -> Result<PathBuf, ResolveError> {
+        let path = git_dir.join("commondir");
+        require_regular_file(&path, "commondir")?;
+        let text = fs::read_to_string(&path)
+            .map_err(|error| invalid(&path, format!("commondir_read:{error}")))?;
+        canonical(
+            &absolute(git_dir, Path::new(text.trim())),
+            "common_directory",
+        )
+    }
+
+    fn canonical(path: &Path, label: &str) -> Result<PathBuf, ResolveError> {
+        fs::canonicalize(path).map_err(|error| invalid(path, format!("{label}:{error}")))
+    }
+
+    fn require_regular_file(path: &Path, label: &str) -> Result<(), ResolveError> {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| invalid(path, format!("{label}_metadata:{error}")))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(invalid(path, format!("{label}_not_regular_file")));
+        }
+        Ok(())
+    }
+
+    fn invalid(path: &Path, reason: impl Into<String>) -> ResolveError {
+        ResolveError::InvalidGitLink {
+            path: path.to_path_buf(),
+            reason: reason.into(),
+        }
     }
 
     fn absolute(base: &Path, path: &Path) -> PathBuf {
@@ -395,6 +479,60 @@ mod tests {
         assert!(matches!(
             resolve(&temp.path().join("missing"), "local"),
             Err(ResolveError::MissingPath(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dotgit_symlink_is_rejected_instead_of_aliasing_another_project() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let victim = temp.path().join("victim");
+        let attacker = temp.path().join("attacker");
+        fs::create_dir(&victim).unwrap();
+        fs::create_dir(&attacker).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&victim)
+                .status()
+                .unwrap()
+                .success()
+        );
+        symlink(victim.join(".git"), attacker.join(".git")).unwrap();
+
+        assert!(matches!(
+            resolve(&attacker, "local"),
+            Err(ResolveError::InvalidGitLink { reason, .. }) if reason == "dotgit_symlink"
+        ));
+    }
+
+    #[test]
+    fn forged_git_pointer_without_reciprocal_worktree_registration_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let victim = temp.path().join("victim");
+        let attacker = temp.path().join("attacker");
+        fs::create_dir(&victim).unwrap();
+        fs::create_dir(&attacker).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&victim)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(
+            attacker.join(".git"),
+            format!("gitdir: {}\n", victim.join(".git").display()),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            resolve(&attacker, "local"),
+            Err(ResolveError::InvalidGitLink { reason, .. })
+                if reason.contains("commondir_metadata")
         ));
     }
 }
