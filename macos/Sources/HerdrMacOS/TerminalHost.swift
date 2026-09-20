@@ -75,6 +75,9 @@ struct TerminalHost: NSViewRepresentable {
         )
         terminal.allowsPaneInput = allowsInput
         terminal.hidePaneID = paneID
+        terminal.onAttachment = { [weak bridge] input, bracketed in
+            bridge?.pasteTerminalAttachment(input, paneID: paneID, bracketed: bracketed)
+        }
         terminal.registerForDraggedTypes([.fileURL])
         terminal.terminalContentsDidDraw = { TerminalLatency.drawn(paneID: paneID) }
         terminal.terminalDisplayTick = { [weak coordinator = context.coordinator] period in
@@ -207,6 +210,7 @@ struct TerminalHost: NSViewRepresentable {
         terminal.terminalContentsDidDraw = nil
         terminal.terminalDelegate = nil
         (terminal as? ImeTerminalView)?.onPointerFocus = nil
+        (terminal as? ImeTerminalView)?.onAttachment = nil
         (terminal as? ImeTerminalView)?.onOrdinaryClick = nil
     }
 

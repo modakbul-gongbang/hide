@@ -43,6 +43,8 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         2_000_000_000,
     ]
     private let statePath: String
+    private var clipboardPreparation: Task<URL, Error>?
+    private var clipboardPreparationID: String?
     private let fixtureMode: Bool
     #if DEBUG
     private let verificationSnapshotPath: String?
@@ -383,6 +385,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     }
 
     deinit {
+        clipboardPreparation?.cancel()
         herdrServerRecoveryTask?.cancel()
         #if DEBUG
         verificationSnapshotWatcher?.cancel()
@@ -406,6 +409,62 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         var payload: [String: Any] = ["pane_id": target, "bytes_base64": Data(bytes).base64EncodedString()]
         if let trace = TerminalLatency.takeInput(paneID: target) { payload["input_trace"] = trace }
         dispatch(kind: "key", payload: payload)
+    }
+
+    func pasteTerminalAttachment(_ input: TerminalAttachmentInput, paneID: String, bracketed: Bool) {
+        let requestID = UUID().uuidString.lowercased()
+        let paths: [String]
+        let clipboard: Bool
+        switch input {
+        case .files(let values): paths = values; clipboard = false
+        case .image, .failure: paths = []; clipboard = true
+        }
+        guard dispatch(kind: "terminal_attachment", payload: ["request_id": requestID, "pane_id": paneID,
+            "bracketed_paste": bracketed, "clipboard": clipboard, "paths": paths]) == .accepted else { return }
+        // Admission is core-owned. A rejected competing paste starts no file task.
+        refreshSnapshot()
+        guard snapshot?.status.asyncOperations.contains(where: { $0.id == requestID && $0.phase == "pending" }) == true else { return }
+        switch input {
+        case .files: return
+        case .failure(let message):
+            dispatch(kind: "terminal_attachment_ready", payload: ["request_id": requestID, "pane_id": paneID, "error": message])
+        case .image(let data):
+            let root = URL(fileURLWithPath: statePath).deletingLastPathComponent().appendingPathComponent("TerminalClipboard")
+            let preparation = Task.detached(priority: .userInitiated) { try TerminalFileDrop.stageImage(data, root: root, requestID: requestID) }
+            clipboardPreparation = preparation
+            clipboardPreparationID = requestID
+            Task { [weak self] in
+                let result = await preparation.result
+                guard let self else {
+                    if case .success(let url) = result { await Self.removePreparedClipboard(url) }
+                    return
+                }
+                if self.clipboardPreparationID == requestID {
+                    self.clipboardPreparation = nil
+                    self.clipboardPreparationID = nil
+                }
+                self.refreshSnapshot()
+                guard let operation = self.snapshot?.status.asyncOperations.first(where: { $0.id == requestID && ["clipboard", "cancelling", "retired"].contains($0.stage) }) else {
+                    if case .success(let url) = result { await Self.removePreparedClipboard(url) }
+                    return
+                }
+                if (operation.stage != "clipboard" || operation.phase != "pending"), case .success(let url) = result {
+                    await Self.removePreparedClipboard(url)
+                }
+                var payload: [String: Any] = ["request_id": requestID, "pane_id": paneID]
+                if case .failure(let error) = result { payload["error"] = error.localizedDescription }
+                self.dispatch(kind: "terminal_attachment_ready", payload: payload)
+            }
+        }
+    }
+
+    private static func removePreparedClipboard(_ url: URL) async {
+        await Task.detached { try? FileManager.default.removeItem(at: url) }.value
+    }
+
+    func terminalAttachmentAction(requestID: String, paneID: String, action: String) {
+        if action == "cancel", clipboardPreparationID == requestID { clipboardPreparation?.cancel() }
+        dispatch(kind: "terminal_attachment_action", payload: ["request_id": requestID, "pane_id": paneID, "action": action])
     }
 
     func clickTerminal(paneID: String, column: Int, row: Int, modifiers: Int) {

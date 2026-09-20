@@ -135,6 +135,9 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     private var plainBackspaceEvent = false
     let pointerRouting = TerminalPointerRoutingState()
     var onPointerFocus: (() -> Void)?
+    var onAttachment: ((TerminalAttachmentInput, Bool) -> Void)?
+    var attachmentPasteboard: NSPasteboard = .general
+    private var consumedImagePasteKey = false
     var hidePaneID: String?
     var allowsPaneInput = true
 
@@ -147,17 +150,50 @@ final class ImeTerminalView: TerminalView, HideTerminalPointerRouting {
     }
 
     @discardableResult func pasteDroppedFiles(_ board: NSPasteboard) -> Bool {
-        guard allowsPaneInput, !isHiddenOrHasHiddenAncestor, onPointerFocus != nil else { return false }
-        do {
-            let bytes = try TerminalFileDrop.input(from: board, bracketedPaste: getTerminal().bracketedPasteMode)
-            onPointerFocus?()
-            window?.makeFirstResponder(self)
-            send(data: bytes[...])
-            return true
-        } catch {
-            presentError(error)
-            return false
+        guard allowsPaneInput, !isHiddenOrHasHiddenAncestor, !hasMarkedText(), onPointerFocus != nil, let onAttachment else { return false }
+        onPointerFocus?()
+        window?.makeFirstResponder(self)
+        onAttachment(TerminalFileDrop.files(from: board), getTerminal().bracketedPasteMode)
+        return true
+    }
+
+    @discardableResult func pasteClipboardImage(_ board: NSPasteboard) -> Bool {
+        guard allowsPaneInput, !isHiddenOrHasHiddenAncestor, !hasMarkedText(),
+              let onAttachment, let input = TerminalFileDrop.image(from: board) else { return false }
+        onAttachment(input, getTerminal().bracketedPasteMode)
+        return true
+    }
+
+    override func paste(_ sender: Any?) {
+        guard allowsPaneInput, !isHiddenOrHasHiddenAncestor else { return }
+        // An image-only paste must not reach SwiftTerm's insertText("") path,
+        // which would clear an active native composition despite inserting nothing.
+        if hasMarkedText(), TerminalFileDrop.accepts(attachmentPasteboard)
+            || attachmentPasteboard.availableType(from: [.png, .tiff]) != nil { return }
+        if TerminalFileDrop.accepts(attachmentPasteboard), pasteDroppedFiles(attachmentPasteboard) { return }
+        if pasteClipboardImage(attachmentPasteboard) { return }
+        super.paste(sender)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 9, consumedImagePasteKey {
+            if event.isARepeat { return }
+            consumedImagePasteKey = false
         }
+        let modifiers = event.modifierFlags.intersection([.control, .command, .option, .shift])
+        if event.keyCode == 9, modifiers == .control, pasteClipboardImage(attachmentPasteboard) {
+            consumedImagePasteKey = true
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if event.keyCode == 9, consumedImagePasteKey {
+            consumedImagePasteKey = false
+            return
+        }
+        super.keyUp(with: event)
     }
     var onOrdinaryClick: ((Int, Int, Int) -> Void)?
 

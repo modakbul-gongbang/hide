@@ -51,6 +51,24 @@ struct RecentProject: Identifiable {
     let id: String
     let deviceID: String
     let workspace: CoreWorkspaceSnapshot
+    let location: RecentLocation
+}
+
+/// Location is separate from agent state and checkout context. It is resolved
+/// once per navigation projection, never by scanning devices on held-key steps.
+struct RecentLocation: Equatable {
+    let deviceID: String
+    let label: String
+
+    var isRemote: Bool { deviceID != "local" }
+    var spoken: String { isRemote ? "Remote, \(label)" : label }
+
+    static func resolve(deviceID: String, labels: [String: String]) -> Self {
+        // A vanished device still has an identity. Show that exact ID instead
+        // of presenting an unregistered remote session as local.
+        let label = labels[deviceID].flatMap { $0.isEmpty ? nil : $0 } ?? deviceID
+        return Self(deviceID: deviceID, label: label)
+    }
 }
 
 struct RecentSurface: Identifiable {
@@ -62,6 +80,7 @@ struct RecentSurface: Identifiable {
     let checkoutID: String
     let checkoutLabel: String
     let item: ShellTabItem
+    let location: RecentLocation
 
     /// The switcher spans projects, so a row names its project unless the
     /// checkout already carries the same name, which is the single-checkout case.

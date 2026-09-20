@@ -116,12 +116,18 @@ pub struct HerdrCore {
 
 impl Drop for HerdrCore {
     fn drop(&mut self) {
+        // Reserve cancellation before any coordinator shutdown can wait: a
+        // completing attachment must not enqueue input during destruction.
+        let attachment_worker = { lock_recover(&self.runtime).take_attachment_worker() };
         self._terminal_maintenance.take();
         self._session_sync.take();
         // Taken under the lock, joined outside it: a coordinator's last act is
         // to lock the runtime, so a join under the lock never returns.
         let remote_syncs = { lock_recover(&self.runtime).take_remote_syncs() };
         drop(remote_syncs);
+        if let Some(worker) = attachment_worker {
+            let _ = worker.join();
+        }
         let worker = { lock_recover(&self.runtime).take_state_save_worker() };
         if let Some(worker) = worker
             && worker.join().is_err()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The cargo entrypoint for verification, as plain argv.
 #
-# Usage: verify-cargo.sh test | lint | build
+# Usage: verify-cargo.sh test [cargo test arguments...] | lint | build
 #
 # The PRD harness runs each verify command with execvp and no shell, so an
 # `ENV=value cargo ...` binding fails with ENOENT at verify time rather than at
@@ -27,7 +27,8 @@ export CARGO_TARGET_DIR="$PWD/target"
 
 case "${1:-}" in
     test)
-        exec cargo test --locked --workspace
+        shift
+        exec cargo test --locked --workspace "$@"
         ;;
     lint)
         cargo fmt --all --check
@@ -37,7 +38,7 @@ case "${1:-}" in
         exec cargo build --release --locked -p herdr-core
         ;;
     *)
-        printf 'usage: %s test|lint|build\n' "$0" >&2
+        printf 'usage: %s test [cargo test arguments...]|lint|build\n' "$0" >&2
         exit 2
         ;;
 esac

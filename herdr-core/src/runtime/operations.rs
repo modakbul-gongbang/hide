@@ -267,6 +267,8 @@ impl Runtime {
         changed |= self.expire_close_operations(now_unix_ms);
         changed |= self.expire_pane_operations(now_unix_ms);
         changed |= self.expire_remote_operations(now_unix_ms);
+        changed |= self.reconcile_attachment_target();
+        changed |= self.tick_attachment();
         if changed {
             self.sync_recent_closed_snapshot();
             self.sync_async_operations();
@@ -1082,6 +1084,12 @@ impl Runtime {
                 retryable: operation.retryable,
             }
         }));
+        if let Some(attachment) = &self.attachment {
+            operations.push(attachment.operation.clone());
+        }
+        if let Some(rejection) = &self.attachment_rejection {
+            operations.push(rejection.clone());
+        }
         operations.sort_by(|left, right| {
             left.started_at_unix_ms
                 .cmp(&right.started_at_unix_ms)

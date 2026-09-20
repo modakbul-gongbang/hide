@@ -1648,7 +1648,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // doCommand/noop: - but more research needs to take place to figure out the priority
     // of those keys.
     //
-    public override func keyDown(with event: NSEvent) {
+    open override func keyDown(with event: NSEvent) {
         selection.active = false
         let eventFlags = event.modifierFlags
 
@@ -1817,7 +1817,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         interpretKeyEvents([event])
     }
 
-    public override func keyUp(with event: NSEvent) {
+    open override func keyUp(with event: NSEvent) {
         let flags = terminal.keyboardEnhancementFlags
         if flags.contains(.reportEvents) {
             let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))

@@ -30,6 +30,7 @@ pub mod remote_files;
 mod runtime;
 mod session_sync;
 mod sidebar;
+mod terminal_attachments;
 mod terminal_recovery;
 mod usage;
 mod wire;

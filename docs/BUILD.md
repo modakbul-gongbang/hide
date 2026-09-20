@@ -53,6 +53,8 @@ Cargo decides freshness by mtime, which a fresh CI checkout always fails, so the
 On a miss the lane builds through `verify-cargo.sh build` and saves the result, so a Swift-only change restores main's archive.
 SwiftPM's `-L`/`-l` linkage does not declare the Rust archive as a build input, so, like `build_dev_app.sh`, the wrapper passes the archive's SHA-256 digest as a Swift compilation condition: a changed archive rebuilds the Swift targets, an identical one keeps the cache hot.
 Arguments after the mode reach swift unchanged, so `verify-swift.sh test --filter <TestName>` runs one suite.
+The Cargo `test` mode likewise forwards trailing test arguments, so an explicitly configured live probe can run as `verify-cargo.sh test <test-name> -- --ignored` without bypassing worktree isolation or toolchain ownership.
+The no-argument `test` mode remains the full locked workspace gate.
 Neither wrapper assembles, signs or verifies an application bundle; that remains the responsibility of `build_dev_app.sh` and `build-app.sh`.
 A failing Cargo prerequisite stops Swift, and each compiler or test process's failure reaches the caller.
 

@@ -185,6 +185,8 @@ private struct HideTabCanvas: View {
                         // split (PRD B7, D-16).
                         onSelectPane: { model.requestPaneSelection(from: pane.id, to: $0) }
                     ) {
+                        VStack(spacing: HideTheme.spacingNone) {
+                        TerminalAttachmentNotice(bridge: model.core, paneID: pane.id)
                         if model.isConversation(for: pane.id),
                            model.canShowConversation(for: pane.id),
                            let agent = model.agents.first(where: { $0.paneID == pane.id }),
@@ -219,6 +221,7 @@ private struct HideTabCanvas: View {
                                 onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
                             )
                             .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                        }
                         }
                     }
                 }

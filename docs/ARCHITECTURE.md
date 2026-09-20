@@ -91,6 +91,35 @@ A pane that is going away ends its attach quietly.
 Herdr closes the PTY before it reports the pane gone, so the attach child ends while the pane is still drawn; projecting that as `ended` is what flashed "terminal attach ended" over a pane the operator had just closed.
 A close Hide asked for, or a pane Herdr has already stopped listing, projects `closing` with no notice chunk and keeps the pane's last frame until it is removed. Every other reason still reports `ended` with its message.
 
+### Explicit terminal attachments
+
+`ImeTerminalView` and `TerminalFileDrop` own only native pasteboard ingress.
+Finder file URLs, Command-V images and Control-V images become one `terminal_attachment` intent carrying the original pane ID, bracketed-paste mode and a generated request UUID.
+Control-V without an image and ordinary text paste retain SwiftTerm's input path; active IME composition is not consumed by image ingress.
+Clipboard preparation completes that same intent with `terminal_attachment_ready`, after one off-main task validates encoded bytes and pixel dimensions and writes a private PNG beside the app state under `TerminalClipboard`.
+No clipboard image bytes enter the JSON event or the render mutex.
+
+`runtime/attachments.rs` owns admission, captured terminal and remote connection generations, one active worker, retry, cancellation and an ordered 64 KiB input reservation.
+Subsequent input to the originating pane is held until file preparation and transfer succeed, then the complete quoted path payload and held bytes enter the existing terminal writer together.
+No Enter is synthesized, and an upload failure never forwards held input, because it may contain an Enter that would submit an incomplete prompt.
+Retry keeps immutable prepared bytes; cancel discards held input explicitly.
+Missing, closed, released or reconnected targets retire the intent and cannot forward its data to a replacement session or fall back to the local host.
+Only admission, completion and actionable failure transitions publish a notice through `status.async_operations`; terminal-specific actions render in the originating pane.
+
+`terminal_attachments.rs` reads only explicitly selected regular files, rejects final-component symlinks, special files, control-character paths and files that change while read, and constructs ordered quoted terminal input.
+The bounds are eight files, 20 MiB per file and 40 MiB per intent; clipboard decoding additionally allows at most 16 megapixels.
+`remote/attachments.rs` transfers the immutable bytes with the existing authenticated `RusshSftpTransport`, not a shell command or a subprocess, and returns only remote paths.
+Remote staging lives in the remote user's private `.hide-terminal-attachments` directory, with generated exclusive filenames, 0700 directory and 0600 file permissions, ownership checks and same-byte verification before adopting a completed upload on retry.
+Connection setup is bounded at 15 seconds and transfer work at 45 seconds; cleanup has its own bounded connection and operation timeouts.
+Neither filesystem nor network I/O runs under `Mutex<Runtime>`.
+
+Both staging locations admit at most 128 files and 256 MiB.
+Cleanup scans only their immediate generated entries on the next explicit attachment intent and expires entries older than 24 hours; there is no background janitor and successful paths may therefore survive longer while idle.
+Local clipboard PNGs remain available after a successful local paste, while remote success releases the local PNG after upload.
+Cancellation, retirement and destruction attempt to remove only that intent's exact generated files; failed remote cleanup is diagnostic and remains bounded by the next-intent expiry policy.
+Original user-selected files are never deleted.
+This boundary has no provider-specific draft, composer or attachment shelf.
+
 ### Reopening locally closed work
 
 The core owns one session-local, twenty-item LIFO stack for file tabs and local Herdr pane or tab closes initiated through Hide.

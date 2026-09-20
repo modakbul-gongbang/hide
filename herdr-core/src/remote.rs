@@ -41,6 +41,8 @@ use crate::remote_files::{FileEntry, FileKind, FileResult, FileServiceError, Sft
 use crate::remote_files::{FileService, RemoteFileService};
 use hide_herdr_client::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 
+mod attachments;
+
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_REMOTE_TERM: &str = "xterm-256color";

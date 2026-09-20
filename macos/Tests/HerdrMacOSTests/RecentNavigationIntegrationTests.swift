@@ -5,6 +5,61 @@ import Testing
 
 @Suite("Recent navigation through the core", .serialized)
 struct RecentNavigationIntegrationTests {
+    @MainActor @Test func sameNamedLocalAndRemoteProjectsKeepSeparateLocations() async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            .appendingPathComponent("hide-recent-hosts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recording = root.appendingPathComponent("recording.json")
+        let seed = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
+            "--workspace-root", root.path, "--state-path", root.appendingPathComponent("seed.json").path,
+            "--verification-snapshot-output", recording.path])
+        try await eventually("recorded local fixture") { seed.snapshot?.navigator.workspaces.isEmpty == false }
+        var payload = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: recording)) as? [String: Any])
+        var rest = try #require(payload["rest"] as? [String: Any])
+        var navigator = try #require(rest["navigator"] as? [String: Any])
+        let workspaces = try #require(navigator["workspaces"] as? [[String: Any]])
+        var devices = try #require(navigator["devices"] as? [[String: Any]])
+        devices.append(["id": "mini", "label": "Mac mini", "kind": "remote", "state": "ready", "agent_count": 1])
+        navigator["devices"] = devices
+        rest["navigator"] = navigator
+        var status = try #require(rest["status"] as? [String: Any])
+        status["remote"] = [[
+            "target_id": "mini", "state": "connected",
+            "files": ["state": "idle", "entries": [], "generation": 0],
+            "session": ["workspaces": workspaces, "agents": [], "active_tab_ids": [:], "pane_layouts": []],
+        ]]
+        rest["status"] = status
+        payload["rest"] = rest
+        let replay = root.appendingPathComponent("replay.json")
+        try JSONSerialization.data(withJSONObject: payload).write(to: replay)
+        let bridge = CoreBridge(arguments: ["HerdrMacOS", "--verification-ui-fixture",
+            "--workspace-root", root.path, "--state-path", root.appendingPathComponent("replay-state.json").path,
+            "--verification-snapshot", replay.path])
+        let model = ShellModel(core: bridge)
+        try await eventually("both locations projected") { model.recentSurfaces.count == 2 }
+        #expect(model.recentProjects.count == 2)
+        #expect(Set(model.recentProjects.values.map(\.workspace.label)).count == 1)
+        #expect(model.recentProjects.values.first { $0.deviceID == "mini" }?.location.spoken == "Remote, Mac mini")
+        #expect(model.recentSurfaces.values.first { $0.deviceID == "mini" }?.location.spoken == "Remote, Mac mini")
+        #expect(model.recentSurfaces.values.first { $0.deviceID == "local" }?.location.isRemote == false)
+        model.beginOrAdvanceTabSwitcher()
+        let highlighted = try #require(model.tabSwitcherCycle?.selectedTabID)
+        // A live registration rename updates both rows without moving the held highlight.
+        devices[devices.count - 1]["label"] = "작업용 Mac mini"
+        navigator["devices"] = devices
+        rest["navigator"] = navigator
+        payload["rest"] = rest
+        payload["revision"] = (payload["revision"] as? UInt64 ?? 1) + 1
+        try JSONSerialization.data(withJSONObject: payload).write(to: replay)
+        try await eventually("device rename reaches both Recent projections") {
+            model.recentProjects.values.first { $0.deviceID == "mini" }?.location.label == "작업용 Mac mini"
+                && model.recentSurfaces.values.first { $0.deviceID == "mini" }?.location.label == "작업용 Mac mini"
+        }
+        #expect(model.tabSwitcherCycle?.selectedTabID == highlighted)
+        model.cancelTabSwitcher()
+    }
+
     @MainActor @Test func emptyAndSingleItemNavigationDoesNotInterruptTheUser() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
             .appendingPathComponent("hide-empty-navigation-\(UUID().uuidString)")

@@ -419,12 +419,29 @@ The existing core catalog determines grouping; navigation does not infer it from
 
 Both switchers use the same themed overlay and registry-derived keycaps, with at most nine rows around the highlight.
 Project rows show the last surface and checkout; panel rows show their project and checkout, collapsed to the checkout alone when both carry the same name, and their surface type.
+Both lists give remote rows a separate trailing `Remote · <device label>` badge, leaving the agent mark, title, checkout and dirty indicator intact.
+The badge uses `HideTheme.recentLocationMaxWidth` and middle truncation; its tooltip and accessibility help retain the complete host identity.
+`RecentLocationBadge` supplies this identity to `HideBadge`'s bounded variant; the shared badge remains the only owner of its typography, padding, background and border.
+Local rows have no extra badge, and a device absent from the registration map is identified by its actual remote ID rather than being presented as local.
+Device names are resolved once with each navigation projection, not while cycling held-key highlights.
 Recent Panels uses the same focused-pane agent brand mark as the tab strip, including Claude Code and Codex; file, diff and unassociated terminal surfaces keep their type icons.
 A panel row whose tab holds exactly one agent pane is titled by that agent's identity with its status mark before the brand mark, derived in the core as the strip entry's `agent_identity`; a tab with no agent or several keeps the Herdr tab label, and the Herdr label itself is never changed for this.
 History is session-local and retains only existing projects and surfaces.
 A deleted highlight moves to the next surviving entry without reordering the held cycle and records the reconciliation in structured trace.
 If none survives, cancel with a structured recovery trace and keep the core's current selection.
 Empty projects show “No open tabs”; a project without an available checkout keeps the current selection and records the recovery.
+
+### Device picker
+
+The bottom-sidebar device trigger uses the compact menu-chip component with a laptop or server icon and the selected device name.
+It opens a Hide-themed popover, not a native system Menu.
+The approved A composition uses one flat two-line list: the actual device name above, Local or Remote, connection state and available agent count below.
+Remote unavailable rows say `Not connected` and do not present a stale count as current.
+The selected device has the selected wash and a checkmark; keyboard focus is separate and does not change device until activation.
+Up and Down move focus, Return or a click selects, and Escape dismisses without a selection change.
+Empty lists say `No devices available`, long names truncate in their title line, and the complete identity remains in the row's accessibility label.
+The list uses the existing tooltip width and relationship-list height cap, with scrolling beyond the cap.
+The reusable device-row and remote-location state sheets are maintained in the design library; the approved scope is recorded in `agents/prd/remote-interface-parity/prd.md`.
 
 ### Search keyboard navigation
 
@@ -810,14 +827,25 @@ Switching Workspaces replaces the decoration root, and no per-row, hover, select
 
 ## Terminal image attachment boundary
 
-Dropping local file URLs into a visible terminal focuses that receiving pane and inserts quoted paths immediately through the existing ordered writer.
+Dropping local file URLs into a visible terminal focuses that receiving pane and starts one attachment intent through the existing ordered writer.
+Command-V and Control-V capture PNG or TIFF clipboard images at the same ingress; ordinary text and keys keep their existing terminal behavior.
+The core reserves the original pane and connection generation before asynchronous image preparation, file validation or transfer, so later focus changes cannot redirect the attachment.
+The shell normalizes clipboard images into private PNG files off the input thread, while the core owns transfer state, held input, retry and cancellation.
+Local files keep their original paths after validation; remote attachments are uploaded through authenticated SFTP and insert only the resulting remote paths.
 When the terminal advertises bracketed paste, each path has its own paste frame; the complete drop is enqueued once in file order.
 Otherwise the paths are inserted as shell-quoted text with a trailing space.
-Spaces, Korean and apostrophes survive; shell expansion characters are escaped, and paths containing control characters are rejected with a native error.
-The drop performs no upload, image decoding, temporary copy or automatic Enter, and never replaces existing prompt text.
+Spaces, Korean and apostrophes survive; shell expansion characters are escaped, and paths containing control characters, symlinks, directories and special files are refused with an actionable notice.
+Nothing performs automatic Enter or replaces existing prompt text.
+One transfer is admitted at a time, with at most eight files, 20 MiB per file and 40 MiB total; clipboard decoding is also capped at 16 megapixels.
+The original terminal's later input is held up to 64 KiB, then explicitly refused rather than growing the queue or silently submitting an incomplete prompt.
+Only a successful transfer to the original live generation releases the attachment followed by that held input.
+A compact notice above the affected terminal shows preparation, upload or failure and offers Retry where safe, or explicit cancellation that discards held input.
+An original pane that closes or reconnects invalidates the intent; neither files nor old input are forwarded into a replacement session.
+Private staging uses owned 0700 directories and 0600 files with a 128-file and 256 MiB cap.
+Files older than 24 hours are pruned on the next attachment attempt, not by a resident background cleaner; successful local clipboard references therefore remain readable after the paste.
+Failed or cancelled transfers clean up only their own created files where the destination remains reachable, with deferred cleanup recorded diagnostically.
 It inserts paths even when a provider cannot decode the referenced file; provider validation remains visible in its own composer.
 Hide provides no thumbnail shelf, attachment membership or synchronized removal; subsequent editing and submission remain native provider operations.
-Ordinary clipboard paste and keyboard input retain the existing SwiftTerm paths.
 Provider-native attachment behavior remains owned by the provider; pasting a path is not proof of image acceptance.
 The former shelf was removed because it could not synchronize native attachment deletion or clear confirmed submissions reliably.
 Reintroducing this surface requires a supported provider contract for stable attachment identity, idempotent add/remove, native draft changes and accepted submission events.

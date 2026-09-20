@@ -329,6 +329,8 @@ enum HideTheme {
     static let deviceTestStageColumnWidth: CGFloat = 64
 
     static let badgeHeight: CGFloat = 16
+    /// A remote name remains visible without consuming a Recent row's title.
+    static let recentLocationMaxWidth: CGFloat = 112
 
     enum Control {
         static let compactHeight: CGFloat = 24

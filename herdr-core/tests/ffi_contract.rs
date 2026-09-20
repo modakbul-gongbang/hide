@@ -1081,6 +1081,46 @@ extern "C" fn count_change(context: *mut c_void) {
 }
 
 #[test]
+fn terminal_attachment_destroy_cleans_idle_failed_clipboard_only() {
+    let root = std::env::temp_dir().join(format!(
+        "hide-attachment-destroy-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let clipboard = root.join("TerminalClipboard");
+    fs::create_dir_all(&clipboard).unwrap();
+    let request_id = "01234567-0123-0123-0123-0123456789ab";
+    let staged = clipboard.join(format!("hide-{request_id}.png"));
+    let original = root.join("original.png");
+    fs::write(&staged, b"owned clipboard bytes").unwrap();
+    fs::write(&original, b"original user bytes").unwrap();
+    let core = create_with_socket_override_hidden(&options_with_state(&root.join("state.json")));
+    assert!(!core.is_null());
+    dispatch(
+        core,
+        json!({"schema_version":2, "kind":"key", "payload":{"pane_id":"attachment-pane", "bytes_base64":""}}),
+    );
+    dispatch(
+        core,
+        json!({"schema_version":2, "kind":"terminal_attachment", "payload":{"request_id":request_id,"pane_id":"attachment-pane","clipboard":true,"bracketed_paste":true,"paths":[]}}),
+    );
+    dispatch(
+        core,
+        json!({"schema_version":2, "kind":"terminal_attachment_ready", "payload":{"request_id":request_id,"pane_id":"attachment-pane","error":"Image preparation failed."}}),
+    );
+    herdr_core_destroy(core);
+    assert!(
+        !staged.exists(),
+        "destruction joins cleanup even when the failed intent has no transfer worker"
+    );
+    assert_eq!(fs::read(&original).unwrap(), b"original user bytes");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn callback_fires_for_snapshot_changes_and_unregisters_cleanly() {
     let core = create();
     let counter = AtomicUsize::new(0);
