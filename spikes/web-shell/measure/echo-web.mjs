@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Shared echo definition: t0 = herdr pane send-text, t1 = xterm.js buffer.
+import { performance } from "node:perf_hooks";
 import { spawnSync } from "node:child_process";
 
 const cdpPort = process.env.S0_CDP_PORT ?? "9222";
@@ -48,35 +49,30 @@ function send(method, params) {
 
 await send("Runtime.enable", {});
 const samples = [];
-const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+const hops = [];
+const load = spawnSync("uptime", { encoding: "utf8" }).stdout.trim();
 for (let i = 0; i < repeats; i += 1) {
-  const marker = alphabet[i % alphabet.length] + String(i % 10);
+  const marker = `s${String(i).padStart(4, "0")}`;
   await send("Runtime.evaluate", {
-    expression: `window.__s0Echo = ""; window.__s0EchoAt = null; "ok"`,
+    expression: `window.__s0Arm(${JSON.stringify(marker)}); "armed"`,
     returnByValue: true,
   });
-  const t0 = Date.now();
+  const t0 = performance.timeOrigin + performance.now();
   const sent = spawnSync(herdrBin, ["pane", "send-text", paneId, `${marker}\n`], {
-    env: process.env,
-    encoding: "utf8",
+    env: process.env, encoding: "utf8", timeout: 3000,
   });
-  if (sent.status !== 0) {
-    console.error("echo-web: send-text failed", sent.stderr);
-    process.exit(1);
-  }
+  const cli_return_ms = performance.timeOrigin + performance.now();
+  if (sent.status !== 0) throw new Error(`send-text failed: ${sent.stderr}`);
   const result = await send("Runtime.evaluate", {
-    expression: `window.__s0WaitFor(${JSON.stringify(marker)}, 3000)`,
-    awaitPromise: true,
-    returnByValue: true,
+    expression: "window.__s0WaitFor()", awaitPromise: true, returnByValue: true,
   });
-  if (result.exceptionDetails) {
-    console.error("echo-web: wait failed", result.exceptionDetails);
-    process.exit(1);
-  }
-  const t1 = result.result?.value;
-  samples.push(Number(t1) - t0);
+  if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+  const hop = { sample: i, t0_ms: t0, cli_return_ms, ...result.result.value };
+  samples.push(hop.write_ms - t0);
+  hops.push(hop);
+  await new Promise((resolve) => setTimeout(resolve, 80));
 }
 
 ws.close();
-const out = { method: "herdr pane send-text t0 -> xterm.js buffer t1 (Date.now)", samples };
+const out = { method: "send-text spawn -> xterm write callback; WS message timestamp recorded before parsing; identical sNNNN + LF bytes", load, samples, hops };
 console.log(JSON.stringify(out, null, 2));

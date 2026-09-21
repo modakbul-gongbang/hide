@@ -10,14 +10,16 @@ BUDGET_MS = 16.7
 def main():
     path = Path(sys.argv[1])
     payload = json.loads(path.read_text())
-    frames = payload.get("frames") if isinstance(payload, dict) else payload
+    if not isinstance(payload, dict):
+        payload = {"frames": payload}
+    frames = payload["frames"]
     dts = [float(frame["dt"]) for frame in frames if "dt" in frame]
-    if dts and dts[0] > 1000:
-        # performance.now() deltas should already be ms. Guard accidental seconds.
-        dts = [value * 1000 for value in dts]
     over = sum(1 for value in dts if value > BUDGET_MS)
     result = {
         "count": len(dts),
+        "covered_ms": sum(dts),
+        "window": payload.get("window"),
+        "complete": bool(dts) and sum(dts) >= 120000 and payload.get("done") is True,
         "over_16_7ms": over,
         "fraction": (over / len(dts)) if dts else None,
         "percent": (100.0 * over / len(dts)) if dts else None,

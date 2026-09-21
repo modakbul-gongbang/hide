@@ -1,169 +1,159 @@
 #!/usr/bin/env python3
-"""Assemble REPORT.md from S0 run artifacts."""
+"""Score only complete, registered-shape measurements; never invent a baseline."""
 import json
 import os
-import subprocess
 from pathlib import Path
-
-
-def load(path: Path):
-    if not path.exists():
-        return None
-    if path.suffix == ".json":
-        return json.loads(path.read_text())
-    return path.read_text()
-
-
-def p95(path: Path):
-    payload = load(path)
-    if not payload:
-        return None
-    samples = payload.get("samples") if isinstance(payload, dict) else payload
-    if not samples:
-        return None
-    import math
-    ordered = sorted(float(value) for value in samples)
-    return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
-
-
-def median(values):
-    values = [value for value in values if value is not None]
-    if not values:
-        return None
-    values = sorted(values)
-    return values[len(values) // 2]
+import statistics
+import subprocess
+from summarize import summarize
 
 
 def main():
-    run = Path(os.environ["S0_RUN_DIR"])
-    worktree = Path(os.environ["S0_WORKTREE"])
-    sha = subprocess.check_output(["git", "-C", str(worktree), "rev-parse", "HEAD"], text=True).strip()
-    chrome = subprocess.check_output(
-        ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--version"],
-        text=True,
-    ).strip()
-    load_avg = Path("/proc/loadavg").read_text() if Path("/proc/loadavg").exists() else subprocess.check_output(["uptime"], text=True).strip()
-
-    web_p95s = [p95(run / f"echo-web-{i}.json") for i in (1, 2, 3)]
-    web_p95 = median(web_p95s)
-    swift_p95s = [p95(run / f"echo-swift-{i}.json") for i in (1, 2, 3)]
-    swift_p95 = median(swift_p95s)
-    rss = load(run / "rss-tab.json") or load(run / "rss-driven.json") or {}
-    frames = load(run / "frames-summary.json") or {}
-    stats = load(run / "snapshot-stats.json") or {}
-    operator_before = load(run / "operator-before.json") or {}
-    operator_after = load(run / "operator-after.json") or {}
-    idle_hided = load(run / "idle-hided.ps") or ""
-    driven_hided = load(run / "driven-hided.ps") or ""
-
-    threshold_echo = None if swift_p95 is None else swift_p95 + 5
-    echo_status = "PENDING"
-    if web_p95 is not None and threshold_echo is not None:
-        echo_status = "PASS" if web_p95 <= threshold_echo else "FAIL"
-    elif web_p95 is not None and swift_p95 is None:
-        echo_status = "PENDING_SWIFT_BASELINE"
-
-    rss_mb = rss.get("sum_mb")
-    mem_status = "PENDING" if rss_mb is None else ("PASS" if rss_mb <= 400 else "FAIL")
-    frac = frames.get("fraction")
-    frame_status = "PENDING" if frac is None else ("PASS" if frac <= 0.01 else "FAIL")
-
-    measured = [echo_status, mem_status, frame_status]
-    hard_fail = [item for item in measured if item == "FAIL"]
-    if hard_fail:
-        banner = "S0 FAIL - S1 착수 금지"
-    elif echo_status == "PASS" and mem_status == "PASS" and frame_status == "PASS":
-        banner = "S0 PASS (IME 판정 대기)"
-    else:
-        banner = "S0 INCOMPLETE - 측정 미완 항목 있음"
-
-    fail_lines = []
-    if echo_status == "FAIL":
-        fail_lines.append(f"- ② echo p95 {web_p95}ms exceeded Swift {swift_p95}ms + 5ms")
-    if mem_status == "FAIL":
-        fail_lines.append(f"- ③ RSS sum {rss_mb}MB exceeded 400MB")
-    if frame_status == "FAIL":
-        fail_lines.append(f"- ④ frame over-budget fraction {frac} exceeded 1%")
-
-    report = f"""# S0 REPORT
+    run = Path(os.environ['S0_RUN_DIR'])
+    worktree = Path(os.environ['S0_WORKTREE'])
+    read = lambda name: json.loads((run / name).read_text())
+    trials = {side: [read(f'echo-{side}-{i}.json') for i in (1, 2, 3)] for side in ('web', 'swift')}
+    for side, values in trials.items():
+        if any(len(v['samples']) < 50 for v in values):
+            raise SystemExit(f'{side}: incomplete sample count')
+    summaries = {side: [summarize(v['samples']) for v in values] for side, values in trials.items()}
+    med = {side: statistics.median(v['p95_ms'] for v in values) for side, values in summaries.items()}
+    rss = read('rss-tab.json')
+    frames = read('frames-summary.json')
+    stats = read('snapshot-stats.json')
+    statuses = [
+        'PASS' if med['web'] <= med['swift'] + 5 else 'FAIL',
+        'PASS' if rss['sum_mb'] <= 400 else 'FAIL',
+        ('PASS' if frames['fraction'] <= .01 else 'FAIL') if frames.get('complete') else 'INCOMPLETE',
+    ]
+    banner = 'S0 FAIL - S1 착수 금지' if 'FAIL' in statuses else ('S0 PASS (IME 판정 대기)' if all(s == 'PASS' for s in statuses) else 'S0 INCOMPLETE - S1 착수 금지')
+    hop_rows = []
+    for i, trial in enumerate(trials['web'], 1):
+        sent = {}
+        for line in (run / f'logs/hided-{i}.log').read_text().splitlines():
+            if line.startswith('{'):
+                row = json.loads(line)
+                if row.get('event') == 'ws_sent': sent[row['requested_ms']] = row['completed_ms']
+        for row in trial['hops']:
+            row = dict(row)
+            row['ws_completed_ms'] = sent[row['requested_ms']]
+            hop_rows.append(row)
+    boundaries = [
+        ('Driver -> on_change', 't0_ms', 'notified_ms'),
+        ('on_change -> snapshot request', 'notified_ms', 'requested_ms'),
+        ('Owner queue', 'requested_ms', 'owner_started_ms'),
+        ('Core snapshot + copy', 'owner_started_ms', 'owner_finished_ms'),
+        ('Envelope preparation', 'owner_finished_ms', 'ws_send_ms'),
+        ('WS send start -> completed', 'ws_send_ms', 'ws_completed_ms'),
+        ('WS send start -> message event', 'ws_send_ms', 'arrival_ms'),
+        ('Message event -> xterm write callback', 'arrival_ms', 'write_ms'),
+    ]
+    hops = {name: summarize([row[b] - row[a] for row in hop_rows if row[a] is not None]) for name, a, b in boundaries}
+    for side, values in trials.items():
+        hops[f'{side} CLI spawn -> return (overlaps downstream)'] = summarize([row['cli_return_ms']-row['t0_ms'] for trial in values for row in trial['hops']])
+    (run/'hop-summary.json').write_text(json.dumps(hops, indent=2)+'\n')
+    sha = subprocess.check_output(['git', '-C', str(worktree), 'rev-parse', 'HEAD'], text=True).strip()
+    chrome = subprocess.check_output(['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome','--version'],text=True).strip()
+    table = '\n'.join(f'| {name} | {s["count"]} | {s["p50_ms"]:.3f} | {s["p95_ms"]:.3f} | {s["p99_ms"]:.3f} | {s["max_ms"]:.3f} |' for name,s in hops.items())
+    distributions = '\n'.join(f'| {side} {i} | {s["count"]} | {s["p50_ms"]:.3f} | {s["p95_ms"]:.3f} | {s["p99_ms"]:.3f} | {s["max_ms"]:.3f} | {trials[side][i-1]["load"]} |' for side in trials for i,s in enumerate(summaries[side],1))
+    ps = '\n'.join(f'{side} {phase} trial {i}:\n{(run/f"{phase}-{side}-{i}.ps").read_text()}' for side in ('swift','hided') for phase in ('idle','driven') for i in (1,2,3))
+    report = f'''# S0 REPORT
 
 {banner}
-
-{os.linesep.join(fail_lines)}
 
 ## Gate table
 
 | # | Item | Value | Baseline | Threshold | Result |
 | --- | --- | --- | --- | --- | --- |
-| ① | Hangul IME V9 four checks | see procedure below | n/a | all four pass in Chrome stable | PENDING_HUMAN |
-| ② | key→echo p95 | web {web_p95} ms (trials {web_p95s}) | Swift {swift_p95} ms (trials {swift_p95s}) | Swift p95 + 5ms = {threshold_echo} | {echo_status} |
-| ③ | Chrome tab + hided RSS | {rss_mb} MB | n/a | ≤ 400 MB | {mem_status} |
-| ④ | 120s driven replay frames >16.7ms | {frames.get("percent")} % ({frames.get("over_16_7ms")}/{frames.get("count")}) | n/a | ≤ 1% | {frame_status} |
+| ① | Hangul IME V9 | four human checks below | n/a | all four pass | PENDING_HUMAN |
+| ② | Driver -> echo p95 | web {med['web']:.3f} ms | Swift {med['swift']:.3f} ms | Swift + 5 = {med['swift']+5:.3f} ms | {statuses[0]} |
+| ③ | Chrome tab renderer + hided RSS | {rss['sum_mb']:.2f} MiB | n/a | <= 400 MB | {statuses[1]} |
+| ④ | Frames over 16.7 ms | {frames['percent']:.4f}% ({frames['over_16_7ms']}/{frames['count']}); {frames['covered_ms']/1000:.3f}s | n/a | <= 1% over full 120s | {statuses[2]} |
 
-## Environment
+## Environment and method
 
-- commit: `{sha}`
-- herdr pin: 0.9.1 (bundle digest in `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`)
-- Chrome: {chrome}
-- machine load: {load_avg}
-- isolated socket: `/tmp/h-s0.sock`
-- operator topology (read-only `herdr api snapshot`): before {json.dumps(operator_before)} after {json.dumps(operator_after)}
+- Source at report generation: `{sha}`; the verification report binds the final committed source.
+- Chrome: {chrome}.
+- Swift baseline: this worktree's signed `macos/build/assembled/hide-web-shell-pivot-s0.app`, debug Swift shell linked to its release core archive, launched with private state and `--verification-background`.
+- hided-spike: debug build; no product-tree changes.
+- Fixture: one disposable repository, workspace, tab and cat pane; private socket/XDG/state/HOME; operator socket read only.
+- Web uses 84x46 terminal grid to match the native candidate's observed settled grid.
+- Each client is stopped before the other attaches; trials alternate web and Swift, 3x50 each.
+- Both send `sNNNN` + LF through the same pinned `herdr pane send-text` into `stty -echo -icanon; cat`.
+- t0 precedes CLI spawn, so CLI duration overlaps terminal processing and is not an additive hop to subtract.
+- Web t1 is xterm write completion after the marker is present in the parsed buffer; the associated WS message timestamp is captured at event entry before JSON decoding.
+- Swift t1 is the next completed receive_to_draw log timestamp from the exact candidate PID, with only one outstanding input and an 80ms quiet interval.
+- This is a software echo/draw proxy, not physical key-to-compositor latency; Swift does not expose marker identity in its trace.
+- Nearest-rank percentiles, median of three trial p95s; no outlier removal.
 
-## Method (latency)
+| Trial | n | p50 ms | p95 ms | p99 ms | max ms | contemporaneous load |
+| --- | --- | --- | --- | --- | --- | --- |
+{distributions}
 
-Both sides use the same driver: `herdr pane send-text` of a short ASCII marker into an isolated pane running `cat`.
-t0 is the driver send wall clock.
-t1 is screen-buffer arrival: xterm.js `window.__s0WaitFor` for web, Swift `TerminalLatency` `receive_to_draw` completed log timestamp for the Swift app.
-Three trials of 50 samples; reported p95 is the median of trial p95s.
-Nearest-rank percentiles match `scripts/summarize-terminal-latency.py`.
+## Per-hop timings
 
-Rerun: `bash spikes/web-shell/measure/run-s0.sh`
+Timestamp units are epoch milliseconds on this machine; within-process high-resolution clocks retain sub-millisecond precision.
+Each matched browser message carries the notification, owner queue and snapshot timestamps; server send-completion logs join by request timestamp.
+WS send completion and browser arrival can overlap across threads and are reported as separate intervals from send start.
+Notification time identifies the burst that caused the snapshot, not a new per-byte notification.
 
-## Swift baseline (idle vs driven)
+| Boundary | n | p50 ms | p95 ms | p99 ms | max ms |
+| --- | --- | --- | --- | --- | --- |
+{table}
 
-Idle hided `ps`:
+## Spike defects and interpretation
+
+The protocol has no client ACK or next-delta request requirement: on_change broadcasts immediately, and the WS task immediately asks the owner thread for a snapshot.
+The hop table measures its actual wake, owner queue and snapshot costs instead of attributing the first pass's 255ms to the product core.
+The first pass used a mutable latest-chunk timestamp, polled for a raw-text match, and called term.write without waiting for completion.
+Its web driver sent LF while its Swift driver did not, and the Swift trials had only 15 samples.
+The corrected driver arms one sample, uses the parsed terminal buffer (ANSI compression can hide a literal marker in raw bytes), and timestamps the actual message event and write callback independently of when the driver reads them.
+The old samples have no per-hop timestamps, so the precise contribution to their 255ms cannot be recovered retrospectively.
+Replay now starts explicitly after Performance recording begins, measures from the first rAF through at least 120000ms, and treats missing coverage as INCOMPLETE.
+The frame summarizer no longer converts a long millisecond stall into seconds or accepts a short window as PASS.
+Cleanup stops all clients before waiting, stops the private server, and supervises process groups when the run owner exits.
+
+## Idle and driven observations
+
+`ps` CPU is the process-lifetime average at each recorded point, not an interval-only CPU sample.
+Idle is before echo; driven is immediately after the 50-sample sequence.
 
 ```
-{idle_hided}
+{ps}
 ```
 
-Driven hided `ps`:
+120s delta capture statistics: {json.dumps(stats)}.
+RSS uses `ps -o rss=` on the replay renderer identified by CDP TracingStartedInBrowser frame metadata, plus hided at replay completion: {json.dumps(rss)}.
+The whole Chrome tree is not gate ③'s denominator; these are endpoint RSS samples, not a ten-minute memory-growth claim.
+Operator topology before: {json.dumps(read('operator-before.json'))}.
+Operator topology after: {json.dumps(read('operator-after.json'))}.
+Any concurrent operator topology drift is retained; this run only reads that socket.
 
-```
-{driven_hided}
-```
+## Reproduction and local evidence
 
-Snapshot delta stats (redacted capture): {json.dumps(stats)}
+Build with `bash macos/scripts/build_dev_app.sh` and the spike build command in README, then run `S0_RUN_DIR="$PWD/agents/runs/web-shell-pivot-s0/<fresh-run>" bash spikes/web-shell/measure/run-s0.sh`.
+Run directory: `{run}`.
+Echo distributions and hop timestamps: `echo-web-1..3.json`, `echo-swift-1..3.json`, `hop-summary.json`, `logs/hided-1..3.log`.
+Replay: `capture.jsonl`, `snapshot-stats.json`, `chrome-trace.json`, `frames.json`, `frames-summary.json`.
+RSS: `rss-tab.json`; native identity/capture: `swift-windows-1..3.json`, `swift-1..3.png`, `swift-echo-1..3.png`; cleanup: `cleanup-processes.txt`.
+Captures replace terminal bytes with same-length x filler; replay therefore tests synthetic byte volume/timing, not preservation of private content or original ANSI semantics.
+All run artifacts stay local and are not committed.
 
-Isolated fixture: 1 workspace, 1 tab, 1 pane (cat then a 120s printer).
-Operator live session counts are recorded above and were not attached to.
+## ① Human IME procedure and unresolved items
 
-## Capture
+Run a fresh isolated fixture, open the Chrome live pane, and use a real Korean input method.
+Automation does not decide any of these four checks.
 
-- path: `agents/runs/web-shell-pivot-s0/capture.jsonl` (local only)
-- terminal bytes replaced with same-length `x` filler (`bytes_len` retained)
-- chrome trace: `agents/runs/web-shell-pivot-s0/chrome-trace.json`
-- frames: `agents/runs/web-shell-pivot-s0/frames.json`
-- RSS method: `ps -o rss=` summed over the Chrome processes whose command line contains the run-dir user-data-dir, plus hided-spike
+1. Candidate window follows the composing cursor: `ime-01-candidate-follows-cursor.png`.
+2. Backspace during composition does not leak DEL: `ime-02-backspace-no-del.png`.
+3. Two or more adjacent Hangul syllables do not overwrite the next cell: `ime-03-adjacent-hangul.png`.
+4. ASCII letters echo immediately: `ime-04-ascii-immediate.png`.
 
-## ① IME procedure (PENDING_HUMAN)
-
-Open `http://127.0.0.1:5173/?mode=live` in Chrome stable, then `?mode=ime` for the checklist.
-Fill these slots in this run directory; do not let an automated CGEvent pass them.
-
-1. Candidate window follows the cursor while composing Hangul. Slot: `ime-01-candidate-follows-cursor.png`
-2. Backspace during composition does not leak DEL to the shell. Slot: `ime-02-backspace-no-del.png`
-3. Two or more adjacent Hangul syllables do not overwrite the next cell. Slot: `ime-03-adjacent-hangul.png`
-4. ASCII letters echo immediately. Slot: `ime-04-ascii-immediate.png`
-
-## Incomplete items
-
-- IME ① is PENDING_HUMAN
-- Swift app baseline is filled only when an isolated worktree bundle was launched; otherwise ② compares against a missing Swift p95
-"""
-    (run / "REPORT.md").write_text(report)
+① remains PENDING_HUMAN; S1 is not started.
+Foreground IME, physical display/compositor latency and release-build parity are not established by these background measurements.
+'''
+    (run/'REPORT.md').write_text(report)
     print(report)
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

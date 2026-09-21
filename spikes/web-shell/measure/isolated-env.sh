@@ -30,16 +30,17 @@ if [[ "$herdr_version" != "$pin_version" ]]; then
 fi
 
 # Unix socket paths are short. Keep the node under /tmp, state under the run dir.
-socket_path="/tmp/h-s0.sock"
+socket_path="/tmp/h-s0-$(printf %s "$run_dir" | shasum | cut -c1-10).sock"
 private="$run_dir/isolated"
 mkdir -p "$private/xdg-config" "$private/xdg-state" "$private/home"
 config_path="$private/herdr-config.toml"
 if [[ ! -f "$config_path" ]]; then
-  printf '# S0 isolated Herdr config. Empty on purpose.\n' > "$config_path"
+  printf '[update]\nversion_check = false\nmanifest_check = false\n' > "$config_path"
 fi
 
 unset HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_ENV
 export HERDR_SESSION="web-shell-s0"
+export HERDR_DISABLE_SOUND=1
 export HERDR_SOCKET_PATH="$socket_path"
 export HERDR_CONFIG_PATH="$config_path"
 export XDG_CONFIG_HOME="$private/xdg-config"

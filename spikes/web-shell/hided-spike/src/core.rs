@@ -7,6 +7,21 @@ use std::ffi::c_void;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub fn now_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock before epoch")
+        .as_secs_f64()
+        * 1000.0
+}
+
+pub struct SnapshotReply {
+    pub bytes: Vec<u8>,
+    pub owner_started_ms: f64,
+    pub owner_finished_ms: f64,
+}
 
 use herdr_core::{
     herdr_core_create, herdr_core_destroy, herdr_core_dispatch, herdr_core_free_bytes,
@@ -21,19 +36,19 @@ pub enum Command {
     Snapshot {
         have_revision: u64,
         have_terminal_sequence: u64,
-        reply: Sender<Result<Vec<u8>, String>>,
+        reply: Sender<Result<SnapshotReply, String>>,
     },
     Shutdown,
 }
 
 pub struct CoreHandle {
     commands: Sender<Command>,
-    pub notify: tokio::sync::broadcast::Sender<()>,
+    pub notify: tokio::sync::broadcast::Sender<f64>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 struct NotifyContext {
-    tx: tokio::sync::broadcast::Sender<()>,
+    tx: tokio::sync::broadcast::Sender<f64>,
 }
 
 extern "C" fn on_change(context: *mut c_void) {
@@ -41,7 +56,7 @@ extern "C" fn on_change(context: *mut c_void) {
         return;
     }
     let ctx = unsafe { &*(context as *const NotifyContext) };
-    let _ = ctx.tx.send(());
+    let _ = ctx.tx.send(now_ms());
 }
 
 impl CoreHandle {
@@ -79,7 +94,7 @@ impl CoreHandle {
         &self,
         have_revision: u64,
         have_terminal_sequence: u64,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<SnapshotReply, String> {
         let (reply, rx) = mpsc::channel();
         self.commands
             .send(Command::Snapshot {
@@ -112,7 +127,7 @@ fn owner_loop(
     options_json: Vec<u8>,
     commands: Receiver<Command>,
     ready: Sender<Result<(), String>>,
-    notify: tokio::sync::broadcast::Sender<()>,
+    notify: tokio::sync::broadcast::Sender<f64>,
 ) {
     let core = herdr_core_create(options_json.as_ptr(), options_json.len());
     if core.is_null() {
@@ -136,6 +151,7 @@ fn owner_loop(
                 have_terminal_sequence,
                 reply,
             } => {
+                let owner_started_ms = now_ms();
                 let bytes = herdr_core_snapshot(core, have_revision, have_terminal_sequence);
                 let copy = if bytes.ptr.is_null() {
                     Vec::new()
@@ -143,7 +159,11 @@ fn owner_loop(
                     unsafe { std::slice::from_raw_parts(bytes.ptr, bytes.len) }.to_vec()
                 };
                 herdr_core_free_bytes(bytes);
-                let _ = reply.send(Ok(copy));
+                let _ = reply.send(Ok(SnapshotReply {
+                    bytes: copy,
+                    owner_started_ms,
+                    owner_finished_ms: now_ms(),
+                }));
             }
             Command::Shutdown => break,
         }

@@ -15,9 +15,22 @@ def rss_kb(pid: str) -> int:
 def main():
     if len(sys.argv) < 2:
         raise SystemExit("usage: rss.py name=pid [name=pid ...]")
+    items = sys.argv[1:]
+    if items[0] == "--trace":
+        # CDP frame metadata identifies the page, unlike ps which also finds
+        # Chrome's spare renderer. Refuse ambiguity instead of picking a PID.
+        trace = json.load(open(items[1]))
+        renderers = {frame['processId'] for event in trace['traceEvents']
+                     if event['name'] == 'TracingStartedInBrowser'
+                     for frame in event['args']['data']['frames']
+                     if frame.get('isOutermostMainFrame') and ':5173/' in frame.get('url', '')
+                     and 'mode=replay' in frame['url']}
+        if len(renderers) != 1:
+            raise SystemExit(f"expected one traced replay renderer, got {renderers}")
+        items = ["tab_renderer=" + str(renderers.pop())] + items[2:]
     parts = {}
     total = 0
-    for item in sys.argv[1:]:
+    for item in items:
         name, pid = item.split("=", 1)
         value = rss_kb(pid)
         parts[name] = {"pid": int(pid), "rss_kb": value, "rss_mb": round(value / 1024, 2)}

@@ -3,7 +3,6 @@ import fs from "node:fs";
 
 const cdpPort = process.env.S0_CDP_PORT ?? "9222";
 const out = process.argv[2];
-const durationMs = Number(process.env.S0_TRACE_MS ?? 120000);
 if (!out) {
   console.error("usage: chrome-trace.mjs <out.json>");
   process.exit(2);
@@ -27,6 +26,11 @@ const chunks = [];
 ws.addEventListener("message", (event) => {
   const message = JSON.parse(String(event.data));
   if (message.method === "Tracing.dataCollected" && message.params?.value) {
+    if (chunks.length + message.params.value.length > 2000000) {
+      console.error("trace event budget exceeded (2000000)");
+      ws.close();
+      process.exit(1);
+    }
     chunks.push(...message.params.value);
   }
   if (message.method === "Tracing.tracingComplete") {
@@ -51,7 +55,8 @@ await send("Tracing.start", {
   categories: "devtools.timeline,disabled-by-default-devtools.timeline,blink.user_timing,v8.execute",
   options: "record-as-much-as-possible",
 });
-await new Promise((resolve) => setTimeout(resolve, durationMs));
+const replay = await send("Runtime.evaluate", { expression: "window.__s0StartReplay()", awaitPromise: true, returnByValue: true });
+if (replay.exceptionDetails) throw new Error(JSON.stringify(replay.exceptionDetails));
 const done = new Promise((resolve) => pending.set("complete", resolve));
 await send("Tracing.end", {});
 await done;

@@ -10,14 +10,14 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::Router;
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use serde_json::{Value, json};
 
-use crate::core::CoreHandle;
+use crate::core::{CoreHandle, now_ms};
 
 const OPERATOR_SOCKET_SUFFIX: &str = ".config/herdr/herdr.sock";
 
@@ -57,12 +57,10 @@ fn required_isolated_socket() -> Result<String, String> {
     let raw = match std::env::var("HERDR_SOCKET_PATH") {
         Ok(value) if !value.is_empty() => value,
         Ok(_) | Err(_) => {
-            return Err(
-                "hided-spike refuses to start: HERDR_SOCKET_PATH is unset. \
+            return Err("hided-spike refuses to start: HERDR_SOCKET_PATH is unset. \
                  Point it at an isolated Herdr server started for this spike. \
                  The operator socket is never used as a default."
-                    .to_owned(),
-            );
+                .to_owned());
         }
     };
     let path = PathBuf::from(&raw);
@@ -78,8 +76,7 @@ fn required_isolated_socket() -> Result<String, String> {
 }
 
 fn is_operator_socket(path: &Path) -> bool {
-    path.to_string_lossy()
-        .ends_with(OPERATOR_SOCKET_SUFFIX)
+    path.to_string_lossy().ends_with(OPERATOR_SOCKET_SUFFIX)
 }
 
 fn app_state_path() -> Result<String, String> {
@@ -139,6 +136,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState) {
         0,
         0,
         true,
+        None,
         &mut have_revision,
         &mut have_terminal_sequence,
     )
@@ -150,15 +148,17 @@ async fn client_loop(mut socket: WebSocket, state: AppState) {
     loop {
         tokio::select! {
             changed = notify.recv() => {
-                if changed.is_err() {
-                    break;
-                }
+                let notified_ms = match changed {
+                    Ok(stamp) => stamp,
+                    Err(error) => { eprintln!("snapshot notification failed: {error}"); break; }
+                };
                 if send_snapshot(
                     &mut socket,
                     &state,
                     have_revision,
                     have_terminal_sequence,
                     false,
+                    Some(notified_ms),
                     &mut have_revision,
                     &mut have_terminal_sequence,
                 )
@@ -214,13 +214,16 @@ async fn send_snapshot(
     have_revision: u64,
     have_terminal_sequence: u64,
     full: bool,
+    notified_ms: Option<f64>,
     out_revision: &mut u64,
     out_sequence: &mut u64,
 ) -> Result<(), ()> {
-    let bytes = state
+    let requested_ms = now_ms();
+    let snapshot = state
         .core
         .snapshot(have_revision, have_terminal_sequence)
         .map_err(|_| ())?;
+    let bytes = snapshot.bytes;
     if bytes.is_empty() {
         return Ok(());
     }
@@ -234,19 +237,32 @@ async fn send_snapshot(
     let envelope = json!({
         "type": if full { "snapshot" } else { "delta" },
         "payload": payload,
+        "timing": {
+            "notified_ms": notified_ms,
+            "requested_ms": requested_ms,
+            "owner_started_ms": snapshot.owner_started_ms,
+            "owner_finished_ms": snapshot.owner_finished_ms,
+            "ws_send_ms": now_ms(),
+        },
     });
     socket
         .send(Message::Text(envelope.to_string().into()))
         .await
-        .map_err(|_| ())
+        .map_err(|_| ())?;
+    eprintln!(
+        "{}",
+        json!({"event":"ws_sent","requested_ms":requested_ms,"completed_ms":now_ms(),"terminal_sequence":out_sequence})
+    );
+    Ok(())
 }
 
 async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
-        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("install SIGTERM handler");
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("install SIGTERM handler");
         tokio::select! {
             _ = ctrl_c => {}
             _ = terminate.recv() => {}

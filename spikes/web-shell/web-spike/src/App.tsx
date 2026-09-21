@@ -2,16 +2,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { bytesToBase64, decodeBase64, installS0Hooks, noteEcho, type S0Frame } from "./s0";
+import { bytesToBase64, decodeBase64, installS0Hooks, noteWriteComplete, epochMs, type HopTiming, type S0Frame } from "./s0";
 
 type Mode = "live" | "replay" | "ime";
 
 type WireMessage = {
   type: string;
+  timing?: HopTiming;
   payload?: {
     terminal?: { pane_id?: string; chunks?: Chunk[] };
     chunks?: Chunk[];
-    rest?: { focused?: { pane_id?: string } };
+    rest?: { focused?: { pane_id?: string }; tab?: { panes?: { id: string }[] } };
   };
 };
 
@@ -40,8 +41,8 @@ function Pane({ mode }: { mode: Exclude<Mode, "ime"> }) {
   useEffect(() => {
     installS0Hooks();
     const term = new Terminal({
-      cols: 80,
-      rows: 24,
+      cols: Number(new URLSearchParams(location.search).get("cols") ?? 80),
+      rows: Number(new URLSearchParams(location.search).get("rows") ?? 24),
       fontFamily: "SF Mono, Menlo, Monaco, monospace",
       fontSize: 13,
       theme: { background: "#111111", foreground: "#dddddd" },
@@ -56,14 +57,14 @@ function Pane({ mode }: { mode: Exclude<Mode, "ime"> }) {
       setBanner((current) => `${current} (webgl fallback to dom renderer)`);
     }
 
-    const feedChunks = (chunks: Chunk[] | undefined) => {
+    const feedChunks = (chunks: Chunk[] | undefined, timing?: HopTiming, arrival = epochMs()) => {
       if (!chunks) return;
-      for (const chunk of chunks) {
-        if (!chunk.bytes_base64) continue;
-        const text = decodeBase64(chunk.bytes_base64);
-        term.write(text);
-        noteEcho(text);
-      }
+      const text = chunks.map((chunk) => chunk.bytes_base64 ? decodeBase64(chunk.bytes_base64) : "").join("");
+      if (!text) return;
+      term.write(text, timing ? () => noteWriteComplete(() => {
+        const buffer = term.buffer.active;
+        return Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? "").join("\n");
+      }, timing, arrival) : undefined);
     };
 
     let closed = false;
@@ -74,6 +75,7 @@ function Pane({ mode }: { mode: Exclude<Mode, "ime"> }) {
         if (!closed) setBanner("disconnected");
       });
       socket.addEventListener("message", (event) => {
+        const arrival = epochMs();
         const message = JSON.parse(String(event.data)) as WireMessage;
         const paneId =
           message.payload?.rest?.focused?.pane_id ??
@@ -85,11 +87,11 @@ function Pane({ mode }: { mode: Exclude<Mode, "ime"> }) {
             JSON.stringify({
               schema_version: 2,
               kind: "terminal_resize",
-              payload: { pane_id: paneId, cols: 80, rows: 24, new_view: true },
+              payload: { pane_id: paneId, cols: term.cols, rows: term.rows, new_view: true },
             }),
           );
         }
-        feedChunks(message.payload?.chunks ?? message.payload?.terminal?.chunks);
+        feedChunks(message.payload?.chunks ?? message.payload?.terminal?.chunks, message.timing, arrival);
       });
       const dataSub = term.onData((data) => {
         const paneId = window.__s0PaneId;
@@ -114,43 +116,50 @@ function Pane({ mode }: { mode: Exclude<Mode, "ime"> }) {
     }
 
     const frames: S0Frame[] = [];
-    let last = performance.now();
     let raf = 0;
-    const onFrame = (t: number) => {
-      frames.push({ t, dt: t - last });
-      last = t;
-      window.__s0Frames = frames;
-      raf = requestAnimationFrame(onFrame);
-    };
-    raf = requestAnimationFrame(onFrame);
-
     const abort = { stopped: false };
     void (async () => {
       const response = await fetch("/capture.jsonl");
-      if (!response.ok) {
-        setBanner("capture.jsonl missing");
-        return;
-      }
+      if (!response.ok) throw new Error("capture.jsonl missing");
       const text = await response.text();
-      const lines: CaptureLine[] = text
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as CaptureLine);
+      const lines: CaptureLine[] = text.split("\n").filter(Boolean).map((line) => JSON.parse(line));
       if (abort.stopped) return;
-      setBanner(`replay ${lines.length} deltas`);
-      const origin = performance.now();
-      const t0 = lines[0]?.t_ms ?? 0;
-      for (const line of lines) {
-        if (abort.stopped) return;
-        const wait = line.t_ms - t0 - (performance.now() - origin);
-        if (wait > 0) {
-          await new Promise((resolve) => setTimeout(resolve, wait));
+      if (!lines.length || lines.at(-1)!.t_ms < 119900) throw new Error("capture does not cover 120s");
+      window.__s0StartReplay = async () => {
+        if (!window.__s0ReplayReady) throw new Error("replay not ready or already started");
+        window.__s0ReplayReady = false;
+        const origin = await new Promise<number>((resolve) => requestAnimationFrame(resolve));
+        performance.mark("s0-replay-start");
+        let last = origin;
+        let frameDone: () => void = () => {};
+        const fullWindow = new Promise<void>((resolve) => { frameDone = resolve; });
+        const onFrame = (t: number) => {
+          frames.push({ t, dt: t - last });
+          last = t;
+          if (t - origin >= 120000) {
+            window.__s0ReplayWindow = { start: origin, end: t, duration_ms: t - origin };
+            frameDone();
+          } else raf = requestAnimationFrame(onFrame);
+        };
+        raf = requestAnimationFrame(onFrame);
+        window.__s0Frames = frames;
+        setBanner(`replay ${lines.length} deltas`);
+        for (const line of lines) {
+          if (abort.stopped) return;
+          if (line.t_ms > 120000) break;
+          const wait = line.t_ms - (performance.now() - origin);
+          if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+          feedChunks(line.payload?.chunks ?? line.payload?.terminal?.chunks);
         }
-        feedChunks(line.payload?.chunks ?? line.payload?.terminal?.chunks);
-      }
-      window.__s0ReplayDone = true;
-      setBanner(`replay done; frames=${frames.length}`);
-    })();
+        await fullWindow;
+        await new Promise<void>((resolve) => term.write("", resolve));
+        performance.mark("s0-replay-end");
+        window.__s0ReplayDone = true;
+        setBanner(`replay done; frames=${frames.length}`);
+      };
+      window.__s0ReplayReady = true;
+      setBanner(`replay ready: ${lines.length} deltas`);
+    })().catch((error) => setBanner(String(error)));
 
     return () => {
       abort.stopped = true;

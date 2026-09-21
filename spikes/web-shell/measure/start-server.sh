@@ -29,9 +29,10 @@ if [[ ! -d "$S0_FIXTURE/.git" ]]; then
 fi
 
 : > "$log_file"
-"$HERDR_BIN" server >>"$log_file" 2>&1 &
+[[ -n "${S0_OWNER_PID:-}" ]] || { echo "start-server: S0_OWNER_PID is required" >&2; exit 2; }
+python3 "$measure_dir/owned.py" "$S0_OWNER_PID" "$pid_file" env HOME="$S0_PRIVATE/home" "$HERDR_BIN" server >>"$log_file" 2>&1 &
 server_pid=$!
-printf '%s\n' "$server_pid" > "$pid_file"
+printf '%s\n' "$server_pid" > "$S0_PRIVATE/herdr-owner.pid"
 cleanup_on_fail() {
   if kill -0 "$server_pid" 2>/dev/null; then
     kill "$server_pid" 2>/dev/null || true
@@ -58,6 +59,7 @@ if [[ ! -S "$HERDR_SOCKET_PATH" ]]; then
 fi
 
 snap="$("$HERDR_BIN" api snapshot)"
+printf "%s\n" "$snap" > "$S0_RUN_DIR/private-empty.json"
 workspaces="$(printf '%s\n' "$snap" | python3 -c 'import json,sys; d=json.load(sys.stdin); s=(d.get("result") or d).get("snapshot") or (d.get("result") or d); print(len(s.get("workspaces") or []))')"
 if [[ "$workspaces" != "0" ]]; then
   printf 'start-server: private server already has %s workspaces; aborting\n' "$workspaces" >&2
