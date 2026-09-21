@@ -61,7 +61,7 @@ async fn health_and_unknown_http_do_not_dispatch() {
     let value: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(value["schema_version"], 2);
     let post = reqwest_post(&format!("http://127.0.0.1:{}/dispatch", running.port)).await;
-    assert_eq!(post, 404);
+    assert_eq!(post, 404, "unknown HTTP paths must be 404");
     let missing = reqwest_status(&format!("http://127.0.0.1:{}/nope", running.port)).await;
     assert_eq!(missing, 404);
     let health_after = reqwest_get(&url).await;

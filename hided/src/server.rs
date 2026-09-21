@@ -76,7 +76,8 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
         .route("/", get(static_asset))
-        .route("/{*path}", get(static_asset))
+        .route("/assets/{*path}", get(static_asset))
+        .fallback(|| async { StatusCode::NOT_FOUND })
         .with_state(state)
 }
 
