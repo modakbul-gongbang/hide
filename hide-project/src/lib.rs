@@ -297,11 +297,7 @@ pub mod git {
         parse_branch_value(config, wanted_branch, "description")
     }
 
-    fn parse_branch_value(
-        config: &str,
-        wanted_branch: &str,
-        wanted_key: &str,
-    ) -> Option<String> {
+    fn parse_branch_value(config: &str, wanted_branch: &str, wanted_key: &str) -> Option<String> {
         let mut selected = false;
         for raw_line in config.lines() {
             let line = raw_line.trim();

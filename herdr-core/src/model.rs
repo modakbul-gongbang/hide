@@ -2844,10 +2844,18 @@ mod wire_enum_tests {
         assert_wire(&contract, "changed_file_status", &statuses);
         checked.insert("changed_file_status");
 
-        let tab_kinds = [EditorTabKind::File, EditorTabKind::Diff];
+        let tab_kinds = [
+            EditorTabKind::File,
+            EditorTabKind::Diff,
+            EditorTabKind::Session,
+            EditorTabKind::Memory,
+        ];
         for variant in tab_kinds {
             match variant {
-                EditorTabKind::File | EditorTabKind::Diff => {}
+                EditorTabKind::File
+                | EditorTabKind::Diff
+                | EditorTabKind::Session
+                | EditorTabKind::Memory => {}
             }
         }
         assert_wire(&contract, "editor_tab_kind", &tab_kinds);
@@ -2876,21 +2884,33 @@ mod wire_enum_tests {
             RightPanelSection::Overview,
             RightPanelSection::Explorer,
             RightPanelSection::Changes,
+            RightPanelSection::Sessions,
         ];
         for variant in sections {
             match variant {
                 RightPanelSection::Overview
                 | RightPanelSection::Explorer
-                | RightPanelSection::Changes => {}
+                | RightPanelSection::Changes
+                | RightPanelSection::Sessions => {}
             }
         }
         assert_wire(&contract, "right_panel_section", &sections);
         checked.insert("right_panel_section");
 
-        let strip_kinds = [StripTabKind::Herdr, StripTabKind::File, StripTabKind::Diff];
+        let strip_kinds = [
+            StripTabKind::Herdr,
+            StripTabKind::File,
+            StripTabKind::Diff,
+            StripTabKind::Session,
+            StripTabKind::Memory,
+        ];
         for variant in strip_kinds {
             match variant {
-                StripTabKind::Herdr | StripTabKind::File | StripTabKind::Diff => {}
+                StripTabKind::Herdr
+                | StripTabKind::File
+                | StripTabKind::Diff
+                | StripTabKind::Session
+                | StripTabKind::Memory => {}
             }
         }
         assert_wire(&contract, "strip_tab_kind", &strip_kinds);
