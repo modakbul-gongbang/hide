@@ -50,6 +50,8 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const paneId = useShellStore((s) => s.focusedPaneId);
+  const viewGeneration = useShellStore((s) => s.viewGeneration);
+  const shownPaneId = useRef<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -131,18 +133,25 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
     };
   }, [dispatch]);
 
+  // Runs when the shown pane changes and again after every self-contained
+  // snapshot: the core may have dropped chunks or restarted, so the terminal
+  // asks for a full frame of the pane it shows rather than trusting what it
+  // has drawn.
   useEffect(() => {
     const term = termRef.current;
     if (!term || !paneId) return;
-    term.reset();
-    writers.clear();
-    pending.delete(paneId);
-    writers.set(
-      paneId,
-      probeEnabled()
-        ? (data) => term.write(data, () => noteWriteComplete(term))
-        : (data) => term.write(data),
-    );
+    if (shownPaneId.current !== paneId) {
+      shownPaneId.current = paneId;
+      term.reset();
+      writers.clear();
+      pending.delete(paneId);
+      writers.set(
+        paneId,
+        probeEnabled()
+          ? (data) => term.write(data, () => noteWriteComplete(term))
+          : (data) => term.write(data),
+      );
+    }
     dispatch({
       schema_version: 2,
       kind: "terminal_viewport",
@@ -153,7 +162,7 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
       kind: "terminal_resize",
       payload: { pane_id: paneId, cols: term.cols, rows: term.rows },
     });
-  }, [paneId, dispatch]);
+  }, [paneId, viewGeneration, dispatch]);
 
   return <div ref={hostRef} className="h-full min-w-0 flex-1 bg-background" data-terminal-pane={paneId ?? ""} />;
 }

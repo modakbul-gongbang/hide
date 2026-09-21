@@ -231,7 +231,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             return;
         }
     };
-    if handshake.token != *state.token {
+    if !token_matches(&handshake.token, &state.token) {
         refuse(&mut socket, CloseReason::InvalidToken, None).await;
         return;
     }
@@ -245,20 +245,15 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         refuse(&mut socket, CloseReason::ClientLimit, Some(previous + 1)).await;
         return;
     }
+    // A reconnecting client resumes from the cursors it last applied, so the
+    // first frame carries only what changed while it was away; a fresh client
+    // (cursor 0) gets the whole state.
     let mut have_revision = handshake.have_revision.unwrap_or(0);
     let mut have_sequence = handshake.have_terminal_sequence.unwrap_or(0);
     let mut notify = state.core.notify.subscribe();
-    if send_snapshot(
-        &mut socket,
-        &state,
-        0,
-        0,
-        true,
-        &mut have_revision,
-        &mut have_sequence,
-    )
-    .await
-    .is_err()
+    if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
+        .await
+        .is_err()
     {
         client_gone(&state);
         return;
@@ -271,17 +266,9 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
-                if send_snapshot(
-                    &mut socket,
-                    &state,
-                    have_revision,
-                    have_sequence,
-                    false,
-                    &mut have_revision,
-                    &mut have_sequence,
-                )
-                .await
-                .is_err()
+                if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
+                    .await
+                    .is_err()
                 {
                     break;
                 }
@@ -306,6 +293,13 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     client_gone(&state);
 }
 
+/// Constant in the token's length, so a byte-by-byte mismatch does not leak
+/// how much of the token a caller guessed.
+fn token_matches(offered: &str, expected: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    offered.len() == expected.len() && offered.as_bytes().ct_eq(expected.as_bytes()).into()
+}
+
 fn handle_client_text(state: &AppState, text: &str) -> Result<(), String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
@@ -318,31 +312,79 @@ fn handle_client_text(state: &AppState, text: &str) -> Result<(), String> {
     state.core.dispatch(bytes)
 }
 
+/// Which frame a delta read turned into, decided by the cursors alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FrameKind {
+    /// Self-contained: the client replaces everything it holds.
+    Snapshot,
+    /// Applies on top of what the client already holds.
+    Delta,
+}
+
+/// Classifies the frame a read from `have_revision`/`have_sequence` produced.
+///
+/// `None` means the core could not serve the cursor the client sent: it
+/// dropped terminal chunks the client never saw, or the client's revision is
+/// ahead of the core's (the daemon restarted), which the core answers as a
+/// fresh reader. Either way the client state is not one a delta can be
+/// applied to, and the caller re-reads from zero and sends a snapshot.
+pub fn classify_frame(
+    have_revision: u64,
+    payload_revision: Option<u64>,
+    chunks_dropped: bool,
+) -> Option<FrameKind> {
+    if have_revision == 0 {
+        return Some(FrameKind::Snapshot);
+    }
+    if chunks_dropped || payload_revision.is_some_and(|revision| revision < have_revision) {
+        return None;
+    }
+    Some(FrameKind::Delta)
+}
+
+async fn read_delta(state: &AppState, have_revision: u64, have_sequence: u64) -> Result<Value, ()> {
+    let snapshot = state
+        .core
+        .snapshot(have_revision, have_sequence)
+        .map_err(|_| ())?;
+    if snapshot.bytes.is_empty() {
+        return Err(());
+    }
+    serde_json::from_slice(&snapshot.bytes).map_err(|_| ())
+}
+
 async fn send_snapshot(
     socket: &mut WebSocket,
     state: &AppState,
-    have_revision: u64,
-    have_terminal_sequence: u64,
-    full: bool,
-    out_revision: &mut u64,
-    out_sequence: &mut u64,
+    have_revision: &mut u64,
+    have_sequence: &mut u64,
 ) -> Result<(), ()> {
-    let snapshot = state
-        .core
-        .snapshot(have_revision, have_terminal_sequence)
-        .map_err(|_| ())?;
-    if snapshot.bytes.is_empty() {
-        return Ok(());
-    }
-    let payload: Value = serde_json::from_slice(&snapshot.bytes).map_err(|_| ())?;
+    let mut payload = read_delta(state, *have_revision, *have_sequence).await?;
+    let kind = match classify_frame(
+        *have_revision,
+        payload.get("revision").and_then(Value::as_u64),
+        payload
+            .get("chunks_dropped")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    ) {
+        Some(kind) => kind,
+        None => {
+            payload = read_delta(state, 0, 0).await?;
+            FrameKind::Snapshot
+        }
+    };
     if let Some(revision) = payload.get("revision").and_then(Value::as_u64) {
-        *out_revision = revision;
+        *have_revision = revision;
     }
     if let Some(sequence) = payload.get("terminal_sequence").and_then(Value::as_u64) {
-        *out_sequence = sequence;
+        *have_sequence = sequence;
     }
     let envelope = json!({
-        "type": if full { "snapshot" } else { "delta" },
+        "type": match kind {
+            FrameKind::Snapshot => "snapshot",
+            FrameKind::Delta => "delta",
+        },
         "payload": payload,
     });
     socket
@@ -448,4 +490,35 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
         set.insert(vite.trim_end_matches('/').to_owned());
     }
     set
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fresh_client_gets_a_snapshot_and_a_resumed_one_a_delta() {
+        assert_eq!(classify_frame(0, Some(7), false), Some(FrameKind::Snapshot));
+        assert_eq!(classify_frame(0, Some(7), true), Some(FrameKind::Snapshot));
+        assert_eq!(classify_frame(7, Some(7), false), Some(FrameKind::Delta));
+        assert_eq!(classify_frame(5, Some(7), false), Some(FrameKind::Delta));
+    }
+
+    #[test]
+    fn a_gap_makes_the_server_start_over() {
+        assert_eq!(classify_frame(7, Some(7), true), None, "dropped chunks");
+        assert_eq!(
+            classify_frame(9, Some(7), false),
+            None,
+            "revision from the future"
+        );
+    }
+
+    #[test]
+    fn token_compare_needs_the_whole_token() {
+        assert!(token_matches("abc", "abc"));
+        assert!(!token_matches("ab", "abc"));
+        assert!(!token_matches("abd", "abc"));
+        assert!(!token_matches("", "abc"));
+    }
 }

@@ -224,7 +224,11 @@ Axum workers send dispatch and snapshot commands over a channel; they never call
 It binds `127.0.0.1` only.
 The WebSocket handshake is the client's first JSON frame `{token, schema_version, have_revision?, have_terminal_sequence?}`.
 A mismatched token, Origin, or schema version, or a ninth concurrent client, is closed with a reason code (`invalid_token`, `origin_not_allowed`, `schema_mismatch`, `client_limit`) and a diagnostic log line.
-After a valid handshake the daemon sends one full snapshot, then one delta frame per core notification burst, using the same `have_revision` / `have_terminal_sequence` cursors as `herdr_core_snapshot`.
+After a valid handshake the daemon reads from the cursors the client sent, using the same `have_revision` / `have_terminal_sequence` as `herdr_core_snapshot`, and then one delta frame per core notification burst.
+A client with cursor 0 gets a self-contained `snapshot`; a reconnecting client resumes with a `delta` that carries only what changed while it was away.
+When the core cannot serve the cursor, because it dropped terminal chunks the client never saw or the client's revision is ahead of the core's after a daemon restart, the daemon re-reads from zero and sends a `snapshot` (`server::classify_frame` owns that rule).
+The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
+The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
 Client frames are core events (`schema_version`, `kind`, `payload`).
 HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
 No HTTP request dispatches a core event.

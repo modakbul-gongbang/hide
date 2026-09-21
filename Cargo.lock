@@ -1283,6 +1283,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "subtle",
  "tempfile",
  "tokio",
  "tokio-tungstenite 0.26.2",

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useShellStore } from "./store";
+import { DIAGNOSTIC_CAP, useShellStore } from "./store";
 
 describe("snapshot merge", () => {
   beforeEach(() => {
@@ -12,8 +12,29 @@ describe("snapshot merge", () => {
       focusedPaneId: null,
       herdrState: null,
       diagnostics: [],
+      diagnosticsDropped: 0,
+      viewGeneration: 0,
       refused: false,
     });
+  });
+
+  it("advances the view generation only on a self-contained snapshot", () => {
+    const store = useShellStore.getState();
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+    store.applyFrame({ type: "delta", payload: { revision: 2 } });
+    store.applyFrame({ type: "delta", payload: { revision: 3, rest: { focused: { pane_id: "p2" } } } });
+    expect(useShellStore.getState().viewGeneration).toBe(1);
+    store.applyFrame({ type: "snapshot", payload: { revision: 4, rest: {} } });
+    expect(useShellStore.getState().viewGeneration).toBe(2);
+  });
+
+  it("keeps the newest diagnostics under the cap and counts the rest", () => {
+    const store = useShellStore.getState();
+    for (let i = 0; i < DIAGNOSTIC_CAP + 5; i += 1) store.noteDiagnostic(`d${i}`);
+    const state = useShellStore.getState();
+    expect(state.diagnostics).toHaveLength(DIAGNOSTIC_CAP);
+    expect(state.diagnostics[0]).toBe("d5");
+    expect(state.diagnosticsDropped).toBe(5);
   });
 
   it("replaces the store on a full snapshot", () => {

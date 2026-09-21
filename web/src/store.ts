@@ -37,9 +37,14 @@ type Store = {
   agents: AgentRow[];
   focusedPaneId: string | null;
   herdrState: string | null;
+  /** The newest `DIAGNOSTIC_CAP` entries; older ones are counted in `diagnosticsDropped`. */
   diagnostics: string[];
+  diagnosticsDropped: number;
+  /** Counts self-contained snapshots; the terminal re-requests its view on each. */
+  viewGeneration: number;
   refused: boolean;
   setConnection: (connection: ConnectionState, refused?: boolean) => void;
+  noteDiagnostic: (message: string) => void;
   applyFrame: (frame: {
     type: string;
     payload?: {
@@ -52,6 +57,17 @@ type Store = {
 };
 
 const KNOWN_GROUPS = new Set(["needs_you", "done", "working", "seen"]);
+export const DIAGNOSTIC_CAP = 200;
+
+function withDiagnostics(
+  diagnostics: string[],
+  dropped: number,
+  added: string[],
+): { diagnostics: string[]; diagnosticsDropped: number } {
+  const all = [...diagnostics, ...added];
+  const overflow = Math.max(0, all.length - DIAGNOSTIC_CAP);
+  return { diagnostics: all.slice(overflow), diagnosticsDropped: dropped + overflow };
+}
 
 export const useShellStore = create<Store>((set, get) => ({
   connection: "connecting",
@@ -62,15 +78,19 @@ export const useShellStore = create<Store>((set, get) => ({
   focusedPaneId: null,
   herdrState: null,
   diagnostics: [],
+  diagnosticsDropped: 0,
+  viewGeneration: 0,
   refused: false,
   setConnection: (connection, refused = false) => set({ connection, refused }),
+  noteDiagnostic: (message) =>
+    set(withDiagnostics(get().diagnostics, get().diagnosticsDropped, [message])),
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};
     const chunks = payload.chunks ?? [];
     if (frame.type === "snapshot" || payload.rest) {
       const rest = frame.type === "snapshot" ? payload.rest ?? {} : { ...get().rest, ...payload.rest };
       const rawAgents = rest.navigator?.agents ?? [];
-      const diagnostics = [...get().diagnostics];
+      const diagnostics: string[] = [];
       const agents = rawAgents.map((agent) => {
         if (agent.group && !KNOWN_GROUPS.has(agent.group)) {
           diagnostics.push(`unknown enum group=${agent.group}`);
@@ -81,7 +101,8 @@ export const useShellStore = create<Store>((set, get) => ({
       set({
         rest,
         agents,
-        diagnostics,
+        ...withDiagnostics(get().diagnostics, get().diagnosticsDropped, diagnostics),
+        viewGeneration: frame.type === "snapshot" ? get().viewGeneration + 1 : get().viewGeneration,
         revision: payload.revision ?? get().revision,
         terminalSequence: payload.terminal_sequence ?? get().terminalSequence,
         focusedPaneId: rest.focused?.pane_id ?? rest.terminal?.pane_id ?? get().focusedPaneId,

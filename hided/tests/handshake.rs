@@ -174,6 +174,115 @@ async fn valid_handshake_receives_snapshot() {
     running.stop();
 }
 
+fn handshake_from(token: &str, have_revision: u64, have_terminal_sequence: u64) -> Message {
+    Message::Text(
+        json!({
+            "token": token,
+            "schema_version": 2,
+            "have_revision": have_revision,
+            "have_terminal_sequence": have_terminal_sequence,
+        })
+        .to_string()
+        .into(),
+    )
+}
+
+async fn first_frame(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) -> Value {
+    let message = socket.next().await.unwrap().unwrap();
+    let Message::Text(text) = message else {
+        panic!("expected a text frame");
+    };
+    serde_json::from_str(&text).unwrap()
+}
+
+#[tokio::test]
+async fn a_reconnect_resumes_from_the_client_cursor() {
+    let (_dir, running) = start().await;
+    let mut fresh = connect(running.port, None).await;
+    fresh.send(handshake(&running.token, 2)).await.unwrap();
+    let full = first_frame(&mut fresh).await;
+    assert_eq!(full["type"], "snapshot");
+    assert!(
+        full["payload"]["rest"].is_object(),
+        "a snapshot carries rest"
+    );
+    let revision = full["payload"]["revision"].as_u64().unwrap();
+    let sequence = full["payload"]["terminal_sequence"].as_u64().unwrap();
+
+    // Same cursor the first client applied: nothing changed, so a delta
+    // without the rest section, not a second full snapshot.
+    let mut resumed = connect(running.port, None).await;
+    resumed
+        .send(handshake_from(&running.token, revision, sequence))
+        .await
+        .unwrap();
+    let delta = first_frame(&mut resumed).await;
+    assert_eq!(delta["type"], "delta");
+    assert!(
+        delta["payload"]["rest"].is_null(),
+        "a delta at the current revision has no rest"
+    );
+    assert_eq!(delta["payload"]["revision"], revision);
+
+    // A cursor ahead of the daemon (it restarted): the client state is not one
+    // a delta applies to, so it gets a self-contained snapshot again.
+    let mut ahead = connect(running.port, None).await;
+    ahead
+        .send(handshake_from(&running.token, revision + 1000, sequence))
+        .await
+        .unwrap();
+    let resync = first_frame(&mut ahead).await;
+    assert_eq!(resync["type"], "snapshot");
+    assert!(resync["payload"]["rest"].is_object());
+    assert_eq!(resync["payload"]["revision"], revision);
+    running.stop();
+}
+
+#[tokio::test]
+async fn the_daemon_exits_after_its_last_client_leaves() {
+    let (dir, mut env) = test_env(false);
+    env.idle_secs = 1;
+    let running = std::sync::Arc::new(hided::start_daemon(env).await.expect("start daemon"));
+    let state_path = state_file::state_path(dir.path());
+    assert!(state_path.exists());
+    let mut socket = connect(running.port, None).await;
+    socket.send(handshake(&running.token, 2)).await.unwrap();
+    let _ = first_frame(&mut socket).await;
+    // Held past the idle window: a connected client keeps the daemon up.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(
+        state_path.exists(),
+        "a connected client keeps the daemon alive"
+    );
+    // Registered before the client leaves so the announcement cannot be missed.
+    let announced = tokio::spawn({
+        let running = std::sync::Arc::clone(&running);
+        async move { hided::wait_shutdown(&running).await }
+    });
+    socket.close(None).await.unwrap();
+    drop(socket);
+    let stopped = tokio::time::timeout(Duration::from_secs(5), announced).await;
+    assert!(
+        stopped.is_ok(),
+        "the daemon did not announce shutdown after its last client left"
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        let listening = tokio::net::TcpStream::connect(("127.0.0.1", running.port))
+            .await
+            .is_ok();
+        if !listening && !state_path.exists() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the listener or the state file outlived the daemon");
+}
+
 async fn wait_close(
     socket: &mut tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
