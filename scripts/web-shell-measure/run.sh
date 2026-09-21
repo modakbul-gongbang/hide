@@ -4,13 +4,13 @@
 # hided. Usage:
 #   HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure bash scripts/web-shell-measure/run.sh
 # Needs: the pinned herdr (HERDR_BIN_PATH or PATH), Google Chrome,
-# target/release/hided built after `pnpm --dir web build` (it embeds web/dist).
+# target/release/hided built after `pnpm --dir web build` (docs/BUILD.md: a release hided embeds web/dist).
 set -euo pipefail
 measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
 chrome_bin="${MEASURE_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 hided_bin="$MEASURE_WORKTREE/target/release/hided"
-[[ -x "$hided_bin" ]] || { echo "build target/release/hided first (pnpm --dir web build; cargo build --release -p hided)" >&2; exit 1; }
+[[ -x "$hided_bin" ]] || { echo "build target/release/hided first: pnpm --dir web build, then the release build described in docs/BUILD.md" >&2; exit 1; }
 [[ -x "$chrome_bin" ]] || { echo "Chrome not found at $chrome_bin" >&2; exit 1; }
 pids=()
 server_started=false
