@@ -1,16 +1,18 @@
 import { expect, test, type Page } from "@playwright/test";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 
-async function startHided(extra: Record<string, string> = {}): Promise<{
-  process: ChildProcess;
+type Daemon = {
   origin: string;
   token: string;
-  dir: string;
-}> {
+  /** Kills the daemon and removes its state directory. */
+  stop: () => void;
+};
+
+async function startHided(extra: Record<string, string> = {}): Promise<Daemon> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-"));
   const bin = path.resolve("..", "target", "debug", "hided");
   const uiDir = path.resolve("dist");
@@ -32,6 +34,10 @@ async function startHided(extra: Record<string, string> = {}): Promise<{
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const stop = () => {
+    child.kill();
+    fs.rmSync(dir, { recursive: true, force: true });
+  };
   for (let i = 0; i < 50; i += 1) {
     const statePath = path.join(dir, "hide", "hided.json");
     if (fs.existsSync(statePath)) {
@@ -43,7 +49,7 @@ async function startHided(extra: Record<string, string> = {}): Promise<{
       try {
         const health = await fetch(`${origin}/health`);
         if (health.ok) {
-          return { process: child, origin, token: state.token, dir };
+          return { origin, token: state.token, stop };
         }
       } catch {
         /* still starting */
@@ -51,7 +57,7 @@ async function startHided(extra: Record<string, string> = {}): Promise<{
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  child.kill();
+  stop();
   throw new Error("hided did not write a state file");
 }
 
@@ -62,7 +68,7 @@ test("sidebar shows a missing Herdr socket and the badge goes live", async ({ pa
     await expect(page.getByText("Herdr 소켓 없음")).toBeVisible();
     await expect(page.locator("[data-connection]")).toHaveCount(0);
   } finally {
-    daemon.process.kill();
+    daemon.stop();
   }
 });
 
@@ -72,7 +78,7 @@ test("a bad token shows the refused connection state", async ({ page }) => {
     await page.goto(`${daemon.origin}/#token=${"aa".repeat(32)}`);
     await expect(page.getByText("연결 거부")).toBeVisible();
   } finally {
-    daemon.process.kill();
+    daemon.stop();
   }
 });
 
@@ -86,8 +92,9 @@ async function typedTextEchoes(page: Page, marker: string): Promise<void> {
 
 test("a sidebar row click switches the pane and typed text echoes there", async ({ page }) => {
   const herdr = await startHerdr();
-  const daemon = await startHided({ HERDR_SOCKET_PATH: herdr.socket, HERDR_BIN_PATH: herdr.bin });
+  let daemon: Daemon | null = null;
   try {
+    daemon = await startHided({ HERDR_SOCKET_PATH: herdr.socket, HERDR_BIN_PATH: herdr.bin });
     const [first, second] = herdr.panes;
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await expect(page.locator(`[data-pane="${first}"]`)).toContainText("Agent one");
@@ -116,7 +123,7 @@ test("a sidebar row click switches the pane and typed text echoes there", async 
       "echo-two-9f3a",
     );
   } finally {
-    daemon.process.kill();
+    daemon?.stop();
     herdr.stop();
   }
 });

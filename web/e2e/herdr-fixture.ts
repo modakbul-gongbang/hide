@@ -76,6 +76,15 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   };
 }
 
+function paneText(env: NodeJS.ProcessEnv, bin: string, pane: string): string {
+  const result = spawnSync(bin, ["pane", "read", pane, "--source", "visible", "--format", "text"], {
+    env,
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  return result.status === 0 ? result.stdout : "";
+}
+
 async function waitFor(predicate: () => boolean, what: string, ms = 10_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
@@ -96,8 +105,13 @@ export async function startHerdr(): Promise<HerdrFixture> {
   // Unix socket paths are short; keep the node directly under /tmp.
   const socket = `/tmp/hide-e2e-${crypto.randomBytes(4).toString("hex")}.sock`;
   const env = isolatedEnv(root, socket);
-  fs.writeFileSync(path.join(root, "shim.c"), SHIM_SOURCE);
-  execFileSync("cc", ["-O1", "-o", path.join(root, "bin", "claude"), path.join(root, "shim.c")]);
+  try {
+    fs.writeFileSync(path.join(root, "shim.c"), SHIM_SOURCE);
+    execFileSync("cc", ["-O1", "-o", path.join(root, "bin", "claude"), path.join(root, "shim.c")]);
+  } catch (error) {
+    fs.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
   const fixturePath = `${path.join(root, "bin")}:/usr/bin:/bin`;
 
   const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
@@ -141,8 +155,11 @@ export async function startHerdr(): Promise<HerdrFixture> {
       "--no-focus",
     ]) as { result: { pane: { pane_id: string } } };
     const second = split.result.pane.pane_id;
-    // The shell must have printed a prompt before agent start accepts the pane.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // The shell must have printed its prompt before agent start accepts the
+    // pane; the fixture .zshrc makes that prompt a fixed string.
+    for (const pane of [first, second]) {
+      await waitFor(() => paneText(env, bin, pane).includes("fixture %"), `a prompt in pane ${pane}`);
+    }
     herdr(env, bin, ["agent", "start", "one", "--kind", "claude", "--pane", first]);
     herdr(env, bin, ["agent", "start", "two", "--kind", "claude", "--pane", second]);
     // Distinct row labels; report-metadata prints nothing on success.

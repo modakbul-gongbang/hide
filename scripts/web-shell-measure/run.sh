@@ -97,9 +97,9 @@ workspaces="$("$HERDR_BIN_PATH" api snapshot | python3 -c 'import json,sys; d=js
 [[ "$workspaces" == "0" ]] || { echo "private server already has $workspaces workspaces" >&2; exit 1; }
 "$HERDR_BIN_PATH" workspace create --cwd "$MEASURE_FIXTURE" --label measure --focus >/dev/null
 export MEASURE_PANE_ID="$("$HERDR_BIN_PATH" api snapshot | python3 "$measure_dir/pane-id.py")"
-sleep 1
+# The pane shell has printed its fixed prompt before it takes a command.
+deadline=$((SECONDS+20)); until "$HERDR_BIN_PATH" pane read "$MEASURE_PANE_ID" --source visible --format text 2>/dev/null | grep -q 'fixture %'; do (( SECONDS < deadline )) || { echo 'pane prompt did not appear' >&2; exit 1; }; sleep 0.1; done
 "$HERDR_BIN_PATH" pane run "$MEASURE_PANE_ID" 'stty -echo -icanon; cat' >/dev/null
-sleep 1
 
 # Product hided (release, embedded web/dist) on the private socket.
 spawn_owned hided env HOME="$MEASURE_PRIVATE/home" HIDE_STATE_DIR="$MEASURE_PRIVATE/hide-state" HIDE_KEEP_ALIVE=1 HIDE_PORT=0 "$hided_bin"
