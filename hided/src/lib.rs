@@ -90,10 +90,23 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         started_at,
     };
     write_state(&env.state_dir, &state).map_err(|error| error.to_string())?;
+    if env.herdr_bin_path.is_none() {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "hided",
+                "kind": "herdr_bin.missing",
+                "message": "no herdr binary: HERDR_BIN_PATH is unset and PATH has none; pane terminals cannot attach",
+            })
+        );
+    }
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
         herdr_socket_path: env.herdr_socket_path.clone(),
-        herdr_bin_path: None,
+        herdr_bin_path: env
+            .herdr_bin_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
         app_state_path: env.state_dir.join("core-state.json").display().to_string(),
     };
     let core = CoreHandle::spawn(options)?;

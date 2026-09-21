@@ -1,7 +1,7 @@
 //! Single registry for every environment key this crate reads.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EnvKey {
@@ -12,6 +12,8 @@ pub struct EnvKey {
 }
 
 pub const HERDR_SOCKET_PATH: &str = "HERDR_SOCKET_PATH";
+pub const HERDR_BIN_PATH: &str = "HERDR_BIN_PATH";
+pub const PATH: &str = "PATH";
 pub const XDG_STATE_HOME: &str = "XDG_STATE_HOME";
 pub const HIDE_STATE_DIR: &str = "HIDE_STATE_DIR";
 pub const HIDE_KEEP_ALIVE: &str = "HIDE_KEEP_ALIVE";
@@ -26,6 +28,18 @@ pub const REGISTRY: &[EnvKey] = &[
         required: false,
         format: "absolute Unix-domain socket path",
         absent_behavior: "Core starts without a Herdr socket and the sidebar shows that state",
+    },
+    EnvKey {
+        key: HERDR_BIN_PATH,
+        required: false,
+        format: "absolute path of the herdr binary; Herdr sets it in every pane it manages",
+        absent_behavior: "The first `herdr` on PATH attaches pane terminals; with neither, no pane terminal can attach and the daemon logs it",
+    },
+    EnvKey {
+        key: PATH,
+        required: false,
+        format: "colon-separated executable search path",
+        absent_behavior: "Only HERDR_BIN_PATH can name the herdr binary",
     },
     EnvKey {
         key: XDG_STATE_HOME,
@@ -74,6 +88,9 @@ pub const REGISTRY: &[EnvKey] = &[
 #[derive(Clone, Debug)]
 pub struct Env {
     pub herdr_socket_path: Option<String>,
+    /// The binary the core spawns for `herdr terminal session control`; the
+    /// core refuses every pane attach without one.
+    pub herdr_bin_path: Option<PathBuf>,
     pub state_dir: PathBuf,
     pub keep_alive: bool,
     pub vite_origin: Option<String>,
@@ -124,6 +141,17 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
             let default = home.join(".config/herdr/herdr.sock");
             default.exists().then(|| default.display().to_string())
         }
+    };
+    let herdr_bin_path = match read(HERDR_BIN_PATH) {
+        Some(value) if value.is_empty() => {
+            errors.push(EnvError {
+                key: HERDR_BIN_PATH,
+                kind: "empty",
+            });
+            None
+        }
+        Some(value) => Some(PathBuf::from(value)),
+        None => read(PATH).and_then(|path| first_on_path(&path, "herdr")),
     };
     let state_dir = if let Some(dir) = read(HIDE_STATE_DIR) {
         if dir.is_empty() {
@@ -203,12 +231,20 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
     }
     Ok(Env {
         herdr_socket_path,
+        herdr_bin_path,
         state_dir,
         keep_alive,
         vite_origin,
         bind: SocketAddr::from(([127, 0, 0, 1], port)),
         idle_secs,
     })
+}
+
+fn first_on_path(path: &str, name: &str) -> Option<PathBuf> {
+    path.split(':')
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| Path::new(dir).join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 #[cfg(test)]
@@ -241,6 +277,32 @@ mod tests {
         assert_eq!(env.idle_secs, 600);
         assert!(!env.keep_alive);
         assert!(env.herdr_socket_path.is_none());
+        assert!(env.herdr_bin_path.is_none());
+    }
+
+    #[test]
+    fn herdr_bin_path_wins_over_path_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let on_path = dir.path().join("herdr");
+        std::fs::write(&on_path, b"").unwrap();
+        let env = from_map(&[
+            ("HOME", "/Users/example"),
+            ("PATH", &format!("/nonexistent:{}", dir.path().display())),
+        ])
+        .unwrap();
+        assert_eq!(env.herdr_bin_path.as_deref(), Some(on_path.as_path()));
+        let env = from_map(&[
+            ("HOME", "/Users/example"),
+            ("PATH", &dir.path().display().to_string()),
+            ("HERDR_BIN_PATH", "/opt/herdr/bin/herdr"),
+        ])
+        .unwrap();
+        assert_eq!(
+            env.herdr_bin_path.as_deref(),
+            Some(Path::new("/opt/herdr/bin/herdr"))
+        );
+        let err = from_map(&[("HOME", "/Users/example"), ("HERDR_BIN_PATH", "")]).unwrap_err();
+        assert_eq!(err[0].key, HERDR_BIN_PATH);
     }
 
     #[test]

@@ -12,6 +12,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
     let dir = tempfile::tempdir().unwrap();
     let env = Env {
         herdr_socket_path: None,
+        herdr_bin_path: None,
         state_dir: dir.path().to_path_buf(),
         keep_alive,
         vite_origin: None,

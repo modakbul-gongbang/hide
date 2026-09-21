@@ -144,6 +144,9 @@ fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
     if let Some(socket) = &env.herdr_socket_path {
         command.env("HERDR_SOCKET_PATH", socket);
     }
+    if let Some(bin) = &env.herdr_bin_path {
+        command.env("HERDR_BIN_PATH", bin);
+    }
     if let Some(origin) = &env.vite_origin {
         command.env("HIDE_VITE_ORIGIN", origin);
     }
