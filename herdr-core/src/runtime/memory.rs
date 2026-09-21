@@ -798,7 +798,8 @@ impl Runtime {
 #[cfg(test)]
 mod scope_tests {
     use super::{
-        archive_load_matches_scope, sessions_load_matches_scope, settled_analysis_snapshot,
+        archive_load_matches_scope, load_session_detail, project_session_row,
+        sessions_load_matches_scope, settled_analysis_snapshot,
         should_request_memory_due_poll_after_load, trusted_memory_receipt, update_hook_projection,
         validate_candidates,
     };
@@ -808,10 +809,46 @@ mod scope_tests {
         runtime::{AgentRuntime, HookEvent},
     };
     use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation, MemoryStore};
-    use hide_session::{Agent, ProjectSession, SessionAvailability, parse_codex_events};
+    use hide_session::{
+        Agent, ProjectSession, SessionAvailability, parse_claude_events, parse_codex_events,
+    };
     use serde_json::json;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn session_detail_opens_before_memory_database_exists() {
+        let temp = tempdir().unwrap();
+        let session_path = temp.path().join("session.jsonl");
+        fs::write(
+            &session_path,
+            concat!(
+                "{\"type\":\"user\",\"timestamp\":\"2026-09-18T00:00:00Z\",",
+                "\"origin\":{\"kind\":\"human\"},",
+                "\"message\":{\"role\":\"user\",\"content\":\"open me\"}}\n"
+            ),
+        )
+        .unwrap();
+        let row = project_session_row(ProjectSession {
+            id: "session-1".to_owned(),
+            agent: Agent::Claude,
+            locator: session_path,
+            checkout_path: temp.path().to_path_buf(),
+            first_human_request: Some("open me".to_owned()),
+            started_at_unix_ms: Some(1),
+            updated_at_unix_ms: 1,
+            title: None,
+            event_count: 1,
+            availability: SessionAvailability::Available,
+        });
+
+        let detail =
+            load_session_detail(&temp.path().join("missing.sqlite3"), "project-1", row).unwrap();
+
+        assert_eq!(detail.events.len(), 1);
+        assert_eq!(detail.events[0].text, "open me");
+        assert_eq!(detail.events[0].memory_attached_count, None);
+    }
 
     #[test]
     fn reversed_session_load_completion_cannot_replace_the_newer_generation() {
@@ -1033,6 +1070,44 @@ mod scope_tests {
                 &store,
                 &project.id,
                 "codex",
+                "session-1",
+                event.is_provider_injected(),
+                &event.text,
+            )
+            .is_none()
+        );
+
+        let claude_auth = store
+            .receipt_auth_tag(
+                &project.id,
+                "claude",
+                "session-1",
+                HookEvent::UserPromptSubmit.name(),
+                item_key,
+            )
+            .unwrap();
+        let claude_marker = format!(
+            "<hide-memory-receipt event=\"UserPromptSubmit\" count=\"1\" items=\"{item_key}\" auth=\"{claude_auth}\" />"
+        );
+        let claude_user_record = json!({
+            "type": "user",
+            "timestamp": "2026-09-21T00:00:00Z",
+            "userType": "external",
+            "entrypoint": "claude-desktop",
+            "message": {"role": "user", "content": claude_marker},
+        })
+        .to_string();
+        let event = parse_claude_events(&claude_user_record)
+            .events
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(!event.is_provider_injected());
+        assert!(
+            trusted_memory_receipt(
+                &store,
+                &project.id,
+                "claude",
                 "session-1",
                 event.is_provider_injected(),
                 &event.text,
@@ -2101,7 +2176,10 @@ fn load_session_detail(
     }
     let contents = read_bounded(Path::new(&row.locator), SESSION_READ_LIMIT_BYTES)
         .map_err(|error| format!("Session unavailable: {error}"))?;
-    let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
+    let store = database
+        .is_file()
+        .then(|| MemoryStore::open_read_only(database).map_err(|error| error.to_string()))
+        .transpose()?;
     let agent = if row.provider == "codex" {
         Agent::Codex
     } else {
@@ -2112,14 +2190,16 @@ fn load_session_detail(
         .events
         .into_iter()
         .map(|event| {
-            let receipt = trusted_memory_receipt(
-                &store,
-                project_id,
-                &row.provider,
-                &row.id,
-                event.is_provider_injected(),
-                &event.text,
-            );
+            let receipt = store.as_ref().and_then(|store| {
+                trusted_memory_receipt(
+                    store,
+                    project_id,
+                    &row.provider,
+                    &row.id,
+                    event.is_provider_injected(),
+                    &event.text,
+                )
+            });
             let attached = receipt.as_ref().map(|receipt| receipt.count);
             let item_ids = receipt
                 .map(|receipt| receipt.items.into_iter().map(|(id, _)| id).collect())

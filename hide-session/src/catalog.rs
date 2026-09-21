@@ -1,5 +1,6 @@
 use crate::{
-    Agent, ConversationEvent, EventKind, SESSION_READ_LIMIT_BYTES, parse_events, read_bounded,
+    Agent, ConversationEvent, EventKind, SESSION_LINE_LIMIT_BYTES, SESSION_READ_LIMIT_BYTES,
+    parse_events, read_bounded, read_bounded_line,
 };
 use hide_project::ProjectIdentity;
 use serde::{Deserialize, Serialize};
@@ -8,13 +9,12 @@ use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs::{self, File};
-use std::io::{self, BufRead, BufReader};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Hard cap on files visited in one catalog refresh.
 pub const SESSION_DISCOVERY_LIMIT: usize = 10_000;
-const FIRST_LINE_LIMIT_BYTES: u64 = 256 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -234,7 +234,7 @@ fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
             let file = File::open(path).ok()?;
             let mut reader = BufReader::new(file);
             for _ in 0..128 {
-                let line = match read_bounded_line(&mut reader, FIRST_LINE_LIMIT_BYTES as usize) {
+                let line = match read_bounded_line(&mut reader, SESSION_LINE_LIMIT_BYTES) {
                     Ok(Some(line)) => line,
                     Ok(None) => break,
                     Err(_) => return None,
@@ -249,31 +249,6 @@ fn session_cwd(agent: Agent, path: &Path) -> Option<PathBuf> {
             None
         }
     }
-}
-
-fn read_bounded_line(
-    reader: &mut impl BufRead,
-    maximum_bytes: usize,
-) -> io::Result<Option<Vec<u8>>> {
-    let mut line = Vec::with_capacity(maximum_bytes.min(8 * 1024));
-    let mut limited = std::io::Read::take(&mut *reader, maximum_bytes.saturating_add(1) as u64);
-    let read = limited.read_until(b'\n', &mut line)?;
-    if read == 0 {
-        return Ok(None);
-    }
-    if line.len() > maximum_bytes {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "session line exceeds its fixed limit",
-        ));
-    }
-    while line
-        .last()
-        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
-    {
-        line.pop();
-    }
-    Ok(Some(line))
 }
 
 fn read_project_session(agent: Agent, path: PathBuf, cwd: PathBuf) -> ProjectSession {
@@ -344,7 +319,7 @@ fn session_id(agent: Agent, path: &Path) -> String {
     }
     let explicit = File::open(path).ok().and_then(|file| {
         let mut reader = BufReader::new(file);
-        let line = read_bounded_line(&mut reader, FIRST_LINE_LIMIT_BYTES as usize).ok()??;
+        let line = read_bounded_line(&mut reader, SESSION_LINE_LIMIT_BYTES).ok()??;
         let value: Value = serde_json::from_slice(&line).ok()?;
         value
             .pointer("/payload/id")
@@ -456,6 +431,6 @@ mod tests {
     fn bounded_line_reader_refuses_before_allocating_past_the_limit() {
         let mut reader = BufReader::new(std::io::Cursor::new(b"123456789\nnext\n"));
         let error = read_bounded_line(&mut reader, 8).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 }

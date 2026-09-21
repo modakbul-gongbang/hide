@@ -727,13 +727,36 @@ pub fn read_bounded(path: &Path, maximum_bytes: u64) -> Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+pub(crate) fn read_bounded_line(
+    reader: &mut impl BufRead,
+    maximum_bytes: usize,
+) -> io::Result<Option<Vec<u8>>> {
+    let mut line = Vec::with_capacity(maximum_bytes.min(8 * 1024));
+    let mut limited = std::io::Read::take(&mut *reader, maximum_bytes.saturating_add(1) as u64);
+    let read = limited.read_until(b'\n', &mut line)?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if line.len() > maximum_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "session line exceeds its fixed limit",
+        ));
+    }
+    while line
+        .last()
+        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+    {
+        line.pop();
+    }
+    Ok(Some(line))
+}
+
 /// Read the cwd from Codex's first session_meta line.
 pub fn codex_session_cwd(path: &Path) -> Option<String> {
-    let mut first = String::new();
-    BufReader::new(File::open(path).ok()?)
-        .read_line(&mut first)
-        .ok()?;
-    let value: Value = serde_json::from_str(first.trim()).ok()?;
+    let mut reader = BufReader::new(File::open(path).ok()?);
+    let first = read_bounded_line(&mut reader, SESSION_LINE_LIMIT_BYTES).ok()??;
+    let value: Value = serde_json::from_slice(&first).ok()?;
     value
         .pointer("/payload/cwd")
         .and_then(Value::as_str)
@@ -843,10 +866,12 @@ fn parse_claude_line(item: &Value) -> LineResult {
             text,
         ));
     }
-    let origin_is_human = item.pointer("/origin/kind").and_then(Value::as_str) == Some("human");
+    let origin_kind = item.pointer("/origin/kind").and_then(Value::as_str);
+    let origin_is_human = origin_kind == Some("human");
+    let origin_is_injected = matches!(origin_kind, Some("hook" | "system"));
     let is_meta = item.get("isMeta").and_then(Value::as_bool).unwrap_or(false);
     let is_system_prompt = item.get("promptSource").and_then(Value::as_str) == Some("system");
-    let provider_injected = !origin_is_human || is_meta || is_system_prompt;
+    let provider_injected = origin_is_injected || is_meta || is_system_prompt;
     let interrupted = is_interruption(&text);
     let command = slash_command_text(&text);
     let kind = if interrupted {
@@ -1274,6 +1299,15 @@ mod tests {
     }
 
     #[test]
+    fn codex_cwd_reader_rejects_an_oversized_first_record() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, vec![b'x'; SESSION_LINE_LIMIT_BYTES + 1]).unwrap();
+
+        assert_eq!(codex_session_cwd(&path), None);
+    }
+
+    #[test]
     fn parser_counts_only_relevant_lines_and_preserves_reason_categories() {
         let input = concat!(
             "{\"type\":\"user\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"origin\":{\"kind\":\"human\"},\"message\":{\"content\":\"요청\"}}\n",
@@ -1395,6 +1429,24 @@ mod tests {
         assert_eq!(parsed.events[0].role, "developer");
         assert_eq!(parsed.events[0].kind, EventKind::Injected);
         assert!(parsed.events[0].is_provider_injected());
+    }
+
+    #[test]
+    fn claude_external_human_without_origin_is_not_provider_authenticated() {
+        let line = serde_json::json!({
+            "type": "user",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "userType": "external",
+            "entrypoint": "claude-desktop",
+            "message": {
+                "role": "user",
+                "content": "<hide-memory-receipt event=\"UserPromptSubmit\" />",
+            },
+        })
+        .to_string();
+        let parsed = parse_claude_events(&line);
+        assert_eq!(parsed.events.len(), 1);
+        assert!(!parsed.events[0].is_provider_injected());
     }
 
     #[test]
