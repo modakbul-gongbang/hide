@@ -805,7 +805,7 @@ mod scope_tests {
     };
     use crate::model::MemoryAnalysisSnapshot;
     use hide_agent_hooks::{
-        memory::{HookMemoryOutcome, database_path, project_memory_output},
+        memory::{HookMemoryOutcome, HookMemoryResult, database_path, project_memory_output_until},
         runtime::{AgentRuntime, HookEvent},
     };
     use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation, MemoryStore};
@@ -814,7 +814,27 @@ mod scope_tests {
     };
     use serde_json::json;
     use std::fs;
+    use std::path::Path;
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
+
+    const FUNCTIONAL_HOOK_TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+    fn functional_hook_output(
+        runtime: AgentRuntime,
+        event: HookEvent,
+        payload: &[u8],
+        home: &Path,
+    ) -> HookMemoryResult {
+        project_memory_output_until(
+            runtime,
+            event,
+            payload,
+            false,
+            home,
+            Instant::now() + FUNCTIONAL_HOOK_TEST_TIMEOUT,
+        )
+    }
 
     #[test]
     fn session_detail_opens_before_memory_database_exists() {
@@ -1148,13 +1168,8 @@ mod scope_tests {
                 "session_id": session_id,
             }))
             .unwrap();
-            let start = project_memory_output(
-                runtime,
-                HookEvent::SessionStart,
-                &start_payload,
-                false,
-                &home,
-            );
+            let start =
+                functional_hook_output(runtime, HookEvent::SessionStart, &start_payload, &home);
             assert_eq!(start.outcome, HookMemoryOutcome::Empty);
             let envelope: serde_json::Value = serde_json::from_str(&start.stdout.unwrap()).unwrap();
             let context = envelope["hookSpecificOutput"]["additionalContext"]
@@ -1240,11 +1255,10 @@ mod scope_tests {
                 "prompt": "durable hook memory",
             }))
             .unwrap();
-            let prompt = project_memory_output(
+            let prompt = functional_hook_output(
                 runtime,
                 HookEvent::UserPromptSubmit,
                 &prompt_payload,
-                false,
                 &home,
             );
             assert_eq!(prompt.outcome, HookMemoryOutcome::Provided { count: 1 });
