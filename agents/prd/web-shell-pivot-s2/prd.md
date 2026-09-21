@@ -6,7 +6,7 @@ review_profile: "high-risk"
 review_rationale: "브라우저 페이지가 처음으로 로컬 파일시스템 목록(remote_file_list)과 워크스페이스 등록(create_workspace)을 요청하게 되어 접근 경계가 새로 생기고, 다중 pane 렌더가 고빈도 경로(스냅샷 델타·resize)에 작업을 더한다."
 source_intake: "agents/interview/web-shell-pivot-s2/qa-log.md"
 created_at: "2026-09-21"
-updated_at: "2026-09-21"
+updated_at: "2026-09-22"
 ---
 
 # PRD: S2 탭·분할·줌, 프로젝트/체크아웃 전환, 단축키
@@ -35,7 +35,7 @@ S2는 그 위에 하루 작업의 나머지 골격을 얹는다: 코어 projecti
 | D-02 | 프로젝트/체크아웃 사이드바 S2 범위: 전환 + 읽기 전용 표시(핀 상태, purpose 한 줄, 브랜치·PR 배지) + inactive 체크아웃·프로젝트 접기. 편집 동작(워크트리 생성·제거, 핀 토글, purpose 편집, 원격 기기)은 S5. 전환만(b)과 전부(c)는 기각. | Q1 "Q2 a로 ㄱㄱㄱ" |
 | D-03 | 분할선 드래그 resize: 드래그 중엔 가이드선만 그리고, 놓을 때 `resize_pane` 이벤트 1개(비율 0.001~0.5 밖이면 보내지 않음). 드래그 중 쓰로틀 실시간 반영(b)은 고빈도 경로·프레임 게이트 때문에 기각. | Q1 "Q3는 a ㄱㄱ" |
 | D-04 | 새 워크스페이스 등록: 경로 입력창 + 코어 디렉터리 목록(`remote_file_list`) 자동완성(홈부터) + 최근 등록 경로 제안 → `create_workspace`. Electron에선 네이티브 폴더 선택창으로 교체(TODO). S2 제외·CLI만(b)과 둘 다(c)는 기각. | Q3 "a로 원 가자" |
-| D-05 | 가정: 보이는 탭의 pane만 xterm 인스턴스를 갖고 다른 탭의 pane은 해제한다. attach 규칙(최근 5탭, `ATTACHED_TAB_LIMIT`)과 released 표시는 코어 그대로. 재검토: 탭 전환 첫 프레임이 게이트를 넘을 때. | 가정: 우산 PRD 결정 16, ARCHITECTURE.md attach 규칙 |
+| D-05 | 사용자 결정(B18 관찰 2026-09-22 "탭 전환할때마다 새로 렌더링하는건가? 뭔가 오래걸리노"): 코어가 attach 상태로 유지하는 탭(최근 5탭, `ATTACHED_TAB_LIMIT`)의 pane은 보이지 않아도 xterm 인스턴스를 유지하며 스트림을 계속 받는다. 인스턴스는 코어가 pane을 released로 표시하거나 pane이 사라질 때만 해제한다. 탭으로 돌아오면 마지막 프레임이 즉시 보이고 "starting…" 빈 화면은 없다. attach 규칙과 released 표시는 코어 그대로. 재검토: 인스턴스 유지가 B15 메모리·프레임 게이트를 넘을 때. | 사용자 결정; 우산 PRD 결정 16, ARCHITECTURE.md attach 규칙 |
 | D-06 | 가정: 탭 바는 상단, 체크아웃별 visible tab. 탭 닫기는 `check_close_status` → 필요 시 확인 → `close_tab`의 현 Swift 흐름. 줌은 `toggle_zoom`. 같은 에이전트 가정으로(D-01 사용자 결정과 별개, 승인 아님) pane 명령 카탈로그(`PaneShortcutSettings.swift:32-41`: ⌘D·⌘⇧D 분할, ⌘⌥↩ 줌, ⌘⇧W pane 닫기, ⌘=·⌘-·⌘0 글자 크기)도 레지스트리에 넣고, ⌘⇧W는 Chrome 창 닫기 예약 키라 ⌥⇧W로 옮긴다; ⌘⌥C 대화 뷰어는 미룸 표면이라 제외. 재검토: 사용자 거부(⌥⇧W 또는 카탈로그 포함). | 가정: design 5; qa-log Addendum D-13 |
 | D-07 | 가정: 프로젝트 클릭은 홈 화면 없이 그 프로젝트의 마지막 체크아웃 탭으로 전환한다(`focus_checkout`). 재검토: Electron PRD(Home/Overview 미룸 표면). | 가정: 우산 PRD 결정 4(미룸 표면) |
 | D-08 | 가정: S0 방식 재측정을 다중 pane(분할 4개, 탭 5개 attach)에서 수행. 게이트는 우산 PRD 결정 6 그대로: echo p95 ≤ Swift 6.228 + 5 ms, 120 s driven 16.7 ms 초과 프레임 ≤ 1%. S1 측정 하네스(`scripts/web-shell-measure/`) 재사용. | 가정: 우산 PRD 결정 6; S1 B8/B12 |
@@ -49,7 +49,7 @@ S2는 그 위에 하루 작업의 나머지 골격을 얹는다: 코어 projecti
 | B2 | 체크아웃 행을 클릭하면 `focus_checkout` 이벤트 하나가 나가고 탭 바가 그 체크아웃의 탭들로, 중앙이 그 체크아웃의 visible tab으로 바뀐다. 프로젝트 행 클릭은 홈 화면 없이 그 프로젝트의 마지막 체크아웃 탭으로 같은 전환을 한다. | D-02, D-07 |
 | B3 | 탭 바가 상단에 체크아웃별 탭을 보이고, 클릭·⌥\`·⌥⇧\`로 전환한다. 탭을 드래그해 놓으면 `reorder_tab` 1개가 나가고 코어 순서대로 다시 그려진다. ⌥T는 새 탭(`create_tab`), ⌥⇧T는 마지막으로 닫힌 탭을 탭 바 끝에 복원해 활성화한다(`reopen_closed`; 복원할 탭이 없으면 아무 일도 없고 진단 로그에만 남는다). 탭 전환은 코어의 `pane_layouts` 조회이며 기다리는 상태를 그리지 않는다. | D-01, D-06 |
 | B4 | 중앙은 활성 탭의 projection 트리를 CSS grid로 그대로 그린다: Split은 direction·ratio대로, 각 Pane은 xterm 인스턴스, 포커스 pane은 현 Swift와 같은 표시. 줌(⌘⌥↩, `toggle_zoom`)이면 그 pane만 전체로 보이고 다시 누르면 돌아온다. ⌘D/⌘⇧D는 `create_pane`으로 분할하고 Herdr가 지오메트리를 내려준 뒤에만 새 pane이 그려진다. | D-01, D-06 |
-| B5 | attach 한도 밖 탭의 pane은 released 표시로 그려지고 클릭하면 다시 붙는다. 보이지 않는 탭의 pane은 xterm 인스턴스를 갖지 않으며, 탭을 돌아오면 코어 상태에서 다시 그려진다. | D-05 |
+| B5 | attach 한도 밖 탭의 pane은 released 표시로 그려지고 클릭하면 다시 붙는다. attach 상태인 탭의 pane은 보이지 않아도 xterm 인스턴스와 스트림을 유지하고, 탭으로 돌아오면 새 프레임을 기다리지 않고 마지막 화면이 즉시 보인다. 인스턴스는 released 표시 또는 pane 소멸 때만 해제된다. | D-05 |
 | B6 | 분할선을 끌면 가이드선만 움직이고, 놓는 순간 `resize_pane` 1개가 나가며 Herdr가 새 지오메트리를 내려주면 grid와 각 xterm의 fit·`terminal_resize`가 따라간다. 비율이 범위 밖이면 이벤트 없이 가이드선이 원위치로 돌아간다. Herdr 거부·타임아웃은 화면 변화 없이 진단 로그에 남는다. | D-03 |
 | B7 | ⌥W는 탭 닫기, ⌥⇧W는 pane 닫기. 살아 있는 프로세스가 있으면(`requires_close_status_check`/`requires_close_confirmation`) 현 Swift와 같은 확인 흐름을 거치고, 확인 전까지 탭·pane은 그대로 있다. pane이 닫히면 Herdr가 내려준 새 지오메트리로 grid가 다시 그려진다. Herdr가 거부하면 탭·pane이 남고 이유는 진단 로그다. | D-01, D-06 |
 | B8 | ⌥⇧N 또는 사이드바 하단 "새 워크스페이스"를 누르면 경로 입력창이 열리고, 홈 디렉터리부터 하위 디렉터리가 자동완성되며 최근 등록 경로가 위에 제안된다. 확정하면 `create_workspace`가 나가고 사이드바에 새 프로젝트가 나타나 포커스된다. | D-04 |
@@ -63,6 +63,7 @@ S2는 그 위에 하루 작업의 나머지 골격을 얹는다: 코어 projecti
 | B16 | `web/src` 어디에도 색·간격·radius 리터럴이 없고 `node scripts/check-design-contract.mjs`가 통과한다. `pr.yml` web job(typecheck·lint·vitest·Playwright)이 통과하며 Playwright는 격리 Herdr 위에서 체크아웃 2개·탭 3개·분할 2개·등록 1회·거부 1회를 수행한다. | - |
 | B17 | `docs/ARCHITECTURE.md` hided 절에 파일시스템 경계와 단축키 레지스트리(호스트별 표, Electron 열 TODO)가 있고, `docs/BUILD.md`/`CONTRIBUTING.md`의 web lane 설명이 S2 측정 명령을 포함한다. | - |
 | B18 | 끝나는 조건: 사용자가 Swift 앱을 닫고 실제 Herdr 세션에서 `hide`만으로 하루 작업(체크아웃 전환, 새 탭, 분할, 줌, 탭 닫기, 워크스페이스 등록, 단축키 시트)을 수행한다. 이 관찰은 사용자가 하고, 구현자는 격리 서버 Playwright와 측정까지 한다. | D-08 |
+| B19 | pane 위에서 휠·트랙패드 스크롤은 `terminal_scroll`(pane_id, direction, lines, column/row, modifiers) 하나로 나가되 픽셀마다가 아니라 휠 배치(애니메이션 프레임)마다 한 번이며, 트랙패드의 픽셀 델타는 행 단위로 누적되고 휠 노치는 최소 1행이다. 화면은 코어가 내려주는 viewport 프레임을 그대로 따르고 xterm 자체 스크롤백은 쓰지 않는다. ⌥+휠은 브라우저에 맡긴다. 줌 상태에서는 줌된 pane이 캔버스 전체를 차지하고 그 fit·`terminal_resize`가 전체 지오메트리를 따른다. | D-05, D-06 |
 
 ## Technical structure
 
