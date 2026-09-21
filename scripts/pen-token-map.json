@@ -138,6 +138,7 @@
     "--size-editor-min-content": "Editor.minimumContentWidth",
     "--size-editor-document": "Editor.documentWidth",
     "--size-editor-document-line-spacing": "Editor.documentLineSpacing",
+    "--size-editor-memory-min": "Editor.memoryMinimumHeight",
     "--size-editor-quote-rule": "Editor.quoteRuleWidth",
     "--ratio-editor-italic-skew": "Editor.italicSkew",
     "--size-hint-gap": "Hint.gap",

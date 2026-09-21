@@ -22,6 +22,13 @@ use std::fs::{self, File, Metadata};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+mod catalog;
+
+pub use catalog::{
+    ProjectSession, SESSION_DISCOVERY_LIMIT, SessionAvailability, SessionCatalog,
+    SessionCatalogError, SessionFilter,
+};
+
 #[cfg(not(unix))]
 use std::time::SystemTime;
 
@@ -33,9 +40,16 @@ use std::os::unix::fs::MetadataExt;
 pub const CODEX_FALLBACK_DAYS: usize = 7;
 /// Number of newest files considered by the usage fallback.
 pub const CODEX_CANDIDATE_LIMIT: usize = 32;
+/// Largest complete session file parsed by archive and detail views.
+pub const SESSION_READ_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
+/// Largest append chunk consumed by one incremental projection poll.
+pub const SESSION_INCREMENT_READ_LIMIT_BYTES: u64 = 1024 * 1024;
+/// Largest individual JSONL record retained or parsed by a cursor.
+pub const SESSION_LINE_LIMIT_BYTES: usize = 256 * 1024;
 
 /// The two local agent session formats supported by Hide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Agent {
     Codex,
     Claude,
@@ -92,6 +106,10 @@ impl EventKind {
 pub struct ConversationEvent {
     pub role: &'static str,
     pub kind: EventKind,
+    /// True only when provider-owned transcript metadata identifies injected
+    /// context. Text prefixes can classify display semantics but never set
+    /// this trust bit.
+    provider_injected: bool,
     pub at_unix_ms: u64,
     pub text: String,
 }
@@ -106,9 +124,19 @@ impl ConversationEvent {
         Self {
             role,
             kind,
+            provider_injected: false,
             at_unix_ms,
             text: text.into(),
         }
+    }
+
+    pub const fn is_provider_injected(&self) -> bool {
+        self.provider_injected
+    }
+
+    fn with_provider_injected(mut self, provider_injected: bool) -> Self {
+        self.provider_injected = provider_injected;
+        self
     }
 }
 
@@ -150,6 +178,11 @@ impl RescanReason {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedSession {
     pub events: Vec<ConversationEvent>,
+    /// Absolute byte offset of the JSONL record that produced each event.
+    ///
+    /// This stays parallel to `events` so archive callers that only need the
+    /// normalized conversation do not have to carry source-location state.
+    pub event_offsets: Vec<u64>,
     /// The name the agent gave its own session, when the chunk carried one.
     ///
     /// Claude Code writes an `ai-title` record once it has named the
@@ -178,6 +211,11 @@ pub enum SessionError {
     CwdUnavailable,
     SessionFileMissing,
     UnsupportedSessionKind,
+    Checkpoint(String),
+    Capacity {
+        resource: &'static str,
+        limit: u64,
+    },
     Io {
         operation: &'static str,
         path: PathBuf,
@@ -201,6 +239,10 @@ impl Display for SessionError {
             Self::CwdUnavailable => formatter.write_str("session_cwd_unavailable"),
             Self::SessionFileMissing => formatter.write_str("session_file_missing"),
             Self::UnsupportedSessionKind => formatter.write_str("session_kind_unsupported"),
+            Self::Checkpoint(reason) => write!(formatter, "session_checkpoint_invalid:{reason}"),
+            Self::Capacity { resource, limit } => {
+                write!(formatter, "session_capacity:{resource}:{limit}")
+            }
             Self::Io {
                 operation, source, ..
             } => write!(formatter, "session_{operation}: {source}"),
@@ -220,10 +262,27 @@ impl Error for SessionError {
 pub type Result<T> = std::result::Result<T, SessionError>;
 
 /// A file identity used to detect an atomic replacement at the same path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 struct FileIdentity {
     first: u64,
     second: u64,
+}
+
+/// Durable state for resuming one append-only session file after relaunch.
+///
+/// The file identity is intentionally retained. An offset without the inode
+/// would silently skip the beginning of an atomic replacement at the same
+/// path.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CursorCheckpoint {
+    pub offset: u64,
+    identity: Option<FileIdentity>,
+    /// Accepted only to migrate checkpoints written before Project Memory
+    /// stopped persisting torn transcript bytes. New checkpoints always keep
+    /// this empty and rewind `offset` to the start of the torn line instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending: Vec<u8>,
 }
 
 impl FileIdentity {
@@ -254,6 +313,9 @@ impl FileIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionChunk {
     pub contents: String,
+    /// Absolute byte offset where `contents` begins in the session file.
+    /// This can precede the prior cursor offset when a torn line was retained.
+    pub start_offset: u64,
     pub rescan_reason: Option<RescanReason>,
 }
 
@@ -276,6 +338,41 @@ impl SessionCursor {
 
     pub const fn offset(&self) -> u64 {
         self.offset
+    }
+
+    pub fn checkpoint(&self) -> CursorCheckpoint {
+        CursorCheckpoint {
+            offset: self.offset.saturating_sub(self.pending.len() as u64),
+            identity: self.identity,
+            pending: Vec::new(),
+        }
+    }
+
+    pub fn restore(checkpoint: CursorCheckpoint) -> Self {
+        Self {
+            // Old checkpoints included raw torn-line bytes after the stored
+            // offset. Rewind once, discard those bytes, and reread them from
+            // the provider-owned session file. New checkpoints have no
+            // `pending` field and therefore restore at their exact offset.
+            offset: checkpoint
+                .offset
+                .saturating_sub(checkpoint.pending.len() as u64),
+            identity: checkpoint.identity,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Serializes the durable cursor and file identity without transcript
+    /// bytes. An unterminated line is reread from its start after relaunch.
+    pub fn encode_checkpoint(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(&self.checkpoint())
+            .map_err(|error| SessionError::Checkpoint(error.to_string()))
+    }
+
+    pub fn restore_checkpoint(bytes: &[u8]) -> Result<Self> {
+        let checkpoint = serde_json::from_slice(bytes)
+            .map_err(|error| SessionError::Checkpoint(error.to_string()))?;
+        Ok(Self::restore(checkpoint))
     }
 
     pub fn reset(&mut self) {
@@ -313,17 +410,30 @@ impl SessionCursor {
             .map_err(|error| SessionError::io("seek", path, error))?;
         let start = self.offset;
         let mut appended = Vec::new();
-        file.read_to_end(&mut appended)
+        file.take(SESSION_INCREMENT_READ_LIMIT_BYTES)
+            .read_to_end(&mut appended)
             .map_err(|error| SessionError::io("read", path, error))?;
-        self.offset = start.saturating_add(appended.len() as u64);
-        self.identity = Some(identity);
 
-        let mut combined = std::mem::take(&mut self.pending);
+        let retained_len = self.pending.len() as u64;
+        let mut combined = self.pending.clone();
         combined.extend(appended);
+        if combined
+            .split_inclusive(|byte| *byte == b'\n')
+            .any(|line| line.len() > SESSION_LINE_LIMIT_BYTES)
+        {
+            return Err(SessionError::Capacity {
+                resource: "line_bytes",
+                limit: SESSION_LINE_LIMIT_BYTES as u64,
+            });
+        }
+        self.offset = start.saturating_add(combined.len() as u64 - retained_len);
+        self.identity = Some(identity);
+        let chunk_start = start.saturating_sub(retained_len);
         let Some(last_newline) = combined.iter().rposition(|byte| *byte == b'\n') else {
             self.pending = combined;
             return Ok(SessionChunk {
                 contents: String::new(),
+                start_offset: chunk_start,
                 rescan_reason,
             });
         };
@@ -331,6 +441,7 @@ impl SessionCursor {
         self.pending = remainder;
         Ok(SessionChunk {
             contents: String::from_utf8_lossy(&combined).into_owned(),
+            start_offset: chunk_start,
             rescan_reason,
         })
     }
@@ -590,13 +701,62 @@ pub fn read_tail(path: &Path, maximum_bytes: u64) -> Result<String> {
         .map_or_else(String::new, |(_, rest)| rest.to_owned()))
 }
 
+/// Read a whole file while enforcing a hard byte cap before and during I/O.
+pub fn read_bounded(path: &Path, maximum_bytes: u64) -> Result<String> {
+    let file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
+    let length = file
+        .metadata()
+        .map_err(|error| SessionError::io("stat", path, error))?
+        .len();
+    if length > maximum_bytes {
+        return Err(SessionError::Capacity {
+            resource: "file_bytes",
+            limit: maximum_bytes,
+        });
+    }
+    let mut bytes = Vec::with_capacity(length as usize);
+    file.take(maximum_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| SessionError::io("read", path, error))?;
+    if bytes.len() as u64 > maximum_bytes {
+        return Err(SessionError::Capacity {
+            resource: "file_bytes",
+            limit: maximum_bytes,
+        });
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub(crate) fn read_bounded_line(
+    reader: &mut impl BufRead,
+    maximum_bytes: usize,
+) -> io::Result<Option<Vec<u8>>> {
+    let mut line = Vec::with_capacity(maximum_bytes.min(8 * 1024));
+    let mut limited = std::io::Read::take(&mut *reader, maximum_bytes.saturating_add(1) as u64);
+    let read = limited.read_until(b'\n', &mut line)?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if line.len() > maximum_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "session line exceeds its fixed limit",
+        ));
+    }
+    while line
+        .last()
+        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+    {
+        line.pop();
+    }
+    Ok(Some(line))
+}
+
 /// Read the cwd from Codex's first session_meta line.
 pub fn codex_session_cwd(path: &Path) -> Option<String> {
-    let mut first = String::new();
-    BufReader::new(File::open(path).ok()?)
-        .read_line(&mut first)
-        .ok()?;
-    let value: Value = serde_json::from_str(first.trim()).ok()?;
+    let mut reader = BufReader::new(File::open(path).ok()?);
+    let first = read_bounded_line(&mut reader, SESSION_LINE_LIMIT_BYTES).ok()??;
+    let value: Value = serde_json::from_slice(&first).ok()?;
     value
         .pointer("/payload/cwd")
         .and_then(Value::as_str)
@@ -624,15 +784,36 @@ pub fn parse_codex_events(contents: &str) -> ParsedSession {
 
 /// Parse a complete-line chunk for the selected provider.
 pub fn parse_events(agent: Agent, contents: &str) -> ParsedSession {
+    parse_events_at(agent, contents, 0)
+}
+
+/// Parse a complete-line chunk while preserving each record's absolute byte
+/// offset. The caller supplies the byte offset where `contents` begins.
+pub fn parse_events_at(agent: Agent, contents: &str, base_offset: u64) -> ParsedSession {
     match agent {
-        Agent::Claude => parse_claude_events(contents),
-        Agent::Codex => parse_codex_events(contents),
+        Agent::Claude => parse_lines_at(contents, base_offset, parse_claude_line),
+        Agent::Codex => parse_lines_at(contents, base_offset, parse_codex_line),
     }
 }
 
 fn parse_lines(contents: &str, mut extract: impl FnMut(&Value) -> LineResult) -> ParsedSession {
+    parse_lines_at(contents, 0, &mut extract)
+}
+
+fn parse_lines_at(
+    contents: &str,
+    base_offset: u64,
+    mut extract: impl FnMut(&Value) -> LineResult,
+) -> ParsedSession {
     let mut parsed = ParsedSession::default();
-    for line in contents.lines().filter(|line| !line.trim().is_empty()) {
+    let mut relative_offset = 0_u64;
+    for raw_line in contents.split_inclusive('\n') {
+        let line_offset = base_offset.saturating_add(relative_offset);
+        relative_offset = relative_offset.saturating_add(raw_line.len() as u64);
+        let line = raw_line.trim_end_matches(['\n', '\r']);
+        if line.trim().is_empty() {
+            continue;
+        }
         let value = match serde_json::from_str::<Value>(line) {
             Ok(value) => value,
             Err(_) => {
@@ -643,7 +824,10 @@ fn parse_lines(contents: &str, mut extract: impl FnMut(&Value) -> LineResult) ->
         match extract(&value) {
             LineResult::Ignore => {}
             LineResult::Skip(reason) => parsed.skipped(reason),
-            LineResult::Event(event) => parsed.events.push(event),
+            LineResult::Event(event) => {
+                parsed.events.push(event);
+                parsed.event_offsets.push(line_offset);
+            }
             LineResult::Title(title) => parsed.title = Some(title),
         }
     }
@@ -682,14 +866,26 @@ fn parse_claude_line(item: &Value) -> LineResult {
             text,
         ));
     }
-    let origin_is_human = item.pointer("/origin/kind").and_then(Value::as_str) == Some("human");
+    let origin_kind = item.pointer("/origin/kind").and_then(Value::as_str);
+    let origin_is_human = origin_kind == Some("human");
+    let origin_is_injected = matches!(origin_kind, Some("hook" | "system"));
+    let external_human = item.get("userType").and_then(Value::as_str) == Some("external")
+        && item.get("promptId").and_then(Value::as_str).is_some()
+        && item
+            .pointer("/message/content")
+            .is_some_and(Value::is_string);
     let is_meta = item.get("isMeta").and_then(Value::as_bool).unwrap_or(false);
     let is_system_prompt = item.get("promptSource").and_then(Value::as_str) == Some("system");
+    let provider_injected = origin_is_injected || is_meta || is_system_prompt;
     let interrupted = is_interruption(&text);
     let command = slash_command_text(&text);
     let kind = if interrupted {
         EventKind::Interrupted
-    } else if origin_is_human && !is_meta && !is_system_prompt && !has_injected_prefix(&text) {
+    } else if (origin_is_human || external_human)
+        && !is_meta
+        && !is_system_prompt
+        && !has_injected_prefix(&text)
+    {
         EventKind::Human
     } else {
         EventKind::Injected
@@ -699,7 +895,10 @@ fn parse_claude_line(item: &Value) -> LineResult {
     } else {
         text
     };
-    LineResult::Event(ConversationEvent::new(role, kind, timestamp, text))
+    LineResult::Event(
+        ConversationEvent::new(role, kind, timestamp, text)
+            .with_provider_injected(provider_injected),
+    )
 }
 
 fn parse_codex_line(item: &Value) -> LineResult {
@@ -714,6 +913,7 @@ fn parse_codex_line(item: &Value) -> LineResult {
     }
     let role = match payload.get("role").and_then(Value::as_str) {
         Some("user") => "user",
+        Some("developer") => "developer",
         Some("assistant") => "assistant",
         _ => return LineResult::Ignore,
     };
@@ -731,6 +931,12 @@ fn parse_codex_line(item: &Value) -> LineResult {
             timestamp,
             text,
         ));
+    }
+    if role == "developer" {
+        return LineResult::Event(
+            ConversationEvent::new(role, EventKind::Injected, timestamp, text)
+                .with_provider_injected(true),
+        );
     }
     let kind = if is_interruption(&text) {
         EventKind::Interrupted
@@ -760,9 +966,14 @@ pub const INJECTED_PREFIXES: &[&str] = &[
 
 fn has_injected_prefix(text: &str) -> bool {
     let text = text.trim_start();
-    INJECTED_PREFIXES
-        .iter()
-        .any(|prefix| text.starts_with(prefix))
+    let memory_context = text
+        .strip_prefix("<hide-memory-context")
+        .and_then(|suffix| suffix.chars().next())
+        .is_some_and(|boundary| boundary == '>' || boundary.is_ascii_whitespace());
+    memory_context
+        || INJECTED_PREFIXES
+            .iter()
+            .any(|prefix| text.starts_with(prefix))
 }
 
 fn is_interruption(text: &str) -> bool {
@@ -959,6 +1170,7 @@ mod tests {
             cursor.read(&path).unwrap(),
             SessionChunk {
                 contents: "one\ntwo\n".to_owned(),
+                start_offset: 0,
                 rescan_reason: None,
             }
         );
@@ -969,7 +1181,9 @@ mod tests {
             .unwrap()
             .write_all(b"three\n")
             .unwrap();
-        assert_eq!(cursor.read(&path).unwrap().contents, "three\n");
+        let appended = cursor.read(&path).unwrap();
+        assert_eq!(appended.contents, "three\n");
+        assert_eq!(appended.start_offset, offset);
         assert!(cursor.offset() > offset);
     }
 
@@ -987,7 +1201,41 @@ mod tests {
             .unwrap()
             .write_all(b"-line\n")
             .unwrap();
-        assert_eq!(cursor.read(&path).unwrap().contents, "partial-line\n");
+        let completed = cursor.read(&path).unwrap();
+        assert_eq!(completed.contents, "partial-line\n");
+        assert_eq!(completed.start_offset, 0);
+    }
+
+    #[test]
+    fn durable_checkpoint_rewinds_without_copying_a_torn_line() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, b"complete\nsecret partial").unwrap();
+        let mut cursor = SessionCursor::new();
+        let first = cursor.read(&path).unwrap();
+        assert_eq!(first.contents, "complete\n");
+
+        let checkpoint = cursor.encode_checkpoint().unwrap();
+        assert!(
+            !checkpoint
+                .windows(b"secret partial".len())
+                .any(|window| { window == b"secret partial" })
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["offset"],
+            "complete\n".len()
+        );
+
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b" completed\n")
+            .unwrap();
+        let mut restored = SessionCursor::restore_checkpoint(&checkpoint).unwrap();
+        let completed = restored.read(&path).unwrap();
+        assert_eq!(completed.contents, "secret partial completed\n");
+        assert_eq!(completed.start_offset, "complete\n".len() as u64);
     }
 
     #[test]
@@ -1011,6 +1259,64 @@ mod tests {
     }
 
     #[test]
+    fn cursor_bounds_each_poll_and_continues_from_the_next_byte() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        let contents = "x\n".repeat(600_000);
+        fs::write(&path, contents.as_bytes()).unwrap();
+        let mut cursor = SessionCursor::new();
+
+        let first = cursor.read(&path).unwrap();
+        assert_eq!(
+            first.contents.len(),
+            SESSION_INCREMENT_READ_LIMIT_BYTES as usize
+        );
+        assert_eq!(cursor.offset(), SESSION_INCREMENT_READ_LIMIT_BYTES);
+        let second = cursor.read(&path).unwrap();
+        assert_eq!(first.contents.len() + second.contents.len(), contents.len());
+        assert_eq!(cursor.offset(), contents.len() as u64);
+    }
+
+    #[test]
+    fn cursor_rejects_a_line_larger_than_the_retention_cap() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, vec![b'x'; SESSION_LINE_LIMIT_BYTES + 1]).unwrap();
+        let error = SessionCursor::new().read(&path).unwrap_err();
+        assert!(matches!(
+            error,
+            SessionError::Capacity {
+                resource: "line_bytes",
+                limit
+            } if limit == SESSION_LINE_LIMIT_BYTES as u64
+        ));
+    }
+
+    #[test]
+    fn bounded_reader_rejects_a_file_larger_than_its_limit() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, b"12345").unwrap();
+        assert_eq!(read_bounded(&path, 5).unwrap(), "12345");
+        assert!(matches!(
+            read_bounded(&path, 4),
+            Err(SessionError::Capacity {
+                resource: "file_bytes",
+                limit: 4
+            })
+        ));
+    }
+
+    #[test]
+    fn codex_cwd_reader_rejects_an_oversized_first_record() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, vec![b'x'; SESSION_LINE_LIMIT_BYTES + 1]).unwrap();
+
+        assert_eq!(codex_session_cwd(&path), None);
+    }
+
+    #[test]
     fn parser_counts_only_relevant_lines_and_preserves_reason_categories() {
         let input = concat!(
             "{\"type\":\"user\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"origin\":{\"kind\":\"human\"},\"message\":{\"content\":\"요청\"}}\n",
@@ -1027,6 +1333,21 @@ mod tests {
         assert_eq!(parsed.skipped_reasons[&SkipReason::InvalidTimestamp], 1);
         assert_eq!(parsed.skipped_reasons[&SkipReason::MissingTimestamp], 1);
         assert_eq!(parsed.skipped_reasons[&SkipReason::MalformedJson], 1);
+    }
+
+    #[test]
+    fn parser_preserves_absolute_jsonl_offsets_for_emitted_events() {
+        let ignored = "{\"type\":\"session_meta\",\"payload\":{}}\n";
+        let first = "{\"type\":\"user\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"origin\":{\"kind\":\"human\"},\"message\":{\"content\":\"one\"}}\n";
+        let second = "{\"type\":\"assistant\",\"timestamp\":\"1970-01-01T00:00:02Z\",\"message\":{\"content\":\"two\"}}\n";
+        let parsed = parse_events_at(Agent::Claude, &format!("{ignored}{first}{second}"), 700);
+        assert_eq!(
+            parsed.event_offsets,
+            vec![
+                700 + ignored.len() as u64,
+                700 + ignored.len() as u64 + first.len() as u64
+            ]
+        );
     }
 
     #[test]
@@ -1098,6 +1419,96 @@ mod tests {
         );
         assert_eq!(parsed.events[3].text, "실제 요청");
         assert_eq!(parsed.events[4].at_unix_ms, 1_789_516_805_000);
+    }
+
+    #[test]
+    fn codex_developer_message_is_provider_authenticated_injected_context() {
+        let line = serde_json::json!({
+            "type": "response_item",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "payload": {
+                "type": "message",
+                "role": "developer",
+                "content": [{"type": "input_text", "text": "<hide-memory-context />"}],
+            },
+        })
+        .to_string();
+        let parsed = parse_codex_events(&line);
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.events[0].role, "developer");
+        assert_eq!(parsed.events[0].kind, EventKind::Injected);
+        assert!(parsed.events[0].is_provider_injected());
+    }
+
+    #[test]
+    fn claude_external_human_without_origin_remains_human_and_untrusted() {
+        let line = serde_json::json!({
+            "type": "user",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "userType": "external",
+            "entrypoint": "claude-desktop",
+            "promptId": "prompt-1",
+            "message": {
+                "role": "user",
+                "content": "<hide-memory-receipt event=\"UserPromptSubmit\" />",
+            },
+        })
+        .to_string();
+        let parsed = parse_claude_events(&line);
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.events[0].kind, EventKind::Human);
+        assert!(!parsed.events[0].is_provider_injected());
+    }
+
+    #[test]
+    fn hook_memory_context_with_a_trust_attribute_is_injected_for_both_providers() {
+        let context = concat!(
+            "<hide-memory-context trust=\"untrusted-reference-data\">\n",
+            "reference data\n",
+            "</hide-memory-context>"
+        );
+        let codex = serde_json::json!({
+            "type": "response_item",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": context}],
+            },
+        })
+        .to_string();
+        let claude = serde_json::json!({
+            "type": "user",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "origin": {"kind": "human"},
+            "message": {"role": "user", "content": context},
+        })
+        .to_string();
+
+        assert_eq!(
+            parse_codex_events(&codex).events[0].kind,
+            EventKind::Injected
+        );
+        assert_eq!(
+            parse_claude_events(&claude).events[0].kind,
+            EventKind::Injected
+        );
+
+        let malformed = serde_json::json!({
+            "type": "response_item",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "<hide-memory-context-malformed>"}],
+            },
+        })
+        .to_string();
+        assert_eq!(
+            parse_codex_events(&malformed).events[0].kind,
+            EventKind::Human
+        );
+        assert!(!parse_codex_events(&codex).events[0].is_provider_injected());
     }
 
     #[test]

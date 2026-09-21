@@ -1375,6 +1375,17 @@ impl Runtime {
         }
         self.hook_diagnosis = Some(diagnosis);
         self.sync_pane_lineage();
+        if self.memory_enable_after_hook_update && self.hooks_support_memory() {
+            self.memory_enable_after_hook_update = false;
+            self.apply_memory_action(crate::runtime::events::MemoryActionPayload {
+                action: "enable".to_owned(),
+                item_id: None,
+                candidate_id: None,
+                body: None,
+                batch_id: None,
+                conflict_choice: None,
+            });
+        }
         true
     }
 

@@ -444,6 +444,28 @@ Completed intents are retained until dismissal; duplicate confirmation does no w
 Regression owners include `overview_open_section_focuses_the_checkout_and_switches_the_panel_in_one_event`, `agent_start_in_checkout_reports_through_the_task_operation_slot`, `behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side`, `linked_worktrees_carry_their_creation_time_and_the_main_worktree_none`, disk filesystem fixtures, cleanup filesystem fixtures and `OverviewPresentationTests`.
 Native acceptance additionally covers row click versus header click versus the `N files` chip, narrow Korean/English wrapping of branch names and tasks, `…`/`?` cells, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
 
+## Project Memory cost contract
+
+Opening Sessions starts one bounded background catalog read for the focused local Project; filtering, searching, and switching Sessions/Memory modes operate on the retained snapshot and start no subprocess.
+The coordinator checks for due Memory work no more than once every five seconds, keeps one poll in flight, and schedules analysis only after a source has complete unread bytes and its size and modification time have remained unchanged for sixty seconds.
+An unchanged poll publishes nothing.
+Session file discovery, incremental reads, SQLite work, redaction, provider requests, hook-config writes, and JSON serialization stay outside `Mutex<Runtime>`.
+One incremental transcript poll reads at most 1 MiB, one retained JSONL line is capped at 256 KiB, and catalog or archive detail parsing rejects a complete session above 64 MiB.
+One Project/session/content-hash intent is idempotent, and background input is capped at 64 KiB, one inflight request, thirty requests per minute, and 10,000 active items per Project.
+Crossing a cap is an actionable state rather than an enlarged queue or automatic deletion.
+
+`UserPromptSubmit` is a separate high-frequency boundary.
+It accepts at most 256 KiB of hook input, opens the app database read-only, checks schema and active-projection integrity, requests at most sixty local FTS candidates, and returns at most three whole items and 600 estimated tokens.
+It has a 100 ms hard deadline and starts no model, embedding, transcript scan, child process, network request, or database write.
+Missing, locked, corrupt, stale, unresolved, or over-deadline inputs exit successfully with empty context so prompt submission continues.
+`SessionStart` reads the precomputed Project capsule under the same read-only and fail-open ownership, with at most five whole items and 600 tokens.
+If the first prompt arrives before that durable receipt is projected, the hook omits Memory for that prompt and retries on the next prompt; it never guesses the delivered set or creates a receipt sidecar or other second store.
+
+Regression owners are the `hide-project` identity tests, `hide-session` provider-neutral catalog and cursor tests, `hide-memory` Project-isolation, lifecycle, convergence, FTS transaction, redaction, ranking and budget tests, `hide-agent-hooks` fixture/config/fail-open tests, and core atomic-event and editor-preview tests.
+Native acceptance uses one exact worktree-local signed app PID and window against a private Herdr server and private app state.
+Record hook idle and driven timing separately, including sample count and failures, and record provider request count, queue/inflight bounds, child descendants, and RSS separately from the prompt path.
+An automated deadline test proves bounded return under its fixture conditions; it does not prove every storage device or native interaction remains below 100 ms.
+
 ### Background candidate launch
 
 Debug candidates support `--verification-background` from the first window presentation, including the pre-runtime recheck.

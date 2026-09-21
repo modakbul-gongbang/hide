@@ -59,6 +59,13 @@
       "reason": "Owns compact menu trigger labels and their neutral surface treatment.",
       "rules": {}
     },
+    "HideMultilineEditor.swift": {
+      "kind": "owner",
+      "reason": "Owns native multiline editing, focused input-surface treatment and accessibility labelling.",
+      "rules": {
+        "control:TextEditor": 1
+      }
+    },
     "HideSearchField.swift": {
       "kind": "owner",
       "reason": "Owns the shared search input, focus and keyboard handling.",

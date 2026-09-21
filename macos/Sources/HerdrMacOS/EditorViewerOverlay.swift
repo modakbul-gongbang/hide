@@ -40,7 +40,10 @@ struct EditorViewerOverlay: View {
 
     var body: some View {
         Group {
-            if let activeTab, activeTab.kind == .diff {
+            if let activeTab, activeTab.kind == .session || activeTab.kind == .memory,
+               let detail = editor?.archiveDetail {
+                ArchiveDetailView(detail: detail)
+            } else if let activeTab, activeTab.kind == .diff {
                 diffViewer(tab: activeTab)
             } else if let selectedURL {
                 VStack(spacing: HideTheme.spacingNone) {

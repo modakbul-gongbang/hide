@@ -2576,6 +2576,7 @@ impl SessionReader for ScriptedSessionReader {
         Ok(ParsedSession {
             title: None,
             events: self.events.borrow().clone(),
+            event_offsets: Vec::new(),
             skipped_lines: 0,
             skipped_reasons: Default::default(),
             rescan_reason: None,
@@ -2590,6 +2591,7 @@ impl SessionReader for FakeSessionReader {
         Ok(ParsedSession {
             title: None,
             events: vec![human_event("작업 요약을 생성하고 표시를 검증해줘")],
+            event_offsets: Vec::new(),
             skipped_lines: 0,
             skipped_reasons: Default::default(),
             rescan_reason: None,
@@ -2784,6 +2786,7 @@ impl SessionReader for StateSequenceReader {
         Ok(ParsedSession {
             title: None,
             events: vec![human_event(format!("새 요청 {}", pane.state_change_seq))],
+            event_offsets: Vec::new(),
             skipped_lines: 0,
             skipped_reasons: Default::default(),
             rescan_reason: None,

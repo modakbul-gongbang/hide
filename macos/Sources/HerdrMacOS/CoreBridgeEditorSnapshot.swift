@@ -4,6 +4,7 @@ struct CoreEditorSnapshot: Decodable {
     let tabs: [CoreEditorTabSnapshot]
     let activeTabID: String?
     let document: CoreEditorDocumentSnapshot?
+    let archiveDetail: CoreArchiveDetailSnapshot?
 
     var path: String? { document?.path }
     var language: String? { document?.language }
@@ -18,12 +19,97 @@ struct CoreEditorSnapshot: Decodable {
         case tabs
         case activeTabID = "active_tab_id"
         case document
+        case archiveDetail = "archive_detail"
     }
 }
 
 enum CoreEditorTabKind: String, Decodable, Equatable, CaseIterable {
     case file
     case diff
+    case session
+    case memory
+}
+
+struct CoreArchiveDetailSnapshot: Decodable, Equatable {
+    let id: String
+    let kind: String
+    let title: String
+    let provider: String?
+    let unavailableReason: String?
+    let events: [CoreArchiveEventSnapshot]
+    let memory: CoreMemoryDetailSnapshot?
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, title, provider, events, memory
+        case unavailableReason = "unavailable_reason"
+    }
+}
+
+struct CoreArchiveEventSnapshot: Decodable, Equatable, Identifiable {
+    var id: String { "\(atUnixMS):\(role):\(kind)" }
+    let role: String
+    let kind: String
+    let atUnixMS: UInt64
+    let text: String
+    let memoryAttachedCount: Int?
+    let memoryAttachedItemIDs: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case role, kind, text
+        case atUnixMS = "at_unix_ms"
+        case memoryAttachedCount = "memory_attached_count"
+        case memoryAttachedItemIDs = "memory_attached_item_ids"
+    }
+}
+
+struct CoreMemoryDetailSnapshot: Decodable, Equatable {
+    let id: String
+    let body: String
+    let lifecycle: String
+    let revision: UInt64
+    let sourceCount: Int
+    let providedSessionCount: Int
+    let learnedAtUnixMS: UInt64
+    let conflictExistingID: String?
+    let conflictCandidateID: String?
+    let sources: [CoreMemorySourceSnapshot]
+    let revisions: [CoreMemoryRevisionSnapshot]
+
+    enum CodingKeys: String, CodingKey {
+        case id, body, lifecycle, revision, sources, revisions
+        case sourceCount = "source_count"
+        case providedSessionCount = "provided_session_count"
+        case learnedAtUnixMS = "learned_at_unix_ms"
+        case conflictExistingID = "conflict_existing_id"
+        case conflictCandidateID = "conflict_candidate_id"
+    }
+}
+
+struct CoreMemorySourceSnapshot: Decodable, Equatable, Identifiable {
+    var id: String { "\(provider):\(sessionID):\(eventOffset)" }
+    let provider: String
+    let sessionID: String
+    let eventOffset: UInt64
+    let available: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case provider, available
+        case sessionID = "session_id"
+        case eventOffset = "event_offset"
+    }
+}
+
+struct CoreMemoryRevisionSnapshot: Decodable, Equatable, Identifiable {
+    var id: UInt64 { revision }
+    let revision: UInt64
+    let body: String
+    let lifecycle: String
+    let createdAtUnixMS: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case revision, body, lifecycle
+        case createdAtUnixMS = "created_at_unix_ms"
+    }
 }
 
 struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {

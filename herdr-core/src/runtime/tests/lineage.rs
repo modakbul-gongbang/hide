@@ -1241,7 +1241,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
              "state_change_seq":2,"cwd":"/fixture","workspace_label":"Fixture","tokens":{"task":"Restore hook visibility"}}
         ],
         "panes": [
-            {"pane_id":"w1:p1","cwd":"/fixture","tokens":{"hide_hooks":"2","hide_sub_done":"2"}},
+            {"pane_id":"w1:p1","cwd":"/fixture","tokens":{"hide_hooks":hide_agent_hooks::HOOK_VERSION.to_string(),"hide_sub_done":"2"}},
             {"pane_id":"w1:p2","cwd":"/fixture"}
         ],
         "tabs": [{"workspace_id":"w1","tab_id":"t1","label":""}],
@@ -1272,6 +1272,9 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
                     version: hide_agent_hooks::HOOK_VERSION,
                 },
                 current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "999.0.0".to_owned(),
+                },
             },
             hide_agent_hooks::diagnosis::RuntimeDiagnosis {
                 runtime: hide_agent_hooks::AgentRuntime::Codex,
@@ -1279,6 +1282,9 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
                 path: "/fixture/.codex/hooks.json".to_owned(),
                 status: hide_agent_hooks::HookStatus::NotInstalled,
                 current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "999.0.0".to_owned(),
+                },
             },
         ],
         last_report_failure: None,
@@ -1292,7 +1298,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
             .map(|row| (row.id.as_str(), row.headline.as_str(), row.offers_install))
             .collect::<Vec<_>>(),
         vec![
-            ("claude-code", "Installed (v2)", false),
+            ("claude-code", "Installed (v4)", false),
             ("codex", "Not installed", true),
         ],
         "a runtime that is fine is not offered a reinstall (PRD B28)"
@@ -1543,11 +1549,11 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         ],
         "panes": [
             {"pane_id":"w1:p1","cwd":"/fixture",
-             "tokens":{"hide_hooks":"2","hide_sub_working":"2","hide_sub_done":"4"}},
-            {"pane_id":"w1:p2","cwd":"/fixture","tokens":{"hide_hooks":"2"}},
-            {"pane_id":"w1:p3","cwd":"/fixture","tokens":{"hide_hooks":"2"}},
+             "tokens":{"hide_hooks":hide_agent_hooks::HOOK_VERSION.to_string(),"hide_sub_working":"2","hide_sub_done":"4"}},
+            {"pane_id":"w1:p2","cwd":"/fixture","tokens":{"hide_hooks":hide_agent_hooks::HOOK_VERSION.to_string()}},
+            {"pane_id":"w1:p3","cwd":"/fixture","tokens":{"hide_hooks":hide_agent_hooks::HOOK_VERSION.to_string()}},
             {"pane_id":"w1:p4","cwd":"/fixture"},
-            {"pane_id":"w1:p5","cwd":"/fixture","tokens":{"hide_hooks":"2","hide_sub_working":"0","hide_sub_done":"0"}},
+            {"pane_id":"w1:p5","cwd":"/fixture","tokens":{"hide_hooks":hide_agent_hooks::HOOK_VERSION.to_string(),"hide_sub_working":"0","hide_sub_done":"0"}},
             {"pane_id":"w1:p6","cwd":"/fixture"}
         ],
         "tabs": [
@@ -1617,6 +1623,9 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
                     version: hide_agent_hooks::HOOK_VERSION,
                 },
                 current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "999.0.0".to_owned(),
+                },
             },
             hide_agent_hooks::diagnosis::RuntimeDiagnosis {
                 runtime: hide_agent_hooks::AgentRuntime::Codex,
@@ -1624,6 +1633,9 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
                 path: "/fixture/.codex/hooks.json".to_owned(),
                 status: hide_agent_hooks::HookStatus::NotInstalled,
                 current_version: hide_agent_hooks::HOOK_VERSION,
+                memory_compatibility: hide_agent_hooks::MemoryCompatibility::Supported {
+                    version: "999.0.0".to_owned(),
+                },
             },
         ],
         last_report_failure: None,

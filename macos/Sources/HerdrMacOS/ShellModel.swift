@@ -2265,6 +2265,28 @@ final class ShellModel: ObservableObject {
         core.persistUIState(rightPanelSection: section)
     }
 
+    var sessions: CoreSessionsSnapshot { core.snapshot?.sessions ?? .empty }
+
+    func refreshSessions() { core.refreshSessions() }
+    func setSessionsMode(_ mode: CoreSessionsMode) { core.setSessionsMode(mode) }
+    func setSessionsFilter(_ filter: CoreSessionsProviderFilter, query: String) {
+        core.setSessionsFilter(filter, query: query)
+    }
+    func openSession(_ id: String) { core.openArchive(kind: "session", id: id) }
+    func openMemory(_ id: String) { core.openArchive(kind: "memory", id: id) }
+    func openMemoryForTurn(_ itemIDs: [String]) { core.openMemoryForTurn(itemIDs) }
+    func applyMemoryAction(
+        _ action: String,
+        itemID: String? = nil,
+        candidateID: String? = nil,
+        body: String? = nil,
+        batchID: String? = nil,
+        conflictChoice: String? = nil
+    ) {
+        core.memoryAction(action, itemID: itemID, candidateID: candidateID, body: body,
+                          batchID: batchID, conflictChoice: conflictChoice)
+    }
+
     var changes: CoreChangesSnapshot {
         core.snapshot?.changes ?? .empty
     }

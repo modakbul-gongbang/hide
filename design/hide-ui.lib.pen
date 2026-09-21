@@ -13861,6 +13861,10 @@
     "--home-halo-radius": {
       "type": "number",
       "value": 6
+    },
+    "--size-editor-memory-min": {
+      "type": "number",
+      "value": 160
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

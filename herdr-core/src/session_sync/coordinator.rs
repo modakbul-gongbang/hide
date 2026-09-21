@@ -666,11 +666,23 @@ fn install_agent_hooks_on_first_run(home: &std::path::Path) {
             return;
         }
     }
-    for row in hide_agent_hooks::Diagnosis::read(home).runtimes {
-        if matches!(row.status, hide_agent_hooks::HookStatus::NotInstalled) {
-            install_agent_hook(home, row.runtime);
-        }
+    for runtime in first_run_hook_installs(&hide_agent_hooks::Diagnosis::read(home)) {
+        install_agent_hook(home, runtime);
     }
+}
+
+fn first_run_hook_installs(
+    diagnosis: &hide_agent_hooks::Diagnosis,
+) -> Vec<hide_agent_hooks::AgentRuntime> {
+    diagnosis
+        .runtimes
+        .iter()
+        .filter(|row| {
+            row.memory_compatibility.supports_injection()
+                && matches!(row.status, hide_agent_hooks::HookStatus::NotInstalled)
+        })
+        .map(|row| row.runtime)
+        .collect()
 }
 
 /// Reads the approved installs out under a brief lock. `None` means the core
@@ -1266,4 +1278,48 @@ fn stale_if_projected(
         return error;
     }
     SessionFetchError::Stale(error.message().to_owned())
+}
+
+#[cfg(test)]
+mod hook_install_tests {
+    use super::first_run_hook_installs;
+    use hide_agent_hooks::{
+        AgentRuntime, Diagnosis, HookStatus, MemoryCompatibility, RuntimeDiagnosis,
+    };
+
+    fn row(runtime: AgentRuntime, supported: bool) -> RuntimeDiagnosis {
+        RuntimeDiagnosis {
+            runtime,
+            label: runtime.label().to_owned(),
+            path: format!("/fixture/{}.json", runtime.id()),
+            status: HookStatus::NotInstalled,
+            current_version: hide_agent_hooks::HOOK_VERSION,
+            memory_compatibility: if supported {
+                MemoryCompatibility::Supported {
+                    version: "current".to_owned(),
+                }
+            } else {
+                MemoryCompatibility::UpdateRequired {
+                    installed_version: Some("old".to_owned()),
+                    minimum_version: "current".to_owned(),
+                }
+            },
+        }
+    }
+
+    #[test]
+    fn first_run_installs_only_memory_compatible_runtimes() {
+        let diagnosis = Diagnosis {
+            runtimes: vec![
+                row(AgentRuntime::ClaudeCode, false),
+                row(AgentRuntime::Codex, true),
+            ],
+            last_report_failure: None,
+        };
+
+        assert_eq!(
+            first_run_hook_installs(&diagnosis),
+            vec![AgentRuntime::Codex]
+        );
+    }
 }

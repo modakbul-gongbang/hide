@@ -418,7 +418,13 @@ private struct HideTabStrip: View {
     private func tabIcon(_ tab: ShellTabItem) -> String {
         switch tab.kind {
         case .herdr: "rectangle.split.2x1"
-        case .editor(let tab): tab.kind == .diff ? "doc.text.magnifyingglass" : "doc.text"
+        case .editor(let tab):
+            switch tab.kind {
+            case .diff: "doc.text.magnifyingglass"
+            case .session: "text.bubble"
+            case .memory: "brain.head.profile"
+            case .file: "doc.text"
+            }
         }
     }
 
@@ -427,7 +433,12 @@ private struct HideTabStrip: View {
         switch tab.kind {
         case .herdr: return tabIcon(tab)
         case .editor(let editor):
-            return editor.kind == .diff ? "doc.text.magnifyingglass" : "doc.text.fill"
+            switch editor.kind {
+            case .diff: return "doc.text.magnifyingglass"
+            case .session: return "text.bubble.fill"
+            case .memory: return "brain.head.profile.fill"
+            case .file: return "doc.text.fill"
+            }
         }
     }
 }

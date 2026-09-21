@@ -25,6 +25,40 @@ The shell decodes it strictly: one string value it does not know fails the whole
 The string enums the core serializes into the snapshot are therefore pinned in `contracts/snapshot-wire-enums.json`; `model.rs` tests that each variant emits the listed value and `SnapshotWireEnumTests` that each listed value decodes, so a variant added on one side fails a suite before it can reach a running shell (a `PullRequestTitle` origin once shipped as `pull_request_title` against a shell that read `pr_title`).
 The bridge publishes `bridgeError` only on change and names the coding path in it, because a repeated failure republished every notification rebuilt every view observing the bridge at the notification rate.
 
+## Project sessions and Memory
+
+`hide-project` is the single durable identity boundary for session discovery, Memory storage, core projection, and hook retrieval.
+It folds linked worktrees into their canonical main worktree, identifies plain folders in device scope, and returns a typed failure instead of falling back to another Project or a display name.
+`hide-session` owns provider-specific file discovery and parsing for local Claude Code and Codex sessions, while `herdr-core` receives only provider-neutral catalog rows and archived ledger events.
+Raw transcript bodies remain in the providers' files.
+
+`hide-memory` owns Hide-native extraction and relation planning, one app SQLite store, its schema and migrations, Project hard filters, session cursors, item and revision lifecycle, provenance, receipts, query-dependent retrieval, and the active FTS5 projection.
+Official Mem0 OSS v2.1.0 does not execute in Hide and is not a runtime dependency, embedded service, compatibility package, daemon, account, credential, or vector database.
+Its pinned extraction and update prompt assets are retained only as audited design-reference provenance under `hide-memory/reference/mem0-v2.1.0/`.
+`hide-memory/hide-native-engine-reference.json` records the exact upstream commit, audited source hashes, local prompt-asset hashes, and the explicit non-runtime role.
+Every Hide-native analysis result is a proposal only: the write service validates Project identity, provenance, redaction, lifecycle, capacity, relation authority, and transaction boundaries before any durable change.
+Normalized session events and the bounded active-Memory comparison set both pass through the current local redactor at the final provider egress boundary.
+Relation planning receives a relevance-neutral active-Memory comparison set, rather than prompt FTS results, so same-meaning Korean and English memories do not need shared literal tokens to reach the provider's strict relation schema.
+The comparison set has item, token, and serialized-byte caps and is composed with normalized events as JSON arrays under the final 64 KiB request cap.
+The disclosure acceptance is versioned; a material egress-copy change disables previously enabled Projects until the operator accepts the current disclosure, without deleting their local data.
+Prompt retrieval confirms lexical or meaningful cwd/path overlap before ranking; salience, extraction confidence, and recency only break ties after relevance and are never presented as semantic similarity.
+The app owns the only writer connection.
+Hook helpers and render-facing reads open read-only connections, fail closed on schema or projection drift, and never rebuild the index in the prompt path.
+The same SQLite store owns one random authentication key per Project, and each hook receipt is authenticated over Project, runtime, session, event, and the exact ordered item revisions before the core accepts it as provided-history.
+Transcript text prefixes remain display classification only: receipt authority additionally requires Claude provider-owned metadata or a Codex developer message, so human or Project instruction text cannot assert a receipt.
+
+The coordinator's existing worker context owns session refresh, the five-second due-work poll, and one Memory analysis intent at a time.
+It waits for a session file to remain unchanged for sixty seconds, reads only complete events after the durable cursor, redacts known credential patterns locally, and sends bounded normalized input through `hide-ai` outside `Mutex<Runtime>`.
+The durable cursor stores file identity and the safe start offset of an incomplete final line, never that line's bytes; a later read resumes from the provider-owned session file.
+Each incremental poll reads at most 1 MiB and retains no JSONL line larger than 256 KiB, while catalog and archive detail reads reject a complete session larger than 64 MiB.
+The same provider, session, content-hash retry converges through a deterministic receipt instead of repeating revisions.
+All filesystem, SQLite, hook-config, provider, and serialization work occurs outside the runtime mutex; applying a completed worker result is the only locked transition.
+Disabling Memory stops new analysis and injection without deleting its data, while Forget, revision Undo, and confirmed Project deletion have their own explicit lifecycle operations.
+
+The core owns the fourth right-panel section, each Project's Sessions/Memory mode, filters, actionable analysis state, and editor preview identity.
+Opening Memory for a turn is one typed event that makes the panel visible, selects Sessions, enters Memory mode, and applies the exact provided-item filter in one frame.
+The Swift shell renders those snapshot values and dispatches typed actions; it does not discover sessions, rank memories, infer counts, or classify failures.
+
 The agent-context-labels plugin is a separate headless consumer of the same Herdr socket contract.
 It opens one long-lived `events.subscribe` stream for pane lifecycle events, bootstraps pane state with `agent.list`, and reports metadata only after a display transition.
 Its event loop also receives hook and refresh wakes through a short-lived Unix socket in the plugin state directory.

@@ -384,6 +384,7 @@ The native controls are not replaced with gesture-only drawings.
 | `HideCheckboxStyle` | 16pt mark inside a compact hit area; neutral checked fill and check mark | Toggle owns checked state and accessibility; unchecked, checked, disabled, hover and focus are distinguishable |
 
 `HideInputSurface` owns text-input typography, horizontal inset, elevated fill, neutral border, focused outline and disabled appearance at compact 24pt or regular 36pt minimum height.
+`HideMultilineEditor` owns native multiline editing, focus tracking, the shared input surface, and its accessibility label; callers provide only the bound text, label, and token-backed minimum height.
 It is a presentation modifier and does not install focus, submit, selection or keyboard handlers.
 Search retains `HideSearchKeyboard` as its only focus owner; address and form inputs retain their existing native editing bindings.
 `HideMenuChipLabel` owns compact menu-trigger typography, chevron, surface and border; the native Menu retains activation and selected menu-item semantics.
@@ -577,7 +578,7 @@ The project tree uses one token-based indentation ladder: top-level projects and
 Selection begins just before the selected checkout's own content edge instead of spanning back to the top-level edge, so its background preserves the child relationship.
 Each completed project block leaves the same project-level vertical gap before the next sibling or top-level inactive disclosure; rows inside a block retain their compact spacing.
 
-The right panel starts with Overview, followed by Explorer and History.
+The right panel order is Overview, Explorer, History, then Sessions.
 The compact section selector uses text labels on one line without a competing checkout title.
 Saved Git section selections migrate to Overview; other selections survive, and new state starts on Overview.
 Overview is project-scoped and is one list: the current Project's worktrees as groups, each holding the agents working in it, under a strip of derived project facts.
@@ -621,6 +622,28 @@ Retired or moved panes leave the list on the next topology projection.
 Remote Overview explicitly reports that local Git context is unavailable.
 Explorer contains file navigation only, with no checkout summary above it.
 History retains its diff navigation; Git/PR context remains in Overview and Workspace controls.
+Sessions is Project-scoped and opens as a mixed latest-first Claude Code and Codex list with provider badges, `All / Codex / Claude Code` filtering, and search.
+Its `Sessions / Memory` mode is restored per Project through core-owned UI state.
+Rows are read views in the narrow panel; one click opens a read-only session or Memory detail in the checkout's existing replaceable editor preview, and beginning a Memory edit promotes that preview to keep-open.
+The row owns its actual provider, first request, checkout, time, availability, content, source count, and lifecycle copy; unavailable sources dim only their own row and expose Retry plus Copy source location.
+
+Memory Off is a disclosure state, not an empty management screen.
+It explains provider transmission and subscription use, provider retention and deletion limits, local derived-data retention, and known-secret exclusion before the single primary `Turn on Memory` action.
+An outdated hook opens an explicit confirmation that names the local Claude Code and Codex configuration ownership and preservation boundary before Hide updates its marked entries.
+Memory On shows a flat searchable list, `Memory on`, active count, source count, and update time without exposing categories, embeddings, indexes, or merge internals.
+Actionable failures use the smallest local notice with exactly one matching action: update hooks, open Settings, sign in, retry, review a conflict, or review capacity.
+Turning Memory off is immediate and retains its count; deleting all derived Project Memory requires a destructive confirmation that distinguishes it from raw provider sessions.
+
+Memory detail shows the full item, learned time, revision history, provided-session count, and navigable provider source sessions.
+Edit promotes the preview and has explicit Save and Cancel; Forget is reversible in the app session, while confirmed Project deletion is not.
+Conflicting candidates remain excluded from injection and offer `Keep existing`, `Replace with new`, and `Forget both` in detail.
+After learning, a compact `Learned N memories · Undo` notice does not cover the working surface.
+
+A provided prompt shows `✦ Memory attached N` only when N is greater than zero, and uses attached or provided rather than used or applied.
+Activating it changes panel visibility, section, Memory mode, and the exact `This turn` filter in one core event; `Show all` clears that filter.
+SessionStart provenance is `Project Memory ready · N` only when N is greater than zero.
+At 320pt, 344pt, and 400pt widths, mode, provider, count, and action controls remain legible; long snippets tail-truncate with the full value in tooltip and accessibility text.
+VoiceOver reads session rows as provider, first request, checkout, time, availability and Memory rows as content, source count, status.
 VoiceOver reads a group header as its branch, purpose and each badge in words, such as `prd/hide-orchestrator, review the checkout flow, pull request 107 changes requested, checks failing, 12 changed files, 2.4 GB`, and a checkout row as its name, lifecycle, commit age and second-line sentence in that order; every tooltip is also the control's accessibility help.
 
 Allocated on disk sums main, linked worktree folders and the actual shared Git directory once.

@@ -19,20 +19,40 @@ One entry is appended per registered event, and nothing else in the file is touc
 The write is atomic - a temporary file and a rename - and `serde_json`'s `preserve_order` is enabled for this crate so appending one hook does not rewrite the operator's whole file in alphabetical order.
 Entries belonging to other tools are counted before and after, and a regression test asserts they survive.
 
-Four events are registered, because those are the four both runtimes declare here: `SessionStart`, `SubagentStart`, `SubagentStop`, and `Stop`.
+Five events are registered: `SessionStart`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, and `Stop`.
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
 
 Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command.
-The runtime argument selects that runtime's SessionStart stdout envelope; the version-2 marker makes a version-1 installation outdated so Settings offers to refresh the stored commands.
+The runtime argument selects that runtime's stdout envelope; the version-3 marker makes an installation without `UserPromptSubmit` outdated so Settings offers to refresh the stored commands.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
 Nothing parses the rest of the command, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
 
 ## What the hook returns and reports back
 
-On `SessionStart`, the helper writes the runtime's JSON hook envelope to stdout with one `hookSpecificOutput.additionalContext` sentence telling the agent to set a one-line worktree purpose with the exact `herdr workspace report-metadata <workspace> --source <you> --token purpose="…"` command.
+On `SessionStart`, the helper writes one runtime JSON envelope whose `hookSpecificOutput.additionalContext` combines the existing one-line worktree-purpose instruction with the bounded Project Memory capsule when Memory is enabled.
+On `UserPromptSubmit`, it parses at most 256 KiB of runtime input, resolves the same durable Project identity as the app, and performs a read-only local lookup against the materialized active projection.
+The prompt text, up to two recent human topics, and current checkout metadata are search inputs only; the original prompt is never replaced.
+An item is eligible only after a lexical match, a bounded two- or three-character literal match, or meaningful path overlap below the Project root; extraction confidence never stands in for semantic similarity and only breaks ties after relevance.
+At most three whole Memory items and 600 estimated tokens are returned in the same `additionalContext` envelope, excluding items already provided by `SessionStart` for that session.
+The core records the authoritative SessionStart receipt in the app-owned SQLite store after it observes the injected envelope, including an internal zero-item receipt when the session begins before any Memory exists.
+The helper authenticates that receipt with the Project-scoped key in the same SQLite store, binding the runtime, session, hook event, and exact ordered item revisions without creating another persistence surface.
+The core accepts it only from provider-owned transcript metadata, including actual Codex developer messages, and verifies the authentication tag before recording or hiding the marker.
+That zero-item receipt does not present a misleading `Project Memory ready 0` message; it only lets later prompts distinguish an observed empty start from a projection race.
+If the first prompt races that projection, the helper omits Memory for that prompt rather than guessing which items were delivered; the next prompt retries the read-only lookup after the receipt exists, and no sidecar or second store is written.
+If multiple observed SessionStart envelopes name different item sets, the exclusion read returns their deterministic union so retries converge instead of selecting an arbitrary receipt.
+For a linked worktree, the helper maps the actual cwd relative to that checkout root back into the durable main-worktree namespace before path ranking, so the worktree identity folds while `crates/foo` relevance remains intact.
 Claude Code and Codex currently accept the same envelope, but the installed runtime argument keeps that protocol choice explicit.
 `SubagentStart`, `SubagentStop`, and `Stop` write nothing to stdout, preserving their existing silent behavior.
 This stdout is advisory context for the agent and is independent of the best-effort metadata report described below.
+
+The prompt path performs no provider or embedding call, transcript scan, child-process launch, or database write.
+Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context and still exit zero.
+The caller-visible deadline is 100 ms from process launch, including stdin collection and SQLite work, and candidate, item, and token counts are hard bounded.
+The helper gives its in-process work 75 ms so process startup, scheduling, stdout flush, and teardown stay inside that caller-visible limit.
+Stdin is read through a nonblocking descriptor until EOF, the size cap, or the absolute deadline, and SQLite receives the same deadline through its progress handler.
+Current Claude Code and Codex `UserPromptSubmit` input and output shapes are fixed by sanitized fixtures in `hide-agent-hooks/tests/fixtures/`.
+The app probes the installed runtime binaries with a 750 ms bounded version check and currently requires Claude Code 2.1.278 or Codex 0.155.1 for Memory injection.
+A runtime below that capability is diagnosed as `Update required` without disabling a supported installed runtime or Sessions browsing.
 
 The helper is stateless, as a hook script must be.
 The count lives in `~/.hide/agent-hooks/panes/`, keyed by `$HERDR_PANE_ID`, and is republished after every event through the `pane.report_metadata` socket method, which Herdr defines as display-only pane metadata.
@@ -57,7 +77,8 @@ A token that is not a count is dropped rather than coerced.
 `Stop` sweeps `working` to zero, because the turn is over and a `SubagentStop` that never arrived cannot leave a count behind.
 A pane Herdr has stopped listing has its record swept on the next session bootstrap.
 
-The helper always exits zero and drains its standard input after writing the SessionStart context when applicable.
+The helper always exits zero and reads no more than its bounded standard-input prefix before writing applicable context.
+A producer that never closes stdin is released at the same absolute Memory deadline.
 A hook that fails must never be what breaks the operator's agent.
 
 Exiting zero is not the same as saying nothing.

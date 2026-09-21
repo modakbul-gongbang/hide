@@ -267,6 +267,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             "pet",
             "recent_closed",
             "schema_version",
+            "sessions",
             "status",
             "tab",
             "task_operation",

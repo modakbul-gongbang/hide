@@ -84,6 +84,7 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
     private var usageWindowObservation: AnyCancellable?
     private var paneKeyMonitor: Any?
     private var reopenClosedMenuItem: NSMenuItem?
+    private var terminationSignalSource: (any DispatchSourceSignal)?
 
     override init() {
         let startedAt = Date()
@@ -102,6 +103,20 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
         HideRuntimeEnvironment.applyPathToProcess()
         model = ShellModel()
         super.init()
+        // A default SIGTERM bypasses AppKit's termination delegate and Swift
+        // object teardown. Convert it into the ordinary application shutdown
+        // path so herdr-core can cancel analysis and reap provider children.
+        signal(SIGTERM, SIG_IGN)
+        let terminationSignalSource = DispatchSource.makeSignalSource(
+            signal: SIGTERM,
+            queue: .main
+        )
+        terminationSignalSource.setEventHandler { [weak self] in
+            guard let self else { return }
+            NSApplication.shared.terminate(self)
+        }
+        terminationSignalSource.resume()
+        self.terminationSignalSource = terminationSignalSource
         HideLaunchTrace.mark(
             "delegate.init.ready",
             durationMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1_000)
@@ -577,7 +592,10 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        terminationSignalSource?.cancel()
+        terminationSignalSource = nil
         model.core.runtimeReadyHandler = nil
+        model.core.shutdown()
         usageWindowObservation?.cancel()
         usageWindowObservation = nil
         if let paneKeyMonitor {

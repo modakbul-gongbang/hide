@@ -483,6 +483,50 @@ pub(super) struct UiStateUpdatePayload {
     pub(super) usage_popover_open: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct SessionsModePayload {
+    pub(super) mode: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SessionsFilterPayload {
+    pub(super) provider: String,
+    #[serde(default)]
+    pub(super) query: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ArchiveOpenPayload {
+    pub(super) kind: String,
+    pub(super) id: String,
+    #[serde(default = "default_true")]
+    pub(super) preview: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct MemoryOpenForTurnPayload {
+    pub(super) item_ids: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct MemoryActionPayload {
+    pub(super) action: String,
+    #[serde(default)]
+    pub(super) item_id: Option<String>,
+    #[serde(default)]
+    pub(super) candidate_id: Option<String>,
+    #[serde(default)]
+    pub(super) body: Option<String>,
+    #[serde(default)]
+    pub(super) batch_id: Option<String>,
+    #[serde(default)]
+    pub(super) conflict_choice: Option<String>,
+}
+
 /// Which changed file the changes view is showing the diff for. `None`
 /// deselects, which is what closing the diff means.
 #[derive(Debug, Deserialize)]
@@ -756,6 +800,12 @@ pub(super) enum Event {
     PathMove(PathMovePayload),
     PathTrash(PathTrashPayload),
     UiStateUpdate(UiStateUpdatePayload),
+    SessionsRefresh,
+    SessionsSetMode(SessionsModePayload),
+    SessionsSetFilter(SessionsFilterPayload),
+    ArchiveOpen(ArchiveOpenPayload),
+    MemoryOpenForTurn(MemoryOpenForTurnPayload),
+    MemoryAction(MemoryActionPayload),
     RetryConnect(RetryConnectPayload),
     InstallAgentHooks(InstallAgentHooksPayload),
     AiSettings(AiSettingsPayload),
@@ -894,6 +944,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "path_move" => decode!(PathMovePayload, PathMove),
         "path_trash" => decode!(PathTrashPayload, PathTrash),
         "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
+        "sessions_refresh" => Ok(Event::SessionsRefresh),
+        "sessions_set_mode" => decode!(SessionsModePayload, SessionsSetMode),
+        "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
+        "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
+        "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
+        "memory_action" => decode!(MemoryActionPayload, MemoryAction),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
         "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
@@ -941,6 +997,16 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
 impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
+            Event::SessionsRefresh => self.request_sessions_refresh(),
+            Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
+            Event::SessionsSetFilter(payload) => {
+                self.set_sessions_filter(&payload.provider, payload.query)
+            }
+            Event::ArchiveOpen(payload) => {
+                self.open_archive_detail(&payload.kind, &payload.id, payload.preview)
+            }
+            Event::MemoryOpenForTurn(payload) => self.open_memory_for_turn(payload.item_ids),
+            Event::MemoryAction(payload) => self.apply_memory_action(payload),
             Event::Attachment(payload) => self.begin_attachment(payload),
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
@@ -2633,6 +2699,8 @@ impl Runtime {
                 let previous_ui_state = current.clone();
                 let git_was_visible = current.right_panel_visible
                     && matches!(current.right_panel_section, RightPanelSection::Overview);
+                let sessions_were_visible = current.right_panel_visible
+                    && matches!(current.right_panel_section, RightPanelSection::Sessions);
                 self.snapshot.ui_state = UiStateSnapshot {
                     left_sidebar_visible: payload
                         .left_sidebar_visible
@@ -2647,6 +2715,7 @@ impl Runtime {
                         .as_deref()
                         .and_then(RightPanelSection::parse)
                         .unwrap_or(current.right_panel_section),
+                    sessions_mode_by_project: current.sessions_mode_by_project,
                     expanded_paths: payload.expanded_paths,
                     collapsed_workspace_ids: payload.collapsed_workspace_ids,
                     collapsed_checkout_ids: payload
@@ -2723,6 +2792,14 @@ impl Runtime {
                 }
                 if git_is_visible != git_was_visible {
                     self.refresh_card();
+                }
+                let sessions_are_visible = self.snapshot.ui_state.right_panel_visible
+                    && matches!(
+                        self.snapshot.ui_state.right_panel_section,
+                        RightPanelSection::Sessions
+                    );
+                if sessions_are_visible && !sessions_were_visible {
+                    self.request_sessions_refresh();
                 }
                 // Session sync owns session-derived temporary workspaces.
                 // UI-state persistence must not rebuild from an empty session

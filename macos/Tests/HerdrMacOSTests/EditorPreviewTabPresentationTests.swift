@@ -39,6 +39,40 @@ struct EditorPreviewTabPresentationTests {
         #expect(!EditorTabTitlePresentation.italic(preview: false))
     }
 
+    @Test func sessionAndMemoryArchivesStopPresentingAsPreviewAfterPromotion() {
+        let before = ShellTabStrip.items(
+            strip: [
+                CoreStripTabSnapshot(
+                    id: "session:s1", kind: .session, sourceID: "s1",
+                    label: "Codex · 프로젝트 기억", preview: true
+                ),
+            ],
+            herdrTabs: [],
+            editorTabs: [editorTab("s1", preview: true, kind: .session)],
+            activeHerdrTabID: nil,
+            activeFileTabID: "s1"
+        )
+        let after = ShellTabStrip.items(
+            strip: [
+                CoreStripTabSnapshot(
+                    id: "memory:m1", kind: .memory, sourceID: "m1",
+                    label: "Memory", preview: false
+                ),
+            ],
+            herdrTabs: [],
+            editorTabs: [editorTab("m1", preview: false, kind: .memory)],
+            activeHerdrTabID: nil,
+            activeFileTabID: "m1"
+        )
+
+        #expect(before.map(\.preview) == [true])
+        #expect(EditorTabTitlePresentation.spoken(label: before[0].label, preview: before[0].preview)
+            == "Codex · 프로젝트 기억 · Preview")
+        #expect(after.map(\.preview) == [false])
+        #expect(EditorTabTitlePresentation.spoken(label: after[0].label, preview: after[0].preview)
+            == "Memory")
+    }
+
     @Test func aStripEntryWithoutTheFlagDecodesAsAnOrdinaryTab() throws {
         let entry = try JSONDecoder().decode(
             CoreStripTabSnapshot.self,

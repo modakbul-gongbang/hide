@@ -1,0 +1,21 @@
+{
+  "engine": "hide-native-project-memory",
+  "runtime_dependency": false,
+  "design_reference": {
+    "name": "Mem0 OSS",
+    "repository": "https://github.com/mem0ai/mem0",
+    "tag": "v2.1.0",
+    "commit": "19f713408273fb1d657daa38d7b82ccf496d36d5",
+    "license": "Apache-2.0",
+    "role": "prompt semantics and relation-planning design reference only"
+  },
+  "reference_prompt_assets": {
+    "reference/mem0-v2.1.0/additive-extraction.prompt.txt": "b9b3e71d9f73b8d9aefbfd6dfd3e6f1d425ce8cd100fbc969ba15e8ae013ad48",
+    "reference/mem0-v2.1.0/update-memory.prompt.txt": "18af574579716b35181914dcdeeed6840cea8c4b50342ebe378e1b3452668a4d"
+  },
+  "audited_upstream_files": {
+    "mem0/configs/prompts.py": "10bc8a34b3b5f0ce24560a2a3190c9112b979a891b981f48393bbd168d915a5c",
+    "mem0/memory/main.py": "5b1b75e2f00aca7bd368a6e9cd5905145d60fd05a0e36d6b1ef3e2f1b4f28ca1",
+    "mem0/utils/scoring.py": "9a4313fda723ad05cb52278e9ef0b9b5792b71fb3b41ba6318410121022e4527"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-claude-session",
+  "transcript_path": "/tmp/fixture-claude-session.jsonl",
+  "cwd": "/tmp/fixture-project",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Inspect the project memory boundary"
+}

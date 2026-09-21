@@ -1,7 +1,7 @@
 # Background AI providers
 
 `hide-ai/` is the one boundary through which a Hide feature asks a language model for something in the background.
-The first consumer is the context-label plugin under `plugins/agent-context-labels/`; later features (naming, summarising, classifying) reuse the same boundary rather than a provider client of their own.
+Its consumers are the context-label plugin under `plugins/agent-context-labels/` and Project Memory extraction under `hide-memory/`; later features reuse the same boundary rather than a provider client of their own.
 This guide owns the boundary's rules; the code under `hide-ai/src/` and the tests under `hide-ai/tests/` are its executable authority.
 
 ## Ownership split
@@ -12,6 +12,22 @@ There is no output token ceiling in the request, because no provider contract ho
 
 `hide-ai` owns everything about providers: which are installed and logged in, the child process and its protocol, timeouts and cancellation, the retry policy, fallback between providers, duplicate suppression, and the structured error a caller branches on.
 No feature type lives in the crate, and no provider detail leaks out of it.
+
+Project Memory uses feature id `project_memory` through Hide's native analysis, relation-planning, persistence, and retrieval boundary.
+Official Mem0 OSS does not execute and is not a runtime dependency or service.
+Pinned Mem0 OSS v2.1.0 extraction and update prompt assets remain only as audited design-reference provenance; their exact upstream commit, source hashes, local asset hashes, and non-runtime role live in `hide-memory/hide-native-engine-reference.json`.
+Hide's strict schema carries candidate text, kind, extraction confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
+The write service validates those proposals against source events, Project identity, privacy, provenance, lifecycle, and resource caps.
+The local search path uses active-only FTS5 plus bounded literal and path fallback; it admits only query-relevant candidates, then uses salience, extraction confidence, and recency as tie-breakers rather than semantic-similarity signals.
+It sends only locally redacted, normalized human and assistant events after the durable session cursor, plus a relevance-neutral active-Memory comparison set used to find duplicates, updates, and conflicts across languages.
+The comparison set is bounded by item, token, and exact serialized-byte budgets; normalized events and comparison items are composed as JSON arrays under one final 64 KiB request-input cap, so individually valid inputs cannot combine into a permanently unprocessable batch.
+Both fields pass through the current local redactor again at the final provider egress boundary.
+The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
+Memory analysis reuses this boundary's selected provider, availability, bounded same-provider retry, duplicate suppression, process ownership, cancellation, and budgets.
+It may fall through to the other logged-in provider under the same bounded router policy, and the disclosure names both that possibility and the fact that the stored analysis batch records which provider answered.
+The disclosure also names active-Memory retransmission, and its stored version disables previously enabled Projects when this material data-egress description changes so that the operator must opt in again.
+Not-authenticated, unavailable, usage-limited, and exhausted outcomes pause new analysis without disabling existing local Memory search or Sessions browsing.
+Logs retain request, feature, provider, Project/session subject IDs, counts, duration, and outcome, but never transcript text, prompt text, Memory body, file path, credential, or provider thread ID.
 
 ## Providers
 
@@ -85,8 +101,9 @@ It re-reads the choice on every scan and rotates nothing, so a line per read wou
 A write that fails says so on the same group, because a choice the operator made and the file on disk must not silently disagree.
 A session with no home directory to write to reports that on the group for the same reason: the choice has already left the runtime, so it cannot be dropped quietly.
 
-Choosing a provider reorders the priority and changes nothing else.
-The chosen one leads, the other still follows it, and every retry, cooldown and stickiness constant is still `RouterConfig::default()`'s, so the fallback described below is the same fallback.
+Choosing a provider reorders the ordinary background-feature priority and changes nothing else.
+The context-label feature may fall through to the other provider under the policy below.
+Project Memory uses that ordinary priority and fallback policy, while retaining the router's retry, cooldown, cancellation, duplicate-suppression, process, and budget rules.
 
 Settings shows each provider's availability and the models it offers.
 Both come from asking the provider, so no model list is written into the core or the shell; `AiRouter::availability()` and `AiRouter::models()` are the source.
@@ -97,6 +114,9 @@ Asking costs child processes, so the probe is a capability reader like the proje
 
 A background feature asks a resident process for an answer, so `hide-ai` owns that process the way `oh-my-principle`'s resident-process practice requires: one spawn helper, one shutdown path, a child that dies with its owner, and caps that turn a leak into a reported failure rather than a larger number.
 This exists because on 2026-09-17 a single label watcher held 1,699 `codex app-server` descendants and 11.6 GB for two idle days with no signal at all.
+
+The macOS shell converts SIGTERM into AppKit's ordinary termination path and explicitly destroys herdr-core before exit.
+That path cancels the analysis coordinator and reaches each backend's existing child shutdown rather than relying on Swift object deinitialization to happen before process exit.
 
 Every child the crate starts goes through one spawn helper (`hide-ai/src/process.rs`).
 The codex app-server is owned through the stdin pipe it inherits: when the owner dies, the pipe closes and the whole tree ends, which is what makes a `kill -9` of the owner leave no survivors.

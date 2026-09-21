@@ -87,6 +87,8 @@ enum ConversationLedgerFormatting {
         let timestamp: Date?
         let elapsed: String?
         let promptGlyph: String?
+        let memoryAttachedCount: Int?
+        let memoryAttachedItemIDs: [String]
         var isWorking: Bool
     }
 
@@ -108,6 +110,8 @@ enum ConversationLedgerFormatting {
                     timestamp: message.timestamp,
                     elapsed: nil,
                     promptGlyph: promptGlyph(for: provider),
+                    memoryAttachedCount: message.memoryAttachedCount,
+                    memoryAttachedItemIDs: message.memoryAttachedItemIDs,
                     isWorking: false
                 ))
             case .assistant:
@@ -127,6 +131,8 @@ enum ConversationLedgerFormatting {
                         timestamp: timestamp,
                         elapsed: elapsedText(from: lastUserDate, to: timestamp),
                         promptGlyph: nil,
+                        memoryAttachedCount: nil,
+                        memoryAttachedItemIDs: [],
                         isWorking: false
                     )
                 } else {
@@ -136,6 +142,8 @@ enum ConversationLedgerFormatting {
                         timestamp: message.timestamp,
                         elapsed: elapsedText(from: lastUserDate, to: message.timestamp),
                         promptGlyph: nil,
+                        memoryAttachedCount: nil,
+                        memoryAttachedItemIDs: [],
                         isWorking: false
                     ))
                 }
@@ -150,6 +158,8 @@ enum ConversationLedgerFormatting {
                 timestamp: result[index].timestamp,
                 elapsed: elapsedText(from: lastUserDate, to: now),
                 promptGlyph: result[index].promptGlyph,
+                memoryAttachedCount: result[index].memoryAttachedCount,
+                memoryAttachedItemIDs: result[index].memoryAttachedItemIDs,
                 isWorking: true
             )
         } else {
@@ -159,6 +169,8 @@ enum ConversationLedgerFormatting {
                 timestamp: nil,
                 elapsed: elapsedText(from: lastUserDate, to: now),
                 promptGlyph: nil,
+                memoryAttachedCount: nil,
+                memoryAttachedItemIDs: [],
                 isWorking: true
             ))
         }
@@ -215,6 +227,22 @@ enum ConversationLedgerFormatting {
                     .conversationRole: "human",
                 ]
                 output.append(NSAttributedString(string: text, attributes: attributes))
+                if let count = turn.memoryAttachedCount, let label = SessionsPresentation.attachedLabel(count) {
+                    let itemQuery = turn.memoryAttachedItemIDs
+                        .map { $0.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0 }
+                        .joined(separator: ",")
+                    let attached = NSAttributedString(
+                        string: "\n✦ \(label)",
+                        attributes: [
+                            .font: NSFont.systemFont(ofSize: HideTheme.Typography.caption * textScale, weight: .medium),
+                            .foregroundColor: HideTheme.Native.secondary,
+                            .paragraphStyle: paragraph,
+                            .conversationRole: "injected",
+                            .link: URL(string: "hide-memory://this-turn?items=\(itemQuery)") as Any,
+                        ]
+                    )
+                    output.append(attached)
+                }
             case .assistant:
                 let rendered: NSMutableAttributedString
                 do {
@@ -472,7 +500,7 @@ struct ConversationLedgerView: NSViewRepresentable {
             now: now
         )
         let signature = turns.map {
-            "\($0.role)|\($0.text)|\($0.timestamp?.timeIntervalSince1970 ?? -1)|\($0.elapsed ?? "")|\($0.isWorking)"
+            "\($0.role)|\($0.text)|\($0.timestamp?.timeIntervalSince1970 ?? -1)|\($0.elapsed ?? "")|\($0.memoryAttachedCount ?? 0)|\($0.memoryAttachedItemIDs.joined(separator: ","))|\($0.isWorking)"
         }.joined(separator: "\n")
             + "|\(provider)|\(textScale)"
         if context.coordinator.source != signature {
