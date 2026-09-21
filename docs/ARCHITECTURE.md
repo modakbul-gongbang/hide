@@ -230,4 +230,9 @@ HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `cl
 No HTTP request dispatches a core event.
 `hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client, and `hide serve --keep-alive`.
 It does not start a Herdr server.
+A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a debug build reads the directory from disk, so `pnpm build` shows up without a cargo rebuild.
+The core spawns `herdr terminal session control` for every pane attach and refuses without a binary, so `hided` resolves one from `HERDR_BIN_PATH`, the variable Herdr sets in every pane it manages, then from the first `herdr` on PATH; with neither it logs `herdr_bin.missing` and no pane terminal can attach.
+Swift coexistence (PRD B5) is decided per socket, not per process: `hided/src/coexist.rs` finds the `HerdrMacOS` process, reads its environment from the kernel, applies the shell's own socket rule (`HERDR_SOCKET_PATH`, else `$HOME/.config/herdr/herdr.sock`), and only an attach to that same socket prompts, or refuses without a TTY.
+An isolated socket never prompts, because the shell on the operator's socket next to a daemon on a private one is the ordinary e2e and measurement arrangement.
 The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.
+With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
