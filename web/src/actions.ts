@@ -21,6 +21,16 @@ export function createActions(dispatch: DispatchFn) {
     return checkout ? { checkout, tab: visibleTab(checkout) } : null;
   };
 
+  const setLeftSidebarVisible = (visible: boolean) => {
+    const state = rest()?.ui_state;
+    if (!state || state.left_sidebar_visible === visible) return;
+    dispatch({
+      schema_version: 2,
+      kind: "ui_state_update",
+      payload: { ...state, left_sidebar_visible: visible },
+    });
+  };
+
   const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"]) => {
     const decision = closeDecision(kind, panes, useShellStore.getState().agents);
     if (decision.action === "status_unknown") {
@@ -171,12 +181,7 @@ export function createActions(dispatch: DispatchFn) {
 
     toggleLeftSidebar() {
       const state = rest()?.ui_state;
-      if (!state) return;
-      dispatch({
-        schema_version: 2,
-        kind: "ui_state_update",
-        payload: { ...state, left_sidebar_visible: !state.left_sidebar_visible },
-      });
+      if (state) setLeftSidebarVisible(!state.left_sidebar_visible);
     },
 
     toggleSidebarView() {
@@ -191,7 +196,9 @@ export function createActions(dispatch: DispatchFn) {
       ui().openOverlay("find");
     },
 
+    /** The registration field lives in the sidebar, so a hidden sidebar is shown first. */
     openNewWorkspace() {
+      setLeftSidebarVisible(true);
       ui().openOverlay("new_workspace");
     },
 

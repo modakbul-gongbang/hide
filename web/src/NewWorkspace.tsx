@@ -36,10 +36,18 @@ export function NewWorkspace({ actions }: { actions: Actions }) {
     }
   }, [open, home, actions]);
 
+  // Only the answer to the pending request settles it: a listing that arrived
+  // for an earlier root would otherwise clear the mark and the same directory
+  // would be asked for again. `~` is answered with the real home path, so it
+  // is matched by being the only request the field has made.
   useEffect(() => {
     if (!listing || !requested.current) return;
-    if (requested.current === "~") setHome(listing.root_path);
-    if (!text && requested.current === "~") setText(`${listing.root_path}/`);
+    if (requested.current === "~") {
+      setHome(listing.root_path);
+      if (!text) setText(`${listing.root_path}/`);
+    } else if (listing.root_path !== requested.current) {
+      return;
+    }
     requested.current = null;
   }, [listing, text]);
 
