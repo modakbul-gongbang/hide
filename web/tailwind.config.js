@@ -18,6 +18,10 @@ export default {
         warning: "var(--color-warning)",
         success: "var(--color-success)",
         "agent-working": "var(--color-agent-working)",
+        "pr-open": "var(--color-pr-open)",
+        "pr-merged": "var(--color-pr-merged)",
+        "pr-closed": "var(--color-pr-closed)",
+        "pr-draft": "var(--color-pr-draft)",
       },
       spacing: {
         none: "var(--spacing-none)",
