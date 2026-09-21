@@ -13,7 +13,7 @@ use crate::{
     MEMORY_BODY_LIMIT_CHARS, PROMPT_ITEM_LIMIT, SESSION_START_ITEM_LIMIT, redact,
 };
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const MEMORY_DISCLOSURE_VERSION: i64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,8 +186,8 @@ pub struct SessionCursorRecord {
     pub provider: String,
     pub session_id: String,
     pub byte_offset: u64,
-    /// Opaque `hide-session` checkpoint including the file identity and an
-    /// unterminated final line. The store does not interpret provider state.
+    /// Opaque `hide-session` checkpoint containing file identity and a safe
+    /// resume offset. Provider transcript bytes are never stored here.
     pub checkpoint: Vec<u8>,
     pub last_content_hash: Option<String>,
     pub updated_at_unix_ms: u64,
@@ -785,6 +785,37 @@ impl MemoryStore {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Returns a bounded, relevance-neutral catalog for provider-side
+    /// relation planning. Prompt retrieval remains query-dependent; analysis
+    /// needs this separate view so a Korean/English paraphrase can be matched
+    /// even when the two strings share no lexical token.
+    pub fn relation_context(
+        &self,
+        project_id: &str,
+        maximum_items: usize,
+        maximum_tokens: usize,
+    ) -> Result<Vec<(String, String)>, MemoryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT i.id,r.body FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE i.project_id=?1 AND i.lifecycle='active' ORDER BY i.salience DESC,i.updated_at_ms DESC,i.id LIMIT ?2",
+        )?;
+        let candidates = statement
+            .query_map(params![project_id, maximum_items as u64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut selected = Vec::new();
+        let mut tokens = 0;
+        for (id, body) in candidates {
+            let item_tokens = token_count(&body);
+            if item_tokens > maximum_tokens || tokens + item_tokens > maximum_tokens {
+                continue;
+            }
+            tokens += item_tokens;
+            selected.push((id, body));
+        }
+        Ok(selected)
+    }
+
     pub fn detail(&self, project_id: &str, item_id: &str) -> Result<MemoryDetail, MemoryError> {
         let item = self
             .item(project_id, item_id)?
@@ -1309,6 +1340,10 @@ COMMIT;"#,
     }
     if version == 3 {
         migrate_version_three(connection)?;
+        version = 4;
+    }
+    if version == 4 {
+        migrate_version_four(connection)?;
         version = SCHEMA_VERSION;
     }
     if version != SCHEMA_VERSION {
@@ -1329,6 +1364,13 @@ fn enable_fts_secure_delete(connection: &Connection) -> rusqlite::Result<()> {
 }
 
 fn migrate_version_two(connection: &Connection) -> Result<(), MemoryError> {
+    migrate_version_two_with_cleanup(connection, purge_deleted_pages)
+}
+
+fn migrate_version_two_with_cleanup(
+    connection: &Connection,
+    cleanup: impl FnOnce(&Connection) -> Result<(), MemoryError>,
+) -> Result<(), MemoryError> {
     let revisions = {
         let mut statement = connection.prepare("SELECT item_id,body FROM memory_revisions")?;
         statement
@@ -1350,7 +1392,6 @@ fn migrate_version_two(connection: &Connection) -> Result<(), MemoryError> {
             connection.execute("DELETE FROM memory_items WHERE id=?1", [&item_id])?;
         }
         rebuild_search_projection(connection)?;
-        connection.pragma_update(None, "user_version", 3)?;
         Ok(())
     })();
     if let Err(error) = result {
@@ -1358,7 +1399,12 @@ fn migrate_version_two(connection: &Connection) -> Result<(), MemoryError> {
         return Err(error);
     }
     connection.execute_batch("COMMIT")?;
-    purge_deleted_pages(connection)
+    // Keep user_version at 2 until physical cleanup succeeds. A failed
+    // VACUUM or WAL truncation is therefore retried on the next open instead
+    // of being forgotten behind a committed migration version.
+    cleanup(connection)?;
+    connection.pragma_update(None, "user_version", 3)?;
+    Ok(())
 }
 
 fn migrate_version_three(connection: &Connection) -> Result<(), MemoryError> {
@@ -1372,7 +1418,7 @@ fn migrate_version_three(connection: &Connection) -> Result<(), MemoryError> {
         // projects must see and accept that material change before analysis or
         // injection resumes; the derived data itself remains intact.
         connection.execute("UPDATE projects SET enabled=0", [])?;
-        connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        connection.pragma_update(None, "user_version", 4)?;
         Ok(())
     })();
     if let Err(error) = result {
@@ -1381,6 +1427,73 @@ fn migrate_version_three(connection: &Connection) -> Result<(), MemoryError> {
     }
     connection.execute_batch("COMMIT")?;
     Ok(())
+}
+
+fn migrate_version_four(connection: &Connection) -> Result<(), MemoryError> {
+    connection.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| -> Result<(), MemoryError> {
+        for table in ["session_cursors", "hook_projection_cursors"] {
+            let rows = {
+                let mut statement = connection.prepare(&format!(
+                    "SELECT project_id,provider,session_id,pending_bytes FROM {table}"
+                ))?;
+                statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, Vec<u8>>(3)?,
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (project_id, provider, session_id, checkpoint) in rows {
+                let sanitized = sanitize_cursor_checkpoint(&checkpoint)?;
+                connection.execute(
+                    &format!("UPDATE {table} SET pending_bytes=?4 WHERE project_id=?1 AND provider=?2 AND session_id=?3"),
+                    params![project_id, provider, session_id, sanitized],
+                )?;
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error);
+    }
+    connection.execute_batch("COMMIT")?;
+    // Version 4 may contain raw torn-line bytes in free pages even after the
+    // row is rewritten. Always purge before advancing so an interrupted
+    // cleanup retries deterministically on the next open.
+    purge_deleted_pages(connection)?;
+    connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    Ok(())
+}
+
+fn sanitize_cursor_checkpoint(bytes: &[u8]) -> Result<Vec<u8>, MemoryError> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| MemoryError::Integrity(format!("cursor_checkpoint_invalid:{error}")))?;
+    let object = value.as_object_mut().ok_or_else(|| {
+        MemoryError::Integrity("cursor_checkpoint_invalid:not_an_object".to_owned())
+    })?;
+    let pending_len = object
+        .remove("pending")
+        .and_then(|pending| pending.as_array().map(Vec::len))
+        .unwrap_or_default() as u64;
+    let offset = object
+        .get("offset")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| MemoryError::Integrity("cursor_checkpoint_invalid:offset".to_owned()))?;
+    object.insert(
+        "offset".to_owned(),
+        serde_json::Value::from(offset.saturating_sub(pending_len)),
+    );
+    serde_json::to_vec(&value)
+        .map_err(|error| MemoryError::Integrity(format!("cursor_checkpoint_invalid:{error}")))
 }
 
 fn rebuild_search_projection(connection: &Connection) -> Result<(), MemoryError> {
@@ -1814,6 +1927,36 @@ mod tests {
         assert_eq!(
             lexical_relevance(&search_terms("hook retrieval"), "Prefer blue buttons"),
             0.0
+        );
+    }
+
+    #[test]
+    fn relation_context_includes_cross_language_memories_without_lexical_overlap() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "relation-context", "relation-context-hash"),
+                &[candidate(
+                    "Use PostgreSQL for persistence",
+                    CandidateRelation::New,
+                )],
+            )
+            .unwrap();
+
+        let context = store.relation_context(&project, 60, 5_000).unwrap();
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0].1, "Use PostgreSQL for persistence");
+        assert_eq!(
+            store
+                .retrieve(&RetrievalQuery::prompt(
+                    &project,
+                    "데이터베이스는 포스트그레스로 결정했다",
+                    vec![],
+                ))
+                .unwrap()
+                .outcome,
+            InjectionOutcome::Empty,
+            "prompt retrieval stays lexical while relation planning sees the full bounded catalog",
         );
     }
 
@@ -2713,6 +2856,130 @@ mod tests {
             .unwrap();
         assert_eq!(fts_secure_delete, 1);
         assert!(store.list_memories("p", "").unwrap().is_empty());
+        drop(store);
+
+        for candidate in [
+            path.clone(),
+            path.with_extension("sqlite3-wal"),
+            path.with_extension("sqlite3-shm"),
+        ] {
+            if candidate.is_file() {
+                let bytes = fs::read(candidate).unwrap();
+                assert!(
+                    !bytes
+                        .windows(secret.len())
+                        .any(|window| window == secret.as_bytes())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn secret_cleanup_failure_keeps_the_migration_retryable() {
+        let connection = Connection::open_in_memory().unwrap();
+        let secret = "api_key=retry-this-physical-cleanup";
+        connection
+            .execute_batch(&format!(
+                "{SCHEMA} ALTER TABLE projects DROP COLUMN disclosure_version; PRAGMA user_version=2;"
+            ))
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects VALUES('p','/fixture','local',1,1,1,1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO analysis_batches VALUES('b','p','codex','codex','s','h',1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO memory_items VALUES('m','p','active',1,0.9,0.8,NULL,1,1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO memory_revisions VALUES('r','m',1,?1,'rule','active',1,'b')",
+                [secret],
+            )
+            .unwrap();
+
+        let failure = migrate_version_two_with_cleanup(&connection, |_| {
+            Err(MemoryError::Integrity("fixture_cleanup_failed".to_owned()))
+        })
+        .unwrap_err();
+        assert!(
+            matches!(failure, MemoryError::Integrity(reason) if reason == "fixture_cleanup_failed")
+        );
+        assert_eq!(
+            connection
+                .pragma_query_value::<i64, _>(None, "user_version", |row| row.get(0))
+                .unwrap(),
+            2
+        );
+
+        migrate_version_two_with_cleanup(&connection, |_| Ok(())).unwrap();
+        assert_eq!(
+            connection
+                .pragma_query_value::<i64, _>(None, "user_version", |row| row.get(0))
+                .unwrap(),
+            3
+        );
+    }
+
+    #[test]
+    fn version_four_migration_removes_torn_transcript_bytes_from_checkpoints() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("memory.sqlite3");
+        let secret = "partial prompt api_key=cursor-secret";
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects VALUES('p','/fixture','local',0,NULL,1,1,0)",
+                [],
+            )
+            .unwrap();
+        let checkpoint = serde_json::json!({
+            "offset": 100 + secret.len(),
+            "identity": {"first": 1, "second": 2},
+            "pending": secret.as_bytes(),
+        })
+        .to_string();
+        for table in ["session_cursors", "hook_projection_cursors"] {
+            connection
+                .execute(
+                    &format!("INSERT INTO {table}(project_id,provider,session_id,byte_offset,pending_bytes,last_content_hash,updated_at_ms) VALUES('p','codex','s',?1,?2,NULL,1)"),
+                    params![(100 + secret.len()) as u64, checkpoint.as_bytes()],
+                )
+                .unwrap();
+        }
+        connection.pragma_update(None, "user_version", 4).unwrap();
+        drop(connection);
+
+        let store = MemoryStore::open(&path).unwrap();
+        for table in ["session_cursors", "hook_projection_cursors"] {
+            let bytes: Vec<u8> = store
+                .connection
+                .query_row(
+                    &format!("SELECT pending_bytes FROM {table} WHERE project_id='p'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(
+                !bytes
+                    .windows(secret.len())
+                    .any(|window| window == secret.as_bytes())
+            );
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(value["offset"], 100);
+            assert!(value.get("pending").is_none());
+        }
         drop(store);
 
         for candidate in [

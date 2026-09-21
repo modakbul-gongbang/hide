@@ -5,17 +5,13 @@ use hide_memory::{
     HOOK_DEADLINE_MS, HOOK_INPUT_LIMIT_BYTES, Injection, InjectionOutcome, MemoryStore,
     RetrievalQuery,
 };
-use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
-use std::io::{self, Read, Write};
+use serde::Deserialize;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 pub const MEMORY_DATABASE_ENV: &str = "HIDE_MEMORY_DATABASE_PATH";
 pub const MEMORY_TESTING_ENV: &str = "HIDE_PROJECT_MEMORY_TESTING";
-const SESSION_RECEIPT_SLOTS: u64 = 512;
-const SESSION_RECEIPT_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1_000;
-const SESSION_RECEIPT_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum HookMemoryOutcome {
@@ -39,15 +35,6 @@ struct HookInput {
     cwd: Option<PathBuf>,
     prompt: Option<String>,
     session_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct SessionStartReceipt {
-    project_id: String,
-    runtime: String,
-    session_id: String,
-    item_ids: Vec<String>,
-    created_at_ms: u64,
 }
 
 /// Retains only the bounded stdin prefix and stops as soon as overflow is
@@ -173,16 +160,21 @@ pub fn project_memory_output_until(
                     .session_start_receipt_ids(&project.id, runtime_id, session_id)
                     .unwrap_or_default()
             };
-            excluded.extend(read_session_start_receipt(
-                home,
-                &project.id,
-                runtime_id,
-                session_id,
-            ));
+            // The core projects the durable receipt into the one app-owned
+            // SQLite store after it observes the SessionStart envelope. The
+            // first prompt can race that projection, so recompute the same
+            // bounded capsule as a read-only fallback. Once the receipt is
+            // present it remains the authority.
+            if excluded.is_empty()
+                && !session_id.is_empty()
+                && let Ok(start) = store.retrieve(&RetrievalQuery::session_start(&project.id))
+            {
+                excluded.extend(start.items.into_iter().map(|(id, _, _)| id));
+            }
             excluded.sort_unstable();
             excluded.dedup();
             RetrievalQuery::prompt(&project.id, text, excluded)
-                .with_path_context(cwd.to_string_lossy())
+                .with_path_context(canonical_path_context(&project, &cwd).to_string_lossy())
         }
         HookEvent::SubagentStart | HookEvent::SubagentStop | HookEvent::Stop => return base(),
     };
@@ -204,126 +196,15 @@ pub fn project_memory_output_until(
         }
         return base();
     };
-    if event == HookEvent::SessionStart && !injection.items.is_empty() && Instant::now() < deadline
-    {
-        let runtime_id = match runtime {
-            AgentRuntime::Codex => "codex",
-            AgentRuntime::ClaudeCode => "claude",
-        };
-        if let Some(session_id) = input
-            .session_id
-            .as_deref()
-            .filter(|value| !value.is_empty())
-        {
-            let item_ids = injection
-                .items
-                .iter()
-                .map(|(id, _, _)| id.clone())
-                .collect();
-            let _ =
-                write_session_start_receipt(home, &project.id, runtime_id, session_id, item_ids);
-        }
-    }
     render(runtime, event, injection, deadline, base)
 }
 
-fn receipt_path(home: &Path, project_id: &str, runtime: &str, session_id: &str) -> PathBuf {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    project_id.hash(&mut hasher);
-    runtime.hash(&mut hasher);
-    session_id.hash(&mut hasher);
-    let slot = hasher.finish() % SESSION_RECEIPT_SLOTS;
-    home.join("Library/Application Support/hide/project-memory-receipts")
-        .join(format!("{slot:03}.json"))
-}
-
-fn write_session_start_receipt(
-    home: &Path,
-    project_id: &str,
-    runtime: &str,
-    session_id: &str,
-    item_ids: Vec<String>,
-) -> io::Result<()> {
-    let receipt = SessionStartReceipt {
-        project_id: project_id.to_owned(),
-        runtime: runtime.to_owned(),
-        session_id: session_id.to_owned(),
-        item_ids,
-        created_at_ms: now_ms(),
-    };
-    let bytes = serde_json::to_vec(&receipt).map_err(io::Error::other)?;
-    if bytes.len() > SESSION_RECEIPT_MAX_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "session start receipt exceeds its fixed limit",
-        ));
-    }
-    let path = receipt_path(home, project_id, runtime, session_id);
-    let directory = path.parent().expect("receipt path has a parent");
-    std::fs::create_dir_all(directory)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
-    }
-    let temporary = directory.join(format!(".receipt-{}.tmp", std::process::id()));
-    let result = (|| -> io::Result<()> {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        file.write_all(&bytes)?;
-        drop(file);
-        std::fs::rename(&temporary, &path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result
-}
-
-fn read_session_start_receipt(
-    home: &Path,
-    project_id: &str,
-    runtime: &str,
-    session_id: &str,
-) -> Vec<String> {
-    if session_id.is_empty() {
-        return Vec::new();
-    }
-    let path = receipt_path(home, project_id, runtime, session_id);
-    let Ok(metadata) = std::fs::metadata(&path) else {
-        return Vec::new();
-    };
-    if metadata.len() as usize > SESSION_RECEIPT_MAX_BYTES {
-        return Vec::new();
-    }
-    let Ok(bytes) = std::fs::read(path) else {
-        return Vec::new();
-    };
-    let Ok(receipt) = serde_json::from_slice::<SessionStartReceipt>(&bytes) else {
-        return Vec::new();
-    };
-    let current = now_ms();
-    if receipt.project_id != project_id
-        || receipt.runtime != runtime
-        || receipt.session_id != session_id
-        || current.saturating_sub(receipt.created_at_ms) > SESSION_RECEIPT_MAX_AGE_MS
-    {
-        return Vec::new();
-    }
-    receipt.item_ids
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+fn canonical_path_context(project: &hide_project::ProjectIdentity, cwd: &Path) -> PathBuf {
+    let canonical = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    canonical
+        .strip_prefix(&project.checkout_root)
+        .map(|relative| project.root.join(relative))
+        .unwrap_or(canonical)
 }
 
 fn render(
@@ -375,8 +256,11 @@ fn render(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation};
+    use hide_memory::{
+        AnalysisBatch, Candidate, CandidateKind, CandidateRelation, SessionSourceRecord,
+    };
     use std::fs;
+    use std::process::Command;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -628,6 +512,148 @@ mod tests {
         for index in started_rules {
             assert!(!prompt_output.contains(&format!("Race rule {index} ")));
         }
+        assert!(
+            !home
+                .join("Library/Application Support/hide/project-memory-receipts")
+                .exists(),
+            "the read-only hook must not create a receipt sidecar",
+        );
+    }
+
+    #[test]
+    fn linked_worktree_cwd_keeps_checkout_relative_path_relevance() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let main = temp.path().join("main");
+        let linked = temp.path().join("linked");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&main).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test"],
+        ] {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&main)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        fs::write(main.join("README.md"), "fixture\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "."])
+                .current_dir(&main)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-qm", "init"])
+                .current_dir(&main)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args([
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    "linked",
+                    linked.to_str().unwrap()
+                ])
+                .current_dir(&main)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let linked_cwd = linked.join("crates/memory/src");
+        fs::create_dir_all(&linked_cwd).unwrap();
+
+        let project = hide_project::resolve(&linked_cwd, "local").unwrap();
+        let path = database_path(&home);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut store = MemoryStore::open(&path).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, "local")
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        store
+            .upsert_session_source(&SessionSourceRecord {
+                id: "path-source".into(),
+                project_id: project.id.clone(),
+                provider: "codex".into(),
+                locator: linked.join("session.jsonl").to_string_lossy().into_owned(),
+                checkout_path: linked_cwd.to_string_lossy().into_owned(),
+                started_at_unix_ms: Some(1),
+                updated_at_unix_ms: 1,
+                unavailable_reason: None,
+            })
+            .unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "path-batch".into(),
+                    project_id: project.id.clone(),
+                    provider: "codex".into(),
+                    analysis_provider: "codex".into(),
+                    session_id: "path-source".into(),
+                    content_hash: "path-hash".into(),
+                    created_at_unix_ms: 1,
+                },
+                &[Candidate {
+                    text: "Keep the local projection bounded".into(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    direct_human_source: true,
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        assert_eq!(project.checkout_root, fs::canonicalize(&linked).unwrap());
+        let path_context = canonical_path_context(&project, &linked_cwd);
+        assert_eq!(path_context, project.root.join("crates/memory/src"));
+        assert_eq!(
+            store
+                .retrieve(
+                    &RetrievalQuery::prompt(&project.id, "zz-no-literal-match", vec![])
+                        .with_path_context(path_context.to_string_lossy()),
+                )
+                .unwrap()
+                .outcome,
+            InjectionOutcome::Provided,
+        );
+        drop(store);
+
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "cwd": linked_cwd,
+            "prompt": "zz-no-literal-match"
+        }))
+        .unwrap();
+        let result = project_memory_output(
+            AgentRuntime::Codex,
+            HookEvent::UserPromptSubmit,
+            &payload,
+            false,
+            &home,
+        );
+
+        assert_eq!(result.outcome, HookMemoryOutcome::Provided { count: 1 });
+        assert!(
+            result
+                .stdout
+                .unwrap()
+                .contains("Keep the local projection bounded")
+        );
     }
 
     #[test]

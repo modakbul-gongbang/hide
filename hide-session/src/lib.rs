@@ -251,6 +251,10 @@ struct FileIdentity {
 pub struct CursorCheckpoint {
     pub offset: u64,
     identity: Option<FileIdentity>,
+    /// Accepted only to migrate checkpoints written before Project Memory
+    /// stopped persisting torn transcript bytes. New checkpoints always keep
+    /// this empty and rewind `offset` to the start of the torn line instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending: Vec<u8>,
 }
 
@@ -311,23 +315,28 @@ impl SessionCursor {
 
     pub fn checkpoint(&self) -> CursorCheckpoint {
         CursorCheckpoint {
-            offset: self.offset,
+            offset: self.offset.saturating_sub(self.pending.len() as u64),
             identity: self.identity,
-            pending: self.pending.clone(),
+            pending: Vec::new(),
         }
     }
 
     pub fn restore(checkpoint: CursorCheckpoint) -> Self {
         Self {
-            offset: checkpoint.offset,
+            // Old checkpoints included raw torn-line bytes after the stored
+            // offset. Rewind once, discard those bytes, and reread them from
+            // the provider-owned session file. New checkpoints have no
+            // `pending` field and therefore restore at their exact offset.
+            offset: checkpoint
+                .offset
+                .saturating_sub(checkpoint.pending.len() as u64),
             identity: checkpoint.identity,
-            pending: checkpoint.pending,
+            pending: Vec::new(),
         }
     }
 
-    /// Serializes the complete durable cursor, including file identity.
-    /// Callers persist this opaque blob rather than reconstructing an offset
-    /// and accidentally skipping an atomically replaced session file.
+    /// Serializes the durable cursor and file identity without transcript
+    /// bytes. An unterminated line is reread from its start after relaunch.
     pub fn encode_checkpoint(&self) -> Result<Vec<u8>> {
         serde_json::to_vec(&self.checkpoint())
             .map_err(|error| SessionError::Checkpoint(error.to_string()))
@@ -1087,6 +1096,38 @@ mod tests {
         let completed = cursor.read(&path).unwrap();
         assert_eq!(completed.contents, "partial-line\n");
         assert_eq!(completed.start_offset, 0);
+    }
+
+    #[test]
+    fn durable_checkpoint_rewinds_without_copying_a_torn_line() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, b"complete\nsecret partial").unwrap();
+        let mut cursor = SessionCursor::new();
+        let first = cursor.read(&path).unwrap();
+        assert_eq!(first.contents, "complete\n");
+
+        let checkpoint = cursor.encode_checkpoint().unwrap();
+        assert!(
+            !checkpoint
+                .windows(b"secret partial".len())
+                .any(|window| { window == b"secret partial" })
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["offset"],
+            "complete\n".len()
+        );
+
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b" completed\n")
+            .unwrap();
+        let mut restored = SessionCursor::restore_checkpoint(&checkpoint).unwrap();
+        let completed = restored.read(&path).unwrap();
+        assert_eq!(completed.contents, "secret partial completed\n");
+        assert_eq!(completed.start_offset, "complete\n".len() as u64);
     }
 
     #[test]

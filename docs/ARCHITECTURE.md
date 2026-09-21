@@ -38,6 +38,7 @@ Its pinned extraction and update prompt assets are retained only as audited desi
 `hide-memory/hide-native-engine-reference.json` records the exact upstream commit, audited source hashes, local prompt-asset hashes, and the explicit non-runtime role.
 Every Hide-native analysis result is a proposal only: the write service validates Project identity, provenance, redaction, lifecycle, capacity, relation authority, and transaction boundaries before any durable change.
 Normalized session events and the bounded active-Memory comparison set both pass through the current local redactor at the final provider egress boundary.
+Relation planning receives a relevance-neutral bounded active-Memory comparison set, rather than prompt FTS results, so same-meaning Korean and English memories do not need shared literal tokens to reach the provider's strict relation schema.
 The disclosure acceptance is versioned; a material egress-copy change disables previously enabled Projects until the operator accepts the current disclosure, without deleting their local data.
 Prompt retrieval confirms lexical or meaningful cwd/path overlap before ranking; salience, extraction confidence, and recency only break ties after relevance and are never presented as semantic similarity.
 The app owns the only writer connection.
@@ -45,6 +46,7 @@ Hook helpers and render-facing reads open read-only connections, fail closed on 
 
 The coordinator's existing worker context owns session refresh, the five-second due-work poll, and one Memory analysis intent at a time.
 It waits for a session file to remain unchanged for sixty seconds, reads only complete events after the durable cursor, redacts known credential patterns locally, and sends bounded normalized input through `hide-ai` outside `Mutex<Runtime>`.
+The durable cursor stores file identity and the safe start offset of an incomplete final line, never that line's bytes; a later read resumes from the provider-owned session file.
 The same provider, session, content-hash retry converges through a deterministic receipt instead of repeating revisions.
 All filesystem, SQLite, hook-config, provider, and serialization work occurs outside the runtime mutex; applying a completed worker result is the only locked transition.
 Disabling Memory stops new analysis and injection without deleting its data, while Forget, revision Undo, and confirmed Project deletion have their own explicit lifecycle operations.

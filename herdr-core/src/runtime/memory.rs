@@ -8,15 +8,14 @@ use hide_agent_hooks::{HookEvent, HookStatus};
 use hide_ai::{AiError, CancelToken};
 use hide_memory::{
     ANALYSIS_INPUT_LIMIT_BYTES, AnalysisBatch, Candidate, CandidateRelation, ConflictChoice,
-    HideNativeAnalyzer, Injection, InjectionOutcome, MemoryStore, RetrievalQuery,
-    SessionCursorRecord, SessionSourceRecord,
+    HideNativeAnalyzer, Injection, InjectionOutcome, MemoryStore, SessionCursorRecord,
+    SessionSourceRecord,
 };
 use hide_session::{Agent, EventKind, SessionAvailability, SessionCatalog, SessionCursor};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fs;
-use std::time::Duration;
 
 const MEMORY_QUIESCENCE_MS: u64 = 60_000;
 const MEMORY_POLL_INTERVAL_MS: u64 = 5_000;
@@ -1481,8 +1480,7 @@ fn analyze_session(
             .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
         let content_hash = digest(&[project_id, provider, &session.id, &serialized]);
         last_hash = Some(content_hash.clone());
-        let active =
-            active_memories_json(store, project_id, &serialized).map_err(AnalysisFailure::Local)?;
+        let active = active_memories_json(store, project_id).map_err(AnalysisFailure::Local)?;
         let request_id = digest(&[
             "memory-request",
             project_id,
@@ -1647,24 +1645,12 @@ fn split_utf8(text: &str, maximum_bytes: usize) -> Vec<&str> {
     chunks
 }
 
-fn active_memories_json(
-    store: &MemoryStore,
-    project_id: &str,
-    source_events: &str,
-) -> Result<String, String> {
-    let injection = store
-        .retrieve(&RetrievalQuery {
-            project_id: project_id.to_owned(),
-            text: source_events.to_owned(),
-            path_context: String::new(),
-            excluded_memory_ids: Vec::new(),
-            maximum_items: 60,
-            maximum_tokens: 5_000,
-            deadline: Duration::from_secs(2),
-        })
+fn active_memories_json(store: &MemoryStore, project_id: &str) -> Result<String, String> {
+    let memories = store
+        .relation_context(project_id, 60, 5_000)
         .map_err(|error| error.to_string())?;
-    let mut values = Vec::with_capacity(injection.items.len());
-    for (id, _, body) in injection.items {
+    let mut values = Vec::with_capacity(memories.len());
+    for (id, body) in memories {
         let redacted = hide_memory::redact(&body);
         if redacted.contains_secret_candidate {
             return Err("Stored Memory failed the outbound secret check".to_owned());

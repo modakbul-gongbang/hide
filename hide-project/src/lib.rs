@@ -14,7 +14,14 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProjectIdentity {
     pub id: String,
+    /// Canonical main-worktree root used for durable Project identity.
     pub root: PathBuf,
+    /// Canonical root of the checkout that contained the resolved path.
+    ///
+    /// This differs from `root` for linked worktrees and lets callers map a
+    /// checkout-relative path into the durable Project namespace without
+    /// treating the worktree itself as another Project.
+    pub checkout_root: PathBuf,
     pub device_id: String,
     pub kind: ProjectKind,
 }
@@ -83,9 +90,17 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
         path: path.to_path_buf(),
         source,
     })?;
-    let (root, kind) = match git::discover_checked(&canonical)? {
-        Some(repository) => (repository.main_root(), ProjectKind::Git),
+    let (root, checkout_root, kind) = match git::discover_checked(&canonical)? {
+        Some(repository) => (repository.main_root(), repository.root, ProjectKind::Git),
         None => (
+            if canonical.is_dir() {
+                canonical.clone()
+            } else {
+                canonical
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .ok_or_else(|| ResolveError::MissingPath(path.to_path_buf()))?
+            },
             if canonical.is_dir() {
                 canonical
             } else {
@@ -102,6 +117,7 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
     Ok(ProjectIdentity {
         id: format!("project:{:x}", digest),
         root,
+        checkout_root,
         device_id: device_id.to_owned(),
         kind,
     })
@@ -470,6 +486,8 @@ mod tests {
         let linked_id = resolve(&linked, "local").unwrap();
         assert_eq!(main_id.id, linked_id.id);
         assert_eq!(main_id.root, linked_id.root);
+        assert_eq!(main_id.checkout_root, fs::canonicalize(&main).unwrap());
+        assert_eq!(linked_id.checkout_root, fs::canonicalize(&linked).unwrap());
         assert_eq!(linked_id.kind, ProjectKind::Git);
     }
 
