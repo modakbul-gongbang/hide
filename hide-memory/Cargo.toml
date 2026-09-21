@@ -6,7 +6,6 @@ publish = false
 
 [dependencies]
 hide-ai = { path = "../hide-ai" }
-mem0-oss-native = { path = "vendor/mem0-oss-native" }
 hide-project = { path = "../hide-project" }
 regex = "=1.13.1"
 rusqlite = { version = "=0.32.1", features = ["bundled", "hooks"] }

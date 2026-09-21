@@ -8,8 +8,8 @@ use hide_agent_hooks::{HookEvent, HookStatus};
 use hide_ai::{AiError, CancelToken};
 use hide_memory::{
     ANALYSIS_INPUT_LIMIT_BYTES, AnalysisBatch, Candidate, CandidateRelation, ConflictChoice,
-    Injection, InjectionOutcome, Mem0Adapter, MemoryStore, RetrievalQuery, SessionCursorRecord,
-    SessionSourceRecord,
+    HideNativeAnalyzer, Injection, InjectionOutcome, MemoryStore, RetrievalQuery,
+    SessionCursorRecord, SessionSourceRecord,
 };
 use hide_session::{Agent, EventKind, SessionAvailability, SessionCatalog, SessionCursor};
 use serde_json::{Value, json};
@@ -725,6 +725,9 @@ impl Runtime {
                         if still_focused && pending.is_none() {
                             match result {
                                 Ok(outcome) => {
+                                    if let Some((kind, message)) = outcome.diagnostic {
+                                        guard.push_diagnostic(kind, message);
+                                    }
                                     guard.snapshot.sessions.notice = outcome.notice;
                                     let current =
                                         std::mem::take(&mut guard.snapshot.sessions.analysis);
@@ -899,10 +902,37 @@ mod scope_tests {
     }
 
     #[test]
-    fn provider_supersede_plans_require_human_conflict_resolution() {
+    fn assistant_only_supersede_plans_require_human_conflict_resolution() {
         let candidates = validate_candidates(
             vec![Candidate {
                 text: "Use the new boundary".to_owned(),
+                kind: CandidateKind::Decision,
+                confidence: 0.9,
+                salience: 0.8,
+                source_offsets: vec![7],
+                direct_human_source: false,
+                relation: CandidateRelation::Supersedes {
+                    target_id: "existing".to_owned(),
+                },
+            }],
+            &[json!({"offset": 7, "kind": "assistant"})],
+        )
+        .unwrap();
+
+        assert_eq!(
+            candidates[0].relation,
+            CandidateRelation::Conflicts {
+                target_id: "existing".to_owned()
+            }
+        );
+        assert!(!candidates[0].direct_human_source);
+    }
+
+    #[test]
+    fn direct_human_supersede_plans_remain_supersedes() {
+        let candidates = validate_candidates(
+            vec![Candidate {
+                text: "새 경계로 교체한다.".to_owned(),
                 kind: CandidateKind::Decision,
                 confidence: 0.9,
                 salience: 0.8,
@@ -918,7 +948,7 @@ mod scope_tests {
 
         assert_eq!(
             candidates[0].relation,
-            CandidateRelation::Conflicts {
+            CandidateRelation::Supersedes {
                 target_id: "existing".to_owned()
             }
         );
@@ -939,6 +969,7 @@ mod scope_tests {
 struct MemoryMutationOutcome {
     notice: Option<MemoryNoticeSnapshot>,
     analysis: Option<MemoryAnalysisSnapshot>,
+    diagnostic: Option<(String, String)>,
 }
 
 impl MemoryMutationOutcome {
@@ -946,6 +977,7 @@ impl MemoryMutationOutcome {
         Self {
             notice,
             analysis: None,
+            diagnostic: None,
         }
     }
 }
@@ -1025,6 +1057,7 @@ fn analyze_project(
                 action: Some(error_action(&error).to_owned()),
                 ..MemoryAnalysisSnapshot::default()
             }),
+            diagnostic: None,
         },
     }
 }
@@ -1049,7 +1082,7 @@ fn analyze_project_inner(
         .ensure_project(&identity.id, &identity.root, workspace::LOCAL_DEVICE_ID)
         .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
     let router = crate::ai::memory_router(settings);
-    let adapter = Mem0Adapter;
+    let analyzer = HideNativeAnalyzer;
     let mut analyzed = 0;
     let mut failed = 0;
     let mut learned = 0;
@@ -1104,7 +1137,7 @@ fn analyze_project_inner(
         match analyze_session(
             &mut store,
             &router,
-            &adapter,
+            &analyzer,
             &identity.id,
             &session,
             cancel,
@@ -1150,6 +1183,7 @@ fn analyze_project_inner(
             message: Some(format!("{analyzed} analyzed · {failed} failed")),
             action: Some("retry".to_owned()),
         }),
+        diagnostic: None,
     })
 }
 
@@ -1356,7 +1390,7 @@ struct SessionAnalysis {
 fn analyze_session(
     store: &mut MemoryStore,
     router: &hide_ai::AiRouter,
-    adapter: &Mem0Adapter,
+    analyzer: &HideNativeAnalyzer,
     project_id: &str,
     session: &hide_session::ProjectSession,
     cancel: &CancelToken,
@@ -1456,7 +1490,7 @@ fn analyze_session(
             &session.id,
             &content_hash,
         ]);
-        let request = adapter
+        let request = analyzer
             .request(
                 request_id.clone(),
                 project_id,
@@ -1469,7 +1503,7 @@ fn analyze_session(
             .execute(&request, cancel)
             .map_err(AnalysisFailure::Provider)?;
         let candidates = validate_candidates(
-            adapter
+            analyzer
                 .parse(answer.value)
                 .map_err(|error| AnalysisFailure::Local(error.to_string()))?,
             &group,
@@ -1670,7 +1704,9 @@ fn validate_candidates(
             .source_offsets
             .iter()
             .any(|offset| human.contains(offset));
-        if let CandidateRelation::Supersedes { target_id } = &candidate.relation {
+        if !candidate.direct_human_source
+            && let CandidateRelation::Supersedes { target_id } = &candidate.relation
+        {
             candidate.relation = CandidateRelation::Conflicts {
                 target_id: target_id.clone(),
             };
@@ -2029,10 +2065,21 @@ fn mutate_memory(
             Ok(MemoryMutationOutcome::notice(None))
         }
         "delete" => {
-            store
+            let deletion = store
                 .delete_project_data(&identity.id)
                 .map_err(|error| error.to_string())?;
-            Ok(MemoryMutationOutcome::notice(None))
+            Ok(MemoryMutationOutcome {
+                notice: None,
+                analysis: None,
+                diagnostic: deletion.cleanup_warning.map(|warning| {
+                    (
+                        "memory.delete_cleanup_deferred".to_owned(),
+                        format!(
+                            "Project Memory data was deleted; page cleanup was deferred: {warning}"
+                        ),
+                    )
+                }),
+            })
         }
         "edit" => {
             let id = payload

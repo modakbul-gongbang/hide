@@ -32,6 +32,7 @@ Nothing parses the rest of the command, and the helper does not pass the marker 
 On `SessionStart`, the helper writes one runtime JSON envelope whose `hookSpecificOutput.additionalContext` combines the existing one-line worktree-purpose instruction with the bounded Project Memory capsule when Memory is enabled.
 On `UserPromptSubmit`, it parses at most 256 KiB of runtime input, resolves the same durable Project identity as the app, and performs a read-only local lookup against the materialized active projection.
 The prompt text, up to two recent human topics, and current checkout metadata are search inputs only; the original prompt is never replaced.
+An item is eligible only after a lexical match, a bounded two- or three-character literal match, or meaningful path overlap below the Project root; extraction confidence never stands in for semantic similarity and only breaks ties after relevance.
 At most three whole Memory items and 600 estimated tokens are returned in the same `additionalContext` envelope, excluding items already provided by `SessionStart` for that session.
 Claude Code and Codex currently accept the same envelope, but the installed runtime argument keeps that protocol choice explicit.
 `SubagentStart`, `SubagentStop`, and `Stop` write nothing to stdout, preserving their existing silent behavior.

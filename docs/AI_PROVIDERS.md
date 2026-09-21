@@ -13,11 +13,12 @@ There is no output token ceiling in the request, because no provider contract ho
 `hide-ai` owns everything about providers: which are installed and logged in, the child process and its protocol, timeouts and cancellation, the retry policy, fallback between providers, duplicate suppression, and the structured error a caller branches on.
 No feature type lives in the crate, and no provider detail leaks out of it.
 
-Project Memory uses feature id `project_memory` and the pinned `mem0-oss-native` runtime dependency for Mem0 OSS v2.1 extraction, update-planning, deduplication, and hybrid search semantics.
-The dependency is an Apache-2.0 native derivative because the app may not embed Python or require a Mem0 service, API key, daemon, or separate vector database.
-The exact upstream commit, dependency path, audited source hashes, vendored prompt assets, and prompt-asset hashes live in `hide-memory/mem0-upstream.json`.
-The adapter preserves Mem0's extraction and memory-update prompts, BM25 sigmoid parameters, and additive hybrid-ranking formula, then adds Hide's Project-specific candidate kinds, provenance, lifecycle, privacy, and resource caps.
-Its strict schema carries candidate text, kind, confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
+Project Memory uses feature id `project_memory` through Hide's native analysis, relation-planning, persistence, and retrieval boundary.
+Official Mem0 OSS does not execute and is not a runtime dependency or service.
+Pinned Mem0 OSS v2.1.0 extraction and update prompt assets remain only as audited design-reference provenance; their exact upstream commit, source hashes, local asset hashes, and non-runtime role live in `hide-memory/hide-native-engine-reference.json`.
+Hide's strict schema carries candidate text, kind, extraction confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
+The write service validates those proposals against source events, Project identity, privacy, provenance, lifecycle, and resource caps.
+The local search path uses active-only FTS5 plus bounded literal and path fallback; it admits only query-relevant candidates, then uses salience, extraction confidence, and recency as tie-breakers rather than semantic-similarity signals.
 It sends only locally redacted, normalized human and assistant events after the durable session cursor, with a 64 KiB request-input cap.
 The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
 Memory analysis reuses this boundary's selected provider, availability, bounded same-provider retry, duplicate suppression, process ownership, cancellation, and budgets.

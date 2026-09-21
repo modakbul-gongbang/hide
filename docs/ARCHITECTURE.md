@@ -32,11 +32,12 @@ It folds linked worktrees into their canonical main worktree, identifies plain f
 `hide-session` owns provider-specific file discovery and parsing for local Claude Code and Codex sessions, while `herdr-core` receives only provider-neutral catalog rows and archived ledger events.
 Raw transcript bodies remain in the providers' files.
 
-`hide-memory` owns one app SQLite store, its schema and migrations, Project hard filters, session cursors, item and revision lifecycle, provenance, receipts, and the active FTS5 projection.
-Mem0 OSS v2.1.0 is a pinned Cargo runtime dependency at `hide-memory/vendor/mem0-oss-native`, behind the crate's native adapter for extraction, same-meaning deduplication, relation planning, and search semantics.
-Upstream Mem0 is Python, so this Apache-2.0 derivative owns only the audited semantics that can run natively without a Python runtime, user-managed daemon, external account, extra credential, or vector database.
-`hide-memory/mem0-upstream.json` records the exact upstream commit, dependency path and audited prompt, pipeline, and scoring source hashes; changing the engine requires changing that manifest and its adapter fixtures together.
-Mem0 output is a proposal only: the Hide write service validates Project identity, provenance, redaction, lifecycle, capacity, and transaction boundaries before any durable change.
+`hide-memory` owns Hide-native extraction and relation planning, one app SQLite store, its schema and migrations, Project hard filters, session cursors, item and revision lifecycle, provenance, receipts, query-dependent retrieval, and the active FTS5 projection.
+Official Mem0 OSS v2.1.0 does not execute in Hide and is not a runtime dependency, embedded service, compatibility package, daemon, account, credential, or vector database.
+Its pinned extraction and update prompt assets are retained only as audited design-reference provenance under `hide-memory/reference/mem0-v2.1.0/`.
+`hide-memory/hide-native-engine-reference.json` records the exact upstream commit, audited source hashes, local prompt-asset hashes, and the explicit non-runtime role.
+Every Hide-native analysis result is a proposal only: the write service validates Project identity, provenance, redaction, lifecycle, capacity, relation authority, and transaction boundaries before any durable change.
+Prompt retrieval confirms lexical or meaningful cwd/path overlap before ranking; salience, extraction confidence, and recency only break ties after relevance and are never presented as semantic similarity.
 The app owns the only writer connection.
 Hook helpers and render-facing reads open read-only connections, fail closed on schema or projection drift, and never rebuild the index in the prompt path.
 

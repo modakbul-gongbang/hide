@@ -1,6 +1,3 @@
-use mem0_oss_native::{
-    DEFAULT_SEMANTIC_THRESHOLD, SearchSignals, bm25_params, hybrid_score, normalize_bm25,
-};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -119,6 +116,14 @@ pub struct ApplySummary {
     pub duplicate_batch: bool,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DeleteProjectOutcome {
+    /// Logical deletion has committed when this is returned. A warning means
+    /// best-effort page cleanup needs later maintenance, not that data remains
+    /// queryable through the Project Memory store.
+    pub cleanup_warning: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProjectMemoryState {
     pub project_id: String,
@@ -209,6 +214,7 @@ struct RetrievalCandidate {
     updated_at_unix_ms: u64,
     lexical_score: f64,
     path_overlap: f64,
+    source_paths: String,
 }
 
 impl RetrievalQuery {
@@ -1134,14 +1140,28 @@ impl MemoryStore {
         Ok(receipt_id)
     }
 
-    pub fn delete_project_data(&mut self, project_id: &str) -> Result<(), MemoryError> {
+    pub fn delete_project_data(
+        &mut self,
+        project_id: &str,
+    ) -> Result<DeleteProjectOutcome, MemoryError> {
+        self.delete_project_data_with_cleanup(project_id, purge_deleted_pages)
+    }
+
+    fn delete_project_data_with_cleanup(
+        &mut self,
+        project_id: &str,
+        cleanup: impl FnOnce(&Connection) -> Result<(), MemoryError>,
+    ) -> Result<DeleteProjectOutcome, MemoryError> {
         self.require_writer()?;
         let transaction = self.connection.transaction()?;
         transaction.execute("DELETE FROM memory_fts WHERE project_id=?1", [project_id])?;
         transaction.execute("DELETE FROM projects WHERE id=?1", [project_id])?;
         transaction.commit()?;
-        purge_deleted_pages(&self.connection)?;
-        Ok(())
+        Ok(DeleteProjectOutcome {
+            cleanup_warning: cleanup(&self.connection)
+                .err()
+                .map(|error| error.to_string()),
+        })
     }
 
     fn item(&self, project_id: &str, item_id: &str) -> Result<Option<MemoryItem>, MemoryError> {
@@ -1162,6 +1182,7 @@ impl MemoryStore {
                     updated_at_unix_ms: row.get(6)?,
                     lexical_score: 0.0,
                     path_overlap: 0.0,
+                    source_paths: String::new(),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1174,72 +1195,64 @@ impl MemoryStore {
         path_context: &str,
     ) -> Result<Vec<RetrievalCandidate>, MemoryError> {
         let terms = search_terms(text);
-        if terms.is_empty() {
+        let cwd_terms = relative_path_terms(
+            &self.connection.query_row(
+                "SELECT root FROM projects WHERE id=?1",
+                [project_id],
+                |row| row.get::<_, String>(0),
+            )?,
+            path_context,
+        );
+        if terms.is_empty() && cwd_terms.is_empty() {
             return Ok(Vec::new());
         }
-        let path_terms = search_terms(path_context);
         let match_query = terms
             .iter()
             .filter(|term| term.chars().count() >= 2)
             .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
             .collect::<Vec<_>>()
             .join(" OR ");
-        if match_query.is_empty() {
-            let literal = normalize(text);
-            let mut statement = self.connection.prepare("SELECT i.id,r.revision,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,COALESCE((SELECT ss.checkout_path FROM memory_sources s JOIN session_sources ss ON ss.project_id=i.project_id AND ss.provider=s.provider AND ss.id=s.session_id WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),'') FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE i.project_id=?1 AND i.lifecycle='active' AND lower(r.body) LIKE '%'||?2||'%' ORDER BY i.salience DESC,i.confidence DESC,i.updated_at_ms DESC,i.id LIMIT 60")?;
-            return Ok(statement
-                .query_map(params![project_id, literal], |row| {
-                    let source_path: String = row.get(7)?;
-                    Ok(RetrievalCandidate {
-                        id: row.get(0)?,
-                        revision: row.get(1)?,
-                        body: row.get(2)?,
-                        primary_source: row.get(3)?,
-                        confidence: row.get(4)?,
-                        salience: row.get(5)?,
-                        updated_at_unix_ms: row.get(6)?,
-                        lexical_score: 1.0,
-                        path_overlap: term_overlap(&path_terms, &search_terms(&source_path)),
-                    })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?);
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        if !match_query.is_empty() {
+            let mut statement = self.connection.prepare("SELECT i.id,r.revision,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,COALESCE((SELECT group_concat(DISTINCT ss.checkout_path) FROM memory_sources s JOIN session_sources ss ON ss.project_id=i.project_id AND ss.provider=s.provider AND ss.id=s.session_id WHERE s.item_id=i.id),'') FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 ORDER BY bm25(memory_fts),i.updated_at_ms DESC,i.id LIMIT 60")?;
+            for candidate in statement
+                .query_map(params![project_id, match_query], map_retrieval_candidate)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+            {
+                seen.insert(candidate.id.clone());
+                candidates.push(candidate);
+            }
         }
-        let mut statement = self.connection.prepare("SELECT i.id,r.revision,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,-bm25(memory_fts),COALESCE((SELECT ss.checkout_path FROM memory_sources s JOIN session_sources ss ON ss.project_id=i.project_id AND ss.provider=s.provider AND ss.id=s.session_id WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),'') FROM memory_fts f JOIN memory_items i ON i.id=f.item_id JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE f.project_id=?1 AND i.lifecycle='active' AND memory_fts MATCH ?2 LIMIT 60")?;
-        let mut candidates = statement
-            .query_map(params![project_id, match_query], |row| {
-                let source_path: String = row.get(8)?;
-                Ok(RetrievalCandidate {
-                    id: row.get(0)?,
-                    revision: row.get(1)?,
-                    body: row.get(2)?,
-                    primary_source: row.get(3)?,
-                    confidence: row.get(4)?,
-                    salience: row.get(5)?,
-                    updated_at_unix_ms: row.get(6)?,
-                    lexical_score: row.get(7)?,
-                    path_overlap: term_overlap(&path_terms, &search_terms(&source_path)),
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        let (midpoint, steepness) = bm25_params(terms.len());
+        if candidates.len() < HOOK_CANDIDATE_LIMIT {
+            let mut statement = self.connection.prepare("SELECT i.id,r.revision,r.body,COALESCE((SELECT s.provider||':'||s.session_id FROM memory_sources s WHERE s.item_id=i.id ORDER BY s.provider,s.session_id,s.event_offset LIMIT 1),''),i.confidence,i.salience,i.updated_at_ms,COALESCE((SELECT group_concat(DISTINCT ss.checkout_path) FROM memory_sources s JOIN session_sources ss ON ss.project_id=i.project_id AND ss.provider=s.provider AND ss.id=s.session_id WHERE s.item_id=i.id),'') FROM memory_items i JOIN memory_revisions r ON r.item_id=i.id AND r.revision=i.current_revision WHERE i.project_id=?1 AND i.lifecycle='active' ORDER BY i.updated_at_ms DESC,i.id LIMIT ?2")?;
+            for candidate in statement
+                .query_map(
+                    params![project_id, HOOK_CANDIDATE_LIMIT as u64],
+                    map_retrieval_candidate,
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+            {
+                if candidates.len() >= HOOK_CANDIDATE_LIMIT || !seen.insert(candidate.id.clone()) {
+                    continue;
+                }
+                candidates.push(candidate);
+            }
+            debug_assert!(candidates.len() <= HOOK_CANDIDATE_LIMIT);
+        }
         for candidate in &mut candidates {
-            candidate.lexical_score = if candidate.lexical_score > 0.0 {
-                normalize_bm25(candidate.lexical_score, midpoint, steepness)
-            } else {
-                0.0
-            };
+            candidate.lexical_score = lexical_relevance(&terms, &candidate.body);
+            let prompt_path = lexical_relevance(&terms, &candidate.source_paths);
+            let cwd_path = path_overlap(&cwd_terms, &candidate.source_paths);
+            candidate.path_overlap = prompt_path.max(cwd_path);
         }
-        let has_bm25 = candidates
-            .iter()
-            .any(|candidate| candidate.lexical_score > 0.0);
-        let has_entity = candidates
-            .iter()
-            .any(|candidate| candidate.path_overlap > 0.0);
-        candidates.retain(|candidate| mem0_hybrid_score(candidate, has_bm25, has_entity).is_some());
+        candidates
+            .retain(|candidate| candidate.lexical_score > 0.0 || candidate.path_overlap > 0.0);
         candidates.sort_by(|left, right| {
-            mem0_hybrid_score(right, has_bm25, has_entity)
-                .unwrap_or_default()
-                .total_cmp(&mem0_hybrid_score(left, has_bm25, has_entity).unwrap_or_default())
+            retrieval_relevance(right)
+                .total_cmp(&retrieval_relevance(left))
+                .then_with(|| right.lexical_score.total_cmp(&left.lexical_score))
+                .then_with(|| right.path_overlap.total_cmp(&left.path_overlap))
                 .then_with(|| right.salience.total_cmp(&left.salience))
                 .then_with(|| right.confidence.total_cmp(&left.confidence))
                 .then_with(|| right.updated_at_unix_ms.cmp(&left.updated_at_unix_ms))
@@ -1368,7 +1381,18 @@ fn rebuild_search_projection(connection: &Connection) -> Result<(), MemoryError>
 
 fn purge_deleted_pages(connection: &Connection) -> Result<(), MemoryError> {
     connection.execute("INSERT INTO memory_fts(memory_fts) VALUES('optimize')", [])?;
-    connection.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+    connection.execute_batch("VACUUM")?;
+    let (busy, log_frames, checkpointed_frames): (i64, i64, i64) =
+        connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+    if busy != 0
+        || (log_frames >= 0 && checkpointed_frames >= 0 && log_frames != checkpointed_frames)
+    {
+        return Err(MemoryError::Integrity(format!(
+            "wal_checkpoint_incomplete:{busy}:{log_frames}:{checkpointed_frames}"
+        )));
+    }
     Ok(())
 }
 
@@ -1595,32 +1619,70 @@ fn search_terms(value: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
-fn term_overlap(query_terms: &[String], path_terms: &[String]) -> f64 {
-    if query_terms.is_empty() || path_terms.is_empty() {
+fn map_retrieval_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<RetrievalCandidate> {
+    Ok(RetrievalCandidate {
+        id: row.get(0)?,
+        revision: row.get(1)?,
+        body: row.get(2)?,
+        primary_source: row.get(3)?,
+        confidence: row.get(4)?,
+        salience: row.get(5)?,
+        updated_at_unix_ms: row.get(6)?,
+        lexical_score: 0.0,
+        path_overlap: 0.0,
+        source_paths: row.get(7)?,
+    })
+}
+fn relative_path_terms(project_root: &str, path_context: &str) -> Vec<String> {
+    if path_context.trim().is_empty() {
+        return Vec::new();
+    }
+    let context = Path::new(path_context);
+    let relative = context
+        .strip_prefix(project_root)
+        .ok()
+        .filter(|path| !path.as_os_str().is_empty());
+    relative
+        .map(|path| search_terms(&path.to_string_lossy()))
+        .unwrap_or_default()
+}
+fn lexical_relevance(query_terms: &[String], value: &str) -> f64 {
+    if query_terms.is_empty() || value.trim().is_empty() {
         return 0.0;
     }
-    let path = path_terms.iter().collect::<HashSet<_>>();
-    let matches = query_terms
+    let normalized = normalize(value);
+    let value_terms = search_terms(value);
+    let total = query_terms.len() as f64;
+    (query_terms
         .iter()
-        .filter(|term| path.contains(term))
-        .count();
-    (matches as f64 / query_terms.len() as f64).clamp(0.0, 1.0)
+        .map(|query| {
+            let characters = query.chars().count();
+            if characters < 2 {
+                0.0
+            } else if value_terms.iter().any(|candidate| candidate == query) {
+                1.0
+            } else if value_terms
+                .iter()
+                .any(|candidate| candidate.starts_with(query))
+            {
+                0.85
+            } else if characters <= 3 && normalized.contains(query) {
+                0.7
+            } else {
+                0.0
+            }
+        })
+        .sum::<f64>()
+        / total)
+        .clamp(0.0, 1.0)
 }
-fn mem0_hybrid_score(
-    candidate: &RetrievalCandidate,
-    has_bm25: bool,
-    has_entity: bool,
-) -> Option<f64> {
-    hybrid_score(
-        SearchSignals {
-            semantic_score: candidate.confidence,
-            bm25_score: candidate.lexical_score,
-            entity_overlap: candidate.path_overlap,
-        },
-        has_bm25,
-        has_entity,
-        DEFAULT_SEMANTIC_THRESHOLD,
-    )
+fn path_overlap(cwd_terms: &[String], source_paths: &str) -> f64 {
+    lexical_relevance(cwd_terms, source_paths)
+}
+fn retrieval_relevance(candidate: &RetrievalCandidate) -> f64 {
+    // Confidence describes extraction certainty. It is deliberately absent
+    // here so it can only break ties after query-dependent relevance.
+    candidate.lexical_score.max(candidate.path_overlap)
 }
 fn token_count(value: &str) -> usize {
     value
@@ -1711,24 +1773,19 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn mem0_v2_1_search_scoring_matches_upstream_golden_values() {
-        assert_eq!(bm25_params(2), (5.0, 0.7));
-        assert_eq!(bm25_params(5), (7.0, 0.6));
-        assert!((normalize_bm25(5.0, 5.0, 0.7) - 0.5).abs() < f64::EPSILON);
-        let candidate = RetrievalCandidate {
-            id: "m1".to_owned(),
-            revision: 1,
-            body: "body".to_owned(),
-            primary_source: "codex:s1".to_owned(),
-            confidence: 0.8,
-            salience: 1.0,
-            updated_at_unix_ms: 1,
-            lexical_score: 0.5,
-            path_overlap: 0.4,
-        };
-        // (semantic 0.8 + BM25 0.5 + entity boost 0.2) / 2.5
-        assert_eq!(mem0_hybrid_score(&candidate, true, true), Some(0.6));
-        assert_eq!(mem0_hybrid_score(&candidate, true, false), Some(0.65));
+    fn hide_native_relevance_is_query_dependent_and_language_aware() {
+        assert_eq!(
+            lexical_relevance(&search_terms("hook retrieval"), "Keep hook retrieval local"),
+            1.0
+        );
+        assert!(
+            lexical_relevance(&search_terms("기억 검색"), "프로젝트 기억 검색은 로컬이다") > 0.9
+        );
+        assert!(lexical_relevance(&search_terms("기억"), "프로젝트기억은 로컬이다") > 0.0);
+        assert_eq!(
+            lexical_relevance(&search_terms("hook retrieval"), "Prefer blue buttons"),
+            0.0
+        );
     }
 
     fn store() -> (tempfile::TempDir, MemoryStore, String) {
@@ -1772,8 +1829,23 @@ mod tests {
         }
     }
 
+    fn register_source(store: &MemoryStore, project: &str, session_id: &str, checkout_path: &Path) {
+        store
+            .upsert_session_source(&SessionSourceRecord {
+                id: session_id.to_owned(),
+                project_id: project.to_owned(),
+                provider: "codex".to_owned(),
+                locator: format!("/sessions/{session_id}.jsonl"),
+                checkout_path: checkout_path.to_string_lossy().into_owned(),
+                started_at_unix_ms: Some(1),
+                updated_at_unix_ms: 2,
+                unavailable_reason: None,
+            })
+            .unwrap();
+    }
+
     #[test]
-    fn duplicate_analysis_converges_and_same_meaning_adds_only_provenance() {
+    fn duplicate_analysis_converges_and_korean_same_meaning_adds_only_provenance() {
         let (_temp, mut store, project) = store();
         let first = store
             .apply_candidates(
@@ -1794,7 +1866,7 @@ mod tests {
             .apply_candidates(
                 &batch(&project, "b3", "h2"),
                 &[candidate(
-                    "Use one writer",
+                    "쓰기 권한은 하나만 둔다.",
                     CandidateRelation::Same { target_id: id },
                 )],
             )
@@ -1803,6 +1875,10 @@ mod tests {
         assert_eq!(
             store.list_memories(&project, "").unwrap()[0].source_count,
             2
+        );
+        assert_eq!(
+            store.list_memories(&project, "").unwrap()[0].body,
+            "Use one writer"
         );
     }
 
@@ -2151,6 +2227,116 @@ mod tests {
             bodies[..2]
                 .iter()
                 .any(|body| body.contains("second source"))
+        );
+    }
+
+    #[test]
+    fn korean_literal_and_english_cwd_path_relevance_are_observable() {
+        let (temp, mut store, project) = store();
+        let path_session = "path-session";
+        let hook_path = temp.path().join("src/hooks");
+        register_source(&store, &project, path_session, &hook_path);
+        store
+            .apply_candidates(
+                &sourced_batch(&project, "korean", "korean-session"),
+                &[candidate(
+                    "프로젝트기억은 로컬에서만 보관한다.",
+                    CandidateRelation::New,
+                )],
+            )
+            .unwrap();
+        store
+            .apply_candidates(
+                &sourced_batch(&project, "path", path_session),
+                &[candidate(
+                    "Keep provider receipts durable.",
+                    CandidateRelation::New,
+                )],
+            )
+            .unwrap();
+
+        let literal = store
+            .retrieve(&RetrievalQuery::prompt(&project, "기억", vec![]))
+            .unwrap();
+        assert_eq!(literal.items.len(), 1);
+        assert_eq!(literal.items[0].2, "프로젝트기억은 로컬에서만 보관한다.");
+
+        let path = store
+            .retrieve(
+                &RetrievalQuery::prompt(&project, "", vec![])
+                    .with_path_context(temp.path().join("src/hooks").to_string_lossy()),
+            )
+            .unwrap();
+        assert_eq!(path.items.len(), 1);
+        assert_eq!(path.items[0].2, "Keep provider receipts durable.");
+    }
+
+    #[test]
+    fn unrelated_high_confidence_memory_is_excluded_before_tie_breaking() {
+        let (_temp, mut store, project) = store();
+        let mut unrelated = candidate("The launch color is blue.", CandidateRelation::New);
+        unrelated.confidence = 1.0;
+        unrelated.salience = 1.0;
+        let mut relevant = candidate("Keep hook retrieval read-only.", CandidateRelation::New);
+        relevant.confidence = 0.2;
+        relevant.salience = 0.2;
+        store
+            .apply_candidates(
+                &sourced_batch(&project, "unrelated", "unrelated-session"),
+                &[unrelated],
+            )
+            .unwrap();
+        store
+            .apply_candidates(
+                &sourced_batch(&project, "relevant", "relevant-session"),
+                &[relevant],
+            )
+            .unwrap();
+
+        let result = store
+            .retrieve(&RetrievalQuery::prompt(&project, "hook retrieval", vec![]))
+            .unwrap();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].2, "Keep hook retrieval read-only.");
+    }
+
+    #[test]
+    fn prompt_top_three_are_ordered_by_relevance_before_confidence() {
+        let (_temp, mut store, project) = store();
+        for (index, body, confidence) in [
+            ("all", "Hook retrieval stays local", 0.1),
+            ("two", "Hook retrieval stays bounded", 0.4),
+            ("one", "Hook writes stay bounded", 0.9),
+            ("none", "Blue buttons stay visible", 1.0),
+        ] {
+            let mut value = candidate(body, CandidateRelation::New);
+            value.confidence = confidence;
+            store
+                .apply_candidates(
+                    &sourced_batch(&project, index, &format!("session-{index}")),
+                    &[value],
+                )
+                .unwrap();
+        }
+
+        let result = store
+            .retrieve(&RetrievalQuery::prompt(
+                &project,
+                "hook retrieval local",
+                vec![],
+            ))
+            .unwrap();
+        assert_eq!(
+            result
+                .items
+                .iter()
+                .map(|(_, _, body)| body.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Hook retrieval stays local",
+                "Hook retrieval stays bounded",
+                "Hook writes stay bounded",
+            ]
         );
     }
 
@@ -2526,7 +2712,8 @@ mod tests {
             )
             .unwrap();
 
-        store.delete_project_data(&project).unwrap();
+        let outcome = store.delete_project_data(&project).unwrap();
+        assert_eq!(outcome.cleanup_warning, None);
         assert!(matches!(
             store.project_state(&project),
             Err(MemoryError::ProjectMissing)
@@ -2549,5 +2736,47 @@ mod tests {
             }
         }
         drop(temp);
+    }
+
+    #[test]
+    fn committed_delete_is_success_even_when_page_cleanup_needs_maintenance() {
+        let (_temp, mut store, project) = store();
+        store
+            .apply_candidates(
+                &batch(&project, "b-delete-warning", "h-delete-warning"),
+                &[candidate(
+                    "Delete this derived memory",
+                    CandidateRelation::New,
+                )],
+            )
+            .unwrap();
+
+        let outcome = store
+            .delete_project_data_with_cleanup(&project, |_| {
+                Err(MemoryError::Integrity(
+                    "wal_checkpoint_incomplete:1:4:2".to_owned(),
+                ))
+            })
+            .unwrap();
+
+        assert_eq!(
+            outcome.cleanup_warning.as_deref(),
+            Some("memory_integrity:wal_checkpoint_incomplete:1:4:2")
+        );
+        assert!(matches!(
+            store.project_state(&project),
+            Err(MemoryError::ProjectMissing)
+        ));
+        assert_eq!(
+            store
+                .connection
+                .query_row(
+                    "SELECT COUNT(*) FROM memory_fts WHERE project_id=?1",
+                    [&project],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap(),
+            0
+        );
     }
 }

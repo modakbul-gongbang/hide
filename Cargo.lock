@@ -1151,7 +1151,6 @@ version = "0.1.0"
 dependencies = [
  "hide-ai",
  "hide-project",
- "mem0-oss-native",
  "regex",
  "rusqlite",
  "serde",
@@ -1423,10 +1422,6 @@ name = "md5"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
-
-[[package]]
-name = "mem0-oss-native"
-version = "2.1.0"
 
 [[package]]
 name = "memchr"
