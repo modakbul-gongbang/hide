@@ -1195,7 +1195,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     /// What this row's live descendants are doing, by state, for the badge
     /// the row wears while they are folded away. All zero for a row with no
     /// descendants worth a mark.
-    var descendantCounts = DescendantCounts()
+    var descendantCounts = CoreDescendantCounts()
 
     /// Fixtures and tests build a row directly. Every derived value defaults
     /// to the quiet reading, so a fixture states only what it is exercising.
@@ -1276,8 +1276,8 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         spawnOriginPaneID = try container.decodeIfPresent(String.self, forKey: .spawnOriginPaneID)
         lineageCollapsed = try container.decodeIfPresent(Bool.self, forKey: .lineageCollapsed) ?? false
         delegated = try container.decodeIfPresent(Bool.self, forKey: .delegated) ?? false
-        descendantCounts = try container.decodeIfPresent(DescendantCounts.self, forKey: .descendantCounts)
-            ?? DescendantCounts()
+        descendantCounts = try container.decodeIfPresent(CoreDescendantCounts.self, forKey: .descendantCounts)
+            ?? CoreDescendantCounts()
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1321,7 +1321,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
 /// The core counts every descendant, not only the direct children, and
 /// leaves out the ones whose activity Herdr cannot classify; the shell
 /// draws the counts it is given and computes none (design rule 4).
-struct DescendantCounts: Decodable, Equatable {
+struct CoreDescendantCounts: Decodable, Equatable {
     var error: Int = 0
     var approval: Int = 0
     var question: Int = 0

@@ -12,7 +12,7 @@ struct DelegatedRowPresentationTests {
         parent: String? = nil,
         children: [String] = [],
         collapsed: Bool = true,
-        counts: DescendantCounts = DescendantCounts(),
+        counts: CoreDescendantCounts = CoreDescendantCounts(),
         worktree: String? = nil,
         orphan: Bool = false
     ) -> SidebarAgent {
@@ -42,7 +42,7 @@ struct DelegatedRowPresentationTests {
     }
 
     @Test func aFoldedParentWearsTheBadgeAndAnOpenedOneHandsItToItsChildren() {
-        let counts = DescendantCounts(question: 1, working: 2)
+        let counts = CoreDescendantCounts(question: 1, working: 2)
         let folded = AgentRowPresentation(
             agent: agent("p1", children: ["p2"], collapsed: true, counts: counts),
             density: .compact,
@@ -69,7 +69,7 @@ struct DelegatedRowPresentationTests {
     }
 
     @Test func aRaisedRowAlwaysWearsTheBadgeAndItsChevronOnlyIndicates() {
-        let counts = DescendantCounts(done: 2)
+        let counts = CoreDescendantCounts(done: 2)
         let raised = AgentRowPresentation(
             agent: agent("p1", children: ["p2"], collapsed: false, counts: counts),
             density: .prominent,
@@ -121,12 +121,12 @@ struct DelegatedRowPresentationTests {
     }
 
     @Test func theBadgeDrawsOnlyNonZeroStatesWorstFirstWithTheRowMarks() {
-        let cells = DescendantBadgeCell.cells(DescendantCounts(error: 1, question: 2, done: 3))
+        let cells = DescendantBadgeCell.cells(CoreDescendantCounts(error: 1, question: 2, done: 3))
         #expect(cells.map(\.id) == ["error", "question", "done"])
         #expect(cells.map(\.symbol) == ["\u{d7}", "?", "✓"])
         #expect(cells.map(\.count) == [1, 2, 3])
-        #expect(DescendantBadgeCell.accessibilityLabel(DescendantCounts(approval: 1, working: 4))
+        #expect(DescendantBadgeCell.accessibilityLabel(CoreDescendantCounts(approval: 1, working: 4))
             == "Descendants: 1 approval, 4 working")
-        #expect(DescendantBadgeCell.cells(DescendantCounts()).isEmpty)
+        #expect(DescendantBadgeCell.cells(CoreDescendantCounts()).isEmpty)
     }
 }

@@ -116,7 +116,7 @@ struct AgentRowPresentation: Equatable {
     /// What the row's live descendants are doing, drawn as a badge before
     /// the elapsed time while they are folded away. A raised row never
     /// unfolds, so it always wears the badge (PRD B3, B12, D-04).
-    var descendantBadge: DescendantCounts? = nil
+    var descendantBadge: CoreDescendantCounts? = nil
     /// What the row's leading role column draws (PRD B9, B10, B12).
     var role: AgentRowRole = .blank
     /// Why Hide cannot say what this pane's session has spawned, as the
@@ -227,7 +227,7 @@ struct DescendantBadgeCell: Equatable, Identifiable {
     let count: Int
 
     /// The non-zero cells in the order the badge draws them (PRD D-08).
-    static func cells(_ counts: DescendantCounts) -> [DescendantBadgeCell] {
+    static func cells(_ counts: CoreDescendantCounts) -> [DescendantBadgeCell] {
         [
             DescendantBadgeCell(id: "error", symbol: "\u{d7}", label: "error", color: HideTheme.danger, count: counts.error),
             DescendantBadgeCell(id: "approval", symbol: "!", label: "approval", color: HideTheme.warning, count: counts.approval),
@@ -239,7 +239,7 @@ struct DescendantBadgeCell: Equatable, Identifiable {
     }
 
     /// The badge read aloud: "Descendants: 1 question, 2 working".
-    static func accessibilityLabel(_ counts: DescendantCounts) -> String {
+    static func accessibilityLabel(_ counts: CoreDescendantCounts) -> String {
         "Descendants: " + cells(counts).map { "\($0.count) \($0.label)" }.joined(separator: ", ")
     }
 }
@@ -248,7 +248,7 @@ struct DescendantBadgeCell: Equatable, Identifiable {
 /// count per state, reusing the row marks so the badge and the rows it
 /// stands for cannot disagree (PRD B3, D-02, D-08).
 struct AgentDescendantBadge: View {
-    let counts: DescendantCounts
+    let counts: CoreDescendantCounts
 
     var body: some View {
         HStack(spacing: HideTheme.spacingXS) {

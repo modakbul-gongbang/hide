@@ -115,7 +115,7 @@ import Testing
     #expect(agent.detail == "waiting")
     #expect(agent.statusWordVisible)
     #expect(!agent.delegated)
-    #expect(agent.descendantCounts == DescendantCounts(approval: 1, question: 2, working: 3))
+    #expect(agent.descendantCounts == CoreDescendantCounts(approval: 1, question: 2, working: 3))
 
     // An older core, or a row with nothing to say, reads as the quiet answer.
     let quiet = """
