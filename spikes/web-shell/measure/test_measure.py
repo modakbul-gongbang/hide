@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 from importlib.util import spec_from_file_location, module_from_spec
 
 HERE = Path(__file__).resolve().parent
@@ -39,6 +40,22 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(result['covered_ms'], 120001)
         self.assertEqual(result['over_16_7ms'], 1)
         self.assertEqual(result['percent'], 100)
+
+    def test_pid_publication_failure_leaves_no_child_group(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = 's0-child-' + uuid.uuid4().hex
+            result = subprocess.run([sys.executable, str(HERE/'owned.py'), str(os.getpid()),
+                str(Path(tmp)/'missing'/'child.pid'), sys.executable, '-c',
+                'import time; time.sleep(60)', marker], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            rows = subprocess.check_output(['ps', '-axo', 'pid=,command='], text=True).splitlines()
+            children = [int(row.split(None,1)[0]) for row in rows if marker in row]
+            try:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(children, [], 'PID publication failure orphaned its child')
+            finally:
+                for pid in children:
+                    try: os.killpg(pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
 
     def test_killed_owner_leaves_no_child_group(self):
         with tempfile.TemporaryDirectory() as tmp:
