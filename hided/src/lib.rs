@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod coexist;
 pub mod core;
 pub mod env;
 pub mod server;

@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use crate::coexist::{self, Coexist};
 use crate::env::{self, Env};
 use crate::spawn::spawn_owned;
 use crate::state_file::{self, DaemonState};
@@ -205,21 +206,34 @@ fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
     }
 }
 
+/// PRD B5: warn only when hided would attach to the socket the Swift shell
+/// already holds; an isolated socket never prompts. Without a TTY the shared
+/// case refuses instead of asking.
 fn confirm_coexist(env: &Env) -> Result<(), String> {
-    if !swift_app_present() {
-        return Ok(());
-    }
-    let socket = env.herdr_socket_path.as_deref().unwrap_or("");
-    if socket.is_empty() && !default_socket_exists() {
-        return Ok(());
-    }
+    let target = env.herdr_socket_path.as_deref().map(Path::new);
+    let (swift, socket, reason) = match coexist::classify(target, coexist::find_swift_shell()) {
+        Coexist::NoSwiftShell | Coexist::Isolated { .. } => return Ok(()),
+        Coexist::SharedSocket { swift, socket } => (swift, Some(socket), None),
+        Coexist::Unknown { swift, reason } => (swift, None, Some(reason)),
+    };
+    let why = match (&socket, &reason) {
+        (Some(socket), _) => format!(
+            "Swift Hide (pid {}) is attached to {}",
+            swift.pid,
+            socket.display()
+        ),
+        (None, Some(reason)) => format!(
+            "Swift Hide (pid {}) may be attached to the same Herdr socket: {reason}",
+            swift.pid
+        ),
+        (None, None) => unreachable!("classify returns a socket or a reason"),
+    };
     if !io::stdin().is_terminal() {
-        return Err(
-            "Swift Hide is running on this machine. Refusing to attach without a TTY. Close Swift or run from a terminal."
-                .into(),
-        );
+        return Err(format!(
+            "{why}. Refusing to attach without a TTY. Close Swift Hide, use another HERDR_SOCKET_PATH, or run from a terminal."
+        ));
     }
-    eprint!("Swift Hide looks attached to Herdr. Continue and attach hided too? [y/N] ");
+    eprint!("{why}. Attach hided to it too? [y/N] ");
     let _ = io::stderr().flush();
     let mut line = String::new();
     io::stdin()
@@ -229,24 +243,6 @@ fn confirm_coexist(env: &Env) -> Result<(), String> {
         "y" | "Y" | "yes" => Ok(()),
         _ => Err("aborted".into()),
     }
-}
-
-fn swift_app_present() -> bool {
-    Command::new("/bin/ps")
-        .args(["-axc", "-o", "comm="])
-        .output()
-        .ok()
-        .map(|output| {
-            let text = String::from_utf8_lossy(&output.stdout);
-            text.lines()
-                .any(|line| line == "Hide" || line == "HerdrMacOS")
-        })
-        .unwrap_or(false)
-}
-
-fn default_socket_exists() -> bool {
-    let home = std::env::var("HOME").unwrap_or_default();
-    Path::new(&home).join(".config/herdr/herdr.sock").exists()
 }
 
 #[cfg(test)]
