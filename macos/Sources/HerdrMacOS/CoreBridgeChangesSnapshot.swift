@@ -128,7 +128,7 @@ struct CoreChangedFile: Decodable, Identifiable, Equatable {
     }
 }
 
-enum CoreChangedFileStatus: String, Decodable, Equatable {
+enum CoreChangedFileStatus: String, Decodable, Equatable, CaseIterable {
     case modified
     case added
     case deleted

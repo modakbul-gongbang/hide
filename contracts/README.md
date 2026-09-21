@@ -23,3 +23,10 @@ Before launching the IDE against a local runtime, verify that the contract, the 
 ```sh
 ./scripts/check-herdr-contract.sh --herdr-bin <path to the pinned binary>
 ```
+
+# Snapshot wire enums
+
+`snapshot-wire-enums.json` lists, for every string enum the core serializes into the shell snapshot, the exact values it emits.
+The core is the writer of those strings and the shell decodes them strictly, so a value one side does not know fails the whole snapshot decode and freezes the shell on its last good frame.
+`herdr-core/src/model.rs` tests that every variant of each enum serializes to the listed value and nothing else; `SnapshotWireEnumTests` in the shell tests that each listed value decodes and that the Swift enum has no extra case.
+Add the variant to this file in the same change as the Rust variant and the Swift case; either test fails until all three agree.

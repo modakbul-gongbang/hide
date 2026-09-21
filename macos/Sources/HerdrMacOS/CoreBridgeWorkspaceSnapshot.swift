@@ -382,11 +382,11 @@ struct CoreCheckoutAgentSummary: Decodable, Equatable {
 }
 
 struct CoreCheckoutPurpose: Decodable, Equatable {
-    enum Origin: String, Decodable {
+    enum Origin: String, Decodable, CaseIterable {
         case token
         case branchDescription = "branch_description"
         case agentTitle = "agent_title"
-        case pullRequestTitle = "pr_title"
+        case pullRequestTitle = "pull_request_title"
     }
 
     let text: String
@@ -548,7 +548,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
 /// for; the panes, the dirty mark, and the active mark come from the snapshot
 /// the entry points at.
 struct CoreStripTabSnapshot: Decodable, Identifiable, Equatable {
-    enum Kind: String, Decodable {
+    enum Kind: String, Decodable, CaseIterable {
         case herdr
         case file
         case diff
@@ -605,7 +605,7 @@ struct CoreUnpushed: Decodable, Equatable {
 /// The five values a branch's pull request reduces to. The core owns the
 /// mapping from `gh`'s state, review decision, and draft flag; nothing here
 /// re-derives it.
-enum CorePullRequestBadge: String, Decodable, Equatable {
+enum CorePullRequestBadge: String, Decodable, Equatable, CaseIterable {
     case merged
     case closed
     case review
@@ -615,13 +615,13 @@ enum CorePullRequestBadge: String, Decodable, Equatable {
     var isSettled: Bool { self == .merged || self == .closed }
 }
 
-enum CoreReviewDecision: String, Decodable, Equatable {
+enum CoreReviewDecision: String, Decodable, Equatable, CaseIterable {
     case reviewRequired = "review_required"
     case changesRequested = "changes_requested"
     case approved
 }
 
-enum CorePullRequestChecks: String, Decodable, Equatable {
+enum CorePullRequestChecks: String, Decodable, Equatable, CaseIterable {
     case unknown, none, pending, failed, passing
 }
 
