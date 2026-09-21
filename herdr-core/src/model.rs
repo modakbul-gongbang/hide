@@ -2466,3 +2466,210 @@ pub struct TerminalMetaWire<'a> {
     pub exit_code: Option<i32>,
     pub panes: &'a [TerminalPaneSnapshot],
 }
+
+#[cfg(test)]
+mod wire_enum_tests {
+    //! The shell decodes these strings strictly, so the values the core emits
+    //! are a contract, pinned in `contracts/snapshot-wire-enums.json` and
+    //! decoded by the shell's `SnapshotWireEnumTests`. Each list below is
+    //! matched exhaustively: a new variant fails to compile here until it is
+    //! listed, and then fails this test until it is in the contract file.
+    use super::*;
+
+    fn contract() -> serde_json::Map<String, serde_json::Value> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../contracts/snapshot-wire-enums.json"
+        );
+        let text = std::fs::read_to_string(path).expect("contracts/snapshot-wire-enums.json");
+        match serde_json::from_str(&text).expect("contract is JSON") {
+            serde_json::Value::Object(map) => map,
+            other => panic!("contract must be an object, got {other}"),
+        }
+    }
+
+    fn assert_wire<T: Serialize>(
+        contract: &serde_json::Map<String, serde_json::Value>,
+        key: &str,
+        variants: &[T],
+    ) {
+        let listed = contract[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("{key} must be an array"))
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{key} holds strings"))
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        let emitted = variants
+            .iter()
+            .map(|variant| match serde_json::to_value(variant).unwrap() {
+                serde_json::Value::String(value) => value,
+                other => panic!("{key} serializes as a string, got {other}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            emitted, listed,
+            "{key}: the core emits the left, the contract lists the right"
+        );
+    }
+
+    #[test]
+    fn every_snapshot_enum_value_is_in_the_contract() {
+        let contract = contract();
+        let mut checked = BTreeSet::new();
+
+        let origins = [
+            CheckoutPurposeOrigin::Token,
+            CheckoutPurposeOrigin::BranchDescription,
+            CheckoutPurposeOrigin::AgentTitle,
+            CheckoutPurposeOrigin::PullRequestTitle,
+        ];
+        for variant in origins {
+            match variant {
+                CheckoutPurposeOrigin::Token
+                | CheckoutPurposeOrigin::BranchDescription
+                | CheckoutPurposeOrigin::AgentTitle
+                | CheckoutPurposeOrigin::PullRequestTitle => {}
+            }
+        }
+        assert_wire(&contract, "checkout_purpose_origin", &origins);
+        checked.insert("checkout_purpose_origin");
+
+        let badges = [
+            PullRequestBadge::Merged,
+            PullRequestBadge::Closed,
+            PullRequestBadge::Review,
+            PullRequestBadge::Open,
+        ];
+        for variant in badges {
+            match variant {
+                PullRequestBadge::Merged
+                | PullRequestBadge::Closed
+                | PullRequestBadge::Review
+                | PullRequestBadge::Open => {}
+            }
+        }
+        assert_wire(&contract, "pull_request_badge", &badges);
+        checked.insert("pull_request_badge");
+
+        let decisions = [
+            ReviewDecision::ReviewRequired,
+            ReviewDecision::ChangesRequested,
+            ReviewDecision::Approved,
+        ];
+        for variant in decisions {
+            match variant {
+                ReviewDecision::ReviewRequired
+                | ReviewDecision::ChangesRequested
+                | ReviewDecision::Approved => {}
+            }
+        }
+        assert_wire(&contract, "review_decision", &decisions);
+        checked.insert("review_decision");
+
+        let checks = [
+            PullRequestChecks::Unknown,
+            PullRequestChecks::None,
+            PullRequestChecks::Pending,
+            PullRequestChecks::Failed,
+            PullRequestChecks::Passing,
+        ];
+        for variant in checks {
+            match variant {
+                PullRequestChecks::Unknown
+                | PullRequestChecks::None
+                | PullRequestChecks::Pending
+                | PullRequestChecks::Failed
+                | PullRequestChecks::Passing => {}
+            }
+        }
+        assert_wire(&contract, "pull_request_checks", &checks);
+        checked.insert("pull_request_checks");
+
+        let statuses = [
+            ChangedFileStatus::Modified,
+            ChangedFileStatus::Added,
+            ChangedFileStatus::Deleted,
+            ChangedFileStatus::Untracked,
+            ChangedFileStatus::Renamed,
+            ChangedFileStatus::Conflict,
+        ];
+        for variant in statuses {
+            match variant {
+                ChangedFileStatus::Modified
+                | ChangedFileStatus::Added
+                | ChangedFileStatus::Deleted
+                | ChangedFileStatus::Untracked
+                | ChangedFileStatus::Renamed
+                | ChangedFileStatus::Conflict => {}
+            }
+        }
+        assert_wire(&contract, "changed_file_status", &statuses);
+        checked.insert("changed_file_status");
+
+        let tab_kinds = [EditorTabKind::File, EditorTabKind::Diff];
+        for variant in tab_kinds {
+            match variant {
+                EditorTabKind::File | EditorTabKind::Diff => {}
+            }
+        }
+        assert_wire(&contract, "editor_tab_kind", &tab_kinds);
+        checked.insert("editor_tab_kind");
+
+        let document_kinds = [
+            DocumentKind::Text,
+            DocumentKind::Markdown,
+            DocumentKind::Image,
+            DocumentKind::Pdf,
+            DocumentKind::Binary,
+        ];
+        for variant in document_kinds {
+            match variant {
+                DocumentKind::Text
+                | DocumentKind::Markdown
+                | DocumentKind::Image
+                | DocumentKind::Pdf
+                | DocumentKind::Binary => {}
+            }
+        }
+        assert_wire(&contract, "document_kind", &document_kinds);
+        checked.insert("document_kind");
+
+        let sections = [
+            RightPanelSection::Overview,
+            RightPanelSection::Explorer,
+            RightPanelSection::Changes,
+        ];
+        for variant in sections {
+            match variant {
+                RightPanelSection::Overview
+                | RightPanelSection::Explorer
+                | RightPanelSection::Changes => {}
+            }
+        }
+        assert_wire(&contract, "right_panel_section", &sections);
+        checked.insert("right_panel_section");
+
+        let strip_kinds = [StripTabKind::Herdr, StripTabKind::File, StripTabKind::Diff];
+        for variant in strip_kinds {
+            match variant {
+                StripTabKind::Herdr | StripTabKind::File | StripTabKind::Diff => {}
+            }
+        }
+        assert_wire(&contract, "strip_tab_kind", &strip_kinds);
+        checked.insert("strip_tab_kind");
+
+        let unchecked = contract
+            .keys()
+            .filter(|key| !checked.contains(key.as_str()))
+            .collect::<Vec<_>>();
+        assert!(
+            unchecked.is_empty(),
+            "contract lists enums this test does not pin: {unchecked:?}"
+        );
+    }
+}

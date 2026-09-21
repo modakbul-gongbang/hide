@@ -21,7 +21,7 @@ struct CoreEditorSnapshot: Decodable {
     }
 }
 
-enum CoreEditorTabKind: String, Decodable, Equatable {
+enum CoreEditorTabKind: String, Decodable, Equatable, CaseIterable {
     case file
     case diff
 }
@@ -57,7 +57,7 @@ struct CoreEditorTabSnapshot: Decodable, Identifiable, Equatable {
 
 /// The core's verdict on what an open file is. The shell draws one view per
 /// case and decides nothing from the file's name or bytes itself.
-enum CoreDocumentKind: String, Decodable, Equatable {
+enum CoreDocumentKind: String, Decodable, Equatable, CaseIterable {
     case text
     case markdown
     case image

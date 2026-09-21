@@ -21,6 +21,9 @@ The Changes reader is also the only Git-status owner for Explorer decorations: i
 The AppKit outline derives file and ancestor-folder decorations from that snapshot in memory; it never starts Git from a row, scroll, hover, or paint.
 Per-pane attach threads stream PTY bytes into the runtime as terminal chunks.
 Everything the shell renders comes from that one snapshot pull.
+The shell decodes it strictly: one string value it does not know fails the whole decode, the bridge keeps its last good frame, and every later notification repeats the failure until the two sides agree, so an unknown value is a stalled shell, not a blank field.
+The string enums the core serializes into the snapshot are therefore pinned in `contracts/snapshot-wire-enums.json`; `model.rs` tests that each variant emits the listed value and `SnapshotWireEnumTests` that each listed value decodes, so a variant added on one side fails a suite before it can reach a running shell (a `PullRequestTitle` origin once shipped as `pull_request_title` against a shell that read `pr_title`).
+The bridge publishes `bridgeError` only on change and names the coding path in it, because a repeated failure republished every notification rebuilt every view observing the bridge at the notification rate.
 
 The agent-context-labels plugin is a separate headless consumer of the same Herdr socket contract.
 It opens one long-lived `events.subscribe` stream for pane lifecycle events, bootstraps pane state with `agent.list`, and reports metadata only after a display transition.
