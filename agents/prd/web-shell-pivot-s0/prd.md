@@ -4,7 +4,7 @@ status: "ready"
 human_approval: "pending"
 review_profile: "standard"
 review_rationale: "제품 코드를 바꾸지 않는 스파이크와 측정이지만, 결과가 34k줄 Swift 삭제 계획(우산 PRD D-06)의 진행/중단을 결정하므로 측정 절차의 정직성이 검토 대상이다."
-source_intake: "agents/prd/web-shell-pivot/prd.md (우산 PRD D-06, D-07, B1-B3) + agents/runs/web-shell-pivot/task-plan.md S0"
+source_intake: "agents/prd/web-shell-pivot/prd.md"
 created_at: "2026-09-21"
 updated_at: "2026-09-21"
 ---
