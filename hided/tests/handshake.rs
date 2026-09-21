@@ -390,6 +390,8 @@ async fn local_listing_and_refusals_are_answered_by_hided() {
     std::fs::write(home.join("projects/file.txt"), "x").unwrap();
     let outside = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(outside.path(), home.join("projects/escape")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("nope"), home.join("projects/dangling"))
+        .unwrap();
     let mut socket = live_socket(&running).await;
 
     let listing = send_event(
@@ -418,6 +420,14 @@ async fn local_listing_and_refusals_are_answered_by_hided() {
         ),
         (
             home.join("projects/escape/nope").display().to_string(),
+            "outside_home",
+        ),
+        (
+            home.join("projects/dangling").display().to_string(),
+            "outside_home",
+        ),
+        (
+            home.join("projects/dangling/child").display().to_string(),
             "outside_home",
         ),
         (format!("{}/projects/../..", home.display()), "invalid_path"),

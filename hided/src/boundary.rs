@@ -2,19 +2,23 @@
 //! behind (PRD web-shell-pivot-s2, D-09 and B10).
 //!
 //! The web shell only draws what this module answers: a directory listing for
-//! its path autocomplete and a refusal with a reason code. A path is tested
-//! twice: as written, before the filesystem is touched, so a refusal for a
-//! path outside home carries one reason (`outside_home`) whether or not the
-//! path exists; then on its real path (`canonicalize`), so a symlink under home
-//! that leaves it is caught too. `..` and encoded segments are refused on
-//! shape or resolve like any other name. The boundary root is read from `HOME`
-//! at boot and is not configurable (`practices/env.md`); an allowed-roots
-//! setting is an S5 candidate.
+//! its path autocomplete and a refusal with a reason code. The filesystem is
+//! only ever asked about paths under home: a path written outside home is
+//! refused as `outside_home` before anything is read, and a path under home
+//! is resolved one component at a time from home, where a symlink's target
+//! is tested as written the same way before it is followed. So the reason a
+//! client reads never says whether a path outside home exists, not even
+//! through a symlink it planted under home. `..` and encoded segments are
+//! refused on shape or resolve like any other name. The boundary root is read
+//! from `HOME` at boot and is not configurable (`practices/env.md`); an
+//! allowed-roots setting is an S5 candidate.
 //!
 //! Nothing here reaches the core: a refused path is answered to the client and
 //! logged, and an accepted path is forwarded as the canonical path that was
 //! checked, so the core registers exactly what the boundary saw.
 
+use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -67,6 +71,27 @@ pub struct Listing {
 /// than this is answered as truncated, not grown (engineering principle 15).
 pub const LIST_CAP: usize = 500;
 
+/// Symlinks one path may pass through before it is refused as a loop; the
+/// kernel's own limit for one lookup is the same order.
+const SYMLINK_HOPS: usize = 40;
+
+/// Lexical normalization of an absolute path: `.` dropped, `..` applied to
+/// the component before it. Used only on a symlink target joined to a path
+/// that holds no symlink, where the lexical parent is the real one.
+fn normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 #[derive(Clone, Debug)]
 pub struct Boundary {
     /// The real home directory every accepted path resolves under.
@@ -100,8 +125,9 @@ impl Boundary {
     /// The canonical directory for `raw` when it is home or under home.
     /// `~` and `~/...` name the home directory, so a client can start its
     /// listing without knowing the path; the answer carries the real one.
-    /// A path written outside home is refused before the filesystem is read,
-    /// so the reason never says whether such a path exists.
+    /// A path written outside home, or reached through a symlink whose
+    /// target is written outside home, is refused before the filesystem is
+    /// read there, so the reason never says whether such a path exists.
     pub fn resolve_dir(&self, raw: &str) -> Result<PathBuf, Refusal> {
         let expanded;
         let raw = if raw == "~" || raw.starts_with("~/") {
@@ -125,25 +151,14 @@ impl Boundary {
             // shape keeps the log readable when it appears.
             return Err(Refusal::InvalidPath);
         }
-        if !path.starts_with(&self.home) && !path.starts_with(&self.home_as_given) {
+        let Some(rest) = self.strip_home(path) else {
             return Err(Refusal::OutsideHome);
-        }
-        let real = match path.canonicalize() {
-            Ok(real) => real,
-            Err(error) => {
-                // Where the path stopped resolving decides the reason: past
-                // a symlink that already left home, nothing deeper is
-                // described, so the reason cannot probe the rest of the disk.
-                if !self.deepest_existing_ancestor_is_inside(path) {
-                    return Err(Refusal::OutsideHome);
-                }
-                return Err(match error.kind() {
-                    io::ErrorKind::NotFound => Refusal::NotFound,
-                    io::ErrorKind::NotADirectory => Refusal::NotADirectory,
-                    _ => Refusal::InvalidPath,
-                });
-            }
         };
+        let resolved = self.walk_from_home(rest)?;
+        // The walk left no symlink in `resolved`, so this only settles the
+        // spelling the OS keeps (letter case on a case-insensitive volume)
+        // and cannot fail for a reason the walk has not already answered.
+        let real = resolved.canonicalize().map_err(|_| Refusal::InvalidPath)?;
         if !real.starts_with(&self.home) {
             return Err(Refusal::OutsideHome);
         }
@@ -154,14 +169,70 @@ impl Boundary {
         Ok(real)
     }
 
-    /// Whether the nearest ancestor of `path` that resolves lies under home
-    /// by real path. `/` always resolves, so a path that was written under
-    /// home always has one.
-    fn deepest_existing_ancestor_is_inside(&self, path: &Path) -> bool {
-        path.ancestors()
-            .skip(1)
-            .find_map(|ancestor| ancestor.canonicalize().ok())
-            .is_some_and(|real| real.starts_with(&self.home))
+    /// The part of `path` below home, when `path` is written under home in
+    /// either spelling.
+    fn strip_home<'a>(&self, path: &'a Path) -> Option<&'a Path> {
+        path.strip_prefix(&self.home)
+            .or_else(|_| path.strip_prefix(&self.home_as_given))
+            .ok()
+    }
+
+    /// Resolves `rest` below the real home one component at a time. Every
+    /// name is read where it sits, so the filesystem is only ever asked about
+    /// paths under home; a symlink is replaced by its target as written, and
+    /// a target not written under home is refused as `OutsideHome` before
+    /// anything about it is read, whether or not it exists.
+    fn walk_from_home(&self, rest: &Path) -> Result<PathBuf, Refusal> {
+        let mut current = self.home.clone();
+        let mut pending: VecDeque<OsString> = rest
+            .components()
+            .filter(|component| matches!(component, Component::Normal(_)))
+            .map(|component| component.as_os_str().to_owned())
+            .collect();
+        let mut hops = 0;
+        while let Some(name) = pending.pop_front() {
+            let next = current.join(&name);
+            let metadata = match fs::symlink_metadata(&next) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Err(Refusal::NotFound);
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotADirectory => {
+                    return Err(Refusal::NotADirectory);
+                }
+                // A loop, a denied directory, or another OS refusal under
+                // home: none of them describes anything outside it.
+                Err(_) => return Err(Refusal::InvalidPath),
+            };
+            if metadata.file_type().is_symlink() {
+                hops += 1;
+                if hops > SYMLINK_HOPS {
+                    return Err(Refusal::InvalidPath);
+                }
+                let target = fs::read_link(&next).map_err(|_| Refusal::InvalidPath)?;
+                let target = normalize(&current.join(target));
+                let Some(below) = self.strip_home(&target) else {
+                    return Err(Refusal::OutsideHome);
+                };
+                // Start over from home with the target's components in front
+                // of what is still pending; `current` holds no symlink, so a
+                // `..` in the target was resolved on real directories.
+                let mut replaced: VecDeque<OsString> = below
+                    .components()
+                    .filter(|component| matches!(component, Component::Normal(_)))
+                    .map(|component| component.as_os_str().to_owned())
+                    .collect();
+                replaced.append(&mut pending);
+                pending = replaced;
+                current = self.home.clone();
+                continue;
+            }
+            if !pending.is_empty() && !metadata.is_dir() {
+                return Err(Refusal::NotADirectory);
+            }
+            current = next;
+        }
+        Ok(current)
     }
 
     /// The canonical path a `create_workspace` may carry: a directory strictly
@@ -342,6 +413,31 @@ mod tests {
             );
             assert_eq!(f.boundary.list(path), Err(Refusal::OutsideHome), "{path}");
         }
+        // A symlink under home to a target outside home is refused the same
+        // way whether its target exists or not, named directly or with a tail.
+        symlink(&existing_dir, f.home.join("projects/out-exists")).unwrap();
+        symlink(&missing_dir, f.home.join("projects/out-missing")).unwrap();
+        symlink("../../outside/secret", f.home.join("projects/out-relative")).unwrap();
+        symlink(
+            "../../outside/nope",
+            f.home.join("projects/out-relative-missing"),
+        )
+        .unwrap();
+        for name in [
+            "out-exists",
+            "out-missing",
+            "out-relative",
+            "out-relative-missing",
+        ] {
+            for tail in ["", "child"] {
+                let path = s(&f.home.join("projects").join(name).join(tail));
+                assert_eq!(
+                    f.boundary.resolve_workspace(&path),
+                    Err(Refusal::OutsideHome),
+                    "{name}/{tail}"
+                );
+            }
+        }
         // A symlink into home from outside is still outside: the path as
         // written decides, not where it leads.
         let inbound = f.outside.join("inbound");
@@ -429,6 +525,37 @@ mod tests {
         // A hidden directory is hidden from the listing but may be typed.
         let hidden = s(&f.home.join("projects/.hidden"));
         assert!(f.boundary.resolve_workspace(&hidden).is_ok());
+    }
+
+    #[test]
+    fn symlinks_inside_home_resolve_and_loops_are_refused() {
+        let f = fixture();
+        symlink("alpha", f.home.join("projects/relative-alias")).unwrap();
+        assert_eq!(
+            f.boundary
+                .resolve_workspace(&s(&f.home.join("projects/relative-alias"))),
+            Ok(f.home.join("projects/alpha"))
+        );
+        symlink("../projects/alpha", f.home.join("projects/dotdot-alias")).unwrap();
+        assert_eq!(
+            f.boundary
+                .resolve_workspace(&s(&f.home.join("projects/dotdot-alias"))),
+            Ok(f.home.join("projects/alpha"))
+        );
+        symlink("loop-b", f.home.join("projects/loop-a")).unwrap();
+        symlink("loop-a", f.home.join("projects/loop-b")).unwrap();
+        assert_eq!(
+            f.boundary
+                .resolve_workspace(&s(&f.home.join("projects/loop-a"))),
+            Err(Refusal::InvalidPath)
+        );
+        symlink("nowhere", f.home.join("projects/dangling-inside")).unwrap();
+        assert_eq!(
+            f.boundary
+                .resolve_workspace(&s(&f.home.join("projects/dangling-inside"))),
+            Err(Refusal::NotFound),
+            "a dangling target under home is a missing path under home"
+        );
     }
 
     #[test]
