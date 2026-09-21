@@ -32,8 +32,9 @@ Use a fresh run directory for every attempt and preserve failed attempts for dia
 
 ## Timing boundaries
 
-Both echo drivers timestamp before spawning the same `herdr pane send-text` command with the same LF-terminated marker.
-CLI return is measured separately and overlaps downstream processing.
+Both drivers record timestamps before and after the same `herdr pane send-text` command with the same LF-terminated marker.
+By Observer decision, gate ② uses CLI return as t0 for both shells; pre-spawn origin and CLI cost remain in raw hops and REPORT.
+The return timestamp is an acknowledged handoff proxy; negative completion differences, if present, are retained without clamping.
 The daemon stamps notification, snapshot request, owner start/end and WS send; structured send-completion logs correlate by request timestamp.
 The browser stamps message entry and xterm's write callback, resolving one armed marker from the parsed buffer without polling.
 Swift uses the next completed draw trace from the exact candidate PID after input, a software proxy without marker identity.

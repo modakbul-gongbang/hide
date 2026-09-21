@@ -8,15 +8,22 @@ import subprocess
 from summarize import summarize
 
 
+def echo_samples(trial, side):
+    end = 'write_ms' if side == 'web' else 'draw_ms'
+    # Re-score existing observations without rewriting raw files or discarding
+    # signed values if a completion ever precedes CLI return.
+    return [row[end] - row['cli_return_ms'] for row in trial['hops']]
+
+
 def main():
     run = Path(os.environ['S0_RUN_DIR'])
     worktree = Path(os.environ['S0_WORKTREE'])
     read = lambda name: json.loads((run / name).read_text())
     trials = {side: [read(f'echo-{side}-{i}.json') for i in (1, 2, 3)] for side in ('web', 'swift')}
     for side, values in trials.items():
-        if any(len(v['samples']) < 50 for v in values):
+        if any(len(v['hops']) < 50 for v in values):
             raise SystemExit(f'{side}: incomplete sample count')
-    summaries = {side: [summarize(v['samples']) for v in values] for side, values in trials.items()}
+    summaries = {side: [summarize(echo_samples(v, side)) for v in values] for side, values in trials.items()}
     med = {side: statistics.median(v['p95_ms'] for v in values) for side, values in summaries.items()}
     rss = read('rss-tab.json')
     frames = read('frames-summary.json')
@@ -66,7 +73,7 @@ def main():
 | # | Item | Value | Baseline | Threshold | Result |
 | --- | --- | --- | --- | --- | --- |
 | ① | Hangul IME V9 | four human checks below | n/a | all four pass | PENDING_HUMAN |
-| ② | Driver -> echo p95 | web {med['web']:.3f} ms | Swift {med['swift']:.3f} ms | Swift + 5 = {med['swift']+5:.3f} ms | {statuses[0]} |
+| ② | CLI return -> echo p95 | web {med['web']:.3f} ms | Swift {med['swift']:.3f} ms | Swift + 5 = {med['swift']+5:.3f} ms | {statuses[0]} |
 | ③ | Chrome tab renderer + hided RSS | {rss['sum_mb']:.2f} MiB | n/a | <= 400 MB | {statuses[1]} |
 | ④ | Frames over 16.7 ms | {frames['percent']:.4f}% ({frames['over_16_7ms']}/{frames['count']}); {frames['covered_ms']/1000:.3f}s | n/a | <= 1% over full 120s | {statuses[2]} |
 
@@ -80,7 +87,9 @@ def main():
 - Web uses 84x46 terminal grid to match the native candidate's observed settled grid.
 - Each client is stopped before the other attaches; trials alternate web and Swift, 3x50 each.
 - Both send `sNNNN` + LF through the same pinned `herdr pane send-text` into `stty -echo -icanon; cat`.
-- t0 precedes CLI spawn, so CLI duration overlaps terminal processing and is not an additive hop to subtract.
+- Observer-authorized t0 is `cli_return_ms`, the send-text CLI return timestamp, used identically for Swift and web; t1 is the screen-side completion described below.
+- The fixed threshold remains Swift p95 + 5ms. CLI spawn-to-return is excluded from gate ② and retained as its own measured distribution; raw `hops.t0_ms` retains the original pre-spawn origin.
+- CLI return is an acknowledged handoff proxy, not instrumentation at the exact socket write. Echo can theoretically precede CLI return; signed differences are retained without clamping.
 - Web t1 is xterm write completion after the marker is present in the parsed buffer; the associated WS message timestamp is captured at event entry before JSON decoding.
 - Swift t1 is the next completed receive_to_draw log timestamp from the exact candidate PID, with only one outstanding input and an 80ms quiet interval.
 - This is a software echo/draw proxy, not physical key-to-compositor latency; Swift does not expose marker identity in its trace.
@@ -89,6 +98,9 @@ def main():
 | Trial | n | p50 ms | p95 ms | p99 ms | max ms | contemporaneous load |
 | --- | --- | --- | --- | --- | --- | --- |
 {distributions}
+
+Negative corrected samples: web {sum(v < 0 for trial in trials['web'] for v in echo_samples(trial, 'web'))}/150; Swift {sum(v < 0 for trial in trials['swift'] for v in echo_samples(trial, 'swift'))}/150.
+Pre-spawn medians of trial p95s, retained for comparison and not gate ②: web {statistics.median(summarize([row['write_ms']-row['t0_ms'] for row in trial['hops']])['p95_ms'] for trial in trials['web']):.3f}ms; Swift {statistics.median(summarize([row['draw_ms']-row['t0_ms'] for row in trial['hops']])['p95_ms'] for trial in trials['swift']):.3f}ms.
 
 ## Per-hop timings
 

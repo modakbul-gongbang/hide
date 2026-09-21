@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from importlib.util import spec_from_file_location, module_from_spec
 
 HERE = Path(__file__).resolve().parent
 
@@ -18,6 +19,15 @@ class MeasurementTests(unittest.TestCase):
             path = Path(tmp) / 'frames.json'
             path.write_text(json.dumps({'frames': [{'dt': v} for v in frames], 'done': done, 'window': None}))
             return json.loads(subprocess.check_output([sys.executable, str(HERE/'frames.py'), str(path)]))
+
+    def test_same_return_origin_for_both_shells(self):
+        spec = spec_from_file_location('report', HERE/'write-report.py')
+        report = module_from_spec(spec); spec.loader.exec_module(report)
+        sample = {'hops': [{'t0_ms': 0, 'cli_return_ms': 110, 'write_ms': 112, 'draw_ms': 113}]}
+        self.assertEqual(report.echo_samples(sample, 'web'), [2])
+        self.assertEqual(report.echo_samples(sample, 'swift'), [3])
+        sample['hops'][0]['write_ms'] = 109
+        self.assertEqual(report.echo_samples(sample, 'web'), [-1])
 
     def test_short_series_cannot_pass_full_window(self):
         self.assertFalse(self.score([10] * 1400)['complete'])

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Shared echo definition: t0 = herdr pane send-text, t1 = xterm.js buffer.
+// Shared echo definition: t0 = send-text CLI return, t1 = xterm write completion.
 import { performance } from "node:perf_hooks";
 import { spawnSync } from "node:child_process";
 
@@ -68,11 +68,11 @@ for (let i = 0; i < repeats; i += 1) {
   });
   if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
   const hop = { sample: i, t0_ms: t0, cli_return_ms, ...result.result.value };
-  samples.push(hop.write_ms - t0);
+  samples.push(hop.write_ms - cli_return_ms);
   hops.push(hop);
   await new Promise((resolve) => setTimeout(resolve, 80));
 }
 
 ws.close();
-const out = { method: "send-text spawn -> xterm write callback; WS message timestamp recorded before parsing; identical sNNNN + LF bytes", load, samples, hops };
+const out = { method: "send-text CLI return -> xterm write callback; t0_ms in hops retains pre-spawn start for overhead; WS message timestamp recorded before parsing; identical sNNNN + LF bytes", load, samples, hops };
 console.log(JSON.stringify(out, null, 2));

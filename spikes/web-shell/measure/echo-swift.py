@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared echo definition for the Swift shell.
 
-t0 = herdr pane send-text
+t0 = herdr pane send-text CLI return
 t1 = timestamp of the next completed TerminalLatency receive_to_draw on the
 isolated app PID (log stream ndjson).
 """
@@ -95,7 +95,7 @@ def main():
                     break
             if matched is None:
                 raise SystemExit(f"no receive_to_draw after marker {marker}")
-            samples.append(matched)
+            samples.append((t1 - cli_return) * 1000)
             hops.append({"sample": i, "t0_ms": t0 * 1000, "cli_return_ms": cli_return * 1000, "draw_ms": t1 * 1000})
             time.sleep(0.08)
     finally:
@@ -108,7 +108,7 @@ def main():
             proc.wait()
     json.dump(
         {
-            "method": "herdr pane send-text t0 -> Swift TerminalLatency receive_to_draw log timestamp t1",
+            "method": "send-text CLI return t0 (hops.t0_ms retains pre-spawn overhead origin) -> Swift TerminalLatency receive_to_draw log timestamp t1",
             "samples": samples,
             "hops": hops,
             "load": load,
