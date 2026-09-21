@@ -34,6 +34,9 @@ config_path="$private/herdr-config.toml"
 printf '[update]\nversion_check = false\nmanifest_check = false\n' > "$config_path"
 
 unset HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_ENV
+# Herdr starts the pane shell from SHELL; only zsh reads the private .zshrc
+# whose prompt run.sh waits for.
+export SHELL=/bin/zsh
 export HERDR_SESSION="hide-web-measure"
 export HERDR_DISABLE_SOUND=1
 export HERDR_SOCKET_PATH="$socket_path"

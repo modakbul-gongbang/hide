@@ -61,11 +61,14 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   for (const dir of ["xdg-config", "xdg-state", "home", "fixture", "bin"]) {
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   }
-  // The pane shell reads this private HOME; a fixed prompt keeps the
-  // workstation's user and host name out of screenshots.
+  // Herdr starts the pane shell from SHELL, so the fixture names it: the
+  // CI runner's login shell is bash, and only zsh reads this private
+  // HOME's .zshrc. A fixed prompt keeps the workstation's user and host
+  // name out of screenshots and is what the fixture waits for.
   fs.writeFileSync(path.join(root, "home", ".zshrc"), "PS1='fixture %# '\n");
   return {
     ...env,
+    SHELL: "/bin/zsh",
     HOME: path.join(root, "home"),
     HERDR_SESSION: `hide-e2e-${path.basename(root)}`,
     HERDR_SOCKET_PATH: socket,
