@@ -450,6 +450,7 @@ Opening Sessions starts one bounded background catalog read for the focused loca
 The coordinator checks for due Memory work no more than once every five seconds, keeps one poll in flight, and schedules analysis only after a source has complete unread bytes and its size and modification time have remained unchanged for sixty seconds.
 An unchanged poll publishes nothing.
 Session file discovery, incremental reads, SQLite work, redaction, provider requests, hook-config writes, and JSON serialization stay outside `Mutex<Runtime>`.
+One incremental transcript poll reads at most 1 MiB, one retained JSONL line is capped at 256 KiB, and catalog or archive detail parsing rejects a complete session above 64 MiB.
 One Project/session/content-hash intent is idempotent, and background input is capped at 64 KiB, one inflight request, thirty requests per minute, and 10,000 active items per Project.
 Crossing a cap is an actionable state rather than an enlarged queue or automatic deletion.
 

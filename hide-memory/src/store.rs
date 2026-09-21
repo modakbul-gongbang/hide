@@ -1,3 +1,4 @@
+use ring::hmac;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,7 +14,7 @@ use crate::{
     MEMORY_BODY_LIMIT_CHARS, PROMPT_ITEM_LIMIT, SESSION_START_ITEM_LIMIT, redact,
 };
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 const MEMORY_DISCLOSURE_VERSION: i64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -461,11 +462,67 @@ impl MemoryStore {
         device_id: &str,
     ) -> Result<(), MemoryError> {
         self.require_writer()?;
-        self.connection.execute(
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
             "INSERT INTO projects(id, root, device_id, enabled, created_at_ms, updated_at_ms) VALUES(?1, ?2, ?3, 0, ?4, ?4) ON CONFLICT(id) DO UPDATE SET root=excluded.root, device_id=excluded.device_id, updated_at_ms=excluded.updated_at_ms",
             params![project_id, root.to_string_lossy(), device_id, now_ms()],
         )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO project_receipt_keys(project_id,auth_key) VALUES(?1,randomblob(32))",
+            [project_id],
+        )?;
+        transaction.commit()?;
         Ok(())
+    }
+
+    pub fn receipt_auth_tag(
+        &self,
+        project_id: &str,
+        runtime: &str,
+        session_id: &str,
+        event: &str,
+        item_key: &str,
+    ) -> Result<String, MemoryError> {
+        let auth_key = self.receipt_auth_key(project_id)?;
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &auth_key);
+        let payload = receipt_auth_payload(project_id, runtime, session_id, event, item_key);
+        Ok(hex_encode(hmac::sign(&key, &payload).as_ref()))
+    }
+
+    pub fn verify_receipt_auth(
+        &self,
+        project_id: &str,
+        runtime: &str,
+        session_id: &str,
+        event: &str,
+        item_key: &str,
+        auth_tag: &str,
+    ) -> Result<bool, MemoryError> {
+        let Some(auth_tag) = hex_decode(auth_tag) else {
+            return Ok(false);
+        };
+        let auth_key = self.receipt_auth_key(project_id)?;
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &auth_key);
+        let payload = receipt_auth_payload(project_id, runtime, session_id, event, item_key);
+        Ok(hmac::verify(&key, &payload, &auth_tag).is_ok())
+    }
+
+    fn receipt_auth_key(&self, project_id: &str) -> Result<Vec<u8>, MemoryError> {
+        let key = self
+            .connection
+            .query_row(
+                "SELECT auth_key FROM project_receipt_keys WHERE project_id=?1",
+                [project_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?
+            .ok_or(MemoryError::ProjectMissing)?;
+        if key.len() != 32 {
+            return Err(MemoryError::Integrity(
+                "receipt_auth_key_invalid".to_owned(),
+            ));
+        }
+        Ok(key)
     }
 
     pub fn set_enabled(
@@ -631,23 +688,22 @@ impl MemoryStore {
         runtime: &str,
         session_id: &str,
     ) -> Result<Option<Vec<String>>, MemoryError> {
-        let receipt_id = self
+        let exists = self
             .connection
             .query_row(
-                "SELECT id FROM injection_receipts WHERE project_id=?1 AND runtime=?2 AND session_id=?3 AND turn_id IS NULL",
+                "SELECT EXISTS(SELECT 1 FROM injection_receipts WHERE project_id=?1 AND runtime=?2 AND session_id=?3 AND turn_id IS NULL)",
                 params![project_id, runtime, session_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
-        let Some(receipt_id) = receipt_id else {
+                |row| row.get::<_, bool>(0),
+            )?;
+        if !exists {
             return Ok(None);
-        };
+        }
         let mut statement = self.connection.prepare(
-            "SELECT item_id FROM injection_receipt_items WHERE receipt_id=?1 ORDER BY item_id",
+            "SELECT DISTINCT rii.item_id FROM injection_receipt_items rii JOIN injection_receipts ir ON ir.id=rii.receipt_id WHERE ir.project_id=?1 AND ir.runtime=?2 AND ir.session_id=?3 AND ir.turn_id IS NULL ORDER BY rii.item_id",
         )?;
         Ok(Some(
             statement
-                .query_map([receipt_id], |row| row.get(0))?
+                .query_map(params![project_id, runtime, session_id], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?,
         ))
     }
@@ -1357,6 +1413,10 @@ COMMIT;"#,
     }
     if version == 4 {
         migrate_version_four(connection)?;
+        version = 5;
+    }
+    if version == 5 {
+        migrate_version_five(connection)?;
         version = SCHEMA_VERSION;
     }
     if version != SCHEMA_VERSION {
@@ -1480,7 +1540,18 @@ fn migrate_version_four(connection: &Connection) -> Result<(), MemoryError> {
     // row is rewritten. Always purge before advancing so an interrupted
     // cleanup retries deterministically on the next open.
     purge_deleted_pages(connection)?;
-    connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    connection.pragma_update(None, "user_version", 5)?;
+    Ok(())
+}
+
+fn migrate_version_five(connection: &Connection) -> Result<(), MemoryError> {
+    connection.execute_batch(
+        r#"BEGIN IMMEDIATE;
+CREATE TABLE IF NOT EXISTS project_receipt_keys(project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,auth_key BLOB NOT NULL);
+INSERT OR IGNORE INTO project_receipt_keys(project_id,auth_key) SELECT id,randomblob(32) FROM projects;
+PRAGMA user_version=6;
+COMMIT;"#,
+    )?;
     Ok(())
 }
 
@@ -1586,6 +1657,7 @@ fn check_projection_integrity(connection: &Connection) -> Result<(), MemoryError
 
 const SCHEMA: &str = r#"
 CREATE TABLE projects(id TEXT PRIMARY KEY,root TEXT NOT NULL,device_id TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,disclosure_accepted_at_ms INTEGER,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,disclosure_version INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE project_receipt_keys(project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,auth_key BLOB NOT NULL);
 CREATE TABLE session_sources(id TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,locator TEXT NOT NULL,checkout_path TEXT NOT NULL,started_at_ms INTEGER,updated_at_ms INTEGER NOT NULL,unavailable_reason TEXT,PRIMARY KEY(project_id,provider,id));
 CREATE TABLE session_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(project_id,provider,session_id));
 CREATE TABLE hook_projection_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(project_id,provider,session_id));
@@ -1861,6 +1933,55 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn receipt_auth_payload(
+    project_id: &str,
+    runtime: &str,
+    session_id: &str,
+    event: &str,
+    item_key: &str,
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(
+        project_id.len() + runtime.len() + session_id.len() + event.len() + item_key.len() + 10,
+    );
+    for part in [
+        "hide-memory-receipt-v1",
+        project_id,
+        runtime,
+        session_id,
+        event,
+        item_key,
+    ] {
+        payload.extend_from_slice(part.as_bytes());
+        payload.push(0);
+    }
+    payload
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn hex_decode(value: &str) -> Option<Vec<u8>> {
+    if value.len() % 2 != 0 {
+        return None;
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = (pair[0] as char).to_digit(16)? as u8;
+            let low = (pair[1] as char).to_digit(16)? as u8;
+            Some((high << 4) | low)
+        })
+        .collect()
 }
 
 #[cfg(unix)]
@@ -2734,6 +2855,86 @@ mod tests {
     }
 
     #[test]
+    fn repeated_session_start_receipts_converge_to_the_observed_union() {
+        let (_temp, mut store, project) = store();
+        for (batch_id, hash, body) in [
+            ("b1", "h1", "Keep first receipt item"),
+            ("b2", "h2", "Keep second receipt item"),
+        ] {
+            store
+                .apply_candidates(
+                    &batch(&project, batch_id, hash),
+                    &[candidate(body, CandidateRelation::New)],
+                )
+                .unwrap();
+        }
+        let items = store.list_memories(&project, "").unwrap();
+        let empty = Injection {
+            outcome: InjectionOutcome::Empty,
+            items: Vec::new(),
+            token_count: 0,
+        };
+        store
+            .record_injection(&project, "codex", "session-union", None, &empty)
+            .unwrap();
+        for item in &items {
+            store
+                .record_injection(
+                    &project,
+                    "codex",
+                    "session-union",
+                    None,
+                    &Injection {
+                        outcome: InjectionOutcome::Provided,
+                        items: vec![(item.id.clone(), item.revision, item.body.clone())],
+                        token_count: 1,
+                    },
+                )
+                .unwrap();
+        }
+        let mut expected = items.into_iter().map(|item| item.id).collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(
+            store
+                .session_start_receipt_ids(&project, "codex", "session-union")
+                .unwrap(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn receipt_authentication_binds_project_runtime_session_event_and_items() {
+        let (_temp, store, project) = store();
+        let auth = store
+            .receipt_auth_tag(&project, "codex", "session-1", "SessionStart", "m1@1,m2@3")
+            .unwrap();
+        assert!(
+            store
+                .verify_receipt_auth(
+                    &project,
+                    "codex",
+                    "session-1",
+                    "SessionStart",
+                    "m1@1,m2@3",
+                    &auth,
+                )
+                .unwrap()
+        );
+        for (runtime, session, event, items) in [
+            ("claude", "session-1", "SessionStart", "m1@1,m2@3"),
+            ("codex", "session-2", "SessionStart", "m1@1,m2@3"),
+            ("codex", "session-1", "UserPromptSubmit", "m1@1,m2@3"),
+            ("codex", "session-1", "SessionStart", "m2@3,m1@1"),
+        ] {
+            assert!(
+                !store
+                    .verify_receipt_auth(&project, runtime, session, event, items, &auth)
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn hook_reader_refuses_a_stale_search_projection() {
         let (temp, mut store, project) = store();
         store
@@ -3009,6 +3210,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn version_five_migration_creates_project_receipt_keys() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects VALUES('p','/fixture','local',0,NULL,1,1,0)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute("DROP TABLE project_receipt_keys", [])
+            .unwrap();
+        connection.pragma_update(None, "user_version", 5).unwrap();
+
+        migrate(&connection).unwrap();
+
+        assert_eq!(
+            connection
+                .pragma_query_value::<i64, _>(None, "user_version", |row| row.get(0))
+                .unwrap(),
+            SCHEMA_VERSION
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT length(auth_key) FROM project_receipt_keys WHERE project_id='p'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            32
+        );
     }
 
     #[test]

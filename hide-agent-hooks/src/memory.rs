@@ -136,28 +136,26 @@ pub fn project_memory_output_until(
         }
         return base();
     };
+    let runtime_id = match runtime {
+        AgentRuntime::Codex => "codex",
+        AgentRuntime::ClaudeCode => "claude",
+    };
+    let session_id = input.session_id.unwrap_or_default();
+    if session_id.is_empty() {
+        return base();
+    }
     let query = match event {
         HookEvent::SessionStart => RetrievalQuery::session_start(&project.id),
         HookEvent::UserPromptSubmit => {
             let mut text = input.prompt.unwrap_or_default();
-            let runtime_id = match runtime {
-                AgentRuntime::Codex => "codex",
-                AgentRuntime::ClaudeCode => "claude",
-            };
-            let session_id = input.session_id.as_deref().unwrap_or_default();
-            if session_id.is_empty() {
-                return base();
-            }
-            if !session_id.is_empty()
-                && let Ok(topics) = store.recent_session_topics(&project.id, runtime_id, session_id)
-            {
+            if let Ok(topics) = store.recent_session_topics(&project.id, runtime_id, &session_id) {
                 for topic in topics {
                     text.push('\n');
                     text.push_str(&topic);
                 }
             }
             let mut excluded =
-                match store.session_start_receipt_ids(&project.id, runtime_id, session_id) {
+                match store.session_start_receipt_ids(&project.id, runtime_id, &session_id) {
                     Ok(Some(items)) => items,
                     // Only the receipt records what SessionStart actually
                     // delivered. If the first prompt races receipt projection,
@@ -190,7 +188,22 @@ pub fn project_memory_output_until(
         }
         return base();
     };
-    render(runtime, event, injection, deadline, base)
+    let item_key = injection
+        .items
+        .iter()
+        .map(|(id, revision, _)| format!("{id}@{revision}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let Ok(receipt_auth) = store.receipt_auth_tag(
+        &project.id,
+        runtime_id,
+        &session_id,
+        event.name(),
+        &item_key,
+    ) else {
+        return base();
+    };
+    render(runtime, event, injection, &receipt_auth, deadline, base)
 }
 
 fn canonical_path_context(project: &hide_project::ProjectIdentity, cwd: &Path) -> PathBuf {
@@ -205,6 +218,7 @@ fn render(
     runtime: AgentRuntime,
     event: HookEvent,
     injection: Injection,
+    receipt_auth: &str,
     deadline: Instant,
     base: impl Fn() -> HookMemoryResult,
 ) -> HookMemoryResult {
@@ -230,10 +244,11 @@ fn render(
         .collect::<Vec<_>>()
         .join(",");
     let receipt = format!(
-        "<hide-memory-receipt event=\"{}\" count=\"{}\" items=\"{}\" />\n",
+        "<hide-memory-receipt event=\"{}\" count=\"{}\" items=\"{}\" auth=\"{}\" />\n",
         event.name(),
         injection.items.len(),
-        receipt
+        receipt,
+        receipt_auth,
     );
     let context = match injection.context() {
         Some(mut context) => {
@@ -761,6 +776,7 @@ mod tests {
                     items: Vec::new(),
                     token_count: 0,
                 },
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 Instant::now() + Duration::from_secs(1),
                 || HookMemoryResult {
                     stdout: crate::runtime::hook_stdout(runtime, HookEvent::SessionStart),
@@ -776,7 +792,7 @@ mod tests {
                 .unwrap();
             assert!(
                 context.contains(
-                    "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" />"
+                    "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" auth=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" />"
                 )
             );
             assert!(!context.contains("Project Memory ready 0"));

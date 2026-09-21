@@ -1,4 +1,6 @@
-use crate::{Agent, ConversationEvent, EventKind, parse_events};
+use crate::{
+    Agent, ConversationEvent, EventKind, SESSION_READ_LIMIT_BYTES, parse_events, read_bounded,
+};
 use hide_project::ProjectIdentity;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,7 +14,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Hard cap on files visited in one catalog refresh.
 pub const SESSION_DISCOVERY_LIMIT: usize = 10_000;
-const SESSION_READ_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 const FIRST_LINE_LIMIT_BYTES: u64 = 256 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -287,14 +288,14 @@ fn read_project_session(agent: Agent, path: PathBuf, cwd: PathBuf) -> ProjectSes
         Some(metadata) if metadata.len() > SESSION_READ_LIMIT_BYTES => {
             (None, Some("session_too_large".to_owned()))
         }
-        Some(_) => match fs::read_to_string(&path) {
+        Some(_) => match read_bounded(&path, SESSION_READ_LIMIT_BYTES) {
             Ok(contents) => {
                 let parsed = parse_events(agent, &contents);
                 let unavailable = (parsed.events.is_empty() && parsed.skipped_lines > 0)
                     .then(|| "session_malformed".to_owned());
                 (Some(parsed), unavailable)
             }
-            Err(error) => (None, Some(format!("session_unreadable:{}", error.kind()))),
+            Err(error) => (None, Some(format!("session_unreadable:{error}"))),
         },
         None => (None, Some("session_missing".to_owned())),
     };

@@ -40,6 +40,12 @@ use std::os::unix::fs::MetadataExt;
 pub const CODEX_FALLBACK_DAYS: usize = 7;
 /// Number of newest files considered by the usage fallback.
 pub const CODEX_CANDIDATE_LIMIT: usize = 32;
+/// Largest complete session file parsed by archive and detail views.
+pub const SESSION_READ_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
+/// Largest append chunk consumed by one incremental projection poll.
+pub const SESSION_INCREMENT_READ_LIMIT_BYTES: u64 = 1024 * 1024;
+/// Largest individual JSONL record retained or parsed by a cursor.
+pub const SESSION_LINE_LIMIT_BYTES: usize = 256 * 1024;
 
 /// The two local agent session formats supported by Hide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -100,6 +106,10 @@ impl EventKind {
 pub struct ConversationEvent {
     pub role: &'static str,
     pub kind: EventKind,
+    /// True only when provider-owned transcript metadata identifies injected
+    /// context. Text prefixes can classify display semantics but never set
+    /// this trust bit.
+    pub provider_injected: bool,
     pub at_unix_ms: u64,
     pub text: String,
 }
@@ -114,9 +124,15 @@ impl ConversationEvent {
         Self {
             role,
             kind,
+            provider_injected: false,
             at_unix_ms,
             text: text.into(),
         }
+    }
+
+    fn with_provider_injected(mut self, provider_injected: bool) -> Self {
+        self.provider_injected = provider_injected;
+        self
     }
 }
 
@@ -192,6 +208,10 @@ pub enum SessionError {
     SessionFileMissing,
     UnsupportedSessionKind,
     Checkpoint(String),
+    Capacity {
+        resource: &'static str,
+        limit: u64,
+    },
     Io {
         operation: &'static str,
         path: PathBuf,
@@ -216,6 +236,9 @@ impl Display for SessionError {
             Self::SessionFileMissing => formatter.write_str("session_file_missing"),
             Self::UnsupportedSessionKind => formatter.write_str("session_kind_unsupported"),
             Self::Checkpoint(reason) => write!(formatter, "session_checkpoint_invalid:{reason}"),
+            Self::Capacity { resource, limit } => {
+                write!(formatter, "session_capacity:{resource}:{limit}")
+            }
             Self::Io {
                 operation, source, ..
             } => write!(formatter, "session_{operation}: {source}"),
@@ -383,14 +406,24 @@ impl SessionCursor {
             .map_err(|error| SessionError::io("seek", path, error))?;
         let start = self.offset;
         let mut appended = Vec::new();
-        file.read_to_end(&mut appended)
+        file.take(SESSION_INCREMENT_READ_LIMIT_BYTES)
+            .read_to_end(&mut appended)
             .map_err(|error| SessionError::io("read", path, error))?;
-        self.offset = start.saturating_add(appended.len() as u64);
-        self.identity = Some(identity);
 
         let retained_len = self.pending.len() as u64;
-        let mut combined = std::mem::take(&mut self.pending);
+        let mut combined = self.pending.clone();
         combined.extend(appended);
+        if combined
+            .split_inclusive(|byte| *byte == b'\n')
+            .any(|line| line.len() > SESSION_LINE_LIMIT_BYTES)
+        {
+            return Err(SessionError::Capacity {
+                resource: "line_bytes",
+                limit: SESSION_LINE_LIMIT_BYTES as u64,
+            });
+        }
+        self.offset = start.saturating_add(combined.len() as u64 - retained_len);
+        self.identity = Some(identity);
         let chunk_start = start.saturating_sub(retained_len);
         let Some(last_newline) = combined.iter().rposition(|byte| *byte == b'\n') else {
             self.pending = combined;
@@ -664,6 +697,32 @@ pub fn read_tail(path: &Path, maximum_bytes: u64) -> Result<String> {
         .map_or_else(String::new, |(_, rest)| rest.to_owned()))
 }
 
+/// Read a whole file while enforcing a hard byte cap before and during I/O.
+pub fn read_bounded(path: &Path, maximum_bytes: u64) -> Result<String> {
+    let file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
+    let length = file
+        .metadata()
+        .map_err(|error| SessionError::io("stat", path, error))?
+        .len();
+    if length > maximum_bytes {
+        return Err(SessionError::Capacity {
+            resource: "file_bytes",
+            limit: maximum_bytes,
+        });
+    }
+    let mut bytes = Vec::with_capacity(length as usize);
+    file.take(maximum_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| SessionError::io("read", path, error))?;
+    if bytes.len() as u64 > maximum_bytes {
+        return Err(SessionError::Capacity {
+            resource: "file_bytes",
+            limit: maximum_bytes,
+        });
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// Read the cwd from Codex's first session_meta line.
 pub fn codex_session_cwd(path: &Path) -> Option<String> {
     let mut first = String::new();
@@ -783,6 +842,7 @@ fn parse_claude_line(item: &Value) -> LineResult {
     let origin_is_human = item.pointer("/origin/kind").and_then(Value::as_str) == Some("human");
     let is_meta = item.get("isMeta").and_then(Value::as_bool).unwrap_or(false);
     let is_system_prompt = item.get("promptSource").and_then(Value::as_str) == Some("system");
+    let provider_injected = !origin_is_human || is_meta || is_system_prompt;
     let interrupted = is_interruption(&text);
     let command = slash_command_text(&text);
     let kind = if interrupted {
@@ -797,7 +857,10 @@ fn parse_claude_line(item: &Value) -> LineResult {
     } else {
         text
     };
-    LineResult::Event(ConversationEvent::new(role, kind, timestamp, text))
+    LineResult::Event(
+        ConversationEvent::new(role, kind, timestamp, text)
+            .with_provider_injected(provider_injected),
+    )
 }
 
 fn parse_codex_line(item: &Value) -> LineResult {
@@ -812,6 +875,7 @@ fn parse_codex_line(item: &Value) -> LineResult {
     }
     let role = match payload.get("role").and_then(Value::as_str) {
         Some("user") => "user",
+        Some("developer") => "developer",
         Some("assistant") => "assistant",
         _ => return LineResult::Ignore,
     };
@@ -829,6 +893,12 @@ fn parse_codex_line(item: &Value) -> LineResult {
             timestamp,
             text,
         ));
+    }
+    if role == "developer" {
+        return LineResult::Event(
+            ConversationEvent::new(role, EventKind::Injected, timestamp, text)
+                .with_provider_injected(true),
+        );
     }
     let kind = if is_interruption(&text) {
         EventKind::Interrupted
@@ -1151,6 +1221,55 @@ mod tests {
     }
 
     #[test]
+    fn cursor_bounds_each_poll_and_continues_from_the_next_byte() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        let contents = "x\n".repeat(600_000);
+        fs::write(&path, contents.as_bytes()).unwrap();
+        let mut cursor = SessionCursor::new();
+
+        let first = cursor.read(&path).unwrap();
+        assert_eq!(
+            first.contents.len(),
+            SESSION_INCREMENT_READ_LIMIT_BYTES as usize
+        );
+        assert_eq!(cursor.offset(), SESSION_INCREMENT_READ_LIMIT_BYTES);
+        let second = cursor.read(&path).unwrap();
+        assert_eq!(first.contents.len() + second.contents.len(), contents.len());
+        assert_eq!(cursor.offset(), contents.len() as u64);
+    }
+
+    #[test]
+    fn cursor_rejects_a_line_larger_than_the_retention_cap() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, vec![b'x'; SESSION_LINE_LIMIT_BYTES + 1]).unwrap();
+        let error = SessionCursor::new().read(&path).unwrap_err();
+        assert!(matches!(
+            error,
+            SessionError::Capacity {
+                resource: "line_bytes",
+                limit
+            } if limit == SESSION_LINE_LIMIT_BYTES as u64
+        ));
+    }
+
+    #[test]
+    fn bounded_reader_rejects_a_file_larger_than_its_limit() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("session.jsonl");
+        fs::write(&path, b"12345").unwrap();
+        assert_eq!(read_bounded(&path, 5).unwrap(), "12345");
+        assert!(matches!(
+            read_bounded(&path, 4),
+            Err(SessionError::Capacity {
+                resource: "file_bytes",
+                limit: 4
+            })
+        ));
+    }
+
+    #[test]
     fn parser_counts_only_relevant_lines_and_preserves_reason_categories() {
         let input = concat!(
             "{\"type\":\"user\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"origin\":{\"kind\":\"human\"},\"message\":{\"content\":\"요청\"}}\n",
@@ -1256,6 +1375,25 @@ mod tests {
     }
 
     #[test]
+    fn codex_developer_message_is_provider_authenticated_injected_context() {
+        let line = serde_json::json!({
+            "type": "response_item",
+            "timestamp": "2026-09-18T00:00:00Z",
+            "payload": {
+                "type": "message",
+                "role": "developer",
+                "content": [{"type": "input_text", "text": "<hide-memory-context />"}],
+            },
+        })
+        .to_string();
+        let parsed = parse_codex_events(&line);
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.events[0].role, "developer");
+        assert_eq!(parsed.events[0].kind, EventKind::Injected);
+        assert!(parsed.events[0].provider_injected);
+    }
+
+    #[test]
     fn hook_memory_context_with_a_trust_attribute_is_injected_for_both_providers() {
         let context = concat!(
             "<hide-memory-context trust=\"untrusted-reference-data\">\n",
@@ -1303,6 +1441,7 @@ mod tests {
             parse_codex_events(&malformed).events[0].kind,
             EventKind::Human
         );
+        assert!(!parse_codex_events(&codex).events[0].provider_injected);
     }
 
     #[test]

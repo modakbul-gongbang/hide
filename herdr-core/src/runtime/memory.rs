@@ -11,7 +11,10 @@ use hide_memory::{
     HideNativeAnalyzer, Injection, InjectionOutcome, MemoryStore, SessionCursorRecord,
     SessionSourceRecord,
 };
-use hide_session::{Agent, EventKind, SessionAvailability, SessionCatalog, SessionCursor};
+use hide_session::{
+    Agent, EventKind, SESSION_READ_LIMIT_BYTES, SessionAvailability, SessionCatalog, SessionCursor,
+    read_bounded,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -454,17 +457,19 @@ impl Runtime {
         thread::Builder::new()
             .name("hide-archive-detail".to_owned())
             .spawn(move || {
-                let result = if kind == "session" {
-                    row.ok_or_else(|| "Session is no longer in this Project".to_owned())
-                        .and_then(load_session_detail)
-                } else if kind == "memory" {
-                    let project_id =
-                        project_id.ok_or_else(|| "Project Memory is unavailable".to_owned());
-                    project_id.and_then(|project_id| {
-                        load_memory_detail(&database, &project_id, &id, &available_sources)
-                    })
-                } else {
-                    Err("Archive detail kind is unsupported".to_owned())
+                let result = match kind.as_str() {
+                    "session" => project_id
+                        .ok_or_else(|| "Project Memory is unavailable".to_owned())
+                        .and_then(|project_id| {
+                            row.ok_or_else(|| "Session is no longer in this Project".to_owned())
+                                .and_then(|row| load_session_detail(&database, &project_id, row))
+                        }),
+                    "memory" => project_id
+                        .ok_or_else(|| "Project Memory is unavailable".to_owned())
+                        .and_then(|project_id| {
+                            load_memory_detail(&database, &project_id, &id, &available_sources)
+                        }),
+                    _ => Err("Archive detail kind is unsupported".to_owned()),
                 };
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
@@ -803,10 +808,10 @@ mod scope_tests {
         runtime::{AgentRuntime, HookEvent},
     };
     use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation, MemoryStore};
-    use hide_session::{Agent, EventKind, ProjectSession, SessionAvailability};
+    use hide_session::{Agent, ProjectSession, SessionAvailability, parse_codex_events};
     use serde_json::json;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::tempdir;
 
     #[test]
     fn reversed_session_load_completion_cannot_replace_the_newer_generation() {
@@ -964,26 +969,83 @@ mod scope_tests {
 
     #[test]
     fn only_provider_injected_events_can_assert_memory_receipts() {
-        let marker = "<hide-memory-receipt event=\"UserPromptSubmit\" count=\"1\" items=\"m1@2\">";
-        assert!(trusted_memory_receipt(EventKind::Human, marker).is_none());
-        assert!(trusted_memory_receipt(EventKind::Assistant, marker).is_none());
-        let receipt = trusted_memory_receipt(EventKind::Injected, marker).unwrap();
+        let temp = tempdir().unwrap();
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let database = temp.path().join("memory.sqlite3");
+        let store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, "local")
+            .unwrap();
+        let item_key = "m1@2";
+        let auth = store
+            .receipt_auth_tag(
+                &project.id,
+                "codex",
+                "session-1",
+                HookEvent::UserPromptSubmit.name(),
+                item_key,
+            )
+            .unwrap();
+        let marker = format!(
+            "<hide-memory-receipt event=\"UserPromptSubmit\" count=\"1\" items=\"{item_key}\" auth=\"{auth}\" />"
+        );
+        assert!(
+            trusted_memory_receipt(&store, &project.id, "codex", "session-1", false, &marker,)
+                .is_none()
+        );
+        assert!(
+            trusted_memory_receipt(
+                &store,
+                &project.id,
+                "codex",
+                "session-1",
+                true,
+                &marker.replace(&auth, &"0".repeat(64)),
+            )
+            .is_none()
+        );
+        let receipt =
+            trusted_memory_receipt(&store, &project.id, "codex", "session-1", true, &marker)
+                .unwrap();
         assert_eq!(receipt.count, 1);
         assert_eq!(receipt.items, vec![("m1".to_owned(), 2)]);
+
+        let user_prefix_record = json!({
+            "type": "response_item",
+            "timestamp": "2026-09-21T00:00:00Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": format!("# AGENTS.md instructions\n{marker}")}],
+            },
+        })
+        .to_string();
+        let event = parse_codex_events(&user_prefix_record)
+            .events
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(!event.provider_injected);
+        assert!(
+            trusted_memory_receipt(
+                &store,
+                &project.id,
+                "codex",
+                "session-1",
+                event.provider_injected,
+                &event.text,
+            )
+            .is_none()
+        );
     }
 
     #[test]
-    fn empty_session_start_projection_unblocks_later_prompt_memory() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let temp = std::env::temp_dir().join(format!(
-            "hide-empty-session-receipt-{}-{nonce}",
-            std::process::id()
-        ));
-        let home = temp.join("home");
-        let project_root = temp.join("project");
+    fn empty_session_start_projection_unblocks_later_prompt_memory_for_both_providers() {
+        let temp = tempdir().unwrap();
+        let home = temp.path().join("home");
+        let project_root = temp.path().join("project");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&project_root).unwrap();
         let project = hide_project::resolve(&project_root, "local").unwrap();
@@ -996,56 +1058,78 @@ mod scope_tests {
         store.set_enabled(&project.id, true, true).unwrap();
         drop(store);
 
-        let session_id = "empty-session";
-        let start_payload = serde_json::to_vec(&json!({
-            "cwd": project_root,
-            "session_id": session_id,
-        }))
-        .unwrap();
-        let start = project_memory_output(
-            AgentRuntime::ClaudeCode,
-            HookEvent::SessionStart,
-            &start_payload,
-            false,
-            &home,
-        );
-        assert_eq!(start.outcome, HookMemoryOutcome::Empty);
-        let envelope: serde_json::Value = serde_json::from_str(&start.stdout.unwrap()).unwrap();
-        let context = envelope["hookSpecificOutput"]["additionalContext"]
-            .as_str()
+        for (runtime, agent, provider, session_id) in [
+            (
+                AgentRuntime::ClaudeCode,
+                Agent::Claude,
+                "claude",
+                "claude-empty",
+            ),
+            (AgentRuntime::Codex, Agent::Codex, "codex", "codex-empty"),
+        ] {
+            let start_payload = serde_json::to_vec(&json!({
+                "cwd": project_root,
+                "session_id": session_id,
+            }))
             .unwrap();
-        assert!(context.contains("count=\"0\""));
-        assert!(!context.contains("Project Memory ready 0"));
+            let start = project_memory_output(
+                runtime,
+                HookEvent::SessionStart,
+                &start_payload,
+                false,
+                &home,
+            );
+            assert_eq!(start.outcome, HookMemoryOutcome::Empty);
+            let envelope: serde_json::Value = serde_json::from_str(&start.stdout.unwrap()).unwrap();
+            let context = envelope["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap();
+            assert!(context.contains("count=\"0\""));
+            assert!(context.contains("auth=\""));
+            assert!(!context.contains("Project Memory ready 0"));
 
-        let locator = temp.join("empty-session.jsonl");
-        let transcript = json!({
-            "type": "user",
-            "timestamp": "2026-09-21T00:00:00Z",
-            "origin": {"kind": "hook"},
-            "isMeta": true,
-            "message": {"role": "user", "content": context},
-        });
-        fs::write(&locator, format!("{transcript}\n")).unwrap();
-        let session = ProjectSession {
-            id: session_id.to_owned(),
-            agent: Agent::Claude,
-            locator,
-            checkout_path: project_root.clone(),
-            first_human_request: None,
-            started_at_unix_ms: Some(1),
-            updated_at_unix_ms: 1,
-            title: None,
-            event_count: 1,
-            availability: SessionAvailability::Available,
-        };
+            let locator = temp.path().join(format!("{provider}-empty.jsonl"));
+            let transcript = match agent {
+                Agent::Claude => json!({
+                    "type": "user",
+                    "timestamp": "2026-09-21T00:00:00Z",
+                    "origin": {"kind": "hook"},
+                    "isMeta": true,
+                    "message": {"role": "user", "content": context},
+                }),
+                Agent::Codex => json!({
+                    "type": "response_item",
+                    "timestamp": "2026-09-21T00:00:00Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "developer",
+                        "content": [{"type": "input_text", "text": context}],
+                    },
+                }),
+            };
+            fs::write(&locator, format!("{transcript}\n")).unwrap();
+            let session = ProjectSession {
+                id: session_id.to_owned(),
+                agent,
+                locator,
+                checkout_path: project_root.clone(),
+                first_human_request: None,
+                started_at_unix_ms: Some(1),
+                updated_at_unix_ms: 1,
+                title: None,
+                event_count: 1,
+                availability: SessionAvailability::Available,
+            };
+            let mut store = MemoryStore::open(&database).unwrap();
+            update_hook_projection(&mut store, &project.id, &session).unwrap();
+            assert_eq!(
+                store
+                    .session_start_receipt_ids(&project.id, provider, session_id)
+                    .unwrap(),
+                Some(Vec::new())
+            );
+        }
         let mut store = MemoryStore::open(&database).unwrap();
-        update_hook_projection(&mut store, &project.id, &session).unwrap();
-        assert_eq!(
-            store
-                .session_start_receipt_ids(&project.id, "claude", session_id)
-                .unwrap(),
-            Some(Vec::new())
-        );
         store
             .apply_candidates(
                 &AnalysisBatch {
@@ -1070,23 +1154,31 @@ mod scope_tests {
             .unwrap();
         drop(store);
 
-        let prompt_payload = serde_json::to_vec(&json!({
-            "cwd": project_root,
-            "session_id": session_id,
-            "prompt": "durable hook memory",
-        }))
-        .unwrap();
-        let prompt = project_memory_output(
-            AgentRuntime::ClaudeCode,
-            HookEvent::UserPromptSubmit,
-            &prompt_payload,
-            false,
-            &home,
-        );
-        assert_eq!(prompt.outcome, HookMemoryOutcome::Provided { count: 1 });
-        let prompt_output = prompt.stdout.unwrap();
-        assert!(prompt_output.contains("빈 시작 영수증 뒤에도 durable hook memory를 제공한다."));
-        fs::remove_dir_all(temp).unwrap();
+        for (runtime, session_id) in [
+            (AgentRuntime::ClaudeCode, "claude-empty"),
+            (AgentRuntime::Codex, "codex-empty"),
+        ] {
+            let prompt_payload = serde_json::to_vec(&json!({
+                "cwd": project_root,
+                "session_id": session_id,
+                "prompt": "durable hook memory",
+            }))
+            .unwrap();
+            let prompt = project_memory_output(
+                runtime,
+                HookEvent::UserPromptSubmit,
+                &prompt_payload,
+                false,
+                &home,
+            );
+            assert_eq!(prompt.outcome, HookMemoryOutcome::Provided { count: 1 });
+            assert!(
+                prompt
+                    .stdout
+                    .unwrap()
+                    .contains("빈 시작 영수증 뒤에도 durable hook memory를 제공한다.")
+            );
+        }
     }
 }
 
@@ -1424,7 +1516,14 @@ fn update_hook_projection(
         .map_err(|error| error.to_string())?;
     let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
     for (event, stable_offset) in parsed.events.into_iter().zip(parsed.event_offsets) {
-        if let Some(receipt) = trusted_memory_receipt(event.kind, &event.text) {
+        if let Some(receipt) = trusted_memory_receipt(
+            store,
+            project_id,
+            provider,
+            &session.id,
+            event.provider_injected,
+            &event.text,
+        ) {
             let turn_id = (receipt.event != HookEvent::SessionStart.name())
                 .then(|| format!("event:{stable_offset}"));
             store
@@ -1556,7 +1655,14 @@ fn analyze_session(
     let parsed = hide_session::parse_events_at(session.agent, &chunk.contents, chunk.start_offset);
     let mut events = Vec::with_capacity(parsed.events.len());
     for (event, stable_offset) in parsed.events.into_iter().zip(parsed.event_offsets) {
-        if let Some(receipt) = trusted_memory_receipt(event.kind, &event.text) {
+        if let Some(receipt) = trusted_memory_receipt(
+            store,
+            project_id,
+            provider,
+            &session.id,
+            event.provider_injected,
+            &event.text,
+        ) {
             let turn_id = (receipt.event != HookEvent::SessionStart.name())
                 .then(|| format!("event:{stable_offset}"));
             let injection = Injection {
@@ -1974,7 +2080,11 @@ fn lifecycle_name(value: hide_memory::MemoryLifecycle) -> String {
     format!("{value:?}").to_ascii_lowercase()
 }
 
-fn load_session_detail(row: SessionRowSnapshot) -> Result<ArchiveDetailSnapshot, String> {
+fn load_session_detail(
+    database: &Path,
+    project_id: &str,
+    row: SessionRowSnapshot,
+) -> Result<ArchiveDetailSnapshot, String> {
     if let Some(reason) = row.unavailable_reason.clone() {
         return Ok(ArchiveDetailSnapshot {
             id: row.id,
@@ -1989,8 +2099,9 @@ fn load_session_detail(row: SessionRowSnapshot) -> Result<ArchiveDetailSnapshot,
             memory: None,
         });
     }
-    let contents = fs::read_to_string(&row.locator)
+    let contents = read_bounded(Path::new(&row.locator), SESSION_READ_LIMIT_BYTES)
         .map_err(|error| format!("Session unavailable: {error}"))?;
+    let store = MemoryStore::open_read_only(database).map_err(|error| error.to_string())?;
     let agent = if row.provider == "codex" {
         Agent::Codex
     } else {
@@ -2001,7 +2112,14 @@ fn load_session_detail(row: SessionRowSnapshot) -> Result<ArchiveDetailSnapshot,
         .events
         .into_iter()
         .map(|event| {
-            let receipt = trusted_memory_receipt(event.kind, &event.text);
+            let receipt = trusted_memory_receipt(
+                &store,
+                project_id,
+                &row.provider,
+                &row.id,
+                event.provider_injected,
+                &event.text,
+            );
             let attached = receipt.as_ref().map(|receipt| receipt.count);
             let item_ids = receipt
                 .map(|receipt| receipt.items.into_iter().map(|(id, _)| id).collect())
@@ -2037,13 +2155,35 @@ fn load_session_detail(row: SessionRowSnapshot) -> Result<ArchiveDetailSnapshot,
 struct MemoryReceipt {
     event: String,
     count: usize,
+    item_key: String,
     items: Vec<(String, u64)>,
+    auth: String,
 }
 
-fn trusted_memory_receipt(kind: EventKind, text: &str) -> Option<MemoryReceipt> {
-    (kind == EventKind::Injected)
-        .then(|| memory_receipt(text))
-        .flatten()
+fn trusted_memory_receipt(
+    store: &MemoryStore,
+    project_id: &str,
+    provider: &str,
+    session_id: &str,
+    provider_injected: bool,
+    text: &str,
+) -> Option<MemoryReceipt> {
+    if !provider_injected {
+        return None;
+    }
+    let receipt = memory_receipt(text)?;
+    store
+        .verify_receipt_auth(
+            project_id,
+            provider,
+            session_id,
+            &receipt.event,
+            &receipt.item_key,
+            &receipt.auth,
+        )
+        .ok()
+        .filter(|valid| *valid)
+        .map(|_| receipt)
 }
 
 fn memory_receipt(text: &str) -> Option<MemoryReceipt> {
@@ -2069,15 +2209,16 @@ fn memory_receipt(text: &str) -> Option<MemoryReceipt> {
             })
             .collect::<Option<Vec<_>>>()?
     };
-    let event = marker
-        .find("event=\"")
-        .and_then(|start| marker[start + "event=\"".len()..].split_once('"'))
-        .map(|(value, _)| value.to_owned())
-        .unwrap_or_else(|| HookEvent::UserPromptSubmit.name().to_owned());
+    let event_start = marker.find("event=\"")? + "event=\"".len();
+    let event = marker[event_start..].split_once('"')?.0.to_owned();
+    let auth_start = marker.find("auth=\"")? + "auth=\"".len();
+    let auth = marker[auth_start..].split_once('"')?.0.to_owned();
     (items.len() == count).then_some(MemoryReceipt {
         event,
         count,
+        item_key: raw_items.to_owned(),
         items,
+        auth,
     })
 }
 
