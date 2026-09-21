@@ -1262,6 +1262,14 @@ impl Runtime {
                     changed = true;
                 }
                 if status.session.as_ref() != Some(&session) {
+                    Self::log_unknown_descendants(
+                        status
+                            .session
+                            .as_ref()
+                            .map(|previous| previous.agents.as_slice())
+                            .unwrap_or(&[]),
+                        &session.agents,
+                    );
                     status.session = Some(session);
                     changed = true;
                 }

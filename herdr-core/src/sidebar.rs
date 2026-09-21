@@ -1298,7 +1298,11 @@ pub fn reconcile_read_records(
         {
             continue;
         }
-        let current = read_fingerprint(agent);
+        // Only the row's own sequence is rebased. A descendant signal that
+        // arrived while Hide was disconnected stays outside the record, so
+        // the read pass still finds it as news (PRD B5).
+        let mut current = read_fingerprint(agent);
+        current.descendant_signals = record.descendant_signals.clone();
         if record != &current {
             records.insert(agent.pane_id.clone(), current.clone());
             changes.push(ReadRecordChange {
@@ -2577,6 +2581,54 @@ mod tests {
         assert!(reconcile_read_records(&replacement, &mut records, &mut pending).is_empty());
         apply_read_state(&mut replacement, &mut records, None);
         assert!(replacement[0].unread, "a replacement agent is new work");
+    }
+
+    /// PRD B5 across a reconnect: a child's question that arrived while Hide
+    /// was disconnected is still news for its parent after the parent's own
+    /// sequence is rebased, because the rebase keeps only what the operator
+    /// had actually seen.
+    #[test]
+    fn reconnect_keeps_a_descendants_new_question_unread_on_the_parent() {
+        let rows = |seq: u64, child_status: &str, child_tokens: Value| {
+            let mut agents = projected(json!([
+                {
+                    "pane_id":"root",
+                    "agent_status":"working",
+                    "state_change_seq":seq,
+                    "agent_session":{"kind":"id","value":"session-root"},
+                    "tokens":{"status_working":"\u{25cf}","activity":"0000000000001"}
+                },
+                {
+                    "pane_id":"child",
+                    "agent_status":child_status,
+                    "state_change_seq":1,
+                    "tokens":child_tokens
+                }
+            ]));
+            agents[1].spawned_from_pane_id = Some("root".to_owned());
+            apply_lineage(&mut agents, &[], &[]);
+            agents
+        };
+        let quiet = json!({"status_working":"\u{25cf}","activity":"0000000000001"});
+        let asking = json!({"status_question_new":"?","activity":"0000000000002"});
+
+        let mut records = BTreeMap::new();
+        let mut before = rows(40, "working", quiet);
+        apply_read_state(&mut before, &mut records, Some("root"));
+        assert!(!before[0].unread);
+
+        let mut restored = rows(3, "idle", asking);
+        let mut pending = HashSet::from(["root".to_owned()]);
+        assert_eq!(
+            reconcile_read_records(&restored, &mut records, &mut pending).len(),
+            1,
+            "the parent's own sequence is rebased"
+        );
+        apply_read_state(&mut restored, &mut records, None);
+        assert!(
+            restored[0].unread,
+            "the question that arrived while disconnected is still news"
+        );
     }
 
     /// The ordering key falls back to Herdr's own sequence, zero padded to the
