@@ -15,8 +15,11 @@ export type EchoSample = { arrival_ms: number; write_ms: number };
 export type Probe = {
   paneId: () => string | null;
   screenText: () => string;
-  /** Resolves at the first write completion whose screen contains the marker. */
-  awaitMarker: (marker: string, timeoutMs?: number) => Promise<EchoSample>;
+  /** Arms one marker; `waitArmed` resolves at the first write completion whose screen contains it. */
+  arm: (marker: string, timeoutMs?: number) => void;
+  waitArmed: () => Promise<EchoSample>;
+  /** WebSocket frames received since the page loaded. */
+  arrivals: () => number;
 };
 
 declare global {
@@ -32,7 +35,9 @@ let armed: {
   resolve: (sample: EchoSample) => void;
   timer: ReturnType<typeof setTimeout>;
 } | null = null;
+let armedPromise: Promise<EchoSample> | null = null;
 let lastArrivalMs = 0;
+let arrivals = 0;
 
 export function probeEnabled(search: string = window.location.search): boolean {
   return new URLSearchParams(search).get("probe") === "1";
@@ -50,6 +55,7 @@ export function screenText(term: Terminal): string {
 /** Called at WebSocket message entry, before JSON parsing. */
 export function noteArrival(): void {
   lastArrivalMs = epochMs();
+  arrivals += 1;
 }
 
 /** Called from the terminal writer's write-completion callback. */
@@ -69,15 +75,22 @@ export function installProbe(term: () => Terminal | null, paneId: () => string |
       const current = term();
       return current ? screenText(current) : "";
     },
-    awaitMarker: (marker, timeoutMs = 3000) => {
-      if (armed) return Promise.reject(new Error("echo sample already armed"));
-      return new Promise<EchoSample>((resolve, reject) => {
+    arm: (marker, timeoutMs = 3000) => {
+      if (armed) throw new Error("echo sample already armed");
+      armedPromise = new Promise<EchoSample>((resolve, reject) => {
         const timer = setTimeout(() => {
           armed = null;
           reject(new Error(`echo timeout: ${marker}`));
         }, timeoutMs);
         armed = { marker, resolve, timer };
       });
+      // A timeout is still retrieved through waitArmed when the driver is late.
+      void armedPromise.catch(() => {});
     },
+    waitArmed: () => {
+      if (!armedPromise) return Promise.reject(new Error("echo sample not armed"));
+      return armedPromise;
+    },
+    arrivals: () => arrivals,
   };
 }
