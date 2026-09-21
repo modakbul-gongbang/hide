@@ -23,5 +23,6 @@ describe("connection machine", () => {
     expect(badgeText("live")).toBe("");
     expect(badgeText("reconnecting")).toBe("reconnecting");
     expect(badgeText("gone")).toContain("hide");
+    expect(badgeText("gone", true)).toContain("연결 거부");
   });
 });

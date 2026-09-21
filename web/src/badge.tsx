@@ -3,7 +3,8 @@ import { useShellStore } from "./store";
 
 export function ConnectionBadge() {
   const connection = useShellStore((s) => s.connection);
-  const text = badgeText(connection);
+  const refused = useShellStore((s) => s.refused);
+  const text = badgeText(connection, refused);
   if (!text) return null;
   return (
     <div

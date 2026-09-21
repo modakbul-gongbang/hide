@@ -8,15 +8,28 @@ import { useShellStore, type TerminalChunk } from "./store";
 import type { DispatchFn } from "./ws";
 
 const writers = new Map<string, (data: Uint8Array) => void>();
+const pending = new Map<string, Uint8Array[]>();
+
+function decodeChunk(chunk: TerminalChunk): Uint8Array | null {
+  if (!chunk.bytes_base64) return null;
+  const binary = atob(chunk.bytes_base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 
 export function feedChunks(chunks: TerminalChunk[]) {
   for (const chunk of chunks) {
+    const bytes = decodeChunk(chunk);
+    if (!bytes) continue;
     const write = writers.get(chunk.pane_id);
-    if (!write || !chunk.bytes_base64) continue;
-    const binary = atob(chunk.bytes_base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    write(bytes);
+    if (write) {
+      write(bytes);
+      continue;
+    }
+    const queued = pending.get(chunk.pane_id) ?? [];
+    queued.push(bytes);
+    pending.set(chunk.pane_id, queued);
   }
 }
 
@@ -52,16 +65,17 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
       /* canvas renderer remains */
     }
     termRef.current = term;
-    const sendResize = () => {
+    const sendViewport = (newView: boolean) => {
       fit.fit();
       const id = useShellStore.getState().focusedPaneId;
       if (!id || term.cols < 2 || term.rows < 2) return;
       dispatch({
         schema_version: 2,
-        kind: "terminal_resize",
-        payload: { pane_id: id, cols: term.cols, rows: term.rows },
+        kind: "terminal_viewport",
+        payload: { pane_id: id, cols: term.cols, rows: term.rows, new_view: newView },
       });
     };
+    const sendResize = () => sendViewport(false);
     const observer = new ResizeObserver(() => sendResize());
     observer.observe(host);
     sendResize();
@@ -101,9 +115,18 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
   useEffect(() => {
     const term = termRef.current;
     if (!term || !paneId) return;
+    term.reset();
     writers.clear();
     writers.set(paneId, (data) => term.write(data));
-  }, [paneId]);
+    const queued = pending.get(paneId) ?? [];
+    pending.delete(paneId);
+    for (const bytes of queued) term.write(bytes);
+    dispatch({
+      schema_version: 2,
+      kind: "terminal_viewport",
+      payload: { pane_id: paneId, cols: term.cols, rows: term.rows, new_view: true },
+    });
+  }, [paneId, dispatch]);
 
   return <div ref={hostRef} className="h-full min-w-0 flex-1 bg-background" data-terminal-pane={paneId ?? ""} />;
 }

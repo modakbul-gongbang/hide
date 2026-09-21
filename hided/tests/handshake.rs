@@ -34,11 +34,12 @@ async fn connect(
     let mut request = format!("ws://127.0.0.1:{port}/ws")
         .into_client_request()
         .unwrap();
-    if let Some(origin) = origin {
-        request
-            .headers_mut()
-            .insert(ORIGIN, origin.parse().unwrap());
-    }
+    let origin = origin
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("http://127.0.0.1:{port}"));
+    request
+        .headers_mut()
+        .insert(ORIGIN, origin.parse().unwrap());
     let (socket, _) = tokio_tungstenite::connect_async(request)
         .await
         .expect("ws connect");
@@ -103,16 +104,40 @@ async fn schema_mismatch_is_refused() {
 #[tokio::test]
 async fn origin_not_allowed_is_refused() {
     let (_dir, running) = start().await;
-    let result = {
-        let mut request = format!("ws://127.0.0.1:{}/ws", running.port)
-            .into_client_request()
-            .unwrap();
-        request
-            .headers_mut()
-            .insert(ORIGIN, "http://example.com".parse().unwrap());
-        tokio_tungstenite::connect_async(request).await
-    };
-    assert!(result.is_err());
+    let mut socket = connect(running.port, Some("http://example.com")).await;
+    let close = wait_close(&mut socket).await;
+    assert_eq!(close, Some(4002));
+    running.stop();
+}
+
+#[tokio::test]
+async fn traversal_of_the_ui_dir_is_404() {
+    let (dir, running) = start().await;
+    let code = reqwest_status(&format!(
+        "http://127.0.0.1:{}/assets/../../hided.json",
+        running.port
+    ))
+    .await;
+    assert_eq!(code, 404);
+    let escaped = tokio::process::Command::new("/usr/bin/curl")
+        .args([
+            "-s",
+            "--path-as-is",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            &format!(
+                "http://127.0.0.1:{}/assets/../../{}/hided.json",
+                running.port,
+                dir.path().join("hided.json").display()
+            ),
+        ])
+        .output()
+        .await
+        .unwrap();
+    let body_code = String::from_utf8(escaped.stdout).unwrap();
+    assert_eq!(body_code, "404");
     running.stop();
 }
 

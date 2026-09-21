@@ -12,7 +12,7 @@ export function connectionAfterHealthFails(fails: number): ConnectionState {
   return fails >= HEALTH_FAILS_TO_GONE ? "gone" : "reconnecting";
 }
 
-export function badgeText(state: ConnectionState): string {
+export function badgeText(state: ConnectionState, refused = false): string {
   switch (state) {
     case "connecting":
       return "connecting";
@@ -21,6 +21,6 @@ export function badgeText(state: ConnectionState): string {
     case "reconnecting":
       return "reconnecting";
     case "gone":
-      return "gone — run hide again";
+      return refused ? "연결 거부 - hide를 다시 실행하세요" : "gone - hide를 다시 실행하세요";
   }
 }

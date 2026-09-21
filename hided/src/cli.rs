@@ -66,9 +66,13 @@ fn status(env: &Env) -> Result<(), String> {
                 .get("clients")
                 .and_then(|value| value.as_u64())
                 .unwrap_or(0);
+            let idle = health
+                .get("idle_remaining_secs")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(env.idle_secs);
             println!(
-                "pid {}  port {}  clients {}  idle {}s",
-                state.pid, state.port, clients, env.idle_secs
+                "pid {}  port {}  clients {}  idle {}s remaining",
+                state.pid, state.port, clients, idle
             );
             Ok(())
         }

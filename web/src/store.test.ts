@@ -12,6 +12,7 @@ describe("snapshot merge", () => {
       focusedPaneId: null,
       herdrState: null,
       diagnostics: [],
+      refused: false,
     });
   });
 

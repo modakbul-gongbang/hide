@@ -71,8 +71,12 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
       backoff = 500;
       healthFails = 0;
     });
-    ws.addEventListener("close", () => {
+    ws.addEventListener("close", (event) => {
       if (closed) return;
+      if (event.code >= 4001 && event.code <= 4004) {
+        useShellStore.getState().setConnection("gone", true);
+        return;
+      }
       void scheduleReconnect();
     });
     ws.addEventListener("error", () => {

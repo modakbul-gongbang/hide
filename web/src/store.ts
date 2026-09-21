@@ -38,7 +38,8 @@ type Store = {
   focusedPaneId: string | null;
   herdrState: string | null;
   diagnostics: string[];
-  setConnection: (connection: ConnectionState) => void;
+  refused: boolean;
+  setConnection: (connection: ConnectionState, refused?: boolean) => void;
   applyFrame: (frame: {
     type: string;
     payload?: {
@@ -61,7 +62,8 @@ export const useShellStore = create<Store>((set, get) => ({
   focusedPaneId: null,
   herdrState: null,
   diagnostics: [],
-  setConnection: (connection) => set({ connection }),
+  refused: false,
+  setConnection: (connection, refused = false) => set({ connection, refused }),
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};
     const chunks = payload.chunks ?? [];

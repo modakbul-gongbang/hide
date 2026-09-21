@@ -68,7 +68,7 @@ test("a bad token shows the refused connection state", async ({ page }) => {
   const daemon = await startHided();
   try {
     await page.goto(`${daemon.origin}/#token=${"aa".repeat(32)}`);
-    await expect(page.locator("[data-connection]")).toHaveAttribute("data-connection", /reconnecting|gone/);
+    await expect(page.getByText("연결 거부")).toBeVisible();
   } finally {
     daemon.process.kill();
   }

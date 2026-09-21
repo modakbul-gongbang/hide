@@ -51,8 +51,11 @@ impl RunningDaemon {
 }
 
 pub async fn run_daemon(env: Env) -> Result<(), String> {
+    let state_dir = env.state_dir.clone();
     let running = start_daemon(env).await?;
     wait_shutdown(&running).await;
+    drop(running);
+    remove_state(&state_dir);
     Ok(())
 }
 

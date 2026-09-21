@@ -81,25 +81,48 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+fn idle_remaining_secs(state: &AppState) -> Option<u64> {
+    if state.keep_alive {
+        return None;
+    }
+    if state.clients.load(Ordering::SeqCst) > 0 {
+        return Some(state.idle_secs);
+    }
+    let gone = *state.last_client_gone.lock().expect("client timestamp");
+    Some(state.idle_secs.saturating_sub(gone.elapsed().as_secs()))
+}
+
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     axum::Json(json!({
         "pid": std::process::id(),
         "version": state.version,
         "schema_version": SCHEMA_VERSION,
         "clients": state.clients.load(Ordering::SeqCst),
+        "idle_remaining_secs": idle_remaining_secs(&state),
     }))
+}
+
+fn confined_file(root: &std::path::Path, relative: &str) -> Option<std::path::PathBuf> {
+    if relative.split(['/', '\\']).any(|segment| segment == "..") {
+        return None;
+    }
+    let candidate = if relative.is_empty() {
+        root.join("index.html")
+    } else {
+        root.join(relative)
+    };
+    let root = root.canonicalize().ok()?;
+    let file = candidate.canonicalize().ok()?;
+    file.starts_with(&root).then_some(file)
 }
 
 async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
     let path = uri.path();
     if let Some(dir) = &state.ui_dir {
         let relative = path.trim_start_matches('/');
-        let candidate = if relative.is_empty() {
-            dir.join("index.html")
-        } else {
-            dir.join(relative)
-        };
-        if candidate.is_file() {
+        if let Some(candidate) = confined_file(dir, relative)
+            && candidate.is_file()
+        {
             return match tokio::fs::read(&candidate).await {
                 Ok(bytes) => Response::builder()
                     .status(StatusCode::OK)
@@ -109,17 +132,15 @@ async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
                 Err(_) => StatusCode::NOT_FOUND.into_response(),
             };
         }
-        if relative.is_empty() || !relative.contains('.') {
-            let index = dir.join("index.html");
-            if index.is_file()
-                && let Ok(bytes) = tokio::fs::read(index).await
-            {
-                return Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/html; charset=utf-8")
-                    .body(Body::from(bytes))
-                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
-            }
+        if (relative.is_empty() || !relative.contains('.'))
+            && let Some(index) = confined_file(dir, "index.html")
+            && let Ok(bytes) = tokio::fs::read(index).await
+        {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/html; charset=utf-8")
+                .body(Body::from(bytes))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
         }
     }
     if path == "/" {
@@ -137,22 +158,17 @@ async fn ws_upgrade(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
-    if let Err(reason) = check_origin(&headers, &state.allowed_origins) {
-        log_refusal(reason, None);
-        return (
-            StatusCode::FORBIDDEN,
-            axum::Json(json!({"reason": reason.name()})),
-        )
-            .into_response();
-    }
-    ws.on_upgrade(move |socket| client_loop(socket, state))
+    let origin = headers
+        .get("origin")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    ws.on_upgrade(move |socket| client_loop(socket, state, origin))
 }
 
-fn check_origin(headers: &HeaderMap, allowed: &HashSet<String>) -> Result<(), CloseReason> {
-    let Some(origin) = headers.get("origin") else {
-        return Ok(());
+fn check_origin(origin: Option<&str>, allowed: &HashSet<String>) -> Result<(), CloseReason> {
+    let Some(origin) = origin else {
+        return Err(CloseReason::OriginNotAllowed);
     };
-    let origin = origin.to_str().unwrap_or("");
     if allowed.iter().any(|allowed| allowed == origin) {
         Ok(())
     } else {
@@ -160,7 +176,11 @@ fn check_origin(headers: &HeaderMap, allowed: &HashSet<String>) -> Result<(), Cl
     }
 }
 
-async fn client_loop(mut socket: WebSocket, state: AppState) {
+async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<String>) {
+    if let Err(reason) = check_origin(origin.as_deref(), &state.allowed_origins) {
+        refuse(&mut socket, reason, None).await;
+        return;
+    }
     let first = match socket.recv().await {
         Some(Ok(Message::Text(text))) => text,
         _ => {
