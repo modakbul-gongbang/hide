@@ -42,81 +42,91 @@ pub struct WorktreeProjectRequest {
 }
 
 type FileStamps = Vec<(PathBuf, Option<std::time::SystemTime>, u64)>;
-type ObservedRequest = (WorktreeRequest, FileStamps, u64);
+
+/// One project's freshness key: the request that describes it, the stamps of
+/// its own git directory, and a counter its own working-tree files advance.
+/// Each project carries its own key so a commit in one repository re-reads
+/// that repository alone. The first version keyed the whole catalog on every
+/// project's stamps together, and a checkpoint commit anywhere re-ran
+/// `git status` in every registered repository, including one on iCloud
+/// whose evicted files that status pulled back down for minutes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProjectObservation {
+    request: WorktreeProjectRequest,
+    stamps: FileStamps,
+    content_generation: u64,
+}
+
+type ObservedRequest = (u64, Vec<ProjectObservation>);
+
+/// One project's answer. `None` is a folder that is not a repository, which
+/// contributes no project entry at all. The paths are what the working-tree
+/// sampler stats between reads.
+type ProjectAnswer = (PathBuf, Option<ProjectWorktreesSnapshot>, Vec<PathBuf>);
 
 const FILE_STATS_PER_WAKE: usize = 32;
 
+/// The most one `git` invocation may take. A repository that cannot answer in
+/// this time reports its status unavailable rather than holding every other
+/// project's answer behind it; a status over evicted iCloud files ran for
+/// minutes before this bound existed.
+const GIT_DEADLINE: Duration = Duration::from_secs(15);
+
 pub struct WorktreeReader {
-    inner: BackgroundRead<ObservedRequest, (WorktreeCatalogSnapshot, Vec<PathBuf>)>,
-    known_paths: Vec<PathBuf>,
+    inner: BackgroundRead<ObservedRequest, Vec<ProjectAnswer>>,
+    /// Every path the last answer named, tagged with the requested root it
+    /// belongs to.
+    known_paths: Vec<(PathBuf, PathBuf)>,
     known_stamps: BTreeMap<PathBuf, (Option<std::time::SystemTime>, u64)>,
     scan_cursor: usize,
-    content_generation: u64,
+    content_generations: BTreeMap<PathBuf, u64>,
 }
 
 impl WorktreeReader {
     pub fn new() -> Self {
         Self {
-            inner: BackgroundRead::on_change(Duration::ZERO, move |request: &ObservedRequest| {
-                let mut catalog = read(&request.0);
-                let mut paths = Vec::new();
-                for row in catalog.projects.iter_mut().flat_map(|p| &mut p.worktrees) {
-                    let root = PathBuf::from(&row.path);
-                    paths.push(root.clone());
-                    if !row.missing {
-                        match git(
-                            &root,
-                            &[
-                                "ls-files",
-                                "-z",
-                                "--cached",
-                                "--others",
-                                "--exclude-standard",
-                            ],
-                        ) {
-                            Ok(files) => {
-                                for file in files.split('\0').filter(|f| !f.is_empty()) {
-                                    let path = root.join(file);
-                                    for parent in
-                                        path.ancestors().take_while(|p| p.starts_with(&root))
-                                    {
-                                        paths.push(parent.to_owned());
-                                    }
-                                }
-                            }
-                            Err(reason) => row.unavailable_reason = Some(reason),
-                        }
-                    }
-                }
-                paths.sort();
-                paths.dedup();
-                (catalog, paths)
+            inner: BackgroundRead::on_change(Duration::ZERO, {
+                let cache = std::sync::Mutex::new(ProjectCache::new());
+                move |request: &ObservedRequest| read_observed(&cache, request)
             }),
             known_paths: Vec::new(),
             known_stamps: BTreeMap::new(),
             scan_cursor: 0,
-            content_generation: 0,
+            content_generations: BTreeMap::new(),
         }
     }
 
     pub fn read_if_due(&mut self, request: WorktreeRequest) -> Option<WorktreeCatalogSnapshot> {
-        let mut signature = Vec::new();
-        for project in &request.projects {
-            if let Some(repository) = crate::git_dir::discover(&project.root_path) {
-                for base in [repository.git_dir, repository.common_dir] {
-                    for name in [
-                        "HEAD",
-                        "index",
-                        "packed-refs",
-                        "refs",
-                        "worktrees",
-                        "FETCH_HEAD",
-                    ] {
-                        stat_tree(&base.join(name), &mut signature);
+        let observations = request
+            .projects
+            .iter()
+            .map(|project| {
+                let mut stamps = Vec::new();
+                if let Some(repository) = crate::git_dir::discover(&project.root_path) {
+                    for base in [repository.git_dir, repository.common_dir] {
+                        for name in [
+                            "HEAD",
+                            "index",
+                            "packed-refs",
+                            "refs",
+                            "worktrees",
+                            "FETCH_HEAD",
+                        ] {
+                            stat_tree(&base.join(name), &mut stamps);
+                        }
                     }
                 }
-            }
-        }
+                ProjectObservation {
+                    request: project.clone(),
+                    stamps,
+                    content_generation: self
+                        .content_generations
+                        .get(&project.root_path)
+                        .copied()
+                        .unwrap_or(0),
+                }
+            })
+            .collect();
         // Sample a bounded slice of the paths discovered by the worker. A
         // complete scan is spread across wakes, so content-only edits are
         // eventually observed without making coordinator latency grow with
@@ -124,12 +134,13 @@ impl WorktreeReader {
         let sample_count = FILE_STATS_PER_WAKE.min(self.known_paths.len());
         for offset in 0..sample_count {
             let index = (self.scan_cursor + offset) % self.known_paths.len();
-            let path = self.known_paths[index].clone();
+            let (project, path) = self.known_paths[index].clone();
             let stamp = stamp(&path);
             match self.known_stamps.get_mut(&path) {
                 Some(previous) if *previous != stamp => {
                     *previous = stamp;
-                    self.content_generation = self.content_generation.wrapping_add(1);
+                    let generation = self.content_generations.entry(project).or_insert(0);
+                    *generation = generation.wrapping_add(1);
                 }
                 Some(_) => {}
                 None => {
@@ -140,19 +151,117 @@ impl WorktreeReader {
         if !self.known_paths.is_empty() {
             self.scan_cursor = (self.scan_cursor + sample_count) % self.known_paths.len();
         }
-        let answer = self
-            .inner
-            .poll((request, signature, self.content_generation));
-        answer.map(|(catalog, paths)| {
-            if self.known_paths != paths {
-                self.known_paths = paths;
-                self.known_stamps.clear();
-                self.scan_cursor = 0;
-                self.content_generation = self.content_generation.wrapping_add(1);
+        let answers = self.inner.poll((request.generation, observations))?;
+        let mut projects: Vec<ProjectWorktreesSnapshot> = Vec::new();
+        let mut paths = Vec::new();
+        for (root, project, project_paths) in answers {
+            paths.extend(project_paths.into_iter().map(|path| (root.clone(), path)));
+            // Two registrations inside one repository describe one project.
+            if let Some(project) = project
+                && !projects
+                    .iter()
+                    .any(|existing| existing.root_path == project.root_path)
+            {
+                projects.push(project);
             }
-            catalog
-        })
+        }
+        if self.known_paths != paths {
+            self.known_paths = paths;
+            self.known_stamps.clear();
+            self.scan_cursor = 0;
+        }
+        self.content_generations
+            .retain(|root, _| request.projects.iter().any(|p| &p.root_path == root));
+        Some(WorktreeCatalogSnapshot { projects })
     }
+}
+
+/// The last answer per requested root, with the observation that produced it.
+type ProjectCache = BTreeMap<
+    PathBuf,
+    (
+        u64,
+        ProjectObservation,
+        Option<ProjectWorktreesSnapshot>,
+        Vec<PathBuf>,
+    ),
+>;
+
+/// The worker's read: every project whose observation moved is read again,
+/// every other one is answered from the last read. The cache lives with the
+/// worker because only the worker produces what it holds; a project that
+/// leaves the request leaves the cache with it.
+fn read_observed(
+    cache: &std::sync::Mutex<ProjectCache>,
+    request: &ObservedRequest,
+) -> Vec<ProjectAnswer> {
+    let (generation, observations) = request;
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.retain(|root, _| observations.iter().any(|o| &o.request.root_path == root));
+    observations
+        .iter()
+        .map(|observation| {
+            let root = observation.request.root_path.clone();
+            if let Some((cached_generation, cached, project, paths)) = cache.get(&root)
+                && cached_generation == generation
+                && cached == observation
+            {
+                return (root, project.clone(), paths.clone());
+            }
+            let (project, paths) = read_project_request(&observation.request);
+            cache.insert(
+                root.clone(),
+                (
+                    *generation,
+                    observation.clone(),
+                    project.clone(),
+                    paths.clone(),
+                ),
+            );
+            (root, project, paths)
+        })
+        .collect()
+}
+
+/// One project's rows and the working-tree paths behind them.
+fn read_project_request(
+    project: &WorktreeProjectRequest,
+) -> (Option<ProjectWorktreesSnapshot>, Vec<PathBuf>) {
+    let Some(mut snapshot) = read(project) else {
+        return (None, Vec::new());
+    };
+    let mut paths = Vec::new();
+    for row in &mut snapshot.worktrees {
+        let root = PathBuf::from(&row.path);
+        paths.push(root.clone());
+        if !row.missing {
+            match git(
+                &root,
+                &[
+                    "ls-files",
+                    "-z",
+                    "--cached",
+                    "--others",
+                    "--exclude-standard",
+                ],
+            ) {
+                Ok(files) => {
+                    for file in files.split('\0').filter(|f| !f.is_empty()) {
+                        let path = root.join(file);
+                        for parent in path.ancestors().take_while(|p| p.starts_with(&root)) {
+                            paths.push(parent.to_owned());
+                        }
+                    }
+                }
+                Err(reason) => row.unavailable_reason = Some(reason),
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    (Some(snapshot), paths)
 }
 
 impl Default for WorktreeReader {
@@ -241,41 +350,28 @@ pub fn deletion_gate(
     }
 }
 
-fn read(request: &WorktreeRequest) -> WorktreeCatalogSnapshot {
-    let mut projects: Vec<ProjectWorktreesSnapshot> = Vec::new();
-    for project in &request.projects {
-        if !project.root_path.exists() {
-            projects.push(ProjectWorktreesSnapshot {
-                root_path: project.root_path.to_string_lossy().into_owned(),
-                unavailable_reason: Some(format!(
-                    "Repository unavailable: {}",
-                    project.root_path.display()
-                )),
-                ..ProjectWorktreesSnapshot::default()
-            });
-            continue;
-        }
-        let Some(root) = main_worktree(&project.root_path) else {
-            // A folder that is not a repository has no worktrees and is not a
-            // failure; the card and the tree both present it as a plain
-            // folder, so it contributes no project entry at all.
-            continue;
-        };
-        let root_path = root.to_string_lossy().into_owned();
-        if projects
-            .iter()
-            .any(|existing| existing.root_path == root_path)
-        {
-            continue;
-        }
-        projects.push(read_project(
-            &root,
-            root_path,
-            &project.bases,
-            project.base_override.as_deref(),
-        ));
+fn read(project: &WorktreeProjectRequest) -> Option<ProjectWorktreesSnapshot> {
+    if !project.root_path.exists() {
+        return Some(ProjectWorktreesSnapshot {
+            root_path: project.root_path.to_string_lossy().into_owned(),
+            unavailable_reason: Some(format!(
+                "Repository unavailable: {}",
+                project.root_path.display()
+            )),
+            ..ProjectWorktreesSnapshot::default()
+        });
     }
-    WorktreeCatalogSnapshot { projects }
+    // A folder that is not a repository has no worktrees and is not a
+    // failure; the card and the tree both present it as a plain folder, so
+    // it contributes no project entry at all.
+    let root = main_worktree(&project.root_path)?;
+    let root_path = root.to_string_lossy().into_owned();
+    Some(read_project(
+        &root,
+        root_path,
+        &project.bases,
+        project.base_override.as_deref(),
+    ))
 }
 
 fn read_project(
@@ -826,13 +922,29 @@ pub(crate) fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
         .lock()
         .unwrap()
         .push((cwd.to_owned(), arguments.first().unwrap_or(&"").to_string()));
-    let output = Command::new("git")
-        .arg("--no-optional-locks")
-        .arg("-C")
-        .arg(cwd)
-        .args(arguments)
-        .output()
-        .map_err(|error| format!("git could not be run: {error}"))?;
+    let output = output_within(
+        Command::new("git")
+            .arg("--no-optional-locks")
+            .arg("-C")
+            .arg(cwd)
+            .args(arguments),
+        GIT_DEADLINE,
+    )
+    .map_err(|error| format!("git could not be run: {error}"))?;
+    let Some(output) = output else {
+        crate::diagnostic!(serde_json::json!({
+            "component": "worktrees",
+            "kind": "git.deadline_exceeded",
+            "path": cwd.to_string_lossy(),
+            "command": arguments[0],
+            "deadline_ms": GIT_DEADLINE.as_millis() as u64,
+        }));
+        return Err(format!(
+            "git {} exceeded {} s",
+            arguments[0],
+            GIT_DEADLINE.as_secs()
+        ));
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if stderr.is_empty() {
@@ -842,6 +954,64 @@ pub(crate) fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Runs `command` to completion, or kills it at `deadline` and answers
+/// `None`. Both pipes are drained on their own threads the whole time, so a
+/// child whose output outgrows the pipe buffer is never left blocked on a
+/// write nobody reads.
+fn output_within(
+    command: &mut Command,
+    deadline: Duration,
+) -> std::io::Result<Option<std::process::Output>> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let drain = |pipe: Option<_>| {
+        std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _: std::io::Result<usize> = std::io::Read::read_to_end(&mut pipe, &mut buffer);
+            }
+            buffer
+        })
+    };
+    let stdout = drain(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let stderr = drain(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if started.elapsed() >= deadline {
+            child.kill()?;
+            child.wait()?;
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = stdout.join().unwrap_or_default();
+    let stderr = stderr.join().unwrap_or_default();
+    Ok(status.map(|status| std::process::Output {
+        status,
+        stdout,
+        stderr,
+    }))
 }
 
 #[cfg(test)]

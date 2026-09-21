@@ -72,9 +72,12 @@ enum WorkspaceFileSearchIndex {
         process.standardOutput = output
         process.standardError = errors
         try process.run()
+        // Drain stdout before waiting: a listing over the 64 KiB pipe buffer
+        // otherwise leaves git blocked on a write nobody reads, and this
+        // load never returns.
+        let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
         return String(decoding: data, as: UTF8.self)
             .split(separator: "\0")
             .map(String.init)
