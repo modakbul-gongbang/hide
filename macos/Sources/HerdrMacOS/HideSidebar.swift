@@ -1065,6 +1065,13 @@ private struct AgentNavigatorRow: View {
             ?? "parent"
     }
 
+    /// One wording for the fold toggle's tooltip and its accessibility
+    /// label; without it the symbol reads as "Forward".
+    private func disclosureLabel(collapsed: Bool, interactive: Bool) -> String {
+        guard interactive else { return "Has descendants; open them in the project tree" }
+        return collapsed ? "Expand descendants" : "Collapse descendants"
+    }
+
     /// The leading role column: the fold toggle, the way back to a parent,
     /// or the blank that keeps the marks in one column (PRD B9, B10, B12).
     @ViewBuilder
@@ -1082,11 +1089,8 @@ private struct AgentNavigatorRow: View {
             // A raised row never unfolds, so its chevron only says the
             // descendants exist; the tree is where they open.
             .disabled(!interactive)
-            .hideTooltip(
-                interactive
-                    ? (collapsed ? "Expand descendants" : "Collapse descendants")
-                    : "Has descendants; open them in the project tree"
-            )
+            .accessibilityLabel(disclosureLabel(collapsed: collapsed, interactive: interactive))
+            .hideTooltip(disclosureLabel(collapsed: collapsed, interactive: interactive))
         case .returnToParent(let paneID):
             let label = parentLabel(paneID)
             Button {
