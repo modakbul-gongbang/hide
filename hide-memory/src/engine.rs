@@ -86,11 +86,13 @@ impl HideNativeAnalyzer {
         // redactor at the final egress boundary so a manual edit or data from
         // an older schema can never bypass today's secret policy.
         let active_memories = redact(active_memories_json);
+        let events_value = parse_input_array("new_events", &events.text)?;
+        let active_memories_value = parse_input_array("active_memories", &active_memories.text)?;
         let input = json!({
             "project_id": project_id,
             "session_id": session_id,
-            "new_events": events.text,
-            "active_memories": active_memories.text,
+            "new_events": events_value,
+            "active_memories": active_memories_value,
             "engine": "hide-native-project-memory",
             "design_reference": {
                 "pin": DESIGN_REFERENCE_PIN,
@@ -196,6 +198,18 @@ impl HideNativeAnalyzer {
     }
 }
 
+fn parse_input_array(field: &str, value: &str) -> Result<Value, HideNativeOutputError> {
+    let parsed = serde_json::from_str::<Value>(value).map_err(|error| {
+        HideNativeOutputError::InvalidShape(format!("{field} is not valid JSON: {error}"))
+    })?;
+    if !parsed.is_array() {
+        return Err(HideNativeOutputError::InvalidShape(format!(
+            "{field} must be an array"
+        )));
+    }
+    Ok(parsed)
+}
+
 #[derive(Deserialize)]
 struct Output {
     candidates: Vec<OutputCandidate>,
@@ -287,6 +301,9 @@ mod tests {
         assert!(request.input.contains(DESIGN_REFERENCE_PIN));
         assert!(request.input.contains(DESIGN_REFERENCE_COMMIT));
         assert!(request.input.contains("\"runtime_dependency\":false"));
+        let input: Value = serde_json::from_str(&request.input).unwrap();
+        assert!(input["new_events"].is_array());
+        assert!(input["active_memories"].is_array());
         assert_eq!(request.subject_id, "project:1:s1");
 
         let manifest: Value = serde_json::from_str(DESIGN_REFERENCE_MANIFEST).unwrap();
@@ -338,10 +355,14 @@ mod tests {
             )
             .unwrap();
         let input: Value = serde_json::from_str(&request.input).unwrap();
-        let active_memories = input["active_memories"].as_str().unwrap();
+        let active_memories = &input["active_memories"];
 
-        assert!(active_memories.contains("[REDACTED]"));
-        assert!(!active_memories.contains("super-secret-egress-value"));
+        assert!(active_memories.to_string().contains("[REDACTED]"));
+        assert!(
+            !active_memories
+                .to_string()
+                .contains("super-secret-egress-value")
+        );
     }
 
     #[test]

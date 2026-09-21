@@ -34,7 +34,8 @@ On `UserPromptSubmit`, it parses at most 256 KiB of runtime input, resolves the 
 The prompt text, up to two recent human topics, and current checkout metadata are search inputs only; the original prompt is never replaced.
 An item is eligible only after a lexical match, a bounded two- or three-character literal match, or meaningful path overlap below the Project root; extraction confidence never stands in for semantic similarity and only breaks ties after relevance.
 At most three whole Memory items and 600 estimated tokens are returned in the same `additionalContext` envelope, excluding items already provided by `SessionStart` for that session.
-The core records the authoritative SessionStart receipt in the app-owned SQLite store after it observes the injected envelope; if the first prompt races that projection, the helper recomputes the same bounded SessionStart capsule read-only and excludes it without writing a sidecar.
+The core records the authoritative SessionStart receipt in the app-owned SQLite store after it observes the injected envelope.
+If the first prompt races that projection, the helper omits Memory for that prompt rather than guessing which items were delivered; the next prompt retries the read-only lookup after the receipt exists, and no sidecar or second store is written.
 For a linked worktree, the helper maps the actual cwd relative to that checkout root back into the durable main-worktree namespace before path ranking, so the worktree identity folds while `crates/foo` relevance remains intact.
 Claude Code and Codex currently accept the same envelope, but the installed runtime argument keeps that protocol choice explicit.
 `SubagentStart`, `SubagentStop`, and `Stop` write nothing to stdout, preserving their existing silent behavior.

@@ -3,6 +3,7 @@ use crate::model::{
     ArchiveDetailSnapshot, MemoryDetailSnapshot, MemoryRowSnapshot, RightPanelSection,
     SessionRowSnapshot, SessionsMode, SessionsProviderFilter,
 };
+use hide_memory::CandidateKind;
 
 fn session(id: &str, provider: &str, request: &str, updated_at_unix_ms: u64) -> SessionRowSnapshot {
     SessionRowSnapshot {
@@ -331,6 +332,78 @@ fn one_event_over_the_analysis_cap_fails_without_advancing() {
             .unwrap_err()
             .contains("analysis limit")
     );
+}
+
+#[test]
+fn maximum_korean_relation_context_and_event_group_fit_one_request() {
+    let root = std::env::temp_dir().join(format!(
+        "hide-memory-request-budget-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut store = hide_memory::MemoryStore::open(&root.join("memory.sqlite3")).unwrap();
+    let project_id = "project:request-budget";
+    store.ensure_project(project_id, &root, "local").unwrap();
+    store
+        .apply_candidates(
+            &hide_memory::AnalysisBatch {
+                id: "request-budget-batch".into(),
+                project_id: project_id.into(),
+                provider: "codex".into(),
+                analysis_provider: "codex".into(),
+                session_id: "source".into(),
+                content_hash: "request-budget-hash".into(),
+                created_at_unix_ms: 1,
+            },
+            &(0..5)
+                .map(|index| hide_memory::Candidate {
+                    text: format!("규칙 {index} {}", "가".repeat(3_990)),
+                    kind: CandidateKind::Rule,
+                    confidence: 1.0,
+                    salience: 1.0 - index as f64 / 10.0,
+                    source_offsets: vec![index],
+                    direct_human_source: true,
+                    relation: hide_memory::CandidateRelation::New,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+    let active = crate::runtime::memory::active_memories_json(&store, project_id).unwrap();
+    assert!(active.len() <= 16 * 1024);
+    assert!(
+        !serde_json::from_str::<Vec<serde_json::Value>>(&active)
+            .unwrap()
+            .is_empty()
+    );
+    let events = vec![serde_json::json!({
+        "offset": 1,
+        "kind": "human",
+        "text": "x".repeat(35 * 1024),
+    })];
+    let group = crate::runtime::memory::event_groups(&events)
+        .unwrap()
+        .remove(0);
+    let request = hide_memory::HideNativeAnalyzer
+        .request(
+            "request-budget",
+            project_id,
+            "session",
+            &serde_json::to_string(&group).unwrap(),
+            &active,
+        )
+        .unwrap();
+
+    assert!(request.input.len() <= hide_memory::ANALYSIS_INPUT_LIMIT_BYTES);
+    let input: serde_json::Value = serde_json::from_str(&request.input).unwrap();
+    assert!(input["new_events"].is_array());
+    assert!(input["active_memories"].is_array());
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

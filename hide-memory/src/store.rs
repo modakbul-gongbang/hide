@@ -630,13 +630,26 @@ impl MemoryStore {
         project_id: &str,
         runtime: &str,
         session_id: &str,
-    ) -> Result<Vec<String>, MemoryError> {
+    ) -> Result<Option<Vec<String>>, MemoryError> {
+        let receipt_id = self
+            .connection
+            .query_row(
+                "SELECT id FROM injection_receipts WHERE project_id=?1 AND runtime=?2 AND session_id=?3 AND turn_id IS NULL",
+                params![project_id, runtime, session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(receipt_id) = receipt_id else {
+            return Ok(None);
+        };
         let mut statement = self.connection.prepare(
-            "SELECT rii.item_id FROM injection_receipts ir JOIN injection_receipt_items rii ON rii.receipt_id=ir.id WHERE ir.project_id=?1 AND ir.runtime=?2 AND ir.session_id=?3 AND ir.turn_id IS NULL ORDER BY rii.item_id",
+            "SELECT item_id FROM injection_receipt_items WHERE receipt_id=?1 ORDER BY item_id",
         )?;
-        Ok(statement
-            .query_map(params![project_id, runtime, session_id], |row| row.get(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?)
+        Ok(Some(
+            statement
+                .query_map([receipt_id], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+        ))
     }
 
     pub fn apply_candidates(

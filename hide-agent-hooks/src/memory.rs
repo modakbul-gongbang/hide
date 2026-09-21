@@ -145,6 +145,9 @@ pub fn project_memory_output_until(
                 AgentRuntime::ClaudeCode => "claude",
             };
             let session_id = input.session_id.as_deref().unwrap_or_default();
+            if session_id.is_empty() {
+                return base();
+            }
             if !session_id.is_empty()
                 && let Ok(topics) = store.recent_session_topics(&project.id, runtime_id, session_id)
             {
@@ -153,24 +156,15 @@ pub fn project_memory_output_until(
                     text.push_str(&topic);
                 }
             }
-            let mut excluded = if session_id.is_empty() {
-                Vec::new()
-            } else {
-                store
-                    .session_start_receipt_ids(&project.id, runtime_id, session_id)
-                    .unwrap_or_default()
-            };
-            // The core projects the durable receipt into the one app-owned
-            // SQLite store after it observes the SessionStart envelope. The
-            // first prompt can race that projection, so recompute the same
-            // bounded capsule as a read-only fallback. Once the receipt is
-            // present it remains the authority.
-            if excluded.is_empty()
-                && !session_id.is_empty()
-                && let Ok(start) = store.retrieve(&RetrievalQuery::session_start(&project.id))
-            {
-                excluded.extend(start.items.into_iter().map(|(id, _, _)| id));
-            }
+            let mut excluded =
+                match store.session_start_receipt_ids(&project.id, runtime_id, session_id) {
+                    Ok(Some(items)) => items,
+                    // Only the receipt records what SessionStart actually
+                    // delivered. If the first prompt races receipt projection,
+                    // omitting Memory for that prompt is the only read-only
+                    // outcome that cannot repeat or falsely exclude an item.
+                    Ok(None) | Err(_) => return base(),
+                };
             excluded.sort_unstable();
             excluded.dedup();
             RetrievalQuery::prompt(&project.id, text, excluded)
@@ -257,7 +251,8 @@ fn render(
 mod tests {
     use super::*;
     use hide_memory::{
-        AnalysisBatch, Candidate, CandidateKind, CandidateRelation, SessionSourceRecord,
+        AnalysisBatch, Candidate, CandidateKind, CandidateRelation, Injection, InjectionOutcome,
+        SessionSourceRecord,
     };
     use std::fs;
     use std::process::Command;
@@ -307,6 +302,19 @@ mod tests {
             .ensure_project(&project.id, &project.root, "local")
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
+        store
+            .record_injection(
+                &project.id,
+                "codex",
+                "unrelated-session",
+                None,
+                &Injection {
+                    outcome: InjectionOutcome::Empty,
+                    items: Vec::new(),
+                    token_count: 0,
+                },
+            )
+            .unwrap();
         store
             .apply_candidates(
                 &AnalysisBatch {
@@ -435,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn immediate_first_prompt_omits_the_session_start_items_before_transcript_projection() {
+    fn immediate_first_prompt_omits_memory_until_the_exact_receipt_is_projected() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
         let project_root = temp.path().join("project");
@@ -494,6 +502,31 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(started_rules.len(), 5);
 
+        let mut store = MemoryStore::open(&path).unwrap();
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "race-new-batch".into(),
+                    project_id: project.id.clone(),
+                    provider: "codex".into(),
+                    analysis_provider: "codex".into(),
+                    session_id: "other-session".into(),
+                    content_hash: "race-new-hash".into(),
+                    created_at_unix_ms: 100,
+                },
+                &[Candidate {
+                    text: "New higher-ranked durable hook rule".into(),
+                    kind: CandidateKind::Rule,
+                    confidence: 1.0,
+                    salience: 1.0,
+                    source_offsets: vec![100],
+                    direct_human_source: true,
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        drop(store);
+
         let prompt_payload = serde_json::to_vec(&serde_json::json!({
             "cwd": project_root,
             "session_id": session_id,
@@ -507,11 +540,8 @@ mod tests {
             false,
             &home,
         );
-        assert_eq!(prompt.outcome, HookMemoryOutcome::Provided { count: 3 });
-        let prompt_output = prompt.stdout.unwrap();
-        for index in started_rules {
-            assert!(!prompt_output.contains(&format!("Race rule {index} ")));
-        }
+        assert_eq!(prompt.outcome, HookMemoryOutcome::Unavailable);
+        assert!(prompt.stdout.is_none());
         assert!(
             !home
                 .join("Library/Application Support/hide/project-memory-receipts")
@@ -586,6 +616,19 @@ mod tests {
             .unwrap();
         store.set_enabled(&project.id, true, true).unwrap();
         store
+            .record_injection(
+                &project.id,
+                "codex",
+                "linked-session",
+                None,
+                &Injection {
+                    outcome: InjectionOutcome::Empty,
+                    items: Vec::new(),
+                    token_count: 0,
+                },
+            )
+            .unwrap();
+        store
             .upsert_session_source(&SessionSourceRecord {
                 id: "path-source".into(),
                 project_id: project.id.clone(),
@@ -636,6 +679,7 @@ mod tests {
 
         let payload = serde_json::to_vec(&serde_json::json!({
             "cwd": linked_cwd,
+            "session_id": "linked-session",
             "prompt": "zz-no-literal-match"
         }))
         .unwrap();

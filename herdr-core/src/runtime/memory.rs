@@ -19,6 +19,7 @@ use std::fs;
 
 const MEMORY_QUIESCENCE_MS: u64 = 60_000;
 const MEMORY_POLL_INTERVAL_MS: u64 = 5_000;
+const RELATION_CONTEXT_INPUT_LIMIT_BYTES: usize = 16 * 1024;
 
 struct SessionsLoad {
     project_id: String,
@@ -1645,7 +1646,10 @@ fn split_utf8(text: &str, maximum_bytes: usize) -> Vec<&str> {
     chunks
 }
 
-fn active_memories_json(store: &MemoryStore, project_id: &str) -> Result<String, String> {
+pub(super) fn active_memories_json(
+    store: &MemoryStore,
+    project_id: &str,
+) -> Result<String, String> {
     let memories = store
         .relation_context(project_id, 60, 5_000)
         .map_err(|error| error.to_string())?;
@@ -1656,6 +1660,13 @@ fn active_memories_json(store: &MemoryStore, project_id: &str) -> Result<String,
             return Err("Stored Memory failed the outbound secret check".to_owned());
         }
         values.push(json!({"id": id, "text": redacted.text}));
+        if serde_json::to_vec(&values)
+            .map_err(|error| error.to_string())?
+            .len()
+            > RELATION_CONTEXT_INPUT_LIMIT_BYTES
+        {
+            values.pop();
+        }
     }
     serde_json::to_string(&values).map_err(|error| error.to_string())
 }

@@ -458,7 +458,7 @@ It accepts at most 256 KiB of hook input, opens the app database read-only, chec
 It has a 100 ms hard deadline and starts no model, embedding, transcript scan, child process, network request, or database write.
 Missing, locked, corrupt, stale, unresolved, or over-deadline inputs exit successfully with empty context so prompt submission continues.
 `SessionStart` reads the precomputed Project capsule under the same read-only and fail-open ownership, with at most five whole items and 600 tokens.
-The first prompt can recompute that same bounded capsule read-only while its durable receipt is still being projected; the hook creates no receipt sidecar or other second store.
+If the first prompt arrives before that durable receipt is projected, the hook omits Memory for that prompt and retries on the next prompt; it never guesses the delivered set or creates a receipt sidecar or other second store.
 
 Regression owners are the `hide-project` identity tests, `hide-session` provider-neutral catalog and cursor tests, `hide-memory` Project-isolation, lifecycle, convergence, FTS transaction, redaction, ranking and budget tests, `hide-agent-hooks` fixture/config/fail-open tests, and core atomic-event and editor-preview tests.
 Native acceptance uses one exact worktree-local signed app PID and window against a private Herdr server and private app state.

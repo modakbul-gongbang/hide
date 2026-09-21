@@ -19,7 +19,8 @@ Pinned Mem0 OSS v2.1.0 extraction and update prompt assets remain only as audite
 Hide's strict schema carries candidate text, kind, extraction confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
 The write service validates those proposals against source events, Project identity, privacy, provenance, lifecycle, and resource caps.
 The local search path uses active-only FTS5 plus bounded literal and path fallback; it admits only query-relevant candidates, then uses salience, extraction confidence, and recency as tie-breakers rather than semantic-similarity signals.
-It sends only locally redacted, normalized human and assistant events after the durable session cursor, plus a relevance-neutral bounded active-Memory comparison set used to find duplicates, updates, and conflicts across languages, with a 64 KiB request-input cap.
+It sends only locally redacted, normalized human and assistant events after the durable session cursor, plus a relevance-neutral active-Memory comparison set used to find duplicates, updates, and conflicts across languages.
+The comparison set is bounded by item, token, and exact serialized-byte budgets; normalized events and comparison items are composed as JSON arrays under one final 64 KiB request-input cap, so individually valid inputs cannot combine into a permanently unprocessable batch.
 Both fields pass through the current local redactor again at the final provider egress boundary.
 The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
 Memory analysis reuses this boundary's selected provider, availability, bounded same-provider retry, duplicate suppression, process ownership, cancellation, and budgets.
