@@ -156,7 +156,9 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
             });
             None
         }
-        Some(value) if !(value.starts_with("http://127.0.0.1:") || value.starts_with("http://localhost:")) =>
+        Some(value)
+            if !(value.starts_with("http://127.0.0.1:")
+                || value.starts_with("http://localhost:")) =>
         {
             errors.push(EnvError {
                 key: HIDE_VITE_ORIGIN,
@@ -228,7 +230,10 @@ mod tests {
     #[test]
     fn defaults_state_dir_under_home() {
         let env = from_map(&[("HOME", "/Users/example")]).unwrap();
-        assert_eq!(env.state_dir, PathBuf::from("/Users/example/.local/state/hide"));
+        assert_eq!(
+            env.state_dir,
+            PathBuf::from("/Users/example/.local/state/hide")
+        );
         assert_eq!(env.idle_secs, 600);
         assert!(!env.keep_alive);
         assert!(env.herdr_socket_path.is_none());
@@ -236,8 +241,11 @@ mod tests {
 
     #[test]
     fn vite_origin_must_be_loopback() {
-        let err = from_map(&[("HOME", "/Users/example"), ("HIDE_VITE_ORIGIN", "http://example.com")])
-            .unwrap_err();
+        let err = from_map(&[
+            ("HOME", "/Users/example"),
+            ("HIDE_VITE_ORIGIN", "http://example.com"),
+        ])
+        .unwrap_err();
         assert_eq!(err[0].key, HIDE_VITE_ORIGIN);
     }
 }

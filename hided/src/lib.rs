@@ -19,6 +19,24 @@ use crate::state_file::{DaemonState, acquire_lock, new_token, remove_state, writ
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn find_ui_dir() -> Option<std::path::PathBuf> {
+    if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
+        let path = std::path::PathBuf::from(dir);
+        if path.join("index.html").is_file() {
+            return Some(path);
+        }
+    }
+    let cwd = std::env::current_dir().ok()?;
+    let candidates = [
+        cwd.join("web/dist"),
+        cwd.join("dist"),
+        cwd.parent().unwrap_or(cwd.as_path()).join("web/dist"),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.join("index.html").is_file())
+}
+
 pub struct RunningDaemon {
     pub port: u16,
     pub token: String,
@@ -75,10 +93,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         keep_alive: env.keep_alive,
         idle_secs: env.idle_secs,
         shutdown: Arc::clone(&shutdown),
-        ui_dir: std::env::current_dir()
-            .ok()
-            .map(|root| root.join("web/dist"))
-            .filter(|path| path.join("index.html").is_file()),
+        ui_dir: find_ui_dir(),
         version: VERSION,
     };
     let env_state_dir = env.state_dir.clone();
@@ -105,7 +120,7 @@ pub async fn wait_shutdown(running: &RunningDaemon) {
 
 #[cfg(test)]
 mod tests {
-    use super::env::{REGISTRY, HOME};
+    use super::env::{HOME, REGISTRY};
 
     #[test]
     fn env_registry_lists_home_as_required() {

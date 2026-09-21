@@ -30,13 +30,14 @@ async fn start() -> (tempfile::TempDir, hided::RunningDaemon) {
 async fn connect(
     port: u16,
     origin: Option<&str>,
-) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
-{
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     let mut request = format!("ws://127.0.0.1:{port}/ws")
         .into_client_request()
         .unwrap();
     if let Some(origin) = origin {
-        request.headers_mut().insert(ORIGIN, origin.parse().unwrap());
+        request
+            .headers_mut()
+            .insert(ORIGIN, origin.parse().unwrap());
     }
     let (socket, _) = tokio_tungstenite::connect_async(request)
         .await
@@ -118,10 +119,7 @@ async fn ninth_client_is_refused() {
     let mut held = Vec::new();
     for _ in 0..8 {
         let mut socket = connect(running.port, None).await;
-        socket
-            .send(handshake(&running.token, 2))
-            .await
-            .unwrap();
+        socket.send(handshake(&running.token, 2)).await.unwrap();
         let _ = socket.next().await;
         held.push(socket);
     }
@@ -136,10 +134,7 @@ async fn ninth_client_is_refused() {
 async fn valid_handshake_receives_snapshot() {
     let (_dir, running) = start().await;
     let mut socket = connect(running.port, None).await;
-    socket
-        .send(handshake(&running.token, 2))
-        .await
-        .unwrap();
+    socket.send(handshake(&running.token, 2)).await.unwrap();
     let message = socket.next().await.unwrap().unwrap();
     let Message::Text(text) = message else {
         panic!("expected text snapshot");
@@ -179,7 +174,16 @@ async fn reqwest_get(url: &str) -> String {
 
 async fn reqwest_post(url: &str) -> u16 {
     let output = tokio::process::Command::new("/usr/bin/curl")
-        .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", url])
+        .args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-X",
+            "POST",
+            url,
+        ])
         .output()
         .await
         .unwrap();

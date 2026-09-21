@@ -68,6 +68,7 @@ pub fn acquire_lock(dir: &Path) -> io::Result<File> {
         .create(true)
         .read(true)
         .write(true)
+        .truncate(false)
         .mode(0o600)
         .open(lock_path(dir))?;
     let result = unsafe { libc::flock(use_raw_fd(&file), libc::LOCK_EX | libc::LOCK_NB) };

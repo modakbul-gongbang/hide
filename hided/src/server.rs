@@ -102,6 +102,7 @@ async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
             return match tokio::fs::read(&candidate).await {
                 Ok(bytes) => Response::builder()
                     .status(StatusCode::OK)
+                    .header("content-type", mime_for(&candidate))
                     .body(Body::from(bytes))
                     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
                 Err(_) => StatusCode::NOT_FOUND.into_response(),
@@ -109,14 +110,14 @@ async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
         }
         if relative.is_empty() || !relative.contains('.') {
             let index = dir.join("index.html");
-            if index.is_file() {
-                if let Ok(bytes) = tokio::fs::read(index).await {
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .header("content-type", "text/html; charset=utf-8")
-                        .body(Body::from(bytes))
-                        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
-                }
+            if index.is_file()
+                && let Ok(bytes) = tokio::fs::read(index).await
+            {
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "text/html; charset=utf-8")
+                    .body(Body::from(bytes))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
             }
         }
     }
@@ -247,7 +248,8 @@ async fn client_loop(mut socket: WebSocket, state: AppState) {
 }
 
 fn handle_client_text(state: &AppState, text: &str) -> Result<(), String> {
-    let value: Value = serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
+    let value: Value =
+        serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
     let event = if value.get("schema_version").is_some() && value.get("kind").is_some() {
         value
     } else {
@@ -305,7 +307,7 @@ async fn refuse(socket: &mut WebSocket, reason: CloseReason, extra: Option<usize
     log_refusal(reason, extra);
     let _ = socket
         .send(Message::Close(Some(CloseFrame {
-            code: reason.code().into(),
+            code: reason.code(),
             reason: reason.name().into(),
         })))
         .await;
@@ -364,6 +366,19 @@ pub async fn bind(addr: SocketAddr) -> Result<tokio::net::TcpListener, String> {
     tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|error| format!("bind {addr} failed: {error}"))
+}
+
+fn mime_for(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    }
 }
 
 pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {

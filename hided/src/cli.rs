@@ -238,9 +238,7 @@ fn swift_app_present() -> bool {
 
 fn default_socket_exists() -> bool {
     let home = std::env::var("HOME").unwrap_or_default();
-    Path::new(&home)
-        .join(".config/herdr/herdr.sock")
-        .exists()
+    Path::new(&home).join(".config/herdr/herdr.sock").exists()
 }
 
 #[cfg(test)]

@@ -415,12 +415,9 @@ pub extern "C" fn herdr_core_on_change(
             notify_change(core);
             return;
         }
-        core.notifier.set_callback(callback.map(|callback| {
-            NotifyTarget::C(CCallback {
-                callback,
-                context,
-            })
-        }));
+        core.notifier.set_callback(
+            callback.map(|callback| NotifyTarget::C(CCallback { callback, context })),
+        );
     }));
 }
 
