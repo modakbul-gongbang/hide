@@ -22,6 +22,8 @@ export type Probe = {
   arrivals: () => number;
   /** Closes the live socket the way a server drop would; the shell reconnects on its own. */
   dropSocket: () => void;
+  /** Pane ids whose terminal session the core reports as not released (the attach window). */
+  attachedPanes: () => string[];
 };
 
 declare global {
@@ -74,10 +76,12 @@ export function installProbe(
   term: () => Terminal | null,
   paneId: () => string | null,
   dropSocket: () => void = () => {},
+  attachedPanes: () => string[] = () => [],
 ): void {
   window.__hideProbe = {
     paneId,
     dropSocket,
+    attachedPanes,
     screenText: () => {
       const current = term();
       return current ? screenText(current) : "";

@@ -3,11 +3,20 @@
 # shell echo (PRD B8) and frame (PRD B12) measurements against the product
 # hided. Usage:
 #   HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure bash scripts/web-shell-measure/run.sh
+#   MEASURE_SCENARIO=multi HIDE_MEASURE_RUN_DIR=... bash scripts/web-shell-measure/run.sh
+# `single` (default) is the S1 shape: one pane in one tab. `multi` is the S2
+# shape (PRD web-shell-pivot-s2 D-08): the measured pane shares its tab with
+# four splits, and four more tabs are shown once each so the core holds five
+# attached tabs, before the shell returns to the measured tab. The driver and
+# the marker still go to the one measured pane; the other panes are idle
+# shells with mounted xterm instances.
 # Needs: the pinned herdr (HERDR_BIN_PATH or PATH), Google Chrome,
 # target/release/hided built after `pnpm --dir web build` (docs/BUILD.md: a release hided embeds web/dist).
 set -euo pipefail
 measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
+scenario="${MEASURE_SCENARIO:-single}"
+case "$scenario" in single|multi) ;; *) echo "MEASURE_SCENARIO must be single or multi" >&2; exit 2;; esac
 chrome_bin="${MEASURE_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 hided_bin="$MEASURE_WORKTREE/target/release/hided"
 [[ -x "$hided_bin" ]] || { echo "build target/release/hided first: pnpm --dir web build, then the release build described in docs/BUILD.md" >&2; exit 1; }
@@ -76,6 +85,7 @@ PY
   echo "herdr_version=$("$HERDR_BIN_PATH" --version)"
   echo "chrome_version=$("$chrome_bin" --version 2>/dev/null)"
   echo "socket=$HERDR_SOCKET_PATH"
+  echo "scenario=$scenario"
   echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   uptime
 } > "$MEASURE_RUN_DIR/identity.txt"
@@ -95,11 +105,37 @@ server_started=true
 deadline=$((SECONDS+20)); until [[ -S "$HERDR_SOCKET_PATH" ]]; do (( SECONDS < deadline )) || { echo 'socket did not appear' >&2; exit 1; }; sleep 0.1; done
 workspaces="$("$HERDR_BIN_PATH" api snapshot | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result") or d; s=r.get("snapshot") or r; print(len(s.get("workspaces") or []))')"
 [[ "$workspaces" == "0" ]] || { echo "private server already has $workspaces workspaces" >&2; exit 1; }
-"$HERDR_BIN_PATH" workspace create --cwd "$MEASURE_FIXTURE" --label measure --focus >/dev/null
+created="$("$HERDR_BIN_PATH" workspace create --cwd "$MEASURE_FIXTURE" --label measure --focus)"
 export MEASURE_PANE_ID="$("$HERDR_BIN_PATH" api snapshot | python3 "$measure_dir/pane-id.py")"
-# The pane shell has printed its fixed prompt before it takes a command.
-deadline=$((SECONDS+20)); until "$HERDR_BIN_PATH" pane read "$MEASURE_PANE_ID" --source visible --format text 2>/dev/null | grep -q 'fixture %'; do (( SECONDS < deadline )) || { echo 'pane prompt did not appear' >&2; exit 1; }; sleep 0.1; done
+measure_workspace="$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["workspace"]["workspace_id"])')"
+measure_tab="$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
+wait_prompt() {
+  # The pane shell has printed its fixed prompt before it takes a command.
+  local deadline=$((SECONDS+20))
+  until "$HERDR_BIN_PATH" pane read "$1" --source visible --format text 2>/dev/null | grep -q 'fixture %'; do
+    (( SECONDS < deadline )) || { echo "pane $1 prompt did not appear" >&2; exit 1; }
+    sleep 0.1
+  done
+}
+wait_prompt "$MEASURE_PANE_ID"
 "$HERDR_BIN_PATH" pane run "$MEASURE_PANE_ID" 'stty -echo -icanon; cat' >/dev/null
+extra_panes=()
+extra_tabs=()
+if [[ "$scenario" == multi ]]; then
+  # Four splits beside the measured pane, alternating direction so the tree
+  # nests, and four more tabs; none of it takes focus from the measured pane.
+  split_from="$MEASURE_PANE_ID"
+  for direction in right down right down; do
+    split_pane="$("$HERDR_BIN_PATH" pane split "$split_from" --direction "$direction" --no-focus | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')"
+    extra_panes+=("$split_pane")
+    split_from="$split_pane"
+  done
+  for label in two three four five; do
+    extra_tab="$("$HERDR_BIN_PATH" tab create --workspace "$measure_workspace" --cwd "$MEASURE_FIXTURE" --label "$label" --no-focus | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
+    extra_tabs+=("$extra_tab")
+  done
+  for pane in "${extra_panes[@]}"; do wait_prompt "$pane"; done
+fi
 
 # Product hided (release, embedded web/dist) on the private socket.
 spawn_owned hided env HOME="$MEASURE_PRIVATE/home" HIDE_STATE_DIR="$MEASURE_PRIVATE/hide-state" HIDE_KEEP_ALIVE=1 HIDE_PORT=0 "$hided_bin"
@@ -114,8 +150,20 @@ spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profil
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
 wait_js 'Boolean(window.__hideProbe && window.__hideProbe.paneId())'
 sleep 2
+if [[ "$scenario" == multi ]]; then
+  # Show each extra tab once so the core attaches it, then return.
+  for tab in "${extra_tabs[@]}" "$measure_tab"; do
+    wait_js "(() => { const el = document.querySelector('[data-tab=\"$tab\"]'); if (!el) return false; if (document.querySelector('[data-canvas]')?.dataset.canvas !== '$tab') el.click(); return true; })()"
+    wait_js "document.querySelector('[data-canvas]')?.dataset.canvas === '$tab' && document.querySelectorAll('[data-pane-view]').length > 0"
+    sleep 1
+  done
+  wait_js "document.querySelectorAll('[data-pane-view]').length === 5 && window.__hideProbe.paneId() === '$MEASURE_PANE_ID'"
+  wait_js "window.__hideProbe.attachedPanes().length >= 9"
+  sleep 2
+fi
 node -e "
-import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); console.log(JSON.stringify(await p.evaluate('({pane: window.__hideProbe.paneId(), cols: document.querySelector(\".xterm\") ? undefined : null, ua: navigator.userAgent, dpr: devicePixelRatio, inner: [innerWidth, innerHeight]})'))); p.close(); })" > "$MEASURE_RUN_DIR/page.json"
+import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); console.log(JSON.stringify(await p.evaluate('({scenario: \"$scenario\", pane: window.__hideProbe.paneId(), pane_views: document.querySelectorAll(\"[data-pane-view]\").length, splits: document.querySelectorAll(\"[data-split]\").length, tabs: document.querySelectorAll(\"[role=tab]\").length, attached_panes: window.__hideProbe.attachedPanes(), ua: navigator.userAgent, dpr: devicePixelRatio, inner: [innerWidth, innerHeight]})'))); p.close(); })" > "$MEASURE_RUN_DIR/page.json"
+cat "$MEASURE_RUN_DIR/page.json"
 
 for trial in 1 2 3; do
   reset_fixture

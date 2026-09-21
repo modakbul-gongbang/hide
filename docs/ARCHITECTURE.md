@@ -240,3 +240,46 @@ Swift coexistence (PRD B5) is decided per socket, not per process: `hided/src/co
 An isolated socket never prompts, because the shell on the operator's socket next to a daemon on a private one is the ordinary e2e and measurement arrangement.
 The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.
 With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
+
+### Panes, tabs and the attach window in the web shell
+
+The center draws the visible tab's `pane_layouts` entry as nested CSS grids (`web/src/PaneGrid.tsx`): a split is a two-track grid sized by Herdr's ratio and every leaf is a pane with its own xterm instance (`web/src/terminals.ts`, keyed by pane id).
+Only the visible tab's panes have instances; a chunk for a pane without one is dropped, because mounting requests a full frame through `terminal_viewport` with `new_view` and nothing older is worth replaying.
+The core's attach rule is unchanged: it attaches the visible tab's panes on its own tick, keeps the last five shown tabs attached, and reports `released` for the rest, which the pane header draws as a caption whose click sends `reconnect_pane`.
+The store keeps the `rest` section structurally shared across frames (`web/src/share.ts`): the core resends the whole section whenever any part changes, so an untouched workspace, tab or pane row keeps its object reference and its memoized row does not re-render.
+A divider drag moves a guide line and sends one `resize_pane` on release, computed as the Swift `PaneResizeDragPolicy` does (the first subtree's last pane, the travel over the split's span); a change outside the core's `0.001..=0.5` sends nothing.
+Zoom lifts the focused pane over the others and keeps them mounted so their streams keep flowing.
+Closing mirrors the Swift flow in `web/src/close.ts`: an unknown activity status asks for `refresh_status` first, a working pane asks once, an idle pane closes with `confirmed: false`.
+
+### The `$HOME` filesystem boundary
+
+`hided/src/boundary.rs` is the one place the boundary is enforced, in the dispatch path before an event reaches the core (`server::apply_boundary`).
+A `remote_file_list` or `create_workspace` whose path does not resolve under `$HOME` by real path (a `..` segment, a symlink whose target leaves home, a file, a missing directory, a relative path) is answered to that client as a `path_refused` frame with a reason code (`outside_home`, `home_root`, `not_found`, `not_a_directory`, `invalid_path`), logged as `path.refused`, and never forwarded.
+An accepted path is forwarded as the canonical path that was checked.
+A `remote_file_list` for the `local` target is answered by hided itself as a `directory_list` frame, because the core's event lists a registered remote target's checkout and has no local listing; the listing carries subdirectories only, hides dotted names and symlinks that leave home, and is capped at `LIST_CAP` with `truncated` set.
+A request of `~` lists the home directory and answers with its real path, which is how the web shell learns `$HOME` for the checks it can make before sending anything (outside home by prefix, already registered, not in the listing it holds).
+The boundary root is read from `HOME` at boot and is not configurable; an allowed-roots setting is an S5 candidate.
+Both frames and the reason codes are in `contracts/hided-ws.schema.json`.
+
+### The shortcut registry
+
+`web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
+The `⌘/` sheet is generated from the table.
+The Electron column is empty until that host exists (TODO: fill it from `ShellMenuCommand.swift` and `PaneShortcutSettings.swift` when the Electron host lands).
+
+| Command | Swift | Browser | Electron |
+| --- | --- | --- | --- |
+| New tab | ⌘T | ⌥T (moved: Chrome reserves ⌘T) | TODO |
+| Close tab | ⌘W | ⌥W (moved) | TODO |
+| Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | TODO |
+| New workspace | ⌘⇧N | ⌥⇧N (moved) | TODO |
+| Next / previous recent tab | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | TODO |
+| Next / previous recent project | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | TODO |
+| Search, Open file, Project home, Toggle right panel | ⌘K, ⌘P, ⌘⇧H, ⌘⇧B | same chords, intercepted; answered "준비 중" until S3 | TODO |
+| Toggle left sidebar, Toggle sidebar view, Find in pane, Keep open | ⌘B, ⌘E, ⌘F, ⌘⇧K | same chords | TODO |
+| Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | TODO |
+| Zoom pane | ⌘⌥↩ | ⌘⌥↩ | TODO |
+| Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | TODO |
+| Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords | TODO |
+| Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | TODO |
+| Keyboard shortcuts | - | ⌘/ | TODO |

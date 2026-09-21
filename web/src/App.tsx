@@ -35,6 +35,10 @@ export function App() {
         () => terminalFor(useShellStore.getState().focusedPaneId),
         () => useShellStore.getState().focusedPaneId,
         session.drop,
+        () =>
+          (useShellStore.getState().rest?.terminal?.panes ?? [])
+            .filter((pane) => pane.transport_state !== "released")
+            .map((pane) => pane.pane_id),
       );
     }
     // The MRU behind ⌥`/⌥Tab and the project row follows what the core
