@@ -9,6 +9,7 @@ import type { DispatchFn } from "./ws";
 
 const writers = new Map<string, (data: Uint8Array) => void>();
 const pending = new Map<string, Uint8Array[]>();
+let termRefForReset: Terminal | null = null;
 
 function decodeChunk(chunk: TerminalChunk): Uint8Array | null {
   if (!chunk.bytes_base64) return null;
@@ -16,6 +17,11 @@ function decodeChunk(chunk: TerminalChunk): Uint8Array | null {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+export function resetTerminal() {
+  termRefForReset?.reset();
+  pending.clear();
 }
 
 export function feedChunks(chunks: TerminalChunk[]) {
@@ -65,7 +71,8 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
       /* canvas renderer remains */
     }
     termRef.current = term;
-    const sendViewport = (newView: boolean) => {
+    termRefForReset = term;
+    const sendGrid = (newView: boolean) => {
       fit.fit();
       const id = useShellStore.getState().focusedPaneId;
       if (!id || term.cols < 2 || term.rows < 2) return;
@@ -74,8 +81,13 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
         kind: "terminal_viewport",
         payload: { pane_id: id, cols: term.cols, rows: term.rows, new_view: newView },
       });
+      dispatch({
+        schema_version: 2,
+        kind: "terminal_resize",
+        payload: { pane_id: id, cols: term.cols, rows: term.rows },
+      });
     };
-    const sendResize = () => sendViewport(false);
+    const sendResize = () => sendGrid(false);
     const observer = new ResizeObserver(() => sendResize());
     observer.observe(host);
     sendResize();
@@ -125,6 +137,11 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
       schema_version: 2,
       kind: "terminal_viewport",
       payload: { pane_id: paneId, cols: term.cols, rows: term.rows, new_view: true },
+    });
+    dispatch({
+      schema_version: 2,
+      kind: "terminal_resize",
+      payload: { pane_id: paneId, cols: term.cols, rows: term.rows },
     });
   }, [paneId, dispatch]);
 

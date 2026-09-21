@@ -119,7 +119,11 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
             });
             None
         }
-        other => other,
+        Some(value) => Some(value),
+        None => {
+            let default = home.join(".config/herdr/herdr.sock");
+            default.exists().then(|| default.display().to_string())
+        }
     };
     let state_dir = if let Some(dir) = read(HIDE_STATE_DIR) {
         if dir.is_empty() {

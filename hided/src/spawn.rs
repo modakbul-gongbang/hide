@@ -15,8 +15,8 @@ pub const MAX_DAEMON_CHILDREN: usize = 1;
 pub fn spawn_owned(command: &mut Command) -> io::Result<Child> {
     command
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
 }
 

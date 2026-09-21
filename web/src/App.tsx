@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ConnectionBadge } from "./badge";
 import { Sidebar } from "./sidebar";
-import { TerminalPane, feedChunks } from "./terminal";
+import { TerminalPane, feedChunks, resetTerminal } from "./terminal";
 import { connectShell, type DispatchFn } from "./ws";
 
 const noop: DispatchFn = () => {};
@@ -9,7 +9,12 @@ const noop: DispatchFn = () => {};
 export function App() {
   const dispatch = useRef<DispatchFn>(noop);
   useEffect(() => {
-    const session = connectShell({ onChunks: feedChunks });
+    const session = connectShell({
+      onChunks: (chunks, full) => {
+        if (full) resetTerminal();
+        feedChunks(chunks);
+      },
+    });
     dispatch.current = session.dispatch;
     return () => session.close();
   }, []);

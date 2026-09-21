@@ -230,8 +230,10 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     loop {
         tokio::select! {
             changed = notify.recv() => {
-                if changed.is_err() {
-                    break;
+                match changed {
+                    Ok(()) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
                 if send_snapshot(
                     &mut socket,

@@ -8,7 +8,7 @@ export type DispatchFn = (event: {
 }) => void;
 
 type Handlers = {
-  onChunks: (chunks: TerminalChunk[]) => void;
+  onChunks: (chunks: TerminalChunk[], full: boolean) => void;
 };
 
 function tokenFromLocation(): string | null {
@@ -66,7 +66,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
       const chunks = useShellStore.getState().applyFrame(frame);
       revision = useShellStore.getState().revision;
       terminalSequence = useShellStore.getState().terminalSequence;
-      if (chunks.length) handlers.onChunks(chunks);
+      handlers.onChunks(chunks, frame.type === "snapshot");
       useShellStore.getState().setConnection("live");
       backoff = 500;
       healthFails = 0;

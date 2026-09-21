@@ -26,12 +26,22 @@ fn find_ui_dir() -> Option<std::path::PathBuf> {
             return Some(path);
         }
     }
-    let cwd = std::env::current_dir().ok()?;
-    let candidates = [
-        cwd.join("web/dist"),
-        cwd.join("dist"),
-        cwd.parent().unwrap_or(cwd.as_path()).join("web/dist"),
-    ];
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(std::path::Path::to_path_buf);
+        for _ in 0..5 {
+            let Some(current) = dir else { break };
+            candidates.push(current.join("web/dist"));
+            dir = current.parent().map(std::path::Path::to_path_buf);
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("web/dist"));
+        candidates.push(cwd.join("dist"));
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.join("web/dist"));
+        }
+    }
     candidates
         .into_iter()
         .find(|path| path.join("index.html").is_file())
