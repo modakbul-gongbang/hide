@@ -60,3 +60,16 @@ import Testing
         #expect(pinned == checked, "contract lists enums this test does not decode: \(pinned.subtracting(checked).sorted())")
     }
 }
+
+@Test @MainActor func decodeFailureNamesTheFieldAndTheValue() {
+    struct Purpose: Decodable { let purpose: CoreCheckoutPurpose }
+    let payload = Data(#"{"purpose":{"text":"t","origin":"pr_title"}}"#.utf8)
+    do {
+        _ = try JSONDecoder().decode(Purpose.self, from: payload)
+        Issue.record("an unknown origin must fail to decode")
+    } catch {
+        let described = CoreBridge.describeDecodeFailure(error)
+        #expect(described.hasPrefix("purpose.origin: "), Comment(rawValue: described))
+        #expect(described.contains("pr_title"), Comment(rawValue: described))
+    }
+}

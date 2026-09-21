@@ -23,6 +23,9 @@ private struct RuntimeStartupPreparation: Sendable {
 @MainActor
 final class CoreBridge: ObservableObject, @unchecked Sendable {
     @Published private(set) var snapshot: CoreSnapshot?
+    /// Written only through `reportBridgeError`: a failure that repeats on
+    /// every core notification would otherwise republish the same string
+    /// each time, and every view observing the bridge would rebuild with it.
     @Published private(set) var bridgeError: String?
     @Published private(set) var runtimeSelection: HerdrRuntimeSelection?
 
@@ -157,7 +160,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             return
         }
         startupDiagnostic = HideStartupDiagnostic.initializing
-        bridgeError = startupDiagnostic
+        reportBridgeError(startupDiagnostic)
         // The core is created once, and it needs the resolved Herdr binary to
         // attach a terminal at all, so resolution has to finish first.
         // Starting it here rather than at the first window means it overlaps
@@ -359,7 +362,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             fixtureMode: fixtureMode,
             statePath: statePath
         ) else {
-            bridgeError = "herdr_core_create returned null"
+            reportBridgeError("herdr_core_create returned null")
             return false
         }
         core = created
@@ -374,13 +377,18 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         return true
     }
 
+    private func reportBridgeError(_ message: String?) {
+        guard bridgeError != message else { return }
+        bridgeError = message
+    }
+
     private func setStartupDiagnostic(_ message: String?) {
         let previous = startupDiagnostic
         startupDiagnostic = message
         if let message {
-            bridgeError = message
+            reportBridgeError(message)
         } else if bridgeError == previous {
-            bridgeError = nil
+            reportBridgeError(nil)
         }
     }
 
@@ -669,8 +677,10 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func selectCommandDevice(id: String, label: String, isRemote: Bool) {
         commandDevice = CommandDevice(id: id, label: label, isRemote: isRemote)
         routingError = nil
-        bridgeError = snapshot?.status.lastError.map { "\($0.kind): \($0.message)" }
-            ?? startupDiagnostic
+        reportBridgeError(
+            snapshot?.status.lastError.map { "\($0.kind): \($0.message)" }
+                ?? startupDiagnostic
+        )
         HideLaunchTrace.mark(
             "core.command_device",
             detail: "id=\(id) remote=\(isRemote)"
@@ -811,11 +821,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func splitCurrentPane(direction: PaneSplitDirection, cwd: String) {
         guard let paneID = snapshot?.terminal.paneID else {
-            bridgeError = "pane.no_current_pane: Select a terminal pane before splitting"
+            reportBridgeError("pane.no_current_pane: Select a terminal pane before splitting")
             return
         }
         guard !cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            bridgeError = "pane.no_checkout_path: The selected checkout path is empty"
+            reportBridgeError("pane.no_checkout_path: The selected checkout path is empty")
             return
         }
         dispatch(kind: "create_pane", payload: [
@@ -828,7 +838,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
 
     func toggleCurrentPaneZoom() {
         guard let paneID = snapshot?.terminal.paneID else {
-            bridgeError = "pane.no_current_pane: Select a terminal pane before toggling zoom"
+            reportBridgeError("pane.no_current_pane: Select a terminal pane before toggling zoom")
             return
         }
         togglePaneZoom(paneID)
@@ -1220,7 +1230,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ) {
             let message = "device.route_blocked: \(commandDevice.label) is selected. \(kind) was not sent to the local Herdr session."
             routingError = message
-            bridgeError = message
+            reportBridgeError(message)
             HideLaunchTrace.mark(
                 "core.dispatch.blocked",
                 detail: "kind=\(kind) device_id=\(commandDevice.id)"
@@ -1234,7 +1244,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             let readiness = localHerdrMutationReadiness
             guard case .connected = readiness else {
                 let message = readiness.message
-                bridgeError = message
+                reportBridgeError(message)
                 if LocalHerdrMutationDispatchPolicy.presentsRejection(kind: kind) {
                     localHerdrMutationRejectionHandler?(readiness)
                 }
@@ -1247,7 +1257,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
         guard let core else {
             let message = "Hide is still starting. Try again when the Herdr status is available."
-            bridgeError = message
+            reportBridgeError(message)
             return .rejected(message)
         }
         if let detail = dispatchTraceDetail(kind: kind, payload: payload) {
@@ -1260,7 +1270,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: envelope) else {
             let message = "Could not encode \(kind) event"
-            bridgeError = message
+            reportBridgeError(message)
             return .rejected(message)
         }
         data.withUnsafeBytes { buffer in
@@ -1314,7 +1324,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         let owned = herdr_core_snapshot(core, requestedRevision, lastTerminalSequence)
         defer { herdr_core_free_bytes(owned) }
         guard let pointer = owned.ptr, owned.len > 0 else {
-            bridgeError = "herdr_core_snapshot returned empty bytes"
+            reportBridgeError("herdr_core_snapshot returned empty bytes")
             return
         }
         do {
@@ -1346,7 +1356,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 // so a missing editor here is a contract violation, not a
                 // state to default over.
                 guard let editor = decoded.editor ?? snapshot?.editor else {
-                    bridgeError = "delta.protocol: first response carried no editor"
+                    reportBridgeError("delta.protocol: first response carried no editor")
                     return
                 }
                 apply(composed: CoreSnapshot(
@@ -1373,7 +1383,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 || decoded.find != snapshot?.find
             {
                 guard let current = snapshot else {
-                    bridgeError = "delta.protocol: a section arrived before the first full snapshot"
+                    reportBridgeError("delta.protocol: a section arrived before the first full snapshot")
                     return
                 }
                 // Find state arrives on every response, so it is compared
@@ -1393,7 +1403,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             {
                 lastTerminalSequence = chunk.sequence
                 guard let data = Data(base64Encoded: chunk.bytesBase64) else {
-                    bridgeError = "terminal.invalid_base64: sequence \(chunk.sequence)"
+                    reportBridgeError("terminal.invalid_base64: sequence \(chunk.sequence)")
                     continue
                 }
                 let dropped = pendingTerminalBytes.append(TerminalDelivery(bytes: [UInt8](data), frame: chunk.frame, inputSent: chunk.inputSent), for: chunk.paneID)
@@ -1406,8 +1416,33 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
                 drainPendingTerminalBytes(for: chunk.paneID)
             }
         } catch {
-            bridgeError = "Snapshot decode failed: \(error.localizedDescription)"
+            // The generic localized text names no field; the coding path is
+            // what tells a reader which wire value the two sides disagree on.
+            let message = "Snapshot decode failed: \(Self.describeDecodeFailure(error))"
+            if bridgeError != message {
+                HideLaunchTrace.mark("core.snapshot.decode_failed", detail: message)
+            }
+            reportBridgeError(message)
         }
+    }
+
+    static func describeDecodeFailure(_ error: Error) -> String {
+        guard let decodingError = error as? DecodingError else {
+            return error.localizedDescription
+        }
+        let context: DecodingError.Context
+        switch decodingError {
+        case .dataCorrupted(let found), .keyNotFound(_, let found),
+             .typeMismatch(_, let found), .valueNotFound(_, let found):
+            context = found
+        @unknown default:
+            return error.localizedDescription
+        }
+        let path = context.codingPath
+            .map { key in key.intValue.map { "[\($0)]" } ?? key.stringValue }
+            .joined(separator: ".")
+            .replacingOccurrences(of: ".[", with: "[")
+        return path.isEmpty ? context.debugDescription : "\(path): \(context.debugDescription)"
     }
 
     /// Replaces the composed snapshot and runs the side effects that watch
@@ -1479,9 +1514,11 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
         let previousFocusedPaneID = snapshot?.focusedPaneID
         snapshot = decoded
-        bridgeError = routingError
-            ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
-            ?? startupDiagnostic
+        reportBridgeError(
+            routingError
+                ?? decoded.status.lastError.map { "\($0.kind): \($0.message)" }
+                ?? startupDiagnostic
+        )
         observeHerdrServerState(decoded.status.herdr.state)
         restorePaneSelectionIfNeeded(decoded)
         let authoritativeFocusedPaneID = decoded.focusedPaneID
