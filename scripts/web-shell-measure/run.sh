@@ -147,6 +147,7 @@ wait_url "http://127.0.0.1:$hided_port/health"
 page_url="http://127.0.0.1:$hided_port/?probe=1#token=$hided_token"
 
 spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port="$MEASURE_CDP_PORT" --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 "$page_url"
+chrome_pid=$owned_pid
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
 wait_js 'Boolean(window.__hideProbe && window.__hideProbe.paneId())'
 sleep 2
@@ -162,8 +163,12 @@ if [[ "$scenario" == multi ]]; then
   sleep 2
 fi
 node -e "
-import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); console.log(JSON.stringify(await p.evaluate('({scenario: \"$scenario\", pane: window.__hideProbe.paneId(), pane_views: document.querySelectorAll(\"[data-pane-view]\").length, splits: document.querySelectorAll(\"[data-split]\").length, tabs: document.querySelectorAll(\"[role=tab]\").length, attached_panes: window.__hideProbe.attachedPanes(), ua: navigator.userAgent, dpr: devicePixelRatio, inner: [innerWidth, innerHeight]})'))); p.close(); })" > "$MEASURE_RUN_DIR/page.json"
+import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); console.log(JSON.stringify(await p.evaluate('({scenario: \"$scenario\", pane: window.__hideProbe.paneId(), pane_views: document.querySelectorAll(\"[data-pane-view]\").length, splits: document.querySelectorAll(\"[data-split]\").length, tabs: document.querySelectorAll(\"[role=tab]\").length, attached_panes: window.__hideProbe.attachedPanes(), live_terminals: window.__hideProbe.liveTerminals(), ua: navigator.userAgent, dpr: devicePixelRatio, inner: [innerWidth, innerHeight]})'))); p.close(); })" > "$MEASURE_RUN_DIR/page.json"
 cat "$MEASURE_RUN_DIR/page.json"
+# Resident memory with every attached pane's terminal alive (D-05): sampled
+# before the echo trials and again after the driven window.
+python3 "$measure_dir/memory.py" settled "$chrome_pid" "$hided_pid" "$MEASURE_CDP_PORT" > "$MEASURE_RUN_DIR/memory-settled.json"
+cat "$MEASURE_RUN_DIR/memory-settled.json"
 
 for trial in 1 2 3; do
   reset_fixture
@@ -184,5 +189,7 @@ uptime > "$MEASURE_RUN_DIR/frames-uptime-after.txt"
 "$HERDR_BIN_PATH" pane read "$MEASURE_PANE_ID" --source recent-unwrapped --lines 5 > "$MEASURE_RUN_DIR/frames-pane-tail.txt" || true
 ps -p "$hided_pid" -o pid,%cpu,rss,etime,command > "$MEASURE_RUN_DIR/driven-hided-frames.ps"
 python3 "$measure_dir/summarize.py" frames "$MEASURE_RUN_DIR/frames.json" > "$MEASURE_RUN_DIR/frames-summary.json"
+python3 "$measure_dir/memory.py" after-frames "$chrome_pid" "$hided_pid" "$MEASURE_CDP_PORT" > "$MEASURE_RUN_DIR/memory-after-frames.json"
+cat "$MEASURE_RUN_DIR/memory-after-frames.json"
 cat "$MEASURE_RUN_DIR/echo-summary.json" "$MEASURE_RUN_DIR/frames-summary.json"
 note 'measurement complete; cleaning up owned processes'
