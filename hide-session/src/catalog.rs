@@ -356,7 +356,7 @@ mod tests {
         let project = hide_project::resolve(&project_root, "local").unwrap();
         fs::write(
             home.join(".claude/projects/p/claude-1.jsonl"),
-            format!("{{\"type\":\"user\",\"cwd\":{},\"timestamp\":\"2026-09-21T01:00:00Z\",\"origin\":{{\"kind\":\"human\"}},\"message\":{{\"content\":\"alpha request\"}}}}\n", serde_json::to_string(&project_root).unwrap()),
+            format!("{{\"type\":\"user\",\"cwd\":{},\"timestamp\":\"2026-09-21T01:00:00Z\",\"userType\":\"external\",\"promptId\":\"prompt-1\",\"message\":{{\"role\":\"user\",\"content\":\"alpha request\"}}}}\n", serde_json::to_string(&project_root).unwrap()),
         ).unwrap();
         fs::write(
             home.join(".codex/sessions/2026/09/21/rollout.jsonl"),
@@ -374,6 +374,10 @@ mod tests {
         assert_eq!(
             SessionCatalog::filtered(&sessions, SessionFilter::Claude, "alpha").len(),
             1
+        );
+        assert_eq!(
+            sessions[1].first_human_request.as_deref(),
+            Some("alpha request")
         );
         assert!(SessionCatalog::filtered(&sessions, SessionFilter::Codex, "alpha").is_empty());
     }

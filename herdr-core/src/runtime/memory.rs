@@ -1094,6 +1094,7 @@ mod scope_tests {
             "timestamp": "2026-09-21T00:00:00Z",
             "userType": "external",
             "entrypoint": "claude-desktop",
+            "promptId": "prompt-1",
             "message": {"role": "user", "content": claude_marker},
         })
         .to_string();

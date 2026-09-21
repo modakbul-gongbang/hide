@@ -869,6 +869,11 @@ fn parse_claude_line(item: &Value) -> LineResult {
     let origin_kind = item.pointer("/origin/kind").and_then(Value::as_str);
     let origin_is_human = origin_kind == Some("human");
     let origin_is_injected = matches!(origin_kind, Some("hook" | "system"));
+    let external_human = item.get("userType").and_then(Value::as_str) == Some("external")
+        && item.get("promptId").and_then(Value::as_str).is_some()
+        && item
+            .pointer("/message/content")
+            .is_some_and(Value::is_string);
     let is_meta = item.get("isMeta").and_then(Value::as_bool).unwrap_or(false);
     let is_system_prompt = item.get("promptSource").and_then(Value::as_str) == Some("system");
     let provider_injected = origin_is_injected || is_meta || is_system_prompt;
@@ -876,7 +881,11 @@ fn parse_claude_line(item: &Value) -> LineResult {
     let command = slash_command_text(&text);
     let kind = if interrupted {
         EventKind::Interrupted
-    } else if origin_is_human && !is_meta && !is_system_prompt && !has_injected_prefix(&text) {
+    } else if (origin_is_human || external_human)
+        && !is_meta
+        && !is_system_prompt
+        && !has_injected_prefix(&text)
+    {
         EventKind::Human
     } else {
         EventKind::Injected
@@ -1432,12 +1441,13 @@ mod tests {
     }
 
     #[test]
-    fn claude_external_human_without_origin_is_not_provider_authenticated() {
+    fn claude_external_human_without_origin_remains_human_and_untrusted() {
         let line = serde_json::json!({
             "type": "user",
             "timestamp": "2026-09-18T00:00:00Z",
             "userType": "external",
             "entrypoint": "claude-desktop",
+            "promptId": "prompt-1",
             "message": {
                 "role": "user",
                 "content": "<hide-memory-receipt event=\"UserPromptSubmit\" />",
@@ -1446,6 +1456,7 @@ mod tests {
         .to_string();
         let parsed = parse_claude_events(&line);
         assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.events[0].kind, EventKind::Human);
         assert!(!parsed.events[0].is_provider_injected());
     }
 
