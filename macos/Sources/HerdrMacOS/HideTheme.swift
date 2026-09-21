@@ -3,6 +3,7 @@ import CoreText
 import Foundation
 import SwiftUI
 
+// Token authority: design/tokens.json. Do not edit numeric values here; run node scripts/gen-tokens.mjs.
 enum HideTheme {
     static let modifierSymbols: [PaneShortcut.Modifier: String] = [.control: "⌃", .option: "⌥", .shift: "⇧", .command: "⌘"]
     @MainActor private static let inter: CGFont = {
