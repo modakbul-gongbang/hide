@@ -273,7 +273,14 @@ test("registration under home succeeds; outside home and a .. path are refused",
     await page.locator('[data-sidebar-mode="projects"]').click();
     await expect(page.locator("[data-project]")).toHaveCount(1);
 
+    // The field lives in the sidebar, so ⌥⇧N with the sidebar hidden brings
+    // the sidebar back (one ui_state_update) and then opens the field.
+    await page.keyboard.press("Meta+KeyB");
+    await expect(page.locator("[data-sidebar]")).toHaveCount(0);
+    await expect.poll(() => sent.get("ui_state_update") ?? 0).toBe(1);
     await page.keyboard.press("Alt+Shift+KeyN");
+    await expect(page.locator("[data-sidebar]")).toHaveCount(1);
+    await expect.poll(() => sent.get("ui_state_update") ?? 0).toBe(2);
     const input = page.getByLabel("Workspace path");
     await expect(input).toBeVisible();
     await expect(input).toHaveValue(`${daemon.home}/`);

@@ -130,13 +130,19 @@ impl Boundary {
         }
         let real = match path.canonicalize() {
             Ok(real) => real,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Err(Refusal::NotFound);
+            Err(error) => {
+                // Where the path stopped resolving decides the reason: past
+                // a symlink that already left home, nothing deeper is
+                // described, so the reason cannot probe the rest of the disk.
+                if !self.deepest_existing_ancestor_is_inside(path) {
+                    return Err(Refusal::OutsideHome);
+                }
+                return Err(match error.kind() {
+                    io::ErrorKind::NotFound => Refusal::NotFound,
+                    io::ErrorKind::NotADirectory => Refusal::NotADirectory,
+                    _ => Refusal::InvalidPath,
+                });
             }
-            Err(error) if error.kind() == io::ErrorKind::NotADirectory => {
-                return Err(Refusal::NotADirectory);
-            }
-            Err(_) => return Err(Refusal::InvalidPath),
         };
         if !real.starts_with(&self.home) {
             return Err(Refusal::OutsideHome);
@@ -146,6 +152,16 @@ impl Boundary {
             return Err(Refusal::NotADirectory);
         }
         Ok(real)
+    }
+
+    /// Whether the nearest ancestor of `path` that resolves lies under home
+    /// by real path. `/` always resolves, so a path that was written under
+    /// home always has one.
+    fn deepest_existing_ancestor_is_inside(&self, path: &Path) -> bool {
+        path.ancestors()
+            .skip(1)
+            .find_map(|ancestor| ancestor.canonicalize().ok())
+            .is_some_and(|real| real.starts_with(&self.home))
     }
 
     /// The canonical path a `create_workspace` may carry: a directory strictly
@@ -261,6 +277,23 @@ mod tests {
             f.boundary.resolve_workspace(&deeper),
             Err(Refusal::OutsideHome)
         );
+        // Past the escape the reason is the same whether the rest exists,
+        // is a file, or is missing: the disk beyond home is not described.
+        fs::write(f.outside.join("secret/marker.txt"), "x").unwrap();
+        for tail in [
+            "nope",
+            "secret/nope",
+            "secret/marker.txt",
+            "secret/marker.txt/child",
+        ] {
+            let path = s(&f.home.join("projects/escape").join(tail));
+            assert_eq!(
+                f.boundary.resolve_workspace(&path),
+                Err(Refusal::OutsideHome),
+                "{tail}"
+            );
+            assert_eq!(f.boundary.list(&path), Err(Refusal::OutsideHome), "{tail}");
+        }
     }
 
     #[test]

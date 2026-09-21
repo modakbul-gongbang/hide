@@ -416,6 +416,10 @@ async fn local_listing_and_refusals_are_answered_by_hided() {
             home.join("projects/escape").display().to_string(),
             "outside_home",
         ),
+        (
+            home.join("projects/escape/nope").display().to_string(),
+            "outside_home",
+        ),
         (format!("{}/projects/../..", home.display()), "invalid_path"),
         (
             format!("{}/projects/%2e%2e/%2e%2e", home.display()),
