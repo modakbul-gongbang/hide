@@ -24,6 +24,10 @@ export type Probe = {
   dropSocket: () => void;
   /** Pane ids whose terminal session the core reports as not released (the attach window). */
   attachedPanes: () => string[];
+  /** Pane ids that hold an xterm instance right now, shown or parked (D-05). */
+  liveTerminals: () => string[];
+  /** The parsed buffer of any pane's instance, empty when it has none. */
+  paneText: (paneId: string) => string;
 };
 
 declare global {
@@ -77,11 +81,18 @@ export function installProbe(
   paneId: () => string | null,
   dropSocket: () => void = () => {},
   attachedPanes: () => string[] = () => [],
+  liveTerminals: () => string[] = () => [],
+  terminalOf: (paneId: string) => Terminal | null = () => null,
 ): void {
   window.__hideProbe = {
     paneId,
     dropSocket,
     attachedPanes,
+    liveTerminals,
+    paneText: (id) => {
+      const current = terminalOf(id);
+      return current ? screenText(current) : "";
+    },
     screenText: () => {
       const current = term();
       return current ? screenText(current) : "";

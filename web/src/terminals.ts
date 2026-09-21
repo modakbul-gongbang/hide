@@ -1,10 +1,16 @@
-// One xterm.js instance per pane of the visible tab, keyed by pane id.
+// One xterm.js instance per attached pane, keyed by pane id.
 //
-// Panes of other tabs have no instance (PRD S2 D-05): a chunk for a pane
-// without one is dropped, not queued, because mounting requests a full frame
-// (`terminal_viewport` with `new_view`) and nothing older is worth replaying.
-// The core attaches the visible tab's panes on its own tick, so a mount is
-// only ever a request for the view, never for the session.
+// An instance outlives the tab it is drawn in (PRD S2 D-05, amendment 1):
+// the core keeps the panes of the last `ATTACHED_TAB_LIMIT` tabs attached and
+// streams their output, so their instances stay alive, fed, and parked out of
+// view while another tab is shown. Coming back to a tab shows the last frame
+// at once; nothing is re-requested unless the size changed. An instance is
+// disposed only when the core reports the pane released or no longer lists
+// it (`retainTerminals`), never on a tab switch.
+//
+// The wheel is Herdr's too (PRD S2 B19): the pane has no local scrollback,
+// so a wheel batch becomes one `terminal_scroll` per animation frame and the
+// core answers with the viewport it now shows.
 
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -12,6 +18,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { mapModifiedKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
+import { wheelModifiers, wheelRows } from "./wheel";
 import { useShellStore, type TerminalChunk } from "./store";
 import type { DispatchFn } from "./ws";
 
@@ -20,9 +27,32 @@ type Instance = {
   fit: FitAddon;
   dispatch: DispatchFn;
   scale: number;
+  /** The element the terminal was opened in; it moves between a host and the parking lot. */
+  element: HTMLDivElement;
+  /** The pane host it is shown in, or null while parked. */
+  host: HTMLElement | null;
+  observer: ResizeObserver | null;
+  /** A self-contained snapshot arrived while parked; the next show asks for a full frame. */
+  stale: boolean;
+  /** Wheel rows accumulated toward the next flush, and the pending flush. */
+  wheel: { rows: number; remainder: number; column: number; row: number; modifiers: number; frame: number | null };
+  disposeHandlers: () => void;
 };
 
 const instances = new Map<string, Instance>();
+
+let parking: HTMLDivElement | null = null;
+
+/** A hidden lot in the document, so a parked terminal keeps its canvas and layout state. */
+function parkingLot(): HTMLDivElement {
+  if (!parking) {
+    parking = document.createElement("div");
+    parking.hidden = true;
+    parking.dataset.terminalParking = "true";
+    document.body.append(parking);
+  }
+  return parking;
+}
 
 function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -65,7 +95,10 @@ export function feedChunks(chunks: TerminalChunk[]) {
 
 /** A self-contained snapshot may follow a core restart; every pane redraws from its next full frame. */
 export function resetAllTerminals() {
-  for (const instance of instances.values()) instance.term.reset();
+  for (const instance of instances.values()) {
+    instance.term.reset();
+    if (!instance.host) instance.stale = true;
+  }
 }
 
 export function terminalFor(paneId: string | null): Terminal | null {
@@ -76,7 +109,13 @@ export function focusTerminal(paneId: string) {
   instances.get(paneId)?.term.focus();
 }
 
+/** Pane ids that currently hold an instance, shown or parked (measurement and e2e seam). */
+export function liveTerminalIds(): string[] {
+  return [...instances.keys()];
+}
+
 function sendGrid(paneId: string, instance: Instance, newView: boolean) {
+  if (!instance.host) return;
   instance.fit.fit();
   const { term } = instance;
   if (term.cols < 2 || term.rows < 2) return;
@@ -92,10 +131,12 @@ function sendGrid(paneId: string, instance: Instance, newView: boolean) {
   });
 }
 
-/** Asks the core for a full frame of the pane; used after mount and after every self-contained snapshot. */
+/** Asks the core for a full frame of the pane; used after every self-contained snapshot. */
 export function requestView(paneId: string) {
   const instance = instances.get(paneId);
-  if (instance) sendGrid(paneId, instance, true);
+  if (!instance) return;
+  instance.stale = false;
+  sendGrid(paneId, instance, true);
 }
 
 /** Applies the core's per-pane text scale; the new fit goes out as `terminal_resize` (PRD S2 B13). */
@@ -107,18 +148,51 @@ export function setTextScale(paneId: string, scale: number) {
   sendGrid(paneId, instance, false);
 }
 
-/**
- * Creates the instance for `paneId` inside `host` and returns its disposer.
- * The host's size is watched, so a grid change from Herdr's new geometry
- * reaches the core as one `terminal_resize` per pane (PRD S2 B6).
- */
-export function mountTerminal(
-  paneId: string,
-  host: HTMLElement,
-  dispatch: DispatchFn,
-  scale: number,
-): () => void {
-  if (instances.has(paneId)) throw new Error(`pane ${paneId} already has a terminal`);
+function flushWheel(paneId: string, instance: Instance) {
+  const wheel = instance.wheel;
+  wheel.frame = null;
+  const rows = wheel.rows;
+  wheel.rows = 0;
+  if (rows === 0) return;
+  instance.dispatch({
+    schema_version: 2,
+    kind: "terminal_scroll",
+    payload: {
+      pane_id: paneId,
+      // Wheel deltas grow downward; Herdr's `up` shows older lines.
+      direction: rows > 0 ? "down" : "up",
+      lines: Math.abs(rows),
+      column: wheel.column,
+      row: wheel.row,
+      modifiers: wheel.modifiers,
+    },
+  });
+}
+
+function onWheel(paneId: string, instance: Instance, event: WheelEvent) {
+  // ⌥ + wheel stays with the browser, as in the Swift shell.
+  if (event.altKey) return;
+  event.preventDefault();
+  const host = instance.host;
+  if (!host) return;
+  const { term } = instance;
+  const rect = host.getBoundingClientRect();
+  const rowHeight = term.rows > 0 ? rect.height / term.rows : 0;
+  const colWidth = term.cols > 0 ? rect.width / term.cols : 0;
+  const wheel = instance.wheel;
+  const moved = wheelRows(event.deltaY, event.deltaMode, rowHeight, wheel.remainder);
+  wheel.remainder = moved.remainder;
+  wheel.rows += moved.rows;
+  wheel.column = colWidth > 0 ? Math.max(0, Math.min(term.cols - 1, Math.floor((event.clientX - rect.left) / colWidth))) : 0;
+  wheel.row = rowHeight > 0 ? Math.max(0, Math.min(term.rows - 1, Math.floor((event.clientY - rect.top) / rowHeight))) : 0;
+  wheel.modifiers = wheelModifiers(event);
+  if (wheel.frame === null) wheel.frame = requestAnimationFrame(() => flushWheel(paneId, instance));
+}
+
+function createInstance(paneId: string, dispatch: DispatchFn, scale: number): Instance {
+  const element = document.createElement("div");
+  element.className = "absolute inset-0";
+  element.dataset.terminal = paneId;
   const term = new Terminal({
     fontFamily: token("--font-mono"),
     fontSize: Math.round(tokenPx("--text-terminal-base") * scale),
@@ -126,18 +200,24 @@ export function mountTerminal(
       background: token("--color-background"),
       foreground: token("--color-primary"),
     },
+    // Herdr owns the history; the pane shows the viewport the core sends.
+    scrollback: 0,
     allowProposedApi: true,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
-  term.open(host);
-  try {
-    term.loadAddon(new WebglAddon());
-  } catch {
-    /* canvas renderer remains */
-  }
-  const instance: Instance = { term, fit, dispatch, scale };
-  instances.set(paneId, instance);
+  const instance: Instance = {
+    term,
+    fit,
+    dispatch,
+    scale,
+    element,
+    host: null,
+    observer: null,
+    stale: false,
+    wheel: { rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
+    disposeHandlers: () => {},
+  };
   const send = (bytes: Uint8Array) =>
     dispatch({
       schema_version: 2,
@@ -153,21 +233,79 @@ export function mountTerminal(
     return false;
   });
   term.onData((data) => send(new TextEncoder().encode(data)));
-  // Clicking into a pane is the operator moving keyboard focus; the core
-  // owns the focus pane, so the click is an event and the header follows
-  // the snapshot, not the click.
-  const onFocus = () => {
-    if (useShellStore.getState().focusedPaneId === paneId) return;
-    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
+  const wheel = (event: WheelEvent) => onWheel(paneId, instance, event);
+  element.addEventListener("wheel", wheel, { capture: true, passive: false });
+  instance.disposeHandlers = () => {
+    element.removeEventListener("wheel", wheel, { capture: true });
+    if (instance.wheel.frame !== null) cancelAnimationFrame(instance.wheel.frame);
   };
-  term.textarea?.addEventListener("focus", onFocus);
-  const observer = new ResizeObserver(() => sendGrid(paneId, instance, false));
+  return instance;
+}
+
+/**
+ * Shows the pane's terminal inside `host`, creating it on first sight, and
+ * returns the function that parks it again. The host's size is watched, so a
+ * grid change from Herdr's new geometry reaches the core as one
+ * `terminal_resize` per pane (PRD S2 B6).
+ */
+export function attachTerminal(
+  paneId: string,
+  host: HTMLElement,
+  dispatch: DispatchFn,
+  scale: number,
+): () => void {
+  let instance = instances.get(paneId);
+  const fresh = !instance;
+  if (!instance) {
+    instance = createInstance(paneId, dispatch, scale);
+    instances.set(paneId, instance);
+  }
+  if (instance.host) throw new Error(`pane ${paneId} is already shown`);
+  const shown = instance;
+  host.append(shown.element);
+  shown.host = host;
+  shown.dispatch = dispatch;
+  if (fresh) {
+    shown.term.open(shown.element);
+    try {
+      shown.term.loadAddon(new WebglAddon());
+    } catch {
+      /* canvas renderer remains */
+    }
+    // Clicking into a pane is the operator moving keyboard focus; the core
+    // owns the focus pane, so the click is an event and the header follows
+    // the snapshot, not the click.
+    shown.term.textarea?.addEventListener("focus", () => {
+      if (useShellStore.getState().focusedPaneId === paneId) return;
+      shown.dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
+    });
+  }
+  const observer = new ResizeObserver(() => sendGrid(paneId, shown, false));
   observer.observe(host);
-  sendGrid(paneId, instance, true);
+  shown.observer = observer;
+  const needsFrame = fresh || shown.stale;
+  shown.stale = false;
+  sendGrid(paneId, shown, needsFrame);
+  if (!fresh) shown.term.refresh(0, shown.term.rows - 1);
   return () => {
     observer.disconnect();
-    term.textarea?.removeEventListener("focus", onFocus);
-    instances.delete(paneId);
-    term.dispose();
+    shown.observer = null;
+    shown.host = null;
+    parkingLot().append(shown.element);
   };
+}
+
+/**
+ * Disposes every parked instance whose pane the core no longer streams:
+ * released beyond the attach window, or gone with its tab. A shown pane is
+ * left to its view, which parks it first.
+ */
+export function retainTerminals(attached: ReadonlySet<string>) {
+  for (const [paneId, instance] of instances) {
+    if (attached.has(paneId) || instance.host) continue;
+    instance.disposeHandlers();
+    instance.term.dispose();
+    instance.element.remove();
+    instances.delete(paneId);
+  }
 }

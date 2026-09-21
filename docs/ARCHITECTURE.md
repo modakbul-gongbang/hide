@@ -244,11 +244,13 @@ With `probe=1` in the page URL it also installs `window.__hideProbe`, the only w
 ### Panes, tabs and the attach window in the web shell
 
 The center draws the visible tab's `pane_layouts` entry as nested CSS grids (`web/src/PaneGrid.tsx`): a split is a two-track grid sized by Herdr's ratio and every leaf is a pane with its own xterm instance (`web/src/terminals.ts`, keyed by pane id).
-Only the visible tab's panes have instances; a chunk for a pane without one is dropped, because mounting requests a full frame through `terminal_viewport` with `new_view` and nothing older is worth replaying.
-The core's attach rule is unchanged: it attaches the visible tab's panes on its own tick, keeps the last five shown tabs attached, and reports `released` for the rest, which the pane header draws as a caption whose click sends `reconnect_pane`.
+An instance lives as long as the core streams its pane (PRD S2 D-05, amendment 1): leaving a tab parks its terminals in a hidden lot in the document, still fed by the chunks the core keeps sending for every attached pane, and coming back re-parents them into the pane hosts and fits them, so the last frame is on screen in the same tick and only a size change goes out (`terminal_viewport` with `new_view: false`, `terminal_resize`).
+A chunk for a pane that has never been shown is dropped; its first show requests a full frame with `new_view`, as does a parked pane's next show after a self-contained snapshot.
+`retainTerminals` disposes an instance only when the core reports the pane `released` or stops listing it; the attach rule itself is unchanged: the core attaches the visible tab's panes on its own tick, keeps the last five shown tabs attached, and reports `released` for the rest, which the pane header draws as a caption whose click sends `reconnect_pane`.
 The store keeps the `rest` section structurally shared across frames (`web/src/share.ts`): the core resends the whole section whenever any part changes, so an untouched workspace, tab or pane row keeps its object reference and its memoized row does not re-render.
 A divider drag moves a guide line and sends one `resize_pane` on release, computed as the Swift `PaneResizeDragPolicy` does (the first subtree's last pane, the travel over the split's span); a change outside the core's `0.001..=0.5` sends nothing.
-Zoom lifts the focused pane over the others and keeps them mounted so their streams keep flowing.
+A zoomed tab draws only the zoomed pane, over the whole canvas, so its fit and `terminal_resize` follow the full geometry Herdr gave the PTY; the other panes' terminals stay parked and fed.
+The wheel is Herdr's (PRD S2 B19): the instance has no local scrollback, a wheel event over a pane becomes whole rows by the Swift `PaneScrollPolicy` (`web/src/wheel.ts`: trackpad pixels accumulate with their remainder, a wheel notch moves at least one row), the rows of one animation frame go out as one `terminal_scroll` with the cell under the pointer and the crossterm modifier bitset, and the core answers with the viewport frame; ⌥ + wheel is left to the browser.
 Closing mirrors the Swift flow in `web/src/close.ts`: an unknown activity status asks for `refresh_status` first, a working pane asks once, an idle pane closes with `confirmed: false`.
 
 ### The `$HOME` filesystem boundary

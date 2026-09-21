@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import type { PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
-import { focusTerminal, mountTerminal, requestView, setTextScale } from "./terminals";
+import { attachTerminal, focusTerminal, requestView, setTextScale } from "./terminals";
 import type { DispatchFn } from "./ws";
 
 /** Transport states with a live stream; anything else is drawn as a caption in the header. */
@@ -50,15 +50,17 @@ export const PaneView = memo(function PaneView({
   const viewGeneration = useShellStore((s) => s.viewGeneration);
   const paneId = pane.id;
 
+  // The terminal is shown here and parked on unmount, not disposed: the
+  // instance belongs to the pane for as long as the core streams it (D-05).
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    return mountTerminal(paneId, host, dispatch, useShellStore.getState().rest?.ui_state?.pane_text_scales?.[paneId] ?? 1);
+    return attachTerminal(paneId, host, dispatch, useShellStore.getState().rest?.ui_state?.pane_text_scales?.[paneId] ?? 1);
   }, [paneId, dispatch]);
 
   // After every self-contained snapshot the core may have restarted, so the
   // pane asks for a full frame rather than trusting what it has drawn. The
-  // mount already requested one, so the first generation is skipped.
+  // attach already requested what it needed, so the first generation is skipped.
   const mountedGeneration = useRef(viewGeneration);
   useEffect(() => {
     if (viewGeneration === mountedGeneration.current) return;

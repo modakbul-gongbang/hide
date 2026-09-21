@@ -11,7 +11,7 @@ import { Sidebar } from "./sidebar";
 import { focusedCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { TabBar } from "./TabBar";
-import { feedChunks, resetAllTerminals, terminalFor } from "./terminals";
+import { feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor } from "./terminals";
 import { useUiStore } from "./ui";
 import { connectShell, type DispatchFn } from "./ws";
 
@@ -30,21 +30,29 @@ export function App() {
     });
     dispatchRef.current = session.dispatch;
     const keyboard = installKeyboard(actions);
+    const attachedPaneIds = () =>
+      (useShellStore.getState().rest?.terminal?.panes ?? [])
+        .filter((pane) => pane.transport_state !== "released")
+        .map((pane) => pane.pane_id);
     if (probeEnabled()) {
       installProbe(
         () => terminalFor(useShellStore.getState().focusedPaneId),
         () => useShellStore.getState().focusedPaneId,
         session.drop,
-        () =>
-          (useShellStore.getState().rest?.terminal?.panes ?? [])
-            .filter((pane) => pane.transport_state !== "released")
-            .map((pane) => pane.pane_id),
+        attachedPaneIds,
+        liveTerminalIds,
+        (paneId) => terminalFor(paneId),
       );
     }
     // The MRU behind ⌥`/⌥Tab and the project row follows what the core
     // reports as focused, whichever side moved it.
     const unsubscribe = useShellStore.subscribe((state, previous) => {
       if (state.rest === previous.rest) return;
+      // A terminal lives as long as the core streams its pane; released or
+      // vanished panes lose theirs here, never on a tab switch (D-05).
+      if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) {
+        retainTerminals(new Set(attachedPaneIds()));
+      }
       const checkout = focusedCheckout(state.rest);
       if (!checkout) return;
       const before = focusedCheckout(previous.rest);

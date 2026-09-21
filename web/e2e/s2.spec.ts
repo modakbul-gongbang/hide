@@ -61,16 +61,22 @@ async function startHided(herdr: HerdrFixture): Promise<Daemon> {
   throw new Error("hided did not write a state file");
 }
 
-/** Counts client events by kind as the page sends them; one action must be one event. */
-function countSent(page: Page): Map<string, number> {
+/**
+ * Counts client events by kind as the page sends them; one action must be
+ * one event. `last` keeps the newest payload per kind for shape assertions.
+ */
+function countSent(page: Page, last: Map<string, Record<string, unknown>> = new Map()): Map<string, number> {
   const counts = new Map<string, number>();
   page.on("pageerror", (error) => console.log(`[pageerror] ${error.message}`));
   page.on("websocket", (ws: WebSocket) => {
     ws.on("socketerror", (error) => console.log(`[ws error] ${error}`));
     ws.on("framesent", (frame) => {
       try {
-        const kind = (JSON.parse(String(frame.payload)) as { kind?: string }).kind;
-        if (kind) counts.set(kind, (counts.get(kind) ?? 0) + 1);
+        const event = JSON.parse(String(frame.payload)) as { kind?: string; payload?: Record<string, unknown> };
+        if (event.kind) {
+          counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
+          last.set(event.kind, event.payload ?? {});
+        }
       } catch {
         /* the handshake is not an event */
       }
@@ -107,7 +113,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
       tabs.push(made.result.tab.tab_id);
     }
     daemon = await startHided(herdr);
-    const sent = countSent(page);
+    const lastSent = new Map<string, Record<string, unknown>>();
+    const sent = countSent(page, lastSent);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
     // Two checkouts in the Projects sidebar. Which one the core focuses at
@@ -173,12 +180,45 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
     await expect.poll(() => sent.get("create_pane")).toBe(1);
     await screenshot(page, "s2-two-splits");
 
+    // The new pane runs the fixture shell. A wheel over it is one
+    // terminal_scroll per batch and the core's viewport follows (B19).
+    const shellPane = page.locator('[data-pane-view][data-focused="true"]');
+    await expect(shellPane).toHaveAttribute("data-transport", /connected|controlling|idle/, { timeout: 15_000 });
+    await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
+    await shellPane.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.type("seq 1 100\n");
+    await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/100\s+fixture %/);
+    const shellBox = (await shellPane.boundingBox())!;
+    await page.mouse.move(shellBox.x + shellBox.width / 2, shellBox.y + shellBox.height / 2);
+    await page.mouse.wheel(0, -120);
+    await expect.poll(() => sent.get("terminal_scroll")).toBe(1);
+    expect(lastSent.get("terminal_scroll")).toMatchObject({ direction: "up", modifiers: 0 });
+    expect(lastSent.get("terminal_scroll")!.lines as number).toBeGreaterThan(1);
+    await expect.poll(() => screen(page), { timeout: 10_000 }).not.toMatch(/100\s+fixture %/);
+    await page.mouse.wheel(0, 400);
+    await expect.poll(() => sent.get("terminal_scroll")).toBe(2);
+    expect(lastSent.get("terminal_scroll")).toMatchObject({ direction: "down" });
+    await expect.poll(() => screen(page), { timeout: 10_000 }).toMatch(/100\s+fixture %/);
+    // ⌥ + wheel is the browser's, not Herdr's.
+    await page.keyboard.down("Alt");
+    await page.mouse.wheel(0, -120);
+    await page.keyboard.up("Alt");
+    await expect.poll(() => sent.get("terminal_scroll")).toBe(2);
+
     await page.keyboard.press("Meta+Alt+Enter");
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-zoomed", "true");
     await expect.poll(() => sent.get("toggle_zoom")).toBe(1);
+    // The zoomed pane takes the whole canvas, not just its own split cell,
+    // and Herdr's wider PTY is what its terminal_resize follows.
+    const canvasBox = (await page.locator("[data-canvas]").boundingBox())!;
+    const zoomedBox = (await page.locator('[data-pane-view][data-focused="true"]').boundingBox())!;
+    expect(Math.abs(zoomedBox.width - canvasBox.width)).toBeLessThan(2);
+    expect(Math.abs(zoomedBox.height - canvasBox.height)).toBeLessThan(2);
+    expect(Math.abs(zoomedBox.x - canvasBox.x)).toBeLessThan(2);
     await screenshot(page, "s2-zoomed");
     await page.keyboard.press("Meta+Alt+Enter");
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-zoomed", "false");
+    await expect(page.locator("[data-pane-view]")).toHaveCount(3);
 
     // A divider drag sends one resize_pane on release and the grid follows Herdr.
     const outer = page.locator("[data-split=right]").first();
@@ -245,6 +285,28 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
     await page.locator('[data-pane-view][data-focused="true"] .xterm-helper-textarea').focus();
     await page.keyboard.type("s2-echo-4b2e");
     await expect.poll(() => screen(page), { timeout: 10_000 }).toContain("s2-echo-4b2e");
+
+    // Leaving the tab parks its terminals instead of disposing them (D-05):
+    // they are still live while away, and coming back shows the last frame
+    // in the same tick as the click, before any frame could arrive.
+    const echoPane = (await page.evaluate(() => window.__hideProbe?.paneId()))!;
+    await page.locator(`[data-tab="${tabs[1]}"]`).click();
+    await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);
+    expect(await page.evaluate(() => window.__hideProbe?.liveTerminals() ?? [])).toContain(echoPane);
+    expect(await page.evaluate((id) => window.__hideProbe?.paneText(id) ?? "", echoPane)).toContain("s2-echo-4b2e");
+    const backAtOnce = await page.evaluate(
+      ({ tab, id }) => {
+        document.querySelector<HTMLElement>(`[data-tab="${tab}"]`)!.click();
+        return window.__hideProbe?.paneText(id) ?? "";
+      },
+      { tab: herdr.tab, id: echoPane },
+    );
+    expect(backAtOnce).toContain("s2-echo-4b2e");
+    await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
+    await expect(page.locator(`[data-pane-view="${echoPane}"]`)).toHaveAttribute("data-transport", /connected|controlling|idle/);
+    await expect(page.locator(`[data-pane-view="${echoPane}"] [data-terminal]`)).toHaveCount(1);
+    // Coming back is a fit on the same size, not a request for a full frame.
+    await expect.poll(() => lastSent.get("terminal_viewport")?.new_view).toBe(false);
 
     // A dropped socket comes back with the tab bar and splits from the core (B14).
     await page.evaluate(() => window.__hideProbe?.dropSocket());

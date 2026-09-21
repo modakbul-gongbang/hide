@@ -17,16 +17,16 @@ import type { DispatchFn } from "./ws";
 
 // The center draws the visible tab's projection tree as nested CSS grids
 // (PRD S2 B4): every split is a two-track grid sized by Herdr's ratio and
-// every leaf is a pane with its own xterm instance. Zoom keeps the other
-// panes mounted underneath so their streams keep flowing; the focused pane
-// is lifted over them (`toggle_zoom` decides, the shell only draws).
+// every leaf is a pane with its own xterm instance. A zoomed tab draws only
+// the zoomed pane, over the whole canvas, so its fit follows the full
+// geometry Herdr gave the PTY (B19); the other panes' terminals stay alive
+// and fed while parked (`toggle_zoom` decides, the shell only draws).
 
 type PaneProps = {
   panes: Map<string, PaneRow>;
   transports: Map<string, TerminalPane>;
   scales: Record<string, number>;
   focusedPaneId: string;
-  zoomedPaneId: string | null;
   dispatch: DispatchFn;
   onClosePane: (paneId: string) => void;
 };
@@ -88,13 +88,13 @@ const TabCanvas = memo(function TabCanvas({
     transports,
     scales,
     focusedPaneId: layout.focused_pane_id,
-    zoomedPaneId: layout.zoomed ? layout.focused_pane_id : null,
     dispatch,
     onClosePane,
   };
+  const root: LayoutNode = layout.zoomed ? { type: "pane", pane_id: layout.focused_pane_id } : layout.root;
   return (
     <div className="relative min-h-0 min-w-0 flex-1" data-canvas={tab.id ?? ""} data-zoomed={layout.zoomed ? "true" : "false"}>
-      <LayoutView node={layout.root} {...props} />
+      <LayoutView node={root} {...props} />
     </div>
   );
 });
@@ -102,9 +102,8 @@ const TabCanvas = memo(function TabCanvas({
 function LayoutView({ node, ...props }: { node: LayoutNode } & PaneProps) {
   if (node.type === "pane") {
     const pane = props.panes.get(node.pane_id);
-    const zoomed = props.zoomedPaneId === node.pane_id;
     return (
-      <div className={zoomed ? "absolute inset-0 z-10" : "relative h-full w-full min-h-0 min-w-0"} data-layout-pane={node.pane_id}>
+      <div className="relative h-full w-full min-h-0 min-w-0" data-layout-pane={node.pane_id}>
         {pane ? (
           <PaneView
             pane={pane}
