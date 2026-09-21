@@ -38,6 +38,9 @@ export function createActions(dispatch: DispatchFn) {
     });
   };
 
+  const focusCheckout = (workspaceId: string, checkoutId: string) =>
+    dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
+
   return {
     dispatch,
 
@@ -146,9 +149,7 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "pane_text_scale", payload: { pane_id: paneId, direction } });
     },
 
-    focusCheckout(workspaceId: string, checkoutId: string) {
-      dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
-    },
+    focusCheckout,
 
     /** A project row: the checkout the operator was last in, else the first row (PRD S2 D-07). */
     focusProject(workspaceId: string) {
@@ -157,7 +158,7 @@ export function createActions(dispatch: DispatchFn) {
       const ids = workspace.checkouts.map((row) => row.id);
       const checkoutId = lastCheckoutOf(ids) ?? ids[0];
       if (!checkoutId) return diagnostic(`focus_checkout: project ${workspace.label} has no checkout`);
-      this.focusCheckout(workspaceId, checkoutId);
+      focusCheckout(workspaceId, checkoutId);
     },
 
     toggleInactiveCheckouts(projectPath: string) {
