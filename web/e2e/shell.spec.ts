@@ -34,6 +34,13 @@ async function startHided(extra: Record<string, string> = {}): Promise<Daemon> {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // The daemon's structured log is run evidence when a directory is given.
+  const logDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (logDir) {
+    const log = fs.createWriteStream(path.join(logDir, `hided-${path.basename(dir)}.log`), { flags: "a" });
+    child.stdout?.pipe(log);
+    child.stderr?.pipe(log);
+  }
   const stop = () => {
     child.kill();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -83,7 +90,7 @@ test("a bad token shows the refused connection state", async ({ page }) => {
 });
 
 async function typedTextEchoes(page: Page, marker: string): Promise<void> {
-  await page.locator(".xterm-helper-textarea").focus();
+  await page.locator('[data-pane-view][data-focused="true"] .xterm-helper-textarea').focus();
   await page.keyboard.type(marker);
   await expect
     .poll(() => page.evaluate(() => window.__hideProbe?.screenText() ?? ""), { timeout: 10_000 })
@@ -99,17 +106,17 @@ test("a sidebar row click switches the pane and typed text echoes there", async 
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await expect(page.locator(`[data-pane="${first}"]`)).toContainText("Agent one");
     await expect(page.locator(`[data-pane="${second}"]`)).toContainText("Agent two");
-    await expect(page.locator("[data-terminal-pane]")).toHaveAttribute("data-terminal-pane", first);
+    await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", first);
 
     await page.locator(`[data-pane="${second}"]`).click();
-    await expect(page.locator("[data-terminal-pane]")).toHaveAttribute("data-terminal-pane", second);
+    await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", second);
     await expect
       .poll(() => page.evaluate(() => window.__hideProbe?.screenText() ?? ""), { timeout: 10_000 })
       .toContain("claude");
     await typedTextEchoes(page, "echo-two-9f3a");
 
     await page.locator(`[data-pane="${first}"]`).click();
-    await expect(page.locator("[data-terminal-pane]")).toHaveAttribute("data-terminal-pane", first);
+    await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", first);
     await expect
       .poll(() => page.evaluate(() => window.__hideProbe?.screenText() ?? ""), { timeout: 10_000 })
       .toContain("claude");
