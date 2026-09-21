@@ -5,7 +5,7 @@ The scripts named here are the executable authority; `scripts/tests/test_toolcha
 
 ## One rule: build output lives in the worktree
 
-Cargo writes to `target/` and SwiftPM to `macos/.build/`, both at their default locations inside the checkout and both ignored by Git.
+Cargo writes to `target/`, SwiftPM to `macos/.build/`, and the web shell to `web/node_modules/` and `web/dist/`, all at their default locations inside the checkout and all ignored by Git.
 Nothing a checkout builds is written anywhere else, so `git worktree remove` is the whole cleanup, and no cache can outlive the work that produced it.
 
 Two facts make the default location the only correct one.

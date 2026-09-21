@@ -216,3 +216,18 @@ There is no installed-CLI candidate list and no version floor; the pin is exact.
 The Swift shell reads the manifest at launch, and `scripts/fetch-herdr-runtime.sh` downloads and verifies the asset against it for both `scripts/build-app.sh` and `macos/scripts/build_dev_app.sh`; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
 Move the pin with `scripts/bump-herdr.sh <release-tag>` (a stable `v0.8.3` or a `preview-...` tag), which verifies the asset, writes the contract that binary reports, and rewrites the tag, version and digest tokens in the README, install guide and third-party notice.
 `.github/workflows/herdr-update.yml` polls for a new stable release weekly and opens a PR with that bump after running both test suites; it never merges, because the core's Herdr behavior assumptions are only asserted against fixtures this repository wrote.
+
+## hided and the WebSocket boundary
+
+`hided` is the product daemon that owns one `herdr-core::Core` on its creating thread.
+Axum workers send dispatch and snapshot commands over a channel; they never call create/dispatch/snapshot/on_change/destroy from another thread.
+It binds `127.0.0.1` only.
+The WebSocket handshake is the client's first JSON frame `{token, schema_version, have_revision?, have_terminal_sequence?}`.
+A mismatched token, Origin, or schema version, or a ninth concurrent client, is closed with a reason code (`invalid_token`, `origin_not_allowed`, `schema_mismatch`, `client_limit`) and a diagnostic log line.
+After a valid handshake the daemon sends one full snapshot, then one delta frame per core notification burst, using the same `have_revision` / `have_terminal_sequence` cursors as `herdr_core_snapshot`.
+Client frames are core events (`schema_version`, `kind`, `payload`).
+HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
+No HTTP request dispatches a core event.
+`hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client, and `hide serve --keep-alive`.
+It does not start a Herdr server.
+The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.

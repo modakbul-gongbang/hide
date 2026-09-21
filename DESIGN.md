@@ -124,7 +124,7 @@ components:
 
 [hide-ui.lib.pen](design/hide-ui.lib.pen) is the shared visual design-system library, not a catalog of every product screen.
 It contains Foundations, primitive controls, and agreed reusable components with their state examples.
-This document owns their meaning and behavior; `HideTheme.swift` owns the numeric token values mirrored into the library by `scripts/pen-token-map.json`.
+This document owns their meaning and behavior; `design/tokens.json` owns the numeric token values, `scripts/gen-tokens.mjs` writes `web/src/tokens.css` and keeps `HideTheme.swift` in sync, and `scripts/pen-token-map.json` mirrors those values into the library.
 The library does not generate Swift controls automatically: an approved system change updates the library, token or component implementation, and this contract together.
 
 Keep task-specific screen exploration in `agents/runs/<slug>/design/scratch.pen` inside the task's worktree.

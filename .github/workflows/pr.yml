@@ -58,7 +58,7 @@ jobs:
           rustc --version
           {
             echo "rustc=$(rustc --version | cut -d' ' -f2)"
-            echo "core=${{ hashFiles('Cargo.lock', 'Cargo.toml', 'contracts/**', 'herdr-core/**', 'hide-*/**', 'plugins/agent-context-labels/**') }}"
+            echo "core=${{ hashFiles('Cargo.lock', 'Cargo.toml', 'contracts/**', 'herdr-core/**', 'hided/**', 'hide-*/**', 'plugins/agent-context-labels/**') }}"
             echo "shell=${{ hashFiles('macos/**', '!macos/.build/**', '!macos/build/**') }}"
           } >> "$GITHUB_OUTPUT"
       - name: Restore the core archive built from these sources
@@ -134,9 +134,41 @@ jobs:
       - name: Compare the Herdr API schema with the contract
         run: zsh scripts/check-herdr-contract.sh --herdr-bin "${{ steps.herdr.outputs.bin }}" --schema-only
 
+  web:
+    name: web shell
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Build hided for Playwright
+        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+      - name: Install web dependencies
+        run: pnpm --dir web install --frozen-lockfile
+      - name: Typecheck, lint, and unit test
+        run: |
+          pnpm --dir web typecheck
+          pnpm --dir web lint
+          pnpm --dir web test
+      - name: Build the web shell
+        run: pnpm --dir web build
+      - name: Install Playwright Chromium
+        run: pnpm --dir web exec playwright install --with-deps chromium
+      - name: End-to-end
+        run: pnpm --dir web exec playwright test
+
   verify:
     name: verify
-    needs: [rust, swift, scripts]
+    needs: [rust, swift, scripts, web]
     if: always()
     runs-on: ubuntu-latest
     steps:
