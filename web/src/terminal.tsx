@@ -9,7 +9,6 @@ import { useShellStore, type TerminalChunk } from "./store";
 import type { DispatchFn } from "./ws";
 
 const writers = new Map<string, (data: Uint8Array) => void>();
-const pending = new Map<string, Uint8Array[]>();
 let termRefForReset: Terminal | null = null;
 
 function decodeChunk(chunk: TerminalChunk): Uint8Array | null {
@@ -22,21 +21,16 @@ function decodeChunk(chunk: TerminalChunk): Uint8Array | null {
 
 export function resetTerminal() {
   termRefForReset?.reset();
-  pending.clear();
 }
 
+// A chunk for a pane with no writer is dropped, not queued: the writer is
+// registered before the view is requested, and that request brings a full
+// frame, so nothing that arrived earlier is worth replaying.
 export function feedChunks(chunks: TerminalChunk[]) {
   for (const chunk of chunks) {
     const bytes = decodeChunk(chunk);
     if (!bytes) continue;
-    const write = writers.get(chunk.pane_id);
-    if (write) {
-      write(bytes);
-      continue;
-    }
-    const queued = pending.get(chunk.pane_id) ?? [];
-    queued.push(bytes);
-    pending.set(chunk.pane_id, queued);
+    writers.get(chunk.pane_id)?.(bytes);
   }
 }
 
@@ -144,7 +138,6 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
       shownPaneId.current = paneId;
       term.reset();
       writers.clear();
-      pending.delete(paneId);
       writers.set(
         paneId,
         probeEnabled()
