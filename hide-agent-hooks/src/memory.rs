@@ -223,24 +223,35 @@ fn render(
         InjectionOutcome::Deadline => HookMemoryOutcome::Deadline,
         InjectionOutcome::Unavailable | InjectionOutcome::Stale => HookMemoryOutcome::Unavailable,
     };
-    let Some(mut context) = injection.context() else {
-        return HookMemoryResult {
-            stdout: crate::runtime::hook_stdout(runtime, event),
-            outcome,
-        };
-    };
     let receipt = injection
         .items
         .iter()
         .map(|(id, revision, _)| format!("{id}@{revision}"))
         .collect::<Vec<_>>()
         .join(",");
-    context.push_str(&format!(
+    let receipt = format!(
         "<hide-memory-receipt event=\"{}\" count=\"{}\" items=\"{}\" />\n",
         event.name(),
         injection.items.len(),
         receipt
-    ));
+    );
+    let context = match injection.context() {
+        Some(mut context) => {
+            context.push_str(&receipt);
+            context
+        }
+        None if event == HookEvent::SessionStart
+            && injection.outcome == InjectionOutcome::Empty =>
+        {
+            receipt
+        }
+        None => {
+            return HookMemoryResult {
+                stdout: crate::runtime::hook_stdout(runtime, event),
+                outcome,
+            };
+        }
+    };
     HookMemoryResult {
         stdout: hook_stdout_with_context(runtime, event, Some(&context)),
         outcome,
@@ -736,6 +747,40 @@ mod tests {
                 value["hookSpecificOutput"]["additionalContext"],
                 "Project Memory:\n- Keep the boundary local.\n"
             );
+        }
+    }
+
+    #[test]
+    fn empty_session_start_emits_an_internal_receipt_without_a_zero_item_message() {
+        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
+            let result = render(
+                runtime,
+                HookEvent::SessionStart,
+                Injection {
+                    outcome: InjectionOutcome::Empty,
+                    items: Vec::new(),
+                    token_count: 0,
+                },
+                Instant::now() + Duration::from_secs(1),
+                || HookMemoryResult {
+                    stdout: crate::runtime::hook_stdout(runtime, HookEvent::SessionStart),
+                    outcome: HookMemoryOutcome::Unavailable,
+                },
+            );
+
+            assert_eq!(result.outcome, HookMemoryOutcome::Empty);
+            let output = result.stdout.unwrap();
+            let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+            let context = value["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap();
+            assert!(
+                context.contains(
+                    "<hide-memory-receipt event=\"SessionStart\" count=\"0\" items=\"\" />"
+                )
+            );
+            assert!(!context.contains("Project Memory ready 0"));
+            assert!(!context.contains("<hide-memory-context"));
         }
     }
 

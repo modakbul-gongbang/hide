@@ -794,12 +794,19 @@ impl Runtime {
 mod scope_tests {
     use super::{
         archive_load_matches_scope, sessions_load_matches_scope, settled_analysis_snapshot,
-        should_request_memory_due_poll_after_load, trusted_memory_receipt, validate_candidates,
+        should_request_memory_due_poll_after_load, trusted_memory_receipt, update_hook_projection,
+        validate_candidates,
     };
     use crate::model::MemoryAnalysisSnapshot;
-    use hide_memory::{Candidate, CandidateKind, CandidateRelation};
-    use hide_session::EventKind;
+    use hide_agent_hooks::{
+        memory::{HookMemoryOutcome, database_path, project_memory_output},
+        runtime::{AgentRuntime, HookEvent},
+    };
+    use hide_memory::{AnalysisBatch, Candidate, CandidateKind, CandidateRelation, MemoryStore};
+    use hide_session::{Agent, EventKind, ProjectSession, SessionAvailability};
     use serde_json::json;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn reversed_session_load_completion_cannot_replace_the_newer_generation() {
@@ -963,6 +970,123 @@ mod scope_tests {
         let receipt = trusted_memory_receipt(EventKind::Injected, marker).unwrap();
         assert_eq!(receipt.count, 1);
         assert_eq!(receipt.items, vec![("m1".to_owned(), 2)]);
+    }
+
+    #[test]
+    fn empty_session_start_projection_unblocks_later_prompt_memory() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp = std::env::temp_dir().join(format!(
+            "hide-empty-session-receipt-{}-{nonce}",
+            std::process::id()
+        ));
+        let home = temp.join("home");
+        let project_root = temp.join("project");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+        let project = hide_project::resolve(&project_root, "local").unwrap();
+        let database = database_path(&home);
+        fs::create_dir_all(database.parent().unwrap()).unwrap();
+        let store = MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&project.id, &project.root, "local")
+            .unwrap();
+        store.set_enabled(&project.id, true, true).unwrap();
+        drop(store);
+
+        let session_id = "empty-session";
+        let start_payload = serde_json::to_vec(&json!({
+            "cwd": project_root,
+            "session_id": session_id,
+        }))
+        .unwrap();
+        let start = project_memory_output(
+            AgentRuntime::ClaudeCode,
+            HookEvent::SessionStart,
+            &start_payload,
+            false,
+            &home,
+        );
+        assert_eq!(start.outcome, HookMemoryOutcome::Empty);
+        let envelope: serde_json::Value = serde_json::from_str(&start.stdout.unwrap()).unwrap();
+        let context = envelope["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains("count=\"0\""));
+        assert!(!context.contains("Project Memory ready 0"));
+
+        let locator = temp.join("empty-session.jsonl");
+        let transcript = json!({
+            "type": "user",
+            "timestamp": "2026-09-21T00:00:00Z",
+            "origin": {"kind": "hook"},
+            "isMeta": true,
+            "message": {"role": "user", "content": context},
+        });
+        fs::write(&locator, format!("{transcript}\n")).unwrap();
+        let session = ProjectSession {
+            id: session_id.to_owned(),
+            agent: Agent::Claude,
+            locator,
+            checkout_path: project_root.clone(),
+            first_human_request: None,
+            started_at_unix_ms: Some(1),
+            updated_at_unix_ms: 1,
+            title: None,
+            event_count: 1,
+            availability: SessionAvailability::Available,
+        };
+        let mut store = MemoryStore::open(&database).unwrap();
+        update_hook_projection(&mut store, &project.id, &session).unwrap();
+        assert_eq!(
+            store
+                .session_start_receipt_ids(&project.id, "claude", session_id)
+                .unwrap(),
+            Some(Vec::new())
+        );
+        store
+            .apply_candidates(
+                &AnalysisBatch {
+                    id: "empty-receipt-batch".to_owned(),
+                    project_id: project.id.clone(),
+                    provider: "claude".to_owned(),
+                    analysis_provider: "claude".to_owned(),
+                    session_id: "source-session".to_owned(),
+                    content_hash: "empty-receipt-hash".to_owned(),
+                    created_at_unix_ms: 2,
+                },
+                &[Candidate {
+                    text: "빈 시작 영수증 뒤에도 durable hook memory를 제공한다.".to_owned(),
+                    kind: CandidateKind::Rule,
+                    confidence: 0.9,
+                    salience: 0.9,
+                    source_offsets: vec![1],
+                    direct_human_source: true,
+                    relation: CandidateRelation::New,
+                }],
+            )
+            .unwrap();
+        drop(store);
+
+        let prompt_payload = serde_json::to_vec(&json!({
+            "cwd": project_root,
+            "session_id": session_id,
+            "prompt": "durable hook memory",
+        }))
+        .unwrap();
+        let prompt = project_memory_output(
+            AgentRuntime::ClaudeCode,
+            HookEvent::UserPromptSubmit,
+            &prompt_payload,
+            false,
+            &home,
+        );
+        assert_eq!(prompt.outcome, HookMemoryOutcome::Provided { count: 1 });
+        let prompt_output = prompt.stdout.unwrap();
+        assert!(prompt_output.contains("빈 시작 영수증 뒤에도 durable hook memory를 제공한다."));
+        fs::remove_dir_all(temp).unwrap();
     }
 }
 
