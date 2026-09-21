@@ -348,8 +348,9 @@ fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
         }
     };
     wait(&mut reader, &request);
-    // First discovery installs the cached tracked-file stat set.
-    wait(&mut reader, &request);
+    // The wake after discovery installs the tracked-file stat set; it is
+    // not a re-read.
+    assert!(reader.read_if_due(request.clone()).is_none());
     let started = std::time::Instant::now();
     while started.elapsed() < Duration::from_secs(20) {
         assert!(reader.read_if_due(request.clone()).is_none());
@@ -434,4 +435,74 @@ fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
     let older = by_branch("older").created_at_unix_ms.expect("older time");
     let newer = by_branch("newer").created_at_unix_ms.expect("newer time");
     assert!(older <= newer, "{older} should not be after {newer}");
+}
+
+/// A commit in one registered repository re-reads that repository alone: the
+/// other project's `git status` does not run again. Before the per-project
+/// key, every project's status ran on any project's change.
+#[test]
+fn a_commit_in_one_project_does_not_rerun_status_in_another() {
+    let changing = Repository::new();
+    let quiet = Repository::new();
+    let mut reader = WorktreeReader::new();
+    let request = WorktreeRequest {
+        projects: [&changing, &quiet]
+            .into_iter()
+            .map(|repo| WorktreeProjectRequest {
+                root_path: repo.0.clone(),
+                bases: BTreeMap::new(),
+                base_override: None,
+            })
+            .collect(),
+        generation: 0,
+    };
+    let wait = |reader: &mut WorktreeReader| {
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(result) = reader.read_if_due(request.clone()) {
+                break result;
+            }
+            assert!(started.elapsed() < Duration::from_secs(15));
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let catalog = wait(&mut reader);
+    assert_eq!(catalog.projects.len(), 2);
+    // Status runs in the path git lists, which is the canonical one.
+    let listed = |catalog: &WorktreeCatalogSnapshot, index: usize| {
+        PathBuf::from(&catalog.projects[index].worktrees[0].path)
+    };
+    let (changing_path, quiet_path) = (listed(&catalog, 0), listed(&catalog, 1));
+    let changing_before = git_call_count(&changing_path, "status");
+    let quiet_before = git_call_count(&quiet_path, "status");
+    assert!(changing_before > 0 && quiet_before > 0);
+    git(&changing.0, &["commit", "--allow-empty", "-m", "moved"]).unwrap();
+    assert_eq!(wait(&mut reader).projects.len(), 2);
+    assert_eq!(
+        git_call_count(&changing_path, "status") - changing_before,
+        1
+    );
+    assert_eq!(git_call_count(&quiet_path, "status") - quiet_before, 0);
+}
+
+/// A git invocation is bounded: one that outruns the deadline is killed and
+/// reported, and one whose output outgrows the pipe buffer still completes.
+#[test]
+fn git_output_is_bounded_in_time_and_drained_past_the_pipe_buffer() {
+    let mut slow = std::process::Command::new("sleep");
+    slow.arg("30");
+    let started = std::time::Instant::now();
+    assert!(
+        output_within(&mut slow, Duration::from_millis(200))
+            .unwrap()
+            .is_none()
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+
+    let mut wide = std::process::Command::new("sh");
+    wide.args(["-c", "yes | head -c 300000"]);
+    let output = output_within(&mut wide, Duration::from_secs(15))
+        .unwrap()
+        .expect("finished within the deadline");
+    assert_eq!(output.stdout.len(), 300_000);
 }

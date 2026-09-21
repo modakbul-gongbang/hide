@@ -63,6 +63,29 @@ struct WorkspaceFileSearchTests {
         #expect(!paths.contains("ignored.txt"))
     }
 
+    /// A listing wider than the 64 KiB pipe buffer completes: the load
+    /// drains git's output before waiting, so git is never left blocked on a
+    /// write nobody reads. The first version waited first, and one large
+    /// repository hung its git and this load for good.
+    @Test(.timeLimit(.minutes(1))) func gitIndexLoadsAListingWiderThanThePipeBuffer() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hide-file-search-wide-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try runGit(["init"], at: root)
+        let count = 3000
+        for index in 0..<count {
+            let name = "untracked-file-with-a-long-enough-name-\(index).txt"
+            try "".write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+
+        let started = Date()
+        let paths = try await WorkspaceFileSearchIndex.load(root: root)
+
+        #expect(paths.count == count)
+        #expect(Date().timeIntervalSince(started) < 30)
+    }
+
     private func runGit(_ arguments: [String], at root: URL) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
