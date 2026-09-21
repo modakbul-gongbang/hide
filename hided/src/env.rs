@@ -87,6 +87,9 @@ pub const REGISTRY: &[EnvKey] = &[
 
 #[derive(Clone, Debug)]
 pub struct Env {
+    /// The filesystem boundary root for the web shell's listing and
+    /// registration events (`boundary.rs`); read once, never configured.
+    pub home: PathBuf,
     pub herdr_socket_path: Option<String>,
     /// The binary the core spawns for `herdr terminal session control`; the
     /// core refuses every pane attach without one.
@@ -230,6 +233,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         return Err(errors);
     }
     Ok(Env {
+        home,
         herdr_socket_path,
         herdr_bin_path,
         state_dir,

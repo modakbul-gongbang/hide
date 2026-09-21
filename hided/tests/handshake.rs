@@ -11,6 +11,7 @@ use tokio_tungstenite::tungstenite::http::header::ORIGIN;
 fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
     let dir = tempfile::tempdir().unwrap();
     let env = Env {
+        home: dir.path().to_path_buf(),
         herdr_socket_path: None,
         herdr_bin_path: None,
         state_dir: dir.path().to_path_buf(),
@@ -341,4 +342,111 @@ async fn reqwest_status(url: &str) -> u16 {
         .unwrap()
         .parse()
         .unwrap_or(0)
+}
+
+// --- $HOME boundary over the socket (PRD S2 B10) -------------------------
+
+async fn live_socket(
+    running: &hided::RunningDaemon,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    let mut socket = connect(running.port, None).await;
+    socket.send(handshake(&running.token, 2)).await.unwrap();
+    let first = first_frame(&mut socket).await;
+    assert_eq!(first["type"], "snapshot");
+    socket
+}
+
+async fn send_event(
+    socket: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+    kind: &str,
+    payload: Value,
+) -> Value {
+    socket
+        .send(Message::Text(
+            json!({"schema_version": 2, "kind": kind, "payload": payload})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    loop {
+        let frame = first_frame(socket).await;
+        // Snapshot deltas keep flowing on the same socket; the reply to a
+        // boundary event is the first frame that is not one of them.
+        if frame["type"] != "snapshot" && frame["type"] != "delta" {
+            return frame;
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_listing_and_refusals_are_answered_by_hided() {
+    let (dir, running) = start().await;
+    let home = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(home.join("projects/alpha")).unwrap();
+    std::fs::create_dir_all(home.join("projects/.hidden")).unwrap();
+    std::fs::write(home.join("projects/file.txt"), "x").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), home.join("projects/escape")).unwrap();
+    let mut socket = live_socket(&running).await;
+
+    let listing = send_event(
+        &mut socket,
+        "remote_file_list",
+        json!({"target_id": "local", "root_path": home.join("projects").display().to_string()}),
+    )
+    .await;
+    assert_eq!(listing["type"], "directory_list");
+    let names: Vec<&str> = listing["payload"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["alpha"],
+        "no file, no hidden dir, no escaping symlink"
+    );
+
+    let cases = [
+        (
+            home.join("projects/escape").display().to_string(),
+            "outside_home",
+        ),
+        (format!("{}/projects/../..", home.display()), "invalid_path"),
+        (
+            format!("{}/projects/%2e%2e/%2e%2e", home.display()),
+            "not_found",
+        ),
+        (
+            home.join("projects/file.txt").display().to_string(),
+            "not_a_directory",
+        ),
+        (outside.path().display().to_string(), "outside_home"),
+        (home.display().to_string(), "home_root"),
+        ("relative/path".to_owned(), "invalid_path"),
+    ];
+    for (path, reason) in cases {
+        let refused = send_event(
+            &mut socket,
+            "create_workspace",
+            json!({"path": path, "label": "x", "initialize_git": false}),
+        )
+        .await;
+        assert_eq!(refused["type"], "path_refused", "{path}");
+        assert_eq!(refused["payload"]["reason"], reason, "{path}");
+        assert_eq!(refused["payload"]["kind"], "create_workspace");
+    }
+    let refused_list = send_event(
+        &mut socket,
+        "remote_file_list",
+        json!({"target_id": "local", "root_path": outside.path().display().to_string()}),
+    )
+    .await;
+    assert_eq!(refused_list["payload"]["reason"], "outside_home");
+    assert_eq!(refused_list["payload"]["kind"], "remote_file_list");
+    running.stop();
 }
