@@ -60,6 +60,40 @@ pub fn classify(target: Option<&Path>, swift: Option<SwiftShell>) -> Coexist {
     }
 }
 
+/// What `hide` does with a coexistence outcome, decided without touching a
+/// terminal so the rule is testable: `Proceed` starts, `Refuse` exits with the
+/// message, `Ask` puts the question to the operator and starts only on yes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Decision {
+    Proceed,
+    Refuse(String),
+    Ask(String),
+}
+
+/// Applies PRD B5 to an outcome: only a shared or unknown socket involves the
+/// operator, and only a TTY can ask them.
+pub fn decide(outcome: Coexist, interactive: bool) -> Decision {
+    let why = match outcome {
+        Coexist::NoSwiftShell | Coexist::Isolated { .. } => return Decision::Proceed,
+        Coexist::SharedSocket { swift, socket } => format!(
+            "Swift Hide (pid {}) is attached to {}",
+            swift.pid,
+            socket.display()
+        ),
+        Coexist::Unknown { swift, reason } => format!(
+            "Swift Hide (pid {}) may be attached to the same Herdr socket: {reason}",
+            swift.pid
+        ),
+    };
+    if interactive {
+        Decision::Ask(format!("{why}. Attach hided to it too? [y/N] "))
+    } else {
+        Decision::Refuse(format!(
+            "{why}. Refusing to attach without a TTY. Close Swift Hide, use another HERDR_SOCKET_PATH, or run from a terminal."
+        ))
+    }
+}
+
 fn same_file(left: &Path, right: &Path) -> bool {
     let resolve = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     resolve(left) == resolve(right)
@@ -265,6 +299,52 @@ mod tests {
         SwiftShell {
             pid: 4242,
             socket: socket.map(PathBuf::from).map_err(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn only_a_shared_or_unknown_socket_involves_the_operator() {
+        let shared = Coexist::SharedSocket {
+            swift: swift(Ok("/tmp/a.sock")),
+            socket: PathBuf::from("/tmp/a.sock"),
+        };
+        let unknown = Coexist::Unknown {
+            swift: swift(Err("no environment")),
+            reason: "no environment".into(),
+        };
+        for interactive in [true, false] {
+            assert_eq!(
+                decide(Coexist::NoSwiftShell, interactive),
+                Decision::Proceed
+            );
+            assert_eq!(
+                decide(
+                    Coexist::Isolated {
+                        swift: swift(Ok("/tmp/b.sock"))
+                    },
+                    interactive
+                ),
+                Decision::Proceed
+            );
+        }
+        match decide(shared.clone(), true) {
+            Decision::Ask(prompt) => {
+                assert!(prompt.contains("pid 4242"), "{prompt}");
+                assert!(prompt.contains("/tmp/a.sock"), "{prompt}");
+                assert!(prompt.ends_with("[y/N] "), "{prompt}");
+            }
+            other => panic!("a shared socket with a TTY asks, got {other:?}"),
+        }
+        match decide(shared, false) {
+            Decision::Refuse(message) => {
+                assert!(message.contains("/tmp/a.sock"), "{message}");
+                assert!(message.contains("without a TTY"), "{message}");
+            }
+            other => panic!("a shared socket without a TTY refuses, got {other:?}"),
+        }
+        match decide(unknown, false) {
+            Decision::Refuse(message) => assert!(message.contains("no environment"), "{message}"),
+            other => panic!("an unknown socket without a TTY refuses, got {other:?}"),
         }
     }
 

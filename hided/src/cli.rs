@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-use crate::coexist::{self, Coexist};
+use crate::coexist::{self, Decision};
 use crate::env::{self, Env};
 use crate::spawn::spawn_owned;
 use crate::state_file::{self, DaemonState};
@@ -214,29 +214,13 @@ fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
 /// case refuses instead of asking.
 fn confirm_coexist(env: &Env) -> Result<(), String> {
     let target = env.herdr_socket_path.as_deref().map(Path::new);
-    let (swift, socket, reason) = match coexist::classify(target, coexist::find_swift_shell()) {
-        Coexist::NoSwiftShell | Coexist::Isolated { .. } => return Ok(()),
-        Coexist::SharedSocket { swift, socket } => (swift, Some(socket), None),
-        Coexist::Unknown { swift, reason } => (swift, None, Some(reason)),
+    let outcome = coexist::classify(target, coexist::find_swift_shell());
+    let prompt = match coexist::decide(outcome, io::stdin().is_terminal()) {
+        Decision::Proceed => return Ok(()),
+        Decision::Refuse(message) => return Err(message),
+        Decision::Ask(prompt) => prompt,
     };
-    let why = match (&socket, &reason) {
-        (Some(socket), _) => format!(
-            "Swift Hide (pid {}) is attached to {}",
-            swift.pid,
-            socket.display()
-        ),
-        (None, Some(reason)) => format!(
-            "Swift Hide (pid {}) may be attached to the same Herdr socket: {reason}",
-            swift.pid
-        ),
-        (None, None) => unreachable!("classify returns a socket or a reason"),
-    };
-    if !io::stdin().is_terminal() {
-        return Err(format!(
-            "{why}. Refusing to attach without a TTY. Close Swift Hide, use another HERDR_SOCKET_PATH, or run from a terminal."
-        ));
-    }
-    eprint!("{why}. Attach hided to it too? [y/N] ");
+    eprint!("{prompt}");
     let _ = io::stderr().flush();
     let mut line = String::new();
     io::stdin()
