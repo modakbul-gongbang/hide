@@ -60,10 +60,13 @@ async fn health_and_unknown_http_do_not_dispatch() {
     let body = reqwest_get(&url).await;
     let value: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(value["schema_version"], 2);
-    let post = reqwest_post(&format!("http://127.0.0.1:{}/health", running.port)).await;
-    assert!(post == 404 || post == 405);
+    let post = reqwest_post(&format!("http://127.0.0.1:{}/dispatch", running.port)).await;
+    assert_eq!(post, 404);
     let missing = reqwest_status(&format!("http://127.0.0.1:{}/nope", running.port)).await;
     assert_eq!(missing, 404);
+    let health_after = reqwest_get(&url).await;
+    let after: Value = serde_json::from_str(&health_after).unwrap();
+    assert_eq!(after["clients"], 0);
     running.stop();
 }
 
