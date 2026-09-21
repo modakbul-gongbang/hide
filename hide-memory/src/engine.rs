@@ -82,11 +82,15 @@ impl HideNativeAnalyzer {
         active_memories_json: &str,
     ) -> Result<AiRequest, HideNativeOutputError> {
         let events = redact(normalized_events_json);
+        // Stored Memory is provider-bound input too. Re-run the current local
+        // redactor at the final egress boundary so a manual edit or data from
+        // an older schema can never bypass today's secret policy.
+        let active_memories = redact(active_memories_json);
         let input = json!({
             "project_id": project_id,
             "session_id": session_id,
             "new_events": events.text,
-            "active_memories": active_memories_json,
+            "active_memories": active_memories.text,
             "engine": "hide-native-project-memory",
             "design_reference": {
                 "pin": DESIGN_REFERENCE_PIN,
@@ -320,6 +324,24 @@ mod tests {
             sha256(UPDATE_MEMORY_REFERENCE),
             DESIGN_REFERENCE_UPDATE_PROMPT_SHA256
         );
+    }
+
+    #[test]
+    fn request_redacts_stored_memory_again_at_the_provider_boundary() {
+        let request = HideNativeAnalyzer
+            .request(
+                "r1",
+                "project:1",
+                "s1",
+                "[]",
+                r#"[{"id":"memory:1","body":"api_key=super-secret-egress-value"}]"#,
+            )
+            .unwrap();
+        let input: Value = serde_json::from_str(&request.input).unwrap();
+        let active_memories = input["active_memories"].as_str().unwrap();
+
+        assert!(active_memories.contains("[REDACTED]"));
+        assert!(!active_memories.contains("super-secret-egress-value"));
     }
 
     #[test]

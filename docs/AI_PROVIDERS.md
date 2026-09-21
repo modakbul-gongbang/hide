@@ -19,10 +19,12 @@ Pinned Mem0 OSS v2.1.0 extraction and update prompt assets remain only as audite
 Hide's strict schema carries candidate text, kind, extraction confidence, source offsets, and `new`, `same`, `supersedes`, `conflicts`, or `discard` relation proposals.
 The write service validates those proposals against source events, Project identity, privacy, provenance, lifecycle, and resource caps.
 The local search path uses active-only FTS5 plus bounded literal and path fallback; it admits only query-relevant candidates, then uses salience, extraction confidence, and recency as tie-breakers rather than semantic-similarity signals.
-It sends only locally redacted, normalized human and assistant events after the durable session cursor, with a 64 KiB request-input cap.
+It sends only locally redacted, normalized human and assistant events after the durable session cursor, plus a bounded active-Memory comparison set used to find duplicates, updates, and conflicts, with a 64 KiB request-input cap.
+Both fields pass through the current local redactor again at the final provider egress boundary.
 The feature layer verifies the relation and provenance before the single-writer store changes anything; provider output never has direct write authority.
 Memory analysis reuses this boundary's selected provider, availability, bounded same-provider retry, duplicate suppression, process ownership, cancellation, and budgets.
 It may fall through to the other logged-in provider under the same bounded router policy, and the disclosure names both that possibility and the fact that the stored analysis batch records which provider answered.
+The disclosure also names active-Memory retransmission, and its stored version disables previously enabled Projects when this material data-egress description changes so that the operator must opt in again.
 Not-authenticated, unavailable, usage-limited, and exhausted outcomes pause new analysis without disabling existing local Memory search or Sessions browsing.
 Logs retain request, feature, provider, Project/session subject IDs, counts, duration, and outcome, but never transcript text, prompt text, Memory body, file path, credential, or provider thread ID.
 

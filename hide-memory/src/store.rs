@@ -13,7 +13,8 @@ use crate::{
     MEMORY_BODY_LIMIT_CHARS, PROMPT_ITEM_LIMIT, SESSION_START_ITEM_LIMIT, redact,
 };
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
+const MEMORY_DISCLOSURE_VERSION: i64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoreMode {
@@ -475,8 +476,8 @@ impl MemoryStore {
     ) -> Result<(), MemoryError> {
         self.require_writer()?;
         let changed = self.connection.execute(
-            "UPDATE projects SET enabled=?2, disclosure_accepted_at_ms=CASE WHEN ?3 THEN COALESCE(disclosure_accepted_at_ms, ?4) ELSE disclosure_accepted_at_ms END, updated_at_ms=?4 WHERE id=?1",
-            params![project_id, enabled as i64, disclosure_accepted as i64, now_ms()],
+            "UPDATE projects SET enabled=?2, disclosure_accepted_at_ms=CASE WHEN ?3 THEN ?4 ELSE disclosure_accepted_at_ms END, disclosure_version=CASE WHEN ?3 THEN ?5 ELSE disclosure_version END, updated_at_ms=?4 WHERE id=?1",
+            params![project_id, enabled as i64, disclosure_accepted as i64, now_ms(), MEMORY_DISCLOSURE_VERSION],
         )?;
         if changed == 0 {
             return Err(MemoryError::ProjectMissing);
@@ -485,12 +486,12 @@ impl MemoryStore {
     }
 
     pub fn project_state(&self, project_id: &str) -> Result<ProjectMemoryState, MemoryError> {
-        let (enabled, disclosure): (i64, Option<u64>) = self
+        let (enabled, disclosure, disclosure_version): (i64, Option<u64>, i64) = self
             .connection
             .query_row(
-                "SELECT enabled, disclosure_accepted_at_ms FROM projects WHERE id=?1",
+                "SELECT enabled, disclosure_accepted_at_ms, disclosure_version FROM projects WHERE id=?1",
                 [project_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?
             .ok_or(MemoryError::ProjectMissing)?;
@@ -500,7 +501,9 @@ impl MemoryStore {
         Ok(ProjectMemoryState {
             project_id: project_id.to_owned(),
             enabled: enabled != 0,
-            disclosure_accepted_at_unix_ms: disclosure,
+            disclosure_accepted_at_unix_ms: (disclosure_version == MEMORY_DISCLOSURE_VERSION)
+                .then_some(disclosure)
+                .flatten(),
             active_count,
             conflict_count,
             capacity_reached: live_count >= ACTIVE_MEMORY_LIMIT,
@@ -1302,6 +1305,10 @@ COMMIT;"#,
     }
     if version == 2 {
         migrate_version_two(connection)?;
+        version = 3;
+    }
+    if version == 3 {
+        migrate_version_three(connection)?;
         version = SCHEMA_VERSION;
     }
     if version != SCHEMA_VERSION {
@@ -1343,7 +1350,7 @@ fn migrate_version_two(connection: &Connection) -> Result<(), MemoryError> {
             connection.execute("DELETE FROM memory_items WHERE id=?1", [&item_id])?;
         }
         rebuild_search_projection(connection)?;
-        connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        connection.pragma_update(None, "user_version", 3)?;
         Ok(())
     })();
     if let Err(error) = result {
@@ -1352,6 +1359,28 @@ fn migrate_version_two(connection: &Connection) -> Result<(), MemoryError> {
     }
     connection.execute_batch("COMMIT")?;
     purge_deleted_pages(connection)
+}
+
+fn migrate_version_three(connection: &Connection) -> Result<(), MemoryError> {
+    connection.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| -> Result<(), MemoryError> {
+        connection.execute(
+            "ALTER TABLE projects ADD COLUMN disclosure_version INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        // The disclosure now names stored-Memory retransmission. Existing
+        // projects must see and accept that material change before analysis or
+        // injection resumes; the derived data itself remains intact.
+        connection.execute("UPDATE projects SET enabled=0", [])?;
+        connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error);
+    }
+    connection.execute_batch("COMMIT")?;
+    Ok(())
 }
 
 fn rebuild_search_projection(connection: &Connection) -> Result<(), MemoryError> {
@@ -1430,7 +1459,7 @@ fn check_projection_integrity(connection: &Connection) -> Result<(), MemoryError
 }
 
 const SCHEMA: &str = r#"
-CREATE TABLE projects(id TEXT PRIMARY KEY,root TEXT NOT NULL,device_id TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,disclosure_accepted_at_ms INTEGER,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL);
+CREATE TABLE projects(id TEXT PRIMARY KEY,root TEXT NOT NULL,device_id TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,disclosure_accepted_at_ms INTEGER,created_at_ms INTEGER NOT NULL,updated_at_ms INTEGER NOT NULL,disclosure_version INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE session_sources(id TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,locator TEXT NOT NULL,checkout_path TEXT NOT NULL,started_at_ms INTEGER,updated_at_ms INTEGER NOT NULL,unavailable_reason TEXT,PRIMARY KEY(project_id,provider,id));
 CREATE TABLE session_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(project_id,provider,session_id));
 CREATE TABLE hook_projection_cursors(project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,session_id TEXT NOT NULL,byte_offset INTEGER NOT NULL,pending_bytes BLOB NOT NULL,last_content_hash TEXT,updated_at_ms INTEGER NOT NULL,PRIMARY KEY(project_id,provider,session_id));
@@ -2580,6 +2609,7 @@ mod tests {
                 r#"
                 PRAGMA foreign_keys=OFF;
                 {SCHEMA}
+                ALTER TABLE projects DROP COLUMN disclosure_version;
                 ALTER TABLE analysis_batches DROP COLUMN analysis_provider;
                 DROP TABLE session_sources;
                 CREATE TABLE session_sources(id TEXT NOT NULL,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,provider TEXT NOT NULL,locator TEXT NOT NULL,checkout_path TEXT NOT NULL,first_human_request TEXT,started_at_ms INTEGER,updated_at_ms INTEGER NOT NULL,unavailable_reason TEXT,PRIMARY KEY(project_id,provider,id));
@@ -2642,7 +2672,7 @@ mod tests {
         let connection = Connection::open(&path).unwrap();
         connection
             .execute_batch(&format!(
-                "PRAGMA foreign_keys=ON; {SCHEMA} PRAGMA user_version=2;"
+                "PRAGMA foreign_keys=ON; {SCHEMA} ALTER TABLE projects DROP COLUMN disclosure_version; PRAGMA user_version=2;"
             ))
             .unwrap();
         connection
@@ -2699,6 +2729,63 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn disclosure_change_disables_existing_projects_until_current_copy_is_accepted() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "{SCHEMA} ALTER TABLE projects DROP COLUMN disclosure_version; PRAGMA user_version=3;"
+            ))
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects VALUES('p','/fixture','local',1,123,1,1)",
+                [],
+            )
+            .unwrap();
+
+        migrate(&connection).unwrap();
+
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT enabled,disclosure_accepted_at_ms,disclosure_version FROM projects WHERE id='p'",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, u64>(1)?, row.get::<_, i64>(2)?)),
+                )
+                .unwrap(),
+            (0, 123, 0)
+        );
+
+        let store = MemoryStore {
+            connection,
+            mode: StoreMode::Writer,
+            path: PathBuf::new(),
+        };
+        assert!(
+            store
+                .project_state("p")
+                .unwrap()
+                .disclosure_accepted_at_unix_ms
+                .is_none()
+        );
+        store.set_enabled("p", true, true).unwrap();
+        let state = store.project_state("p").unwrap();
+        assert!(state.enabled);
+        assert!(state.disclosure_accepted_at_unix_ms.is_some());
+        assert_eq!(
+            store
+                .connection
+                .query_row(
+                    "SELECT disclosure_version FROM projects WHERE id='p'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            MEMORY_DISCLOSURE_VERSION
+        );
     }
 
     #[test]

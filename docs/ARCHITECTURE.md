@@ -37,6 +37,8 @@ Official Mem0 OSS v2.1.0 does not execute in Hide and is not a runtime dependenc
 Its pinned extraction and update prompt assets are retained only as audited design-reference provenance under `hide-memory/reference/mem0-v2.1.0/`.
 `hide-memory/hide-native-engine-reference.json` records the exact upstream commit, audited source hashes, local prompt-asset hashes, and the explicit non-runtime role.
 Every Hide-native analysis result is a proposal only: the write service validates Project identity, provenance, redaction, lifecycle, capacity, relation authority, and transaction boundaries before any durable change.
+Normalized session events and the bounded active-Memory comparison set both pass through the current local redactor at the final provider egress boundary.
+The disclosure acceptance is versioned; a material egress-copy change disables previously enabled Projects until the operator accepts the current disclosure, without deleting their local data.
 Prompt retrieval confirms lexical or meaningful cwd/path overlap before ranking; salience, extraction confidence, and recency only break ties after relevance and are never presented as semantic similarity.
 The app owns the only writer connection.
 Hook helpers and render-facing reads open read-only connections, fail closed on schema or projection drift, and never rebuild the index in the prompt path.

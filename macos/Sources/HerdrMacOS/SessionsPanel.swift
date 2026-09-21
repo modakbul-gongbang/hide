@@ -73,6 +73,7 @@ enum SessionsPresentation {
             : "Hide sends session content to \(selected) first and may fall back to \(fallbacks.joined(separator: " or ")). Either request may use your subscription."
         return [
             route,
+            "Hide may send stored Memory entries with later session analysis to find duplicates, updates, and conflicts, including through the fallback above.",
             "Each provider's retention and deletion terms apply. Hide cannot guarantee deletion after content is sent.",
             "Derived memories stay on this Mac until you Forget them or delete this Project's Memory data.",
             "Known credential patterns are redacted before provider transmission and excluded from stored memories and search data.",

@@ -108,7 +108,7 @@ struct SessionsPresentationTests {
         #expect(SessionsPresentation.readyLabel(3) == "Project Memory ready · 3")
     }
 
-    @Test func disclosureNamesTheSelectedProviderFallbackAndRedactionBoundary() {
+    @Test func disclosureNamesProviderFallbackStoredMemoryEgressAndRedactionBoundary() {
         let backgroundAI = CoreBackgroundAI(
             provider: "codex",
             chosen: true,
@@ -127,8 +127,10 @@ struct SessionsPresentationTests {
         let statements = SessionsPresentation.memoryDisclosure(backgroundAI)
 
         #expect(statements[0] == "Hide sends session content to Codex first and may fall back to Claude Code. Either request may use your subscription.")
-        #expect(statements[1].contains("Each provider's retention"))
-        #expect(statements[3].contains("redacted before provider transmission"))
+        #expect(statements[1].contains("stored Memory entries"))
+        #expect(statements[1].contains("fallback"))
+        #expect(statements[2].contains("Each provider's retention"))
+        #expect(statements[4].contains("redacted before provider transmission"))
     }
 
     @Test func analysisCopyDistinguishesRunningFromPausedAndCompleted() {
