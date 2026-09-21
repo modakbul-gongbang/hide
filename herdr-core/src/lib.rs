@@ -29,6 +29,7 @@ mod recent_closed;
 pub mod remote;
 pub mod remote_files;
 mod runtime;
+pub mod schema;
 mod session_sync;
 mod sidebar;
 mod terminal_attachments;
@@ -40,7 +41,8 @@ mod worktrees;
 mod zoneinfo;
 
 pub use ffi::{
-    HerdrBytes, HerdrCore, herdr_core_create, herdr_core_destroy, herdr_core_dispatch,
+    Core, HerdrBytes, HerdrCore, herdr_core_create, herdr_core_destroy, herdr_core_dispatch,
     herdr_core_free_bytes, herdr_core_on_change, herdr_core_snapshot,
 };
-pub use model::{CoreOptions, SCHEMA_VERSION, Snapshot};
+pub use model::{CoreOptions, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload};
+pub use runtime::serialize_snapshot_delta;

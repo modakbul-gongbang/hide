@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hide.dev/contracts/hided-ws.schema.json",
+  "title": "hided WebSocket contract",
+  "description": "Handshake, server frames, close reason codes, and client dispatch events for hided.",
+  "oneOf": [
+    { "$ref": "#/$defs/handshake" },
+    { "$ref": "#/$defs/serverFrame" },
+    { "$ref": "#/$defs/clientEvent" }
+  ],
+  "$defs": {
+    "handshake": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token", "schema_version"],
+      "properties": {
+        "token": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]+$" },
+        "schema_version": { "type": "integer", "const": 2 },
+        "have_revision": { "type": "integer", "minimum": 0 },
+        "have_terminal_sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "serverFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "payload"],
+      "properties": {
+        "type": { "type": "string", "enum": ["snapshot", "delta", "error"] },
+        "payload": { "type": "object" },
+        "message": { "type": "string" }
+      }
+    },
+    "clientEvent": {
+      "type": "object",
+      "required": ["schema_version", "kind", "payload"],
+      "properties": {
+        "schema_version": { "type": "integer", "const": 2 },
+        "kind": { "type": "string" },
+        "payload": { "type": "object" }
+      }
+    },
+    "closeReason": {
+      "type": "string",
+      "enum": ["invalid_token", "origin_not_allowed", "schema_mismatch", "client_limit"]
+    },
+    "closeCode": {
+      "type": "integer",
+      "enum": [4001, 4002, 4003, 4004]
+    },
+    "health": {
+      "type": "object",
+      "required": ["pid", "version", "schema_version", "clients"],
+      "properties": {
+        "pid": { "type": "integer" },
+        "version": { "type": "string" },
+        "schema_version": { "type": "integer", "const": 2 },
+        "clients": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    }
+  }
+}

@@ -5,7 +5,7 @@ The scripts named here are the executable authority; `scripts/tests/test_toolcha
 
 ## One rule: build output lives in the worktree
 
-Cargo writes to `target/` and SwiftPM to `macos/.build/`, both at their default locations inside the checkout and both ignored by Git.
+Cargo writes to `target/`, SwiftPM to `macos/.build/`, and the web shell to `web/node_modules/` and `web/dist/`, all at their default locations inside the checkout and all ignored by Git.
 Nothing a checkout builds is written anywhere else, so `git worktree remove` is the whole cleanup, and no cache can outlive the work that produced it.
 
 Two facts make the default location the only correct one.
@@ -18,6 +18,9 @@ Redirecting a release build with `CARGO_TARGET_DIR`, `--target-dir` or `--build-
 `scripts/verify-cargo.sh` therefore sets `CARGO_TARGET_DIR` to the worktree's own `target/` on every invocation, whatever the caller carried.
 
 The cost of this layout is one full build cache per worktree, which is why a worktree is removed when its branch lands rather than kept around.
+
+A release `hided` carries `web/dist` inside the binary: `hided/build.rs` embeds every file under it when the profile is `release` and fails the build when `web/dist/index.html` is missing, so a release build is always `pnpm --dir web build` first, then `cargo build --release -p hided`.
+A debug `hided` embeds nothing and reads `web/dist` from disk at run time (`HIDED_UI_DIR` overrides the lookup), so a rebuilt web shell shows up without a cargo rebuild.
 On 2026-09-09 one abandoned worktree held 5.3 GB, over half of the 10 GB across all eight.
 An earlier design sent test builds to `/tmp/hide-verify-<uid>/<hash>/`, keyed by checkout path so a run judging the tree would not dirty it; the reason had lapsed once the harness scored only tracked files, and the caches it left behind reached 7.5 GB with no worktree owning them.
 Hide's own merged-worktree cleanup had grown a step that forked `bash` to compute and delete that path, which this layout makes unnecessary.

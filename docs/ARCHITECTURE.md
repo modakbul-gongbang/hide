@@ -216,3 +216,27 @@ There is no installed-CLI candidate list and no version floor; the pin is exact.
 The Swift shell reads the manifest at launch, and `scripts/fetch-herdr-runtime.sh` downloads and verifies the asset against it for both `scripts/build-app.sh` and `macos/scripts/build_dev_app.sh`; `scripts/check-herdr-pin-single-source.sh` fails when any of those restates the value.
 Move the pin with `scripts/bump-herdr.sh <release-tag>` (a stable `v0.8.3` or a `preview-...` tag), which verifies the asset, writes the contract that binary reports, and rewrites the tag, version and digest tokens in the README, install guide and third-party notice.
 `.github/workflows/herdr-update.yml` polls for a new stable release weekly and opens a PR with that bump after running both test suites; it never merges, because the core's Herdr behavior assumptions are only asserted against fixtures this repository wrote.
+
+## hided and the WebSocket boundary
+
+`hided` is the product daemon that owns one `herdr-core::Core` on its creating thread.
+Axum workers send dispatch and snapshot commands over a channel; they never call create/dispatch/snapshot/on_change/destroy from another thread.
+It binds `127.0.0.1` only.
+The WebSocket handshake is the client's first JSON frame `{token, schema_version, have_revision?, have_terminal_sequence?}`.
+A mismatched token, Origin, or schema version, or a ninth concurrent client, is closed with a reason code (`invalid_token`, `origin_not_allowed`, `schema_mismatch`, `client_limit`) and a diagnostic log line.
+After a valid handshake the daemon reads from the cursors the client sent, using the same `have_revision` / `have_terminal_sequence` as `herdr_core_snapshot`, and then one delta frame per core notification burst.
+A client with cursor 0 gets a self-contained `snapshot`; a reconnecting client resumes with a `delta` that carries only what changed while it was away.
+When the core cannot serve the cursor, because it dropped terminal chunks the client never saw or the client's revision is ahead of the core's after a daemon restart, the daemon re-reads from zero and sends a `snapshot` (`server::classify_frame` owns that rule).
+The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
+The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
+Client frames are core events (`schema_version`, `kind`, `payload`).
+HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
+No HTTP request dispatches a core event.
+`hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client, and `hide serve --keep-alive`.
+It does not start a Herdr server.
+A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a debug build reads the directory from disk, so `pnpm build` shows up without a cargo rebuild.
+The core spawns `herdr terminal session control` for every pane attach and refuses without a binary, so `hided` resolves one from `HERDR_BIN_PATH`, the variable Herdr sets in every pane it manages, then from the first `herdr` on PATH; with neither it logs `herdr_bin.missing` and no pane terminal can attach.
+Swift coexistence (PRD B5) is decided per socket, not per process: `hided/src/coexist.rs` finds the `HerdrMacOS` process, reads its environment from the kernel, applies the shell's own socket rule (`HERDR_SOCKET_PATH`, else `$HOME/.config/herdr/herdr.sock`), and only an attach to that same socket prompts, or refuses without a TTY.
+An isolated socket never prompts, because the shell on the operator's socket next to a daemon on a private one is the ordinary e2e and measurement arrangement.
+The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.
+With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.

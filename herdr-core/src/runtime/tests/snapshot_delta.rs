@@ -195,11 +195,11 @@ fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
     let ffi = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ffi.rs"))
         .expect("the ffi source");
     let entry_point = ffi
-        .split_once("pub extern \"C\" fn herdr_core_snapshot(")
+        .split_once("pub fn snapshot_delta(")
         .expect("the snapshot entry point")
         .1;
     let body = entry_point
-        .split_once("#[unsafe(no_mangle)]")
+        .split_once("pub fn on_change")
         .expect("the entry point after it")
         .0;
     assert!(

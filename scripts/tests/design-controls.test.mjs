@@ -14,7 +14,7 @@ function fixture(t, git = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-design-test-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   fs.mkdirSync(path.join(root, 'scripts'));
-  for (const file of ['check-design-contract.mjs', 'check-design-controls.mjs', 'check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-pen.mjs', 'swift-source-tokens.mjs', 'pen-tokens.mjs', 'pen-bands.mjs', 'pen-foundations.mjs', 'pen-canvas.mjs']) fs.copyFileSync(path.join(repository, 'scripts', file), path.join(root, 'scripts', file));
+  for (const file of ['check-design-contract.mjs', 'check-design-controls.mjs', 'check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-pen.mjs', 'swift-source-tokens.mjs', 'pen-tokens.mjs', 'pen-bands.mjs', 'pen-foundations.mjs', 'pen-canvas.mjs', 'check-web-tokens.mjs', 'gen-tokens.mjs']) fs.copyFileSync(path.join(repository, 'scripts', file), path.join(root, 'scripts', file));
   // Minimal source fixtures exercise checker CLI behavior without depending on
   // whichever product UI happens to be present or being edited in the repo.
   for (const owner of ['HideTheme', 'HideKeycap', 'HideBalloon', 'HideIconButton', 'HideBadge', 'HideFormPicker', 'HideTextButtonStyle', 'HideChoiceGroup', 'HideSearchField', 'HideInputSurface', 'HideCheckboxStyle', 'HideInteractiveButtonStyle', 'HideEmptyState', 'HideMenuChipLabel']) {
@@ -32,6 +32,12 @@ function fixture(t, git = false) {
     'CheckoutOverview.swift': {kind: 'legacy', reason: 'Fixture legacy control', rules: {'control:Picker': 1}},
   }}));
   canvas(root);
+  // The web token lane reads design/tokens.json and compares the generated
+  // CSS; an empty token set keeps the fixture independent of the product theme.
+  fs.mkdirSync(path.join(root, 'design'), {recursive: true});
+  fs.writeFileSync(path.join(root, 'design/tokens.json'), JSON.stringify({tokens: {}}));
+  const generated = spawnSync(process.execPath, ['scripts/gen-tokens.mjs'], {cwd: root, encoding: 'utf8'});
+  assert.equal(generated.status, 0, generated.stderr);
   fs.cpSync(path.join(repository, '.githooks'), path.join(root, '.githooks'), {recursive: true});
   if (git) { command(root, ['init', '--quiet']); command(root, ['add', '.']); }
   return root;

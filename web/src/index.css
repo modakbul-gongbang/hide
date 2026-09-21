@@ -1,0 +1,21 @@
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-primary);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.xterm,
+.xterm-viewport,
+.xterm-screen {
+  height: 100%;
+}

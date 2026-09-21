@@ -8,8 +8,10 @@ Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host 
 
 ## Repository Layout
 
-- `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`.
-- `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against. It projects Herdr-owned pane topology and owns Hide's UI state; the shell owns neither.
+- `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`. It coexists with the web shell until S6.
+- `hided/` - the product daemon and `hide` CLI. It links `herdr-core` on an owner thread, serves loopback HTTP (`/`, `/assets`, `/health`) and a token-gated WebSocket for dispatch and snapshot deltas.
+- `web/` - the React web shell (Vite, zustand, xterm.js). Build output is `web/dist/` inside this worktree and is gitignored.
+- `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against, plus the pub Rust API `hided` uses. It projects Herdr-owned pane topology and owns Hide's UI state; the shell owns neither.
 - `hide-agent-hooks/` - the only code that writes a configuration file the operator owns (each agent runtime's hook file). A separate crate because a `settings.json` write must never sit behind the render lock; see `docs/agent-hooks.md`.
 - `hide-ai/` - the provider boundary for background AI features, backed by the user's own logged-in CLIs; see `docs/AI_PROVIDERS.md`.
 - `hide-session/` - shared local Claude and Codex session location, incremental reading, and conversation parsing used by the plugin and core usage fallback.
@@ -122,7 +124,7 @@ Conventions:
 ## Design Reference
 
 Read `DESIGN.md` before changing any surface a user looks at; it is the design source of truth for the macOS shell.
-`HideTheme` in `macos/Sources/HerdrMacOS/HideTheme.swift` carries its tokens into the shell: a new color, radius, or spacing value is added there and used from there, never written inline, and a case the system does not cover is raised as a proposed addition rather than settled with a one-off value.
+`design/tokens.json` is the numeric token authority. `scripts/gen-tokens.mjs` writes `web/src/tokens.css` and must keep `HideTheme.swift` in sync for the coexistence period: a new color, radius, or spacing value is added to `design/tokens.json` and used from the generated CSS or `HideTheme`, never written inline, and a case the system does not cover is raised as a proposed addition rather than settled with a one-off value.
 Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception.
 Run `node scripts/check-design-contract.mjs` before delivery; it is the entrypoint `design-contract.yml` runs.
 
@@ -133,7 +135,7 @@ Only `System /` and `Component /` top-level sheets belong there.
 Product screens, proposals, audits and scratch do not.
 Read [DESIGN.md: Design library and exploration](DESIGN.md#design-library-and-exploration) for ownership, human review and local scratch.
 
-`HideTheme.swift` remains the numeric token authority.
+`design/tokens.json` remains the numeric token authority.
 Use `$--` variables for supported visual properties; propose missing tokens in `HideTheme` rather than introducing one-off values.
 Run `node scripts/gen-pen.mjs` after editing the library; it refreshes mapped variables and Foundations without moving authored sheets.
 Run `node scripts/check-design-contract.mjs` before delivery.

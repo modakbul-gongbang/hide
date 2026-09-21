@@ -388,6 +388,22 @@ The run verdict must include:
 
 Use a qualified verdict when coverage is bounded: “no whole-body blanking observed in these recordings” is supportable; “all performance issues resolved” is not.
 
+## Web shell echo and frame measurement
+
+`scripts/web-shell-measure/run.sh` measures the product `hided` the way the S0 spike measured its prototype, so the numbers stay comparable to the S0 Swift baseline.
+It owns every process it starts: an isolated pinned Herdr server on a private socket under `/tmp` (`isolated-env.sh`, the same routing table as section 3), one workspace with a `stty -echo -icanon; cat` pane, the release `hided` with its embedded `web/dist`, and one Google Chrome with a CDP port on the page opened with `?probe=1`.
+The operator's socket is only read, before and after, for the topology counts written beside the results.
+
+Echo (PRD B8) is three trials of fifty `herdr pane send-text` markers.
+`t0` is the CLI return timestamp and `t1` is the xterm write completion that first shows the marker in the parsed buffer, read through `window.__hideProbe`; the sample is `t1 - t0`, nearest-rank percentiles, the median of the three trial p95s against the S0 Swift baseline p95 plus 5 ms.
+The baseline is reused from the S0 report rather than re-measured, and `summarize.py` carries it as a named constant so a rerun does not quietly move it.
+
+Frames (PRD B12) is one 120 s window with the pane printing a line every 8 ms while a `requestAnimationFrame` loop injected through CDP records every frame's `dt`; the result is the fraction of frames over 16.7 ms, the WebSocket frame count the page received during the window, and the pane tail that proves the driver ran.
+This is a live driven pipeline, not the in-page replay the spike used: a replay mode would put spike code into the product, and the threshold is absolute, so the live run is the stricter measurement.
+
+Run it as `HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh` after `pnpm --dir web build` and `cargo build --release -p hided`; the run directory keeps `identity.txt` (head, dirty count, binary hash, Herdr and Chrome versions, load), `echo-*.json`, `frames.json`, both summaries and the process list at cleanup.
+A Chrome window opens on the desktop for the run; the loop throttles in an occluded or minimized window, so leave it visible and report the load recorded beside each trial.
+
 ## Projects and Overview cost contract
 
 Shared control hover, pressed and keyboard-focus appearance stays in local SwiftUI state.

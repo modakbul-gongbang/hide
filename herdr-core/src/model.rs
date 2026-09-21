@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 2;
@@ -1095,7 +1096,7 @@ pub struct TerminalSnapshot {
     pub panes: Vec<TerminalPaneSnapshot>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct TerminalChunk {
     pub pane_id: String,
     pub sequence: u64,
@@ -1112,14 +1113,14 @@ pub struct TerminalInputTrace {
     pub started_ns: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct TerminalInputSent {
     pub id: u64,
     pub milliseconds: f64,
     pub outcome: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct TerminalFrame {
     pub width: u16,
     pub height: u16,

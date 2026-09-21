@@ -1,0 +1,7 @@
+packages:
+  - web
+
+# Build scripts run only for these packages; pnpm 10 reads this at the
+# workspace root, not from a member package.json.
+onlyBuiltDependencies:
+  - esbuild
