@@ -1,4 +1,5 @@
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
+import { noteArrival } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
 
 export type DispatchFn = (event: {
@@ -60,6 +61,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
       );
     });
     ws.addEventListener("message", (event) => {
+      noteArrival();
       const frame = JSON.parse(String(event.data)) as {
         type: string;
         payload?: { revision?: number; terminal_sequence?: number };

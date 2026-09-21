@@ -4,6 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 import { mapModifiedKey } from "./keys";
+import { installProbe, noteWriteComplete, probeEnabled } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
 import type { DispatchFn } from "./ws";
 
@@ -72,6 +73,12 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
     }
     termRef.current = term;
     termRefForReset = term;
+    if (probeEnabled()) {
+      installProbe(
+        () => termRef.current,
+        () => useShellStore.getState().focusedPaneId,
+      );
+    }
     const sendGrid = (newView: boolean) => {
       fit.fit();
       const id = useShellStore.getState().focusedPaneId;
@@ -130,7 +137,12 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
     term.reset();
     writers.clear();
     pending.delete(paneId);
-    writers.set(paneId, (data) => term.write(data));
+    writers.set(
+      paneId,
+      probeEnabled()
+        ? (data) => term.write(data, () => noteWriteComplete(term))
+        : (data) => term.write(data),
+    );
     dispatch({
       schema_version: 2,
       kind: "terminal_viewport",
