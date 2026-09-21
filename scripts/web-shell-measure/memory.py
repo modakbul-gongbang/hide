@@ -2,7 +2,7 @@
 """Resident memory of the measured processes at one instant.
 
 usage: memory.py <phase> <chrome-pid> <hided-pid> <cdp-port>
--> {phase, chrome_tree_rss_kb, chrome_processes, hided_rss_kb, page: {js_heap_used_bytes, live_terminals}}
+-> {phase, chrome_tree_rss_kb, chrome_processes, chrome_renderer_rss_kb, processes, hided_rss_kb, page: {js_heap_used_bytes, live_terminals, pane_views}}
 
 Chrome's renderer and GPU processes are children of the browser process, so
 the tree sum is what the tab costs; the page's own JS heap comes from
@@ -25,6 +25,15 @@ def children(pid):
 def rss_kb(pid):
     out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
     return int(out) if out else 0
+
+
+def chrome_type(pid):
+    """The `--type=` a Chrome child was started with; the browser process has none."""
+    out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+    for word in out.split():
+        if word.startswith("--type="):
+            return word[len("--type="):]
+    return "browser"
 
 
 def page_metrics(port):
@@ -56,10 +65,15 @@ def page_metrics(port):
 def main():
     phase, chrome_pid, hided_pid, port = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
     tree = [chrome_pid] + children(chrome_pid)
+    processes = [{"pid": p, "type": chrome_type(p), "rss_kb": rss_kb(p)} for p in tree]
     doc = {
         "phase": phase,
-        "chrome_tree_rss_kb": sum(rss_kb(p) for p in tree),
+        "chrome_tree_rss_kb": sum(entry["rss_kb"] for entry in processes),
         "chrome_processes": len(tree),
+        # The page's own renderer is the tab's cost; the rest is the browser,
+        # GPU, network and utility processes any tab shares.
+        "chrome_renderer_rss_kb": [entry["rss_kb"] for entry in processes if entry["type"] == "renderer"],
+        "processes": processes,
         "hided_rss_kb": rss_kb(hided_pid),
         "page": page_metrics(port),
     }
