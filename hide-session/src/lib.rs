@@ -109,7 +109,7 @@ pub struct ConversationEvent {
     /// True only when provider-owned transcript metadata identifies injected
     /// context. Text prefixes can classify display semantics but never set
     /// this trust bit.
-    pub provider_injected: bool,
+    provider_injected: bool,
     pub at_unix_ms: u64,
     pub text: String,
 }
@@ -128,6 +128,10 @@ impl ConversationEvent {
             at_unix_ms,
             text: text.into(),
         }
+    }
+
+    pub const fn is_provider_injected(&self) -> bool {
+        self.provider_injected
     }
 
     fn with_provider_injected(mut self, provider_injected: bool) -> Self {
@@ -1390,7 +1394,7 @@ mod tests {
         assert_eq!(parsed.events.len(), 1);
         assert_eq!(parsed.events[0].role, "developer");
         assert_eq!(parsed.events[0].kind, EventKind::Injected);
-        assert!(parsed.events[0].provider_injected);
+        assert!(parsed.events[0].is_provider_injected());
     }
 
     #[test]
@@ -1441,7 +1445,7 @@ mod tests {
             parse_codex_events(&malformed).events[0].kind,
             EventKind::Human
         );
-        assert!(!parse_codex_events(&codex).events[0].provider_injected);
+        assert!(!parse_codex_events(&codex).events[0].is_provider_injected());
     }
 
     #[test]

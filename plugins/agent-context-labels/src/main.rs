@@ -212,18 +212,13 @@ fn main() -> Result<()> {
                 return Err(anyhow!("provider {provider} cannot answer"));
             }
             let events = [
-                SessionEvent {
-                    role: "user",
-                    kind: EventKind::Human,
-                    at_unix_ms: 0,
-                    text: "Add compact task labels".to_owned(),
-                },
-                SessionEvent {
-                    role: "assistant",
-                    kind: EventKind::Assistant,
-                    at_unix_ms: 0,
-                    text: "Implementing the labels and waiting for review.".to_owned(),
-                },
+                SessionEvent::new("user", EventKind::Human, 0, "Add compact task labels"),
+                SessionEvent::new(
+                    "assistant",
+                    EventKind::Assistant,
+                    0,
+                    "Implementing the labels and waiting for review.",
+                ),
             ];
             let context = analysis_context(&events);
             let verdict = analyze_once(&router, "verify", &context)?;

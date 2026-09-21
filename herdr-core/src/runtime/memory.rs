@@ -1027,14 +1027,14 @@ mod scope_tests {
             .into_iter()
             .next()
             .unwrap();
-        assert!(!event.provider_injected);
+        assert!(!event.is_provider_injected());
         assert!(
             trusted_memory_receipt(
                 &store,
                 &project.id,
                 "codex",
                 "session-1",
-                event.provider_injected,
+                event.is_provider_injected(),
                 &event.text,
             )
             .is_none()
@@ -1521,7 +1521,7 @@ fn update_hook_projection(
             project_id,
             provider,
             &session.id,
-            event.provider_injected,
+            event.is_provider_injected(),
             &event.text,
         ) {
             let turn_id = (receipt.event != HookEvent::SessionStart.name())
@@ -1660,7 +1660,7 @@ fn analyze_session(
             project_id,
             provider,
             &session.id,
-            event.provider_injected,
+            event.is_provider_injected(),
             &event.text,
         ) {
             let turn_id = (receipt.event != HookEvent::SessionStart.name())
@@ -2117,7 +2117,7 @@ fn load_session_detail(
                 project_id,
                 &row.provider,
                 &row.id,
-                event.provider_injected,
+                event.is_provider_injected(),
                 &event.text,
             );
             let attached = receipt.as_ref().map(|receipt| receipt.count);
