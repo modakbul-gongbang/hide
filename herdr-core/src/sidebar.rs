@@ -677,15 +677,15 @@ pub fn apply_lineage(
     let mut descendant_counts =
         vec![crate::model::DescendantCountsSnapshot::default(); agents.len()];
     let mut descendant_signals = vec![BTreeSet::new(); agents.len()];
-    for index in 0..agents.len() {
+    for (index, agent) in agents.iter().enumerate() {
         let mut ancestors = Vec::new();
         let mut root = index;
         while let Some(parent) = parents[root] {
             ancestors.push(parent);
             root = parent;
         }
-        let state = descendant_state(&agents[index]);
-        let signals = descendant_signals_of(&agents[index]);
+        let state = descendant_state(agent);
+        let signals = descendant_signals_of(agent);
         for ancestor in &ancestors {
             state.count_into(&mut descendant_counts[*ancestor]);
             descendant_signals[*ancestor].extend(signals.iter().cloned());
