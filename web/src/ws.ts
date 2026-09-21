@@ -35,7 +35,8 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
   let reconnectTimer: number | undefined;
 
   const dispatch: DispatchFn = (event) => {
-    socket?.send(JSON.stringify(event));
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify(event));
   };
 
   const open = () => {

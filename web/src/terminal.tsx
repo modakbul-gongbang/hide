@@ -129,10 +129,8 @@ export function TerminalPane({ dispatch }: { dispatch: DispatchFn }) {
     if (!term || !paneId) return;
     term.reset();
     writers.clear();
-    writers.set(paneId, (data) => term.write(data));
-    const queued = pending.get(paneId) ?? [];
     pending.delete(paneId);
-    for (const bytes of queued) term.write(bytes);
+    writers.set(paneId, (data) => term.write(data));
     dispatch({
       schema_version: 2,
       kind: "terminal_viewport",

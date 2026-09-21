@@ -2,8 +2,10 @@ import { useShellStore, type AgentRow } from "./store";
 import type { DispatchFn } from "./ws";
 
 function herdrRowLabel(state: string | null): string | null {
-  if (state === "unconfigured") return "Herdr 소켓 없음";
-  if (state === "not_connected" || state === "unreachable") return "Herdr 무응답";
+  if (state === "unconfigured" || state === "socket_missing") return "Herdr 소켓 없음";
+  if (state === "not_connected" || state === "unreachable" || state === "stale") {
+    return "Herdr 무응답";
+  }
   return null;
 }
 

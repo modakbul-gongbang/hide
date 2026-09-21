@@ -116,9 +116,13 @@ fn dev(mut env: Env) -> Result<(), String> {
     if env.vite_origin.is_none() {
         env.vite_origin = Some("http://127.0.0.1:5173".into());
     }
+    if env.bind.port() == 0 {
+        env.bind = "127.0.0.1:9876".parse().expect("loopback");
+    }
     confirm_coexist(&env)?;
     println!(
-        "hide dev: start Vite with VITE proxy to this daemon, origin {}",
+        "HIDED_ORIGIN=http://127.0.0.1:{}  Vite origin {}",
+        env.bind.port(),
         env.vite_origin.as_deref().unwrap_or("")
     );
     serve(env, true)
