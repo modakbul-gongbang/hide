@@ -21,6 +21,32 @@ use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 
 const FALLBACK_INDEX: &str = include_str!("../fallback-ui/index.html");
 
+/// The web shell a release binary carries; empty in a debug build, which
+/// reads `web/dist` from disk instead (`build.rs`).
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/ui_embed.rs"));
+}
+
+/// Whether this binary carries the web shell (a release build).
+pub fn has_embedded_ui() -> bool {
+    !embedded::FILES.is_empty()
+}
+
+/// The embedded file for a request path: `/` is `index.html`, anything else
+/// is an exact relative path, so a traversal segment never matches a key.
+pub fn embedded_file(path: &str) -> Option<(&'static str, &'static [u8])> {
+    let relative = path.trim_start_matches('/');
+    let name = if relative.is_empty() {
+        "index.html"
+    } else {
+        relative
+    };
+    embedded::FILES
+        .iter()
+        .find(|(file, _)| *file == name)
+        .map(|(file, bytes)| (*file, *bytes))
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub core: Arc<CoreHandle>,
@@ -118,6 +144,16 @@ fn confined_file(root: &std::path::Path, relative: &str) -> Option<std::path::Pa
 
 async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
     let path = uri.path();
+    if has_embedded_ui() {
+        return match embedded_file(path) {
+            Some((name, bytes)) => Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", mime_for(std::path::Path::new(name)))
+                .body(Body::from(bytes))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+            None => StatusCode::NOT_FOUND.into_response(),
+        };
+    }
     if let Some(dir) = &state.ui_dir {
         let relative = path.trim_start_matches('/');
         if let Some(candidate) = confined_file(dir, relative)

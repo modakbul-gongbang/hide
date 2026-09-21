@@ -120,7 +120,11 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         keep_alive: env.keep_alive,
         idle_secs: env.idle_secs,
         shutdown: Arc::clone(&shutdown),
-        ui_dir: find_ui_dir(),
+        ui_dir: if server::has_embedded_ui() {
+            None
+        } else {
+            find_ui_dir()
+        },
         version: VERSION,
     };
     let env_state_dir = env.state_dir.clone();
