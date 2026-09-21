@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { listingRootFor, localRefusal, readRecent, rememberRecent, suggestions } from "./registration";
 
-const home = "/Users/me";
-const registrations = [{ id: "w1", label: "hide", path: "/Users/me/hide", device_id: "local", pinned: false }];
+const home = "/home/me";
+const registrations = [{ id: "w1", label: "hide", path: "/home/me/hide", device_id: "local", pinned: false }];
 const listing = {
-  root_path: "/Users/me/projects",
+  root_path: "/home/me/projects",
   entries: [
-    { name: "alpha", path: "/Users/me/projects/alpha" },
-    { name: "Beta", path: "/Users/me/projects/Beta" },
+    { name: "alpha", path: "/home/me/projects/alpha" },
+    { name: "Beta", path: "/home/me/projects/Beta" },
   ],
   truncated: false,
 };
@@ -16,30 +16,30 @@ describe("localRefusal", () => {
   it("refuses what the snapshot already answers", () => {
     expect(localRefusal("", home, registrations, null)).toBe("empty");
     expect(localRefusal("/etc", home, registrations, null)).toBe("outside_home");
-    expect(localRefusal("/Users/me-other/x", home, registrations, null)).toBe("outside_home");
-    expect(localRefusal("/Users/me/hide/", home, registrations, null)).toBe("already_registered");
-    expect(localRefusal("/Users/me/projects/nope", home, registrations, listing)).toBe("not_in_listing");
+    expect(localRefusal("/home/me-other/x", home, registrations, null)).toBe("outside_home");
+    expect(localRefusal("/home/me/hide/", home, registrations, null)).toBe("already_registered");
+    expect(localRefusal("/home/me/projects/nope", home, registrations, listing)).toBe("not_in_listing");
   });
 
   it("leaves the rest to hided", () => {
-    expect(localRefusal("/Users/me/projects/alpha", home, registrations, listing)).toBeNull();
-    expect(localRefusal("/Users/me/elsewhere/x", home, registrations, listing)).toBeNull();
-    expect(localRefusal("/Users/me/projects/nope", home, registrations, { ...listing, truncated: true })).toBeNull();
+    expect(localRefusal("/home/me/projects/alpha", home, registrations, listing)).toBeNull();
+    expect(localRefusal("/home/me/elsewhere/x", home, registrations, listing)).toBeNull();
+    expect(localRefusal("/home/me/projects/nope", home, registrations, { ...listing, truncated: true })).toBeNull();
   });
 });
 
 describe("suggestions", () => {
   it("completes the last segment from the parent's listing", () => {
-    expect(suggestions("/Users/me/projects/a", listing)).toEqual(["/Users/me/projects/alpha"]);
-    expect(suggestions("/Users/me/projects/b", listing)).toEqual(["/Users/me/projects/Beta"]);
-    expect(suggestions("/Users/me/projects/", listing)).toEqual(["/Users/me/projects/alpha", "/Users/me/projects/Beta"]);
-    expect(suggestions("/Users/me/other/a", listing)).toEqual([]);
+    expect(suggestions("/home/me/projects/a", listing)).toEqual(["/home/me/projects/alpha"]);
+    expect(suggestions("/home/me/projects/b", listing)).toEqual(["/home/me/projects/Beta"]);
+    expect(suggestions("/home/me/projects/", listing)).toEqual(["/home/me/projects/alpha", "/home/me/projects/Beta"]);
+    expect(suggestions("/home/me/other/a", listing)).toEqual([]);
   });
 
   it("names the directory to list for what was typed", () => {
     expect(listingRootFor("", home)).toBe(home);
-    expect(listingRootFor("/Users/me/pro", home)).toBe("/Users/me");
-    expect(listingRootFor("/Users/me/projects/", home)).toBe("/Users/me/projects");
+    expect(listingRootFor("/home/me/pro", home)).toBe("/home/me");
+    expect(listingRootFor("/home/me/projects/", home)).toBe("/home/me/projects");
     expect(listingRootFor("/etc/x", home)).toBe(home);
   });
 });
