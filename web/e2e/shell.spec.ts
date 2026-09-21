@@ -48,12 +48,13 @@ async function startHided(extra: Record<string, string> = {}): Promise<Daemon> {
   for (let i = 0; i < 50; i += 1) {
     const statePath = path.join(dir, "hide", "hided.json");
     if (fs.existsSync(statePath)) {
-      const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
-        port: number;
-        token: string;
-      };
-      const origin = `http://127.0.0.1:${state.port}`;
       try {
+        // The file may be mid-write on the first read; the next tick reads it whole.
+        const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+          port: number;
+          token: string;
+        };
+        const origin = `http://127.0.0.1:${state.port}`;
         const health = await fetch(`${origin}/health`);
         if (health.ok) {
           return { origin, token: state.token, stop };

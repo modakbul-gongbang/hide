@@ -21,6 +21,7 @@ export function NewWorkspace({ actions }: { actions: Actions }) {
   const [home, setHome] = useState<string | null>(null);
   const [local, setLocal] = useState<string | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
+  const [submitted, setSubmitted] = useState<string | null>(null);
   const requested = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -51,6 +52,18 @@ export function NewWorkspace({ actions }: { actions: Actions }) {
     actions.listDirectory(root);
   }, [open, home, text, listing, actions]);
 
+  // A path joins the recent list once the core registered it, not when it
+  // was submitted: a refused path is not one to offer again.
+  useEffect(() => {
+    if (!submitted) return;
+    if (registrations?.some((row) => normalizePath(row.path) === submitted)) {
+      setRecent(rememberRecent(localStorage, submitted));
+      setSubmitted(null);
+    } else if (refusal?.kind === "create_workspace") {
+      setSubmitted(null);
+    }
+  }, [submitted, registrations, refusal]);
+
   if (!open) return null;
 
   const options = suggestions(text, listing);
@@ -66,7 +79,7 @@ export function NewWorkspace({ actions }: { actions: Actions }) {
     }
     setLocal(null);
     const path = normalizePath(candidate);
-    setRecent(rememberRecent(localStorage, path));
+    setSubmitted(path);
     actions.createWorkspace(path, path.slice(path.lastIndexOf("/") + 1));
   };
 

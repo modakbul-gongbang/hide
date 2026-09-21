@@ -20,6 +20,8 @@ export type Probe = {
   waitArmed: () => Promise<EchoSample>;
   /** WebSocket frames received since the page loaded. */
   arrivals: () => number;
+  /** Closes the live socket the way a server drop would; the shell reconnects on its own. */
+  dropSocket: () => void;
 };
 
 declare global {
@@ -68,9 +70,14 @@ export function noteWriteComplete(term: Terminal): void {
   armed = null;
 }
 
-export function installProbe(term: () => Terminal | null, paneId: () => string | null): void {
+export function installProbe(
+  term: () => Terminal | null,
+  paneId: () => string | null,
+  dropSocket: () => void = () => {},
+): void {
   window.__hideProbe = {
     paneId,
+    dropSocket,
     screenText: () => {
       const current = term();
       return current ? screenText(current) : "";

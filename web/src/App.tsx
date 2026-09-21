@@ -34,6 +34,7 @@ export function App() {
       installProbe(
         () => terminalFor(useShellStore.getState().focusedPaneId),
         () => useShellStore.getState().focusedPaneId,
+        session.drop,
       );
     }
     // The MRU behind ⌥`/⌥Tab and the project row follows what the core

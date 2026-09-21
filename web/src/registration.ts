@@ -58,7 +58,7 @@ export function refusalText(reason: string): string {
     case "home_root":
       return "홈 디렉터리 자체는 등록할 수 없습니다.";
     case "invalid_path":
-      return "절대 경로를 입력하세요.";
+      return "절대 경로만 등록할 수 있습니다(`..` 없이).";
     default:
       return `등록 거부: ${reason}`;
   }

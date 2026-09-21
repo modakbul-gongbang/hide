@@ -38,9 +38,12 @@ const Strip = memo(function Strip({
   const herdrTabs = checkout.strip
     .map((entry, index) => ({ entry, index }))
     .filter(({ entry }) => entry.kind === "herdr");
+  // The drag itself lives in a ref: pointer events arrive faster than a
+  // continuous-priority render lands, so the release reads the ref and the
+  // state only drives the highlight.
+  const drag = useRef<{ id: string; x: number; active: boolean } | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
-  const activation = useRef<{ id: string; x: number } | null>(null);
 
   return (
     <div
@@ -59,25 +62,28 @@ const Strip = memo(function Strip({
           onSelect={() => actions.focusTab(entry.source_id)}
           onClose={() => actions.closeTab(entry.source_id)}
           onPointerDown={(x) => {
-            activation.current = { id: entry.id, x };
+            drag.current = { id: entry.id, x, active: false };
           }}
           onPointerMove={(x) => {
-            const start = activation.current;
-            if (!start || dragging) return;
+            const start = drag.current;
+            if (!start || start.active) return;
             const threshold = Number.parseFloat(
               getComputedStyle(document.documentElement).getPropertyValue("--size-tab-drag-activation"),
             );
-            if (Math.abs(x - start.x) >= threshold) setDragging(start.id);
+            if (Math.abs(x - start.x) >= threshold) {
+              start.active = true;
+              setDragging(start.id);
+            }
           }}
           onPointerEnter={() => {
-            if (dragging) setOver(entry.id);
+            if (drag.current?.active) setOver(entry.id);
           }}
           onPointerUp={() => {
-            const from = dragging;
-            activation.current = null;
+            const start = drag.current;
+            drag.current = null;
             setDragging(null);
             setOver(null);
-            if (from && from !== entry.id) actions.reorderTab(from, index);
+            if (start?.active && start.id !== entry.id) actions.reorderTab(start.id, index);
           }}
         />
       ))}

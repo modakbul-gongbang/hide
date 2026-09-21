@@ -17,7 +17,15 @@ export type HerdrFixture = {
   bin: string;
   socket: string;
   env: NodeJS.ProcessEnv;
+  /** The fixture root; `fixture/` under it is the first workspace's cwd. */
+  root: string;
+  workspace: string;
+  tab: string;
   panes: [string, string];
+  /** The PATH the fixture's `claude` shim is on, for panes created later. */
+  fixturePath: string;
+  /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
+  run: (args: string[]) => unknown;
   stop: () => void;
 };
 
@@ -145,7 +153,7 @@ export async function startHerdr(): Promise<HerdrFixture> {
       "--env",
       `PATH=${fixturePath}`,
       "--focus",
-    ]) as { result: { root_pane: { pane_id: string } } };
+    ]) as { result: { workspace: { workspace_id: string }; tab: { tab_id: string }; root_pane: { pane_id: string } } };
     const first = created.result.root_pane.pane_id;
     const split = herdr(env, bin, [
       "pane",
@@ -175,7 +183,18 @@ export async function startHerdr(): Promise<HerdrFixture> {
         timeout: 30_000,
       });
     }
-    return { bin, socket, env, panes: [first, second], stop };
+    return {
+      bin,
+      socket,
+      env,
+      root,
+      workspace: created.result.workspace.workspace_id,
+      tab: created.result.tab.tab_id,
+      panes: [first, second],
+      fixturePath,
+      run: (args) => herdr(env, bin, args),
+      stop,
+    };
   } catch (error) {
     stop();
     throw error;
