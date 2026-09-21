@@ -274,6 +274,10 @@ The first appearance of a local Git project requests its GitHub status once for 
 Repeated appearances are no-ops; explicit refresh advances that repository's generation.
 The selected Overview project and explicit sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
 The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request additionally asks for `title` and `statusCheckRollup`; it retains the 200-PR limit and existing branch tie-breaking policy.
+The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
+The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
+Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
+A failed component read retains that component's last successful answer, including a successfully empty answer, while a successful PR read still advances if issue reading fails.
 Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
 The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
 
@@ -343,3 +347,29 @@ The ⌘K sheet's agent row is titled by the identity and subtitled by the second
 The pane id is no longer printed on the row but still matches the query and is read by accessibility.
 A tab holding exactly one agent pane carries that agent's identity and mark into its Recent Panels row (`StripTabSnapshot.agent_identity`), derived in the core on every status, lineage, or strip rebuild pass; a tab with none or several keeps its Herdr label.
 Neither the core nor the plugin renames the Herdr tab for this; the Recent Panels label is projection only.
+
+### Project Home
+
+Project Home is the empty local checkout surface and the Shift-Command-H overlay.
+Its session-local choice defaults to Tasks; Agents groups the same card by the canonical root request's group.
+Tasks derives delivery in priority order: merged worktree or merged PR, open PR, changed files or ahead commits, then ready.
+Needs You changes the halo and stable sort priority, never this delivery stage.
+Main and non-Git checkouts appear only in the ad hoc row when they have agents.
+Completed columns start collapsed and disappear only with their underlying pane or worktree.
+
+`runtime/issues.rs` resolves workspace manual overrides, pane-family issue tokens, branch configuration, PR closing references, then the two supported branch prefixes.
+`wire.rs` extracts metadata and `git_dir.rs` reads the branch setting with the catalog off the runtime lock.
+The existing generation-driven GitHub reader fetches PRs, repository identity and open issues together; a 201st sentinel proves overflow and `sort:updated-desc` determines backlog order.
+Missing closed or cross-repository linked issues use one bounded read-only GraphQL query, not one process per card.
+An enriched issue lookup may retry once without optional Project fields; basic issue facts remain usable and the Project failure stays in the diagnostic and GitHub availability path.
+Linked issues take priority within the combined 200-identity project limit.
+A failed generation preserves its last successful payload, including a successful empty payload.
+The board keeps stale facts and puts their age in the shared issue tooltip; Overview owns the actionable GitHub availability explanation.
+
+Manual issue writes reuse the purpose operation slot and token-first, Git-second writer.
+Validation resolves an issue before writing, a failed Git mirror attempts to restore the previous token, and the runtime suppresses only an uncertain mutation until fresh metadata confirms replacement.
+A validation failure or confirmed rollback preserves the existing manual override.
+No GitHub mutation is allowed by this path.
+The existing purpose mirror worker clears a branch issue setting when an observed worktree path is removed; a branch switch, detached HEAD, or unregistered project is not a removed worktree.
+While a worktree stays detached, the worker retains its last known branch for cleanup if that path is later removed.
+A rejected cleanup enqueue is retained for the next catalog synchronization.

@@ -9,6 +9,7 @@ mod attachments;
 mod devices;
 mod editor;
 mod events;
+mod issues;
 mod operations;
 mod projects;
 mod session;
@@ -932,6 +933,10 @@ pub struct Runtime {
     /// rebuild triggered by a registration change is not a session update, so
     /// it reuses these rather than briefly emptying the navigator.
     last_session_spaces: Vec<workspace::SessionSpace>,
+    issue_tokens: crate::wire::IssueTokens,
+    issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
+    issue_write_pending: Option<(u64, String, String)>,
+    unconfirmed_issue_tokens: BTreeMap<String, issues::UnconfirmedIssueToken>,
     /// The catalog and root index most recently accepted from the sync
     /// coordinator, reused when a later precomputation arrives stale so the
     /// reconcile never rebuilds under the runtime lock.
@@ -1151,6 +1156,10 @@ impl Runtime {
             pet_unseen_observed: std::collections::BTreeMap::new(),
             restore_hint_pending: true,
             last_session_spaces: Vec::new(),
+            issue_tokens: Default::default(),
+            issue_candidates: Default::default(),
+            issue_write_pending: None,
+            unconfirmed_issue_tokens: BTreeMap::new(),
             last_accepted_catalog: None,
             catalog_roots: workspace::RootIndex::new(),
             checkout_tab_order: BTreeMap::new(),

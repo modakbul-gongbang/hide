@@ -416,6 +416,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     .unwrap_or(&space.label)
                     .to_owned();
                 projects.push(WorkspaceSnapshot {
+                    home_issues: Default::default(),
                     id: workspace_id.clone(),
                     label: name.clone(),
                     path: project_path.to_string_lossy().into_owned(),
@@ -656,6 +657,7 @@ fn inspect(
     };
 
     WorkspaceSnapshot {
+        home_issues: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),
         path: normalized.to_string_lossy().into_owned(),
@@ -694,7 +696,20 @@ fn checkout(
     let purpose = branch
         .as_deref()
         .and_then(|branch| branch_description(repository.as_ref(), branch));
+    let branch_issue = match repository.as_ref().zip(branch.as_deref()) {
+        Some((repository, branch)) => match repository.branch_issue(branch) {
+            Ok(issue) => issue,
+            Err(error) => {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"checkout_issue", "kind":"config.read_failed", "message":error})
+                );
+                None
+            }
+        },
+        None => None,
+    };
     CheckoutSnapshot {
+        branch_issue,
         // A checkout with no Herdr tabs yet: the first one the operator makes
         // here is Tab 1. Reconcile overwrites this the moment Herdr reports any.
         next_tab_label: crate::model::next_tab_label(std::iter::empty()),
@@ -1204,6 +1219,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "outer".to_owned(),
             label: "Outer".to_owned(),
             path: "/fixture/outer".to_owned(),
@@ -1256,6 +1272,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "fixture".to_owned(),
             label: "Fixture".to_owned(),
             path: root.to_string_lossy().into_owned(),

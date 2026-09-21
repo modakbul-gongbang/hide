@@ -403,6 +403,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
     };
     let mut runtime = runtime();
     let pull_request = PullRequestSnapshot {
+        closing_issues: Default::default(),
         title: "Fixture pull request".into(),
         checks: crate::model::PullRequestChecks::Unknown,
         number: 7,
@@ -417,6 +418,7 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
     };
     runtime.ingest_github(GithubSnapshot {
         projects: vec![GithubProjectSnapshot {
+            issues: Default::default(),
             root_path: "/tmp/hide".to_owned(),
             status: GithubStatusSnapshot {
                 available: true,
@@ -424,6 +426,8 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
                 ..GithubStatusSnapshot::default()
             },
             pull_requests: vec![pull_request.clone()],
+            pull_requests_read: true,
+            issues_read: true,
         }],
     });
 
@@ -459,10 +463,30 @@ fn a_failed_lookup_keeps_the_pull_requests_it_could_not_refresh() {
         }],
     });
     let project = runtime.github.project("/tmp/hide").unwrap();
-    assert_eq!(project.pull_requests, vec![pull_request]);
+    assert_eq!(project.pull_requests, vec![pull_request.clone()]);
     assert!(project.status.stale);
     assert!(!project.status.available);
     assert_eq!(project.status.last_success_at_unix_ms, Some(1_000));
+    let mut fresh_pr = pull_request;
+    fresh_pr.number = 8;
+    runtime.ingest_github(GithubSnapshot {
+        projects: vec![GithubProjectSnapshot {
+            root_path: "/tmp/hide".into(),
+            pull_requests: vec![fresh_pr.clone()],
+            pull_requests_read: true,
+            status: GithubStatusSnapshot {
+                available: true,
+                stale: true,
+                unavailable_reason: Some("issue-only read failure".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }],
+    });
+    assert_eq!(
+        runtime.github.project("/tmp/hide").unwrap().pull_requests,
+        vec![fresh_pr]
+    );
 }
 
 #[test]

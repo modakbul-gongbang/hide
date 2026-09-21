@@ -424,6 +424,7 @@ pub struct SidebarAgentSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceSnapshot {
+    pub home_issues: crate::issues::ProjectIssuesSnapshot,
     pub id: String,
     pub label: String,
     pub path: String,
@@ -525,6 +526,9 @@ pub struct CheckoutPurposeSnapshot {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
+    pub issue: Option<crate::issues::IssueLinkSnapshot>,
+    #[serde(skip_serializing)]
+    pub branch_issue: Option<String>,
     pub github: GithubStatusSnapshot,
     pub agent_summary: CheckoutAgentSummary,
     pub id: String,
@@ -1539,6 +1543,7 @@ pub enum PullRequestChecks {
 /// request on that branch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PullRequestSnapshot {
+    pub closing_issues: Vec<crate::issues::IssueReference>,
     pub title: String,
     pub checks: PullRequestChecks,
     pub number: u32,
@@ -1577,6 +1582,13 @@ pub struct GithubStatusSnapshot {
 /// One repository's pull requests as `gh` reported them.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct GithubProjectSnapshot {
+    /// Successful component payloads, including a successful empty answer.
+    /// Internal reader provenance, not a snapshot wire field.
+    #[serde(skip)]
+    pub pull_requests_read: bool,
+    #[serde(skip)]
+    pub issues_read: bool,
+    pub issues: crate::issues::ProjectIssuesSnapshot,
     /// The repository's main worktree, which is what identifies a project.
     pub root_path: String,
     pub status: GithubStatusSnapshot,

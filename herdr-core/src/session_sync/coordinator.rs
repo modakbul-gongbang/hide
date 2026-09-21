@@ -42,7 +42,7 @@ fn run_coordinator(
     let mut next_hook_diagnosis_refresh = Instant::now();
     let mut catalog_cache: Option<CatalogCache> = None;
     let mut purpose_mirror = if context.is_local() {
-        match live::PurposeMirror::new() {
+        match live::PurposeMirror::new(Arc::clone(&context.api_connector)) {
             Ok(mirror) => Some(mirror),
             Err(message) => {
                 crate::diagnostic!(json!({

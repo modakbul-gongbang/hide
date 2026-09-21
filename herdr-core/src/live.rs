@@ -47,10 +47,10 @@ pub(crate) mod cleanup;
 #[path = "worktree_control.rs"]
 mod worktree_control;
 pub use worktree_control::{
-    CheckoutTabRequest, PurposeMirror, PurposeTaskOutcome, PurposeTaskRequest, WorktreeTaskOutcome,
-    WorktreeTaskRequest, spawn_branch_migration, spawn_checkout_tab_create, spawn_purpose_write,
-    spawn_remote_purpose_write, spawn_workspace_close, spawn_worktree_close, spawn_worktree_create,
-    spawn_worktree_open,
+    CheckoutTabRequest, IssueWriteFailure, PurposeMirror, PurposeTaskOutcome, PurposeTaskRequest,
+    WorktreeTaskOutcome, WorktreeTaskRequest, spawn_branch_migration, spawn_checkout_tab_create,
+    spawn_issue_write, spawn_purpose_write, spawn_remote_purpose_write, spawn_workspace_close,
+    spawn_worktree_close, spawn_worktree_create, spawn_worktree_open,
 };
 
 /// Everything a terminal session spawn needs from the live configuration.

@@ -873,3 +873,13 @@ The former shelf was removed because it could not synchronize native attachment 
 Reintroducing this surface requires a supported provider contract for stable attachment identity, idempotent add/remove, native draft changes and accepted submission events.
 Both surfaces must reflect the same attachment membership, and the shelf must clear only after confirmed submission, preserving items on failure.
 PTY writes, key events and terminal viewport state cannot substitute for that contract.
+
+## Project Home
+
+Project Home uses the shared tab choice group, badges, agent identity marks, settings field, icon buttons and command tooltip.
+Tasks is the session default, with ad hoc requests above four Git-derived columns; Agents reuses each card in three canonical lifecycle columns.
+Needs You uses the warning halo and an error uses danger, without moving the card out of its Git column.
+Only the current delivery fact and linked issue appear in the footer.
+Merged and Seen columns start collapsed.
+The board scrolls horizontally below its column minimum and titles wrap to two lines; branch labels truncate at the tail with full shared tooltip and accessibility help.
+`HideTheme.Home` owns the 288-point column, 148-point collapsed column, 6-point halo and 12-point child indent, mapped by `scripts/pen-token-map.json` into the library.

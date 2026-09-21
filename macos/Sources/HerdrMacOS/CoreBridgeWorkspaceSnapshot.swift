@@ -227,6 +227,7 @@ struct CoreDeviceTestStageSnapshot: Decodable, Equatable, Identifiable {
 }
 
 struct CoreWorkspaceSnapshot: Decodable, Identifiable {
+    var homeIssues = CoreProjectIssues()
     let id: String
     let label: String
     let path: String
@@ -253,6 +254,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
     let removal: CoreWorkspaceRemovalGateSnapshot
 
     enum CodingKeys: String, CodingKey {
+        case homeIssues = "home_issues"
         case id
         case label
         case path
@@ -312,6 +314,7 @@ struct CoreWorkspaceSnapshot: Decodable, Identifiable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        homeIssues = try container.decodeIfPresent(CoreProjectIssues.self, forKey: .homeIssues) ?? CoreProjectIssues()
         id = try container.decode(String.self, forKey: .id)
         label = try container.decode(String.self, forKey: .label)
         path = try container.decode(String.self, forKey: .path)
@@ -391,6 +394,7 @@ struct CoreCheckoutPurpose: Decodable, Equatable {
 }
 
 struct CoreCheckoutSnapshot: Decodable, Identifiable {
+    var issue: CoreIssueLink? = nil
     var github: CoreGithubStatus = .empty
     var agentSummary = CoreCheckoutAgentSummary()
     var purpose: CoreCheckoutPurpose? = nil
@@ -429,6 +433,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
     let nextTabLabel: String
 
     enum CodingKeys: String, CodingKey {
+        case issue
         case github
         case agentSummary = "agent_summary"
         case purpose
@@ -509,6 +514,7 @@ struct CoreCheckoutSnapshot: Decodable, Identifiable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        issue = try container.decodeIfPresent(CoreIssueLink.self, forKey: .issue)
         github = try container.decodeIfPresent(CoreGithubStatus.self, forKey: .github) ?? .empty
         agentSummary = try container.decode(CoreCheckoutAgentSummary.self, forKey: .agentSummary)
         purpose = try container.decodeIfPresent(CoreCheckoutPurpose.self, forKey: .purpose)
@@ -1173,6 +1179,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     let elapsed: String
     let lastActivity: String
 
+    var lineageParentPaneID: String? = nil
     var lineageDepth: Int = 0
     var lineageChildPaneIDs: [String] = []
     var lineageRootCheckoutID: String? = nil
@@ -1259,6 +1266,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         statusWordVisible = try container.decodeIfPresent(Bool.self, forKey: .statusWordVisible) ?? true
         elapsed = try container.decode(String.self, forKey: .elapsed)
         lastActivity = try container.decode(String.self, forKey: .lastActivity)
+        lineageParentPaneID = try container.decodeIfPresent(String.self, forKey: .lineageParentPaneID)
         lineageDepth = try container.decodeIfPresent(Int.self, forKey: .lineageDepth) ?? 0
         lineageChildPaneIDs = try container.decodeIfPresent([String].self, forKey: .lineageChildPaneIDs) ?? []
         lineageRootCheckoutID = try container.decodeIfPresent(String.self, forKey: .lineageRootCheckoutID)
@@ -1294,6 +1302,7 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case statusWordVisible = "status_word_visible"
         case elapsed
         case lastActivity = "last_activity"
+        case lineageParentPaneID = "lineage_parent_pane_id"
         case lineageDepth = "lineage_depth"
         case lineageChildPaneIDs = "lineage_child_pane_ids"
         case lineageRootCheckoutID = "lineage_root_checkout_id"

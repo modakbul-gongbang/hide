@@ -287,6 +287,7 @@ mod tests {
         pane_ids: &[&str],
     ) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: id.to_owned(),
             label: id.to_owned(),
             path: format!("/fixture/{id}"),
@@ -398,6 +399,7 @@ mod tests {
 
     fn settled_pull_request(badge: PullRequestBadge) -> PullRequestSnapshot {
         PullRequestSnapshot {
+            closing_issues: Default::default(),
             title: "Settled".to_owned(),
             checks: Default::default(),
             number: 1,

@@ -445,6 +445,15 @@ impl Runtime {
                         || self.sidebar_github_projects.contains(&workspace.path)
                 })
                 .map(|workspace| crate::github::GithubProjectRequest {
+                    links: workspace
+                        .checkouts
+                        .iter()
+                        .filter_map(|checkout| self.issue_candidates.get(&checkout.id))
+                        .map(|candidate| candidate.reference.clone())
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .take(crate::issues::ISSUE_LIMIT)
+                        .collect(),
                     root: PathBuf::from(&workspace.path),
                     generation: self
                         .github_generations
@@ -472,11 +481,26 @@ impl Runtime {
         for project in &mut merged.projects {
             if (project.status.stale || project.status.unavailable_reason.is_some())
                 && let Some(previous) = self.github.project(&project.root_path)
-                && !previous.pull_requests.is_empty()
             {
-                project.status.stale = true;
-                project.pull_requests = previous.pull_requests.clone();
-                project.status.last_success_at_unix_ms = previous.status.last_success_at_unix_ms;
+                let incomplete = !project.pull_requests_read || !project.issues_read;
+                if !project.pull_requests_read
+                    && (previous.pull_requests_read
+                        || previous.status.last_success_at_unix_ms.is_some())
+                {
+                    project.pull_requests = previous.pull_requests.clone();
+                    project.pull_requests_read = true;
+                }
+                if !project.issues_read
+                    && (previous.issues_read || previous.status.last_success_at_unix_ms.is_some())
+                {
+                    project.issues = previous.issues.clone();
+                    project.issues_read = true;
+                }
+                if incomplete {
+                    project.status.stale = true;
+                    project.status.last_success_at_unix_ms =
+                        previous.status.last_success_at_unix_ms;
+                }
             }
         }
         if self.github == merged {
@@ -1151,6 +1175,13 @@ impl Runtime {
                             || git_requested),
                     ..Default::default()
                 });
+            let home_issues = project
+                .map(|project| project.issues.clone())
+                .unwrap_or_default();
+            if workspace.home_issues != home_issues {
+                workspace.home_issues = home_issues;
+                changed = true;
+            }
             for checkout in workspace.checkouts.iter_mut() {
                 if checkout.github != status {
                     checkout.github = status.clone();
@@ -1173,6 +1204,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        changed |= self.sync_issues();
         changed
     }
 

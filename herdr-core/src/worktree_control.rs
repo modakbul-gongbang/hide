@@ -180,6 +180,11 @@ struct PurposeMirrorRequest {
 
 enum PurposeMirrorMessage {
     Write(PurposeMirrorRequest),
+    RemoveIssue {
+        repository_root: String,
+        branch: String,
+        workspace_ids: Vec<String>,
+    },
     Stop,
 }
 
@@ -191,20 +196,34 @@ pub struct PurposeMirror {
     sender: SyncSender<PurposeMirrorMessage>,
     worker: Option<thread::JoinHandle<()>>,
     observed: BTreeMap<(String, String, String), Option<String>>,
+    issue_worktrees: BTreeSet<(String, String, String)>,
 }
 
 impl PurposeMirror {
     const QUEUE_CAPACITY: usize = 64;
 
-    pub fn new() -> Result<Self, String> {
+    pub fn new(connector: Arc<dyn ApiConnector>) -> Result<Self, String> {
         let (sender, receiver) = sync_channel(Self::QUEUE_CAPACITY);
         let worker = thread::Builder::new()
             .name("herdr-core-purpose-mirror".to_owned())
             .spawn(move || {
                 let git = SystemGit;
                 while let Ok(message) = receiver.recv() {
-                    let PurposeMirrorMessage::Write(request) = message else {
-                        break;
+                    let request = match message {
+                        PurposeMirrorMessage::Write(request) => request,
+                        PurposeMirrorMessage::Stop => break,
+                        PurposeMirrorMessage::RemoveIssue { repository_root, branch, workspace_ids } => {
+                            for id in workspace_ids {
+                                let result = wire::workspace_issue_params(&id, None).and_then(|params| control_request(connector.as_ref(), "workspace.report_metadata", params));
+                                if let Err(error) = result {
+                                    crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"removed_worktree.token_cleanup_failed","workspace_id":id,"message":error}));
+                                }
+                            }
+                            if let Err(error) = git.unset(&repository_root, &format!("branch.{branch}.issue")) {
+                                crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"removed_worktree.cleanup_failed","message":error}));
+                            }
+                            continue;
+                        }
                     };
                     let key = format!("branch.{}.description", request.branch);
                     let result = match request.purpose.as_deref() {
@@ -235,6 +254,7 @@ impl PurposeMirror {
             sender,
             worker: Some(worker),
             observed: BTreeMap::new(),
+            issue_worktrees: BTreeSet::new(),
         })
     }
 
@@ -246,6 +266,7 @@ impl PurposeMirror {
                 sender,
                 worker: None,
                 observed: BTreeMap::new(),
+                issue_worktrees: BTreeSet::new(),
             },
             receiver,
         )
@@ -257,6 +278,65 @@ impl PurposeMirror {
         workspaces: &[WorkspaceSnapshot],
         unconfirmed_created_purposes: &HashMap<String, String>,
     ) {
+        let current_issues: BTreeSet<_> = workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .flat_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .filter(|checkout| checkout.is_worktree)
+                    .filter_map(|checkout| {
+                        checkout.branch.as_ref().map(|branch| {
+                            (
+                                workspace.path.clone(),
+                                checkout.path.clone(),
+                                branch.clone(),
+                            )
+                        })
+                    })
+            })
+            .collect();
+        let mut retained = current_issues.clone();
+        for (root, path, branch) in self.issue_worktrees.difference(&current_issues) {
+            let project = workspaces.iter().find(|workspace| &workspace.path == root);
+            if project.is_some_and(|project| {
+                project
+                    .checkouts
+                    .iter()
+                    .any(|checkout| &checkout.path == path && checkout.branch.is_none())
+            }) {
+                // Detaching keeps the last branch's cleanup ownership until removal.
+                retained.insert((root.clone(), path.clone(), branch.clone()));
+                continue;
+            }
+            // A branch switch or detached HEAD is not a removed worktree.
+            if project.is_some_and(|project| {
+                !project
+                    .checkouts
+                    .iter()
+                    .any(|checkout| &checkout.path == path)
+            }) && let Err(error) = self.sender.try_send(PurposeMirrorMessage::RemoveIssue {
+                repository_root: root.clone(),
+                branch: branch.clone(),
+                workspace_ids: spaces
+                    .iter()
+                    .filter(|space| {
+                        space
+                            .cwds
+                            .iter()
+                            .any(|cwd| Path::new(cwd).starts_with(path))
+                    })
+                    .map(|space| space.id.clone())
+                    .collect(),
+            }) {
+                retained.insert((root.clone(), path.clone(), branch.clone()));
+                crate::diagnostic!(
+                    serde_json::json!({"component":"checkout_issue","kind":"cleanup.queue_unavailable","message":error.to_string()})
+                );
+            }
+        }
+        self.issue_worktrees = retained;
         let mut current = BTreeSet::new();
         for workspace in workspaces {
             for checkout in &workspace.checkouts {
@@ -386,6 +466,92 @@ pub fn spawn_purpose_write(
         })
         .map(|_| ())
         .map_err(|error| format!("purpose worker could not be started: {error}"))
+}
+
+#[derive(Clone, Debug)]
+pub struct IssueWriteFailure {
+    pub detail: String,
+    pub unconfirmed_token: bool,
+}
+impl IssueWriteFailure {
+    pub fn unchanged(detail: String) -> Self {
+        Self {
+            detail,
+            unconfirmed_token: false,
+        }
+    }
+}
+
+fn write_issue_metadata(
+    connector: &dyn ApiConnector,
+    git: &dyn GitCommands,
+    request: &PurposeTaskRequest,
+    previous: Option<&str>,
+) -> Result<(), IssueWriteFailure> {
+    let (detail, token_may_have_changed) =
+        match write_workspace_metadata(connector, git, request, "issue", "issue") {
+            Ok(PurposeTaskOutcome::Saved { .. }) => return Ok(()),
+            Ok(PurposeTaskOutcome::GitFailed {
+                detail,
+                token_written,
+                ..
+            }) => (detail, token_written),
+            // A transport failure can arrive after the server accepted the token.
+            Err(detail) => (detail, request.session_workspace_id.is_some()),
+        };
+    if token_may_have_changed && let Some(workspace_id) = request.session_workspace_id.as_deref() {
+        let rollback = wire::workspace_issue_params(workspace_id, previous).and_then(|params| {
+            control_request(connector, "workspace.report_metadata", params).map(|_| ())
+        });
+        if let Err(error) = rollback {
+            return Err(IssueWriteFailure {
+                detail: format!("{detail}; issue rollback failed: {error}"),
+                unconfirmed_token: true,
+            });
+        }
+    }
+    Err(IssueWriteFailure::unchanged(detail))
+}
+
+pub fn spawn_issue_write(
+    context: LiveContext,
+    request: PurposeTaskRequest,
+    previous: Option<String>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-issue-write".into())
+        .spawn(move || {
+            let result = (|| {
+                let issue = if request.purpose.is_empty() {
+                    None
+                } else {
+                    let reference = crate::issues::IssueReference::parse(&request.purpose, None)
+                        .map_err(IssueWriteFailure::unchanged)?;
+                    Some(
+                        crate::github::read_linked_issue(
+                            Path::new(&request.repository_root),
+                            &reference,
+                        )
+                        .map_err(IssueWriteFailure::unchanged)?,
+                    )
+                };
+                write_issue_metadata(
+                    context.api_connector.as_ref(),
+                    &SystemGit,
+                    &request,
+                    previous.as_deref(),
+                )?;
+                Ok(issue)
+            })();
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_issue_operation_result(&request, result);
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("issue worker could not be started: {error}"))
 }
 
 pub fn spawn_remote_purpose_write(
@@ -719,6 +885,16 @@ fn write_purpose(
     git: &dyn GitCommands,
     request: &PurposeTaskRequest,
 ) -> Result<PurposeTaskOutcome, String> {
+    write_workspace_metadata(connector, git, request, "purpose", "description")
+}
+
+fn write_workspace_metadata(
+    connector: &dyn ApiConnector,
+    git: &dyn GitCommands,
+    request: &PurposeTaskRequest,
+    token: &str,
+    config_key: &str,
+) -> Result<PurposeTaskOutcome, String> {
     let purpose = request.purpose.trim().to_owned();
     if purpose.chars().count() > 80 {
         return Err("Purpose must be 80 characters or fewer".to_owned());
@@ -731,10 +907,17 @@ fn write_purpose(
         control_request(
             connector,
             "workspace.report_metadata",
-            wire::workspace_purpose_params(
-                workspace_id,
-                (!purpose.is_empty()).then_some(purpose.as_str()),
-            )?,
+            if token == "issue" {
+                wire::workspace_issue_params(
+                    workspace_id,
+                    (!purpose.is_empty()).then_some(purpose.as_str()),
+                )?
+            } else {
+                wire::workspace_purpose_params(
+                    workspace_id,
+                    (!purpose.is_empty()).then_some(purpose.as_str()),
+                )?
+            },
         )
         .map_err(|error| format!("workspace purpose: {error}"))?;
     }
@@ -744,7 +927,7 @@ fn write_purpose(
             token_written,
         });
     };
-    let key = format!("branch.{branch}.description");
+    let key = format!("branch.{branch}.{config_key}");
     let git_result = if purpose.is_empty() {
         git.unset(&request.repository_root, &key)
     } else {
@@ -1131,6 +1314,33 @@ mod tests {
     }
 
     #[test]
+    fn issue_writer_uses_the_same_token_first_boundary_and_clears_both_values() {
+        let server = server(vec![
+            json!({"result":{"type":"ok"}}),
+            json!({"result":{"type":"ok"}}),
+        ]);
+        let git = ScriptedGit::new(vec![Ok(""), Ok("")]);
+        write_workspace_metadata(
+            &server,
+            &git,
+            &purpose_request("acme/project#42"),
+            "issue",
+            "issue",
+        )
+        .unwrap();
+        write_workspace_metadata(&server, &git, &purpose_request(""), "issue", "issue").unwrap();
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests[0]["params"]["tokens"]["issue"], "acme/project#42");
+        assert!(requests[1]["params"]["tokens"]["issue"].is_null());
+        let calls = git.calls.lock().unwrap();
+        assert_eq!(
+            calls[0],
+            ["config", "branch.feature.issue", "acme/project#42"]
+        );
+        assert_eq!(calls[1], ["config", "--unset-all", "branch.feature.issue"]);
+    }
+
+    #[test]
     fn purpose_writes_the_workspace_token_before_the_branch_description() {
         let server = server(vec![json!({"result":{"type":"ok"}})]);
         let git = ScriptedGit::new(vec![Ok("")]);
@@ -1160,6 +1370,101 @@ mod tests {
                 "Ship checkout row D".to_owned(),
             ]]
         );
+    }
+
+    #[test]
+    fn issue_cleanup_distinguishes_branch_switch_detach_removal_and_unregister() {
+        let (mut mirror, receiver) = PurposeMirror::recording();
+        let mut project = WorkspaceSnapshot {
+            home_issues: Default::default(),
+            id: "project".to_owned(),
+            label: "Fixture".to_owned(),
+            path: "/fixture/repo".to_owned(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".to_owned(),
+            repo_name: "repo".to_owned(),
+            is_git: true,
+            default_branch: Some("main".to_owned()),
+            branches: vec!["main".to_owned(), "topic/quoted".to_owned()],
+            registered: true,
+            temporary: false,
+            session_workspace_ids: vec!["w-purpose".to_owned()],
+            last_activity_unix_ms: None,
+            pinned: false,
+            checkouts: vec![crate::model::CheckoutSnapshot {
+                id: "checkout".to_owned(),
+                workspace_id: "project".to_owned(),
+                label: "topic/quoted".to_owned(),
+                path: "/fixture/repo/worktrees/topic".to_owned(),
+                branch: Some("topic/quoted".to_owned()),
+                exists: true,
+                is_worktree: true,
+                ..Default::default()
+            }],
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        };
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        project.checkouts[0].branch = Some("other".into());
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        project.checkouts[0].branch = None;
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        assert!(receiver.try_recv().is_err());
+        project.checkouts[0].branch = Some("other".into());
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        mirror.sync(&[], &[], &HashMap::new());
+        assert!(receiver.try_recv().is_err(), "unregister is not deletion");
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        project.checkouts[0].branch = None;
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
+        assert!(receiver.try_recv().is_err(), "detaching is not deletion");
+        project.checkouts.clear();
+        let space = workspace::SessionSpace {
+            id: "w-purpose".into(),
+            label: "Fixture".into(),
+            cwds: vec!["/fixture/repo/worktrees/topic".into()],
+            purpose: None,
+        };
+        mirror.sync(&[space], &[project], &HashMap::new());
+        let PurposeMirrorMessage::RemoveIssue {
+            branch,
+            workspace_ids,
+            ..
+        } = receiver
+            .try_recv()
+            .expect("detached removal still owns cleanup")
+        else {
+            panic!("expected cleanup")
+        };
+        assert_eq!(branch, "other");
+        assert_eq!(workspace_ids, vec!["w-purpose"]);
+        assert!(receiver.try_recv().is_err());
+    }
+    #[test]
+    fn issue_rollback_reports_only_an_uncertain_token_as_unconfirmed() {
+        for failed_rollback in [false, true] {
+            let rollback = if failed_rollback {
+                json!({"error":{"code":"unavailable","message":"rollback refused"}})
+            } else {
+                json!({"result":{"type":"ok"}})
+            };
+            let server = server(vec![json!({"result":{"type":"ok"}}), rollback]);
+            let git = ScriptedGit::new(vec![Err("git locked")]);
+            let error = write_issue_metadata(
+                &server,
+                &git,
+                &purpose_request("acme/project#3"),
+                Some("acme/project#1"),
+            )
+            .unwrap_err();
+            assert_eq!(error.unconfirmed_token, failed_rollback);
+            assert_eq!(
+                server.requests.lock().unwrap()[1]["params"]["tokens"]["issue"],
+                "acme/project#1"
+            );
+        }
     }
 
     #[test]
@@ -1283,6 +1588,7 @@ mod tests {
             purpose: Some("Initial purpose".to_owned()),
         };
         let checkout = WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1397,6 +1703,7 @@ mod tests {
             },
         ];
         let project = WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "outer".to_owned(),
             label: "Outer".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1452,6 +1759,7 @@ mod tests {
             purpose: None,
         };
         let mut project = WorkspaceSnapshot {
+            home_issues: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),

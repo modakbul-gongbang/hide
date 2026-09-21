@@ -148,6 +148,10 @@ enum HerdrStatusPresentation {
 
 @MainActor
 final class ShellModel: ObservableObject {
+    @Published var projectHomeVisible = false
+    @Published var projectHomeView: ProjectHomeViewKind = .tasks
+    @Published var projectHomeIssuePopover = false
+    @Published private(set) var projectHomeIssueResult: CoreTaskOperation?
     @Published var activeSurface: ShellSurface = .terminal
     @Published private(set) var sidebarContent: SidebarContent = .projects
     @Published var agentListScope: AgentListScope = .mine
@@ -867,6 +871,7 @@ final class ShellModel: ObservableObject {
     }
 
     func focusPane(_ paneID: String) {
+        projectHomeVisible = false
         if isRemoteContext {
             guard let workspace = focusedWorkspace,
                   let checkout = focusedCheckout
@@ -1140,6 +1145,7 @@ final class ShellModel: ObservableObject {
     }
 
     func selectCheckout(_ checkout: CoreCheckoutSnapshot) {
+        projectHomeVisible = false
         let action = CheckoutSelectionPolicy.action(for: checkout)
         HideLaunchTrace.mark(
             "checkout.selection",
@@ -1169,11 +1175,9 @@ final class ShellModel: ObservableObject {
         }
         core.focusCheckout(workspaceID: checkout.workspaceID, checkoutID: checkout.id)
         focus(.terminal)
-        switch action {
-        case .focusExisting:
-            checkoutStartState = .idle
-        case .startTerminal:
-            startTerminal(for: checkout, focusHerdr: false)
+        checkoutStartState = .idle
+        if let workspace = workspaces.first(where: { $0.id == checkout.workspaceID }) {
+            requestGithubStatus(workspace, refresh: true)
         }
     }
 
@@ -1206,6 +1210,7 @@ final class ShellModel: ObservableObject {
     }
 
     func selectAgent(_ agent: SidebarAgent) {
+        projectHomeVisible = false
         guard let identity = workspaces.lazy.compactMap({ workspace in
             workspace.checkouts.lazy.compactMap { checkout in
                 checkout.tabs.contains(where: { tab in
@@ -1267,6 +1272,12 @@ final class ShellModel: ObservableObject {
 
     private var hintSuppressingSheetVisibility: [Bool] {
         [showSearch, showFileSearch, showSettings, worktreeWorkspace != nil, purposeRequest != nil]
+    }
+
+    var projectHomeModalPresented: Bool {
+        hintSheetPresented || projectHomeIssuePopover || showPetDashboard
+            || branchMigration != nil || worktreeToDelete != nil
+            || workspaceToRemove != nil || explorerTrashPrompt != nil || interactionNotice != nil
     }
 
     var hintSheetPresented: Bool {
@@ -1880,6 +1891,12 @@ final class ShellModel: ObservableObject {
         defer {
             core.dispatch(kind: "task_operation_ack", payload: ["id": operation.id])
         }
+        if operation.kind == "checkout_issue" {
+            // Metadata writes create neither a pane nor a path. Keep the
+            // result until the popover consumes it, even after the core ack.
+            projectHomeIssueResult = operation
+            return
+        }
         if operation.kind == "checkout_purpose" {
             if operation.phase == "failed" {
                 purposeError = WorktreeSubmissionPresentation.oneLine(
@@ -1955,6 +1972,7 @@ final class ShellModel: ObservableObject {
     }
 
     func addTab() {
+        projectHomeVisible = false
         guard let workspace = focusedWorkspace else {
             interactionNotice = "Create or register a workspace before adding a tab."
             return
@@ -1986,6 +2004,7 @@ final class ShellModel: ObservableObject {
     }
 
     func focusTab(_ tab: CoreTabSnapshot) {
+        projectHomeVisible = false
         guard let tabID = tab.id,
               let workspace = focusedWorkspace,
               let checkout = focusedCheckout
@@ -2018,6 +2037,7 @@ final class ShellModel: ObservableObject {
     /// `preview` is the Explorer single click; Cmd+P, a double-click and every
     /// other caller open an ordinary tab (PRD editor-preview-tab D-09).
     func openFile(_ url: URL, preview: Bool = false) {
+        projectHomeVisible = false
         guard !isRemoteContext,
               let workspace = focusedWorkspace,
               let checkout = focusedCheckout
@@ -2045,6 +2065,7 @@ final class ShellModel: ObservableObject {
     }
 
     func focusEditorTab(_ tab: CoreEditorTabSnapshot) {
+        projectHomeVisible = false
         guard !isRemoteContext else {
             interactionNotice = "Remote file tabs are not available in the current read-only contract."
             return
@@ -2318,6 +2339,34 @@ final class ShellModel: ObservableObject {
         showSidebarContent(sidebarContent.alternate)
     }
 
+    var projectHomeIsEmptyState: Bool {
+        guard !isRemoteContext, localProjectionNotice == nil, focusedCheckout != nil,
+              case .idle = checkoutStartState else { return false }
+        return true
+    }
+
+    func toggleProjectHome() {
+        guard !isRemoteContext else {
+            interactionNotice = "Project Home shows local projects only."
+            return
+        }
+        guard focusedWorkspace != nil else {
+            interactionNotice = "Select a project in the sidebar to open its Project Home."
+            return
+        }
+        projectHomeVisible.toggle()
+
+    }
+
+    func closeProjectHome() { projectHomeVisible = false }
+
+    func saveProjectHomeIssue(checkoutID: String, value: String) -> Bool {
+        guard core.snapshot?.taskOperation?.phase != "working",
+              requireLocalHerdrMutationReadiness() else { return false }
+        core.dispatch(kind: "set_checkout_issue", payload: ["checkout_id": checkoutID, "text": value])
+        return true
+    }
+
     func toggleRightPanel() {
         core.persistUIState(rightPanelVisible: !rightPanelVisible)
     }
@@ -2515,6 +2564,7 @@ final class ShellModel: ObservableObject {
     /// working in. Reaching for the tab you are already on must change
     /// nothing.
     func focusUnifiedTab(_ item: ShellTabItem) {
+        projectHomeVisible = false
         guard !item.active else { return }
         switch item.kind {
         case .herdr(let tab): focusTab(tab)

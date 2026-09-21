@@ -132,6 +132,7 @@ impl Runtime {
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
         self.last_session_spaces = Self::session_spaces(payload);
+        self.issue_tokens = crate::wire::issue_tokens(payload);
         // The catalog and the root index shell out to git, so the sync
         // coordinator builds them before taking the runtime lock. A
         // precomputation whose registrations no longer match current state is
