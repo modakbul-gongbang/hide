@@ -1,10 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { startHerdr } from "./herdr-fixture";
 
-async function startHided(): Promise<{
+async function startHided(extra: Record<string, string> = {}): Promise<{
   process: ChildProcess;
   origin: string;
   token: string;
@@ -27,6 +28,7 @@ async function startHided(): Promise<{
       HIDE_KEEP_ALIVE: "1",
       HIDE_PORT: "0",
       HIDED_UI_DIR: uiDir,
+      ...extra,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -71,5 +73,45 @@ test("a bad token shows the refused connection state", async ({ page }) => {
     await expect(page.getByText("연결 거부")).toBeVisible();
   } finally {
     daemon.process.kill();
+  }
+});
+
+async function typedTextEchoes(page: Page, marker: string): Promise<void> {
+  await page.locator(".xterm-helper-textarea").focus();
+  await page.keyboard.type(marker);
+  await expect
+    .poll(() => page.evaluate(() => window.__hideProbe?.screenText() ?? ""), { timeout: 10_000 })
+    .toContain(marker);
+}
+
+test("a sidebar row click switches the pane and typed text echoes there", async ({ page }) => {
+  const herdr = await startHerdr();
+  const daemon = await startHided({ HERDR_SOCKET_PATH: herdr.socket, HERDR_BIN_PATH: herdr.bin });
+  try {
+    const [first, second] = herdr.panes;
+    await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
+    await expect(page.locator(`[data-pane="${first}"]`)).toContainText("Agent one");
+    await expect(page.locator(`[data-pane="${second}"]`)).toContainText("Agent two");
+    await expect(page.locator("[data-terminal-pane]")).toHaveAttribute("data-terminal-pane", first);
+
+    await page.locator(`[data-pane="${second}"]`).click();
+    await expect(page.locator("[data-terminal-pane]")).toHaveAttribute("data-terminal-pane", second);
+    await expect
+      .poll(() => page.evaluate(() => window.__hideProbe?.screenText() ?? ""), { timeout: 10_000 })
+      .toContain("claude");
+    await typedTextEchoes(page, "echo-two-9f3a");
+
+    await page.locator(`[data-pane="${first}"]`).click();
+    await expect(page.locator("[data-terminal-pane]")).toHaveAttribute("data-terminal-pane", first);
+    await expect
+      .poll(() => page.evaluate(() => window.__hideProbe?.screenText() ?? ""), { timeout: 10_000 })
+      .toContain("claude");
+    await typedTextEchoes(page, "echo-one-7c1d 한글");
+    await expect(page.evaluate(() => window.__hideProbe?.screenText() ?? "")).resolves.not.toContain(
+      "echo-two-9f3a",
+    );
+  } finally {
+    daemon.process.kill();
+    herdr.stop();
   }
 });

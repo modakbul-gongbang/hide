@@ -163,7 +163,22 @@ jobs:
         run: pnpm --dir web build
       - name: Install Playwright Chromium
         run: pnpm --dir web exec playwright install --with-deps chromium
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        # The click-flow e2e attaches hided to an isolated real Herdr; the
+        # fixture refuses any binary whose version is not the pin.
+        run: |
+          manifest=macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
+          url="$(jq -er .source_url "$manifest")"
+          expected="$(jq -er .sha256 "$manifest")"
+          curl -sSfL "$url" -o "$RUNNER_TEMP/herdr"
+          actual="$(shasum -a 256 "$RUNNER_TEMP/herdr" | awk '{print $1}')"
+          [[ "$actual" == "$expected" ]] || { echo "pinned Herdr digest mismatch: $actual" >&2; exit 1; }
+          chmod +x "$RUNNER_TEMP/herdr"
+          echo "bin=$RUNNER_TEMP/herdr" >> "$GITHUB_OUTPUT"
       - name: End-to-end
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: pnpm --dir web exec playwright test
 
   verify:

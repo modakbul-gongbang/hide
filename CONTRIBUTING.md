@@ -16,7 +16,7 @@ bash scripts/verify-cargo.sh lint                # cargo fmt --check, then clipp
 bash scripts/verify-cargo.sh test                # herdr-core, hided, hide-ai and the context-label plugin
 bash scripts/verify-swift.sh test                # builds target/release/libherdr_core.a, then the shell
 pnpm --dir web typecheck && pnpm --dir web lint && pnpm --dir web test
-pnpm --dir web build && pnpm --dir web e2e       # Playwright against a local hided with fake/missing Herdr
+pnpm --dir web build && pnpm --dir web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the click flow
 bash scripts/check-right-panel-sections.sh
 bash scripts/check-shortcut-contract.sh
 bash scripts/check-harness-ignore-anchor.sh
@@ -49,7 +49,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | `cargo fmt` | Rust formatting stays deterministic across the workspace, so reviews do not accumulate unrelated style drift | `bash scripts/verify-cargo.sh lint` (`cargo fmt --all --check`) | Run the same command without `--check` and commit the machine-generated formatting separately. |
 | `cargo clippy` | Every Rust target in the workspace is warning-free, including tests and generated-contract consumers | `bash scripts/verify-cargo.sh lint` (`cargo clippy --locked --workspace --all-targets -- -D warnings`) | Fix a warning when that clarifies the code; use a narrow, explained allowance when the alternative would obscure a generated or performance-sensitive boundary. |
 | `cargo test` | The core's behavior including its Herdr fixtures, hided handshake and state-file rules, the `hide-ai` router and codex backend against a fake app server, the context-label plugin, and the agent-hook crate's configuration rules | `bash scripts/verify-cargo.sh test` | Fix the test or the code. A fixture that no longer matches Herdr means the pin moved; see `AGENTS.md`, Herdr API Contract. |
-| web typecheck/lint/test/e2e | The web shell's store merge, modifier-key bytes, connection machine, and Playwright against hided | `pnpm --dir web typecheck`, `pnpm --dir web lint`, `pnpm --dir web test`, `pnpm --dir web e2e` | Fix the test or the code. e2e builds `web/dist` and `target/debug/hided`. |
+| web typecheck/lint/test/e2e | The web shell's store merge, modifier-key bytes, connection machine, and Playwright against hided: the missing-socket row, the refused token, and the sidebar click -> pane switch -> echo flow on an isolated pinned Herdr | `pnpm --dir web typecheck`, `pnpm --dir web lint`, `pnpm --dir web test`, `pnpm --dir web e2e` | Fix the test or the code. e2e builds `web/dist` and `target/debug/hided`, needs the pinned `herdr` (`HIDE_E2E_HERDR_BIN`, `HERDR_BIN_PATH` or PATH) and `cc` for the fake agent. |
 | `swift test` | The shell's rendering and event contracts | `bash scripts/verify-swift.sh test`, which builds the release core first | Same. `--filter <TestName>` after the mode narrows a run. |
 | right panel sections | The Workbench name never returns to a user-facing string | `bash scripts/check-right-panel-sections.sh` | The panel presents exactly Overview, Explorer, and History; rename, do not reintroduce. |
 | shortcut contract | The right panel toggle is `⇧⌘B` and `⌘⌥B` is advertised nowhere | `bash scripts/check-shortcut-contract.sh` | Update the catalog and every label together. |
