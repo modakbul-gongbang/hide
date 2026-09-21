@@ -29,6 +29,7 @@ fi
 socket_path="/tmp/h-m-$(printf %s "$run_dir" | shasum | cut -c1-10).sock"
 private="$run_dir/isolated"
 mkdir -p "$private/xdg-config" "$private/xdg-state" "$private/home" "$private/hide-state"
+printf "PS1='fixture %%# '\n" > "$private/home/.zshrc"
 config_path="$private/herdr-config.toml"
 printf '[update]\nversion_check = false\nmanifest_check = false\n' > "$config_path"
 

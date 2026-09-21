@@ -107,6 +107,11 @@ test("a sidebar row click switches the pane and typed text echoes there", async 
       .poll(() => page.evaluate(() => window.__hideProbe?.screenText() ?? ""), { timeout: 10_000 })
       .toContain("claude");
     await typedTextEchoes(page, "echo-one-7c1d 한글");
+    // Run evidence for a reviewer; CI sets no directory and takes none.
+    const screenshots = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (screenshots) {
+      await page.screenshot({ path: path.join(screenshots, "s1-click-flow.png") });
+    }
     await expect(page.evaluate(() => window.__hideProbe?.screenText() ?? "")).resolves.not.toContain(
       "echo-two-9f3a",
     );
