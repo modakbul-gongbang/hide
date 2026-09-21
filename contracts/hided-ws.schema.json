@@ -54,7 +54,7 @@
       "enum": ["outside_home", "home_root", "not_found", "not_a_directory", "invalid_path"]
     },
     "directoryList": {
-      "description": "Payload of a directory_list frame: the visible subdirectories of root_path under $HOME. Files, hidden names, and symlinks that resolve outside home are absent; truncated is true past the listing cap.",
+      "description": "Payload of a directory_list frame: the visible subdirectories of root_path under $HOME. root_path is the real path that was listed (a request of `~` lists home and answers with its path). Files, hidden names, and symlinks that resolve outside home are absent; truncated is true past the listing cap.",
       "type": "object",
       "additionalProperties": false,
       "required": ["root_path", "entries", "truncated"],

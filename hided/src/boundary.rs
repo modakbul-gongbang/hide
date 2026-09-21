@@ -89,8 +89,19 @@ impl Boundary {
     }
 
     /// The canonical directory for `raw` when it is home or under home.
+    /// `~` and `~/...` name the home directory, so a client can start its
+    /// listing without knowing the path; the answer carries the real one.
     pub fn resolve_dir(&self, raw: &str) -> Result<PathBuf, Refusal> {
-        let path = Path::new(raw);
+        let expanded;
+        let raw = if raw == "~" || raw.starts_with("~/") {
+            expanded = self
+                .home
+                .join(raw.trim_start_matches('~').trim_start_matches('/'));
+            expanded.to_string_lossy().into_owned()
+        } else {
+            raw.to_owned()
+        };
+        let path = Path::new(&raw);
         if raw.is_empty() || raw.contains('\0') || !path.is_absolute() {
             return Err(Refusal::InvalidPath);
         }
@@ -293,6 +304,16 @@ mod tests {
             Err(Refusal::HomeRoot)
         );
         assert!(f.boundary.list(&s(&f.home)).is_ok(), "home itself lists");
+        assert_eq!(f.boundary.list("~").unwrap().root_path, s(&f.home));
+        assert_eq!(
+            f.boundary.resolve_workspace("~/projects/alpha").unwrap(),
+            f.home.join("projects/alpha")
+        );
+        assert_eq!(f.boundary.resolve_workspace("~"), Err(Refusal::HomeRoot));
+        assert_eq!(
+            f.boundary.resolve_workspace("~user/x"),
+            Err(Refusal::InvalidPath)
+        );
         assert_eq!(f.boundary.resolve_workspace(""), Err(Refusal::InvalidPath));
         assert_eq!(
             f.boundary.resolve_workspace("projects"),
