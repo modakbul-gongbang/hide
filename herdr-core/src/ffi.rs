@@ -38,13 +38,27 @@ impl HerdrBytes {
 }
 
 #[derive(Clone, Copy)]
-struct CallbackRegistration {
+struct CCallback {
     callback: extern "C" fn(*mut c_void),
     context: *mut c_void,
 }
 
-unsafe impl Send for CallbackRegistration {}
-unsafe impl Sync for CallbackRegistration {}
+unsafe impl Send for CCallback {}
+unsafe impl Sync for CCallback {}
+
+enum NotifyTarget {
+    C(CCallback),
+    Rust(Arc<dyn Fn() + Send + Sync>),
+}
+
+impl Clone for NotifyTarget {
+    fn clone(&self) -> Self {
+        match self {
+            Self::C(callback) => Self::C(*callback),
+            Self::Rust(callback) => Self::Rust(Arc::clone(callback)),
+        }
+    }
+}
 
 /// Thread-safe handle that fires the registered change callback. Cloned into
 /// live worker threads so PTY and session-sync output can wake the Swift shell.
@@ -56,7 +70,7 @@ unsafe impl Sync for CallbackRegistration {}
 /// on the runtime mutex per PTY chunk.
 #[derive(Clone)]
 pub struct ChangeNotifier {
-    registration: Arc<Mutex<Option<CallbackRegistration>>>,
+    registration: Arc<Mutex<Option<NotifyTarget>>>,
     /// True from an announcement until the read that answers it begins.
     announced: Arc<AtomicBool>,
 }
@@ -70,7 +84,7 @@ impl ChangeNotifier {
     }
 
     pub fn notify(&self) {
-        let registration = *lock_recover(&self.registration);
+        let registration = lock_recover(&self.registration).clone();
         // Latching with nobody listening would swallow the first real
         // announcement, so an unregistered notifier stays silent and unlatched.
         let Some(registration) = registration else {
@@ -79,8 +93,9 @@ impl ChangeNotifier {
         if self.announced.swap(true, Ordering::AcqRel) {
             return;
         }
-        let _ = catch_unwind(AssertUnwindSafe(|| {
-            (registration.callback)(registration.context);
+        let _ = catch_unwind(AssertUnwindSafe(|| match registration {
+            NotifyTarget::C(target) => (target.callback)(target.context),
+            NotifyTarget::Rust(callback) => callback(),
         }));
     }
 
@@ -95,7 +110,7 @@ impl ChangeNotifier {
         self.announced.store(false, Ordering::Release);
     }
 
-    fn set_callback(&self, registration: Option<CallbackRegistration>) {
+    fn set_callback(&self, registration: Option<NotifyTarget>) {
         *lock_recover(&self.registration) = registration;
     }
 
@@ -183,37 +198,20 @@ fn notify_change(core: &HerdrCore) {
     core.notifier.notify();
 }
 
-/// Makes a write to a closed pipe or socket return `EPIPE` instead of
-/// terminating the process.
+/// Safe Rust handle for the same core the C ABI exposes.
 ///
-/// A Rust binary does this in its own startup, but this core is a static
-/// library inside a Swift host, which leaves SIGPIPE at its default action:
-/// terminate, with no crash report. On 2026-09-04 closing a tab exited the app
-/// that way: the pane's control child had already left on `terminal_closed`,
-/// and the release line the session drop writes to its stdin hit the closed
-/// pipe. Every pipe write in this core reports its error to the runtime, so
-/// this is what lets those reports happen.
-fn ignore_sigpipe() {
-    // SAFETY: installing SIG_IGN for SIGPIPE has no handler to race with and
-    // no memory to hand over; the call only changes the process signal table.
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
-    }
-}
+/// `create`, `dispatch`, `snapshot_delta`, `on_change`, and `Drop` (destroy)
+/// belong to the thread that created the value. Axum workers talk to it
+/// through an owner-thread channel in `hided`.
+pub type Core = HerdrCore;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut HerdrCore {
-    catch_unwind(AssertUnwindSafe(|| {
+impl HerdrCore {
+    pub fn create(options: CoreOptions) -> Option<Box<Self>> {
         ignore_sigpipe();
-        let Some(bytes) = input_bytes(options_json, len) else {
-            return ptr::null_mut();
-        };
-        let Ok(mut options) = serde_json::from_slice::<CoreOptions>(bytes) else {
-            return ptr::null_mut();
-        };
         if validate_options(&options).is_err() {
-            return ptr::null_mut();
+            return None;
         }
+        let mut options = options;
         let environment = environment::read_and_validate();
         let usage_paths = crate::usage::UsagePaths {
             home: environment.home_path.clone(),
@@ -268,13 +266,98 @@ pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut
                 None
             }
         };
-        Box::into_raw(Box::new(HerdrCore {
+        Some(Box::new(HerdrCore {
             _terminal_maintenance: maintenance,
             _session_sync: session_sync,
             runtime,
             notifier,
             owner_thread: thread::current().id(),
         }))
+    }
+
+    pub fn create_from_json(options_json: &[u8]) -> Option<Box<Self>> {
+        let options = serde_json::from_slice::<CoreOptions>(options_json).ok()?;
+        Self::create(options)
+    }
+
+    pub fn dispatch_bytes(&self, bytes: &[u8]) -> bool {
+        if !check_owner_thread(self, "dispatch") {
+            notify_change(self);
+            return false;
+        }
+        let (changed, retired_syncs) = {
+            let mut runtime = lock_recover(&self.runtime);
+            let changed = runtime.dispatch_json(bytes);
+            (changed, runtime.take_retired_remote_syncs())
+        };
+        drop(retired_syncs);
+        if changed {
+            notify_change(self);
+        }
+        changed
+    }
+
+    pub fn snapshot_delta(&self, have_revision: u64, have_terminal_sequence: u64) -> Vec<u8> {
+        if !check_owner_thread(self, "snapshot") {
+            notify_change(self);
+            return Vec::new();
+        }
+        self.notifier.clear_announcement();
+        let payload = {
+            let mut runtime = lock_recover(&self.runtime);
+            runtime.snapshot_delta_payload(have_revision, have_terminal_sequence)
+        };
+        crate::runtime::serialize_snapshot_delta(&payload).unwrap_or_default()
+    }
+
+    pub fn on_change<F>(&self, callback: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        if !check_owner_thread(self, "on_change") {
+            notify_change(self);
+            return;
+        }
+        self.notifier
+            .set_callback(Some(NotifyTarget::Rust(Arc::new(callback))));
+    }
+
+    pub fn clear_on_change(&self) {
+        if !check_owner_thread(self, "on_change") {
+            notify_change(self);
+            return;
+        }
+        self.notifier.set_callback(None);
+    }
+}
+
+/// Makes a write to a closed pipe or socket return `EPIPE` instead of
+/// terminating the process.
+///
+/// A Rust binary does this in its own startup, but this core is a static
+/// library inside a Swift host, which leaves SIGPIPE at its default action:
+/// terminate, with no crash report. On 2026-09-04 closing a tab exited the app
+/// that way: the pane's control child had already left on `terminal_closed`,
+/// and the release line the session drop writes to its stdin hit the closed
+/// pipe. Every pipe write in this core reports its error to the runtime, so
+/// this is what lets those reports happen.
+fn ignore_sigpipe() {
+    // SAFETY: installing SIG_IGN for SIGPIPE has no handler to race with and
+    // no memory to hand over; the call only changes the process signal table.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn herdr_core_create(options_json: *const u8, len: usize) -> *mut HerdrCore {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(bytes) = input_bytes(options_json, len) else {
+            return ptr::null_mut();
+        };
+        HerdrCore::create_from_json(bytes)
+            .map(Box::into_raw)
+            .unwrap_or(ptr::null_mut())
     }))
     .unwrap_or(ptr::null_mut())
 }
@@ -285,10 +368,6 @@ pub extern "C" fn herdr_core_dispatch(core: *mut HerdrCore, event_json: *const u
         let Some(core) = core_ref(core) else {
             return;
         };
-        if !check_owner_thread(core, "dispatch") {
-            notify_change(core);
-            return;
-        }
         let Some(bytes) = input_bytes(event_json, len) else {
             lock_recover(&core.runtime).set_error(
                 "event.invalid_pointer",
@@ -298,17 +377,7 @@ pub extern "C" fn herdr_core_dispatch(core: *mut HerdrCore, event_json: *const u
             notify_change(core);
             return;
         };
-        let (changed, retired_syncs) = {
-            let mut runtime = lock_recover(&core.runtime);
-            let changed = runtime.dispatch_json(bytes);
-            (changed, runtime.take_retired_remote_syncs())
-        };
-        // A removed device's coordinator is joined here, off the lock it
-        // needs to finish.
-        drop(retired_syncs);
-        if changed {
-            notify_change(core);
-        }
+        let _ = core.dispatch_bytes(bytes);
     }));
 }
 
@@ -322,24 +391,11 @@ pub extern "C" fn herdr_core_snapshot(
         let Some(core) = core_ref(core) else {
             return HerdrBytes::empty();
         };
-        if !check_owner_thread(core, "snapshot") {
-            notify_change(core);
-            return HerdrBytes::empty();
-        }
-        // Clear first, then read. A change landing between the two announces
-        // itself again and costs one extra read; clearing after the read would
-        // lose it.
-        core.notifier.clear_announcement();
-        let payload = {
-            let mut runtime = lock_recover(&core.runtime);
-            runtime.snapshot_delta_payload(have_revision, have_terminal_sequence)
-        };
-        // The guard is gone before a byte is written. Serializing the
-        // navigator, ui state and terminal output under the lock made every
-        // attach thread and the next read wait behind it.
-        match crate::runtime::serialize_snapshot_delta(&payload) {
-            Ok(bytes) => HerdrBytes::from_vec(bytes),
-            Err(_) => HerdrBytes::empty(),
+        let bytes = core.snapshot_delta(have_revision, have_terminal_sequence);
+        if bytes.is_empty() {
+            HerdrBytes::empty()
+        } else {
+            HerdrBytes::from_vec(bytes)
         }
     }))
     .unwrap_or_else(|_| HerdrBytes::empty())
@@ -359,8 +415,12 @@ pub extern "C" fn herdr_core_on_change(
             notify_change(core);
             return;
         }
-        core.notifier
-            .set_callback(callback.map(|callback| CallbackRegistration { callback, context }));
+        core.notifier.set_callback(callback.map(|callback| {
+            NotifyTarget::C(CCallback {
+                callback,
+                context,
+            })
+        }));
     }));
 }
 
