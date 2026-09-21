@@ -1,0 +1,47 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      colors: {
+        background: "var(--color-background)",
+        sidebar: "var(--color-sidebar)",
+        panel: "var(--color-panel)",
+        elevated: "var(--color-elevated)",
+        balloon: "var(--color-balloon)",
+        divider: "var(--color-divider)",
+        primary: "var(--color-primary)",
+        secondary: "var(--color-secondary)",
+        muted: "var(--color-muted)",
+        accent: "var(--color-accent)",
+        danger: "var(--color-danger)",
+        warning: "var(--color-warning)",
+        success: "var(--color-success)",
+        "agent-working": "var(--color-agent-working)",
+      },
+      spacing: {
+        none: "var(--spacing-none)",
+        xxs: "var(--spacing-xxs)",
+        xs: "var(--spacing-xs)",
+        sm: "var(--spacing-sm)",
+        md: "var(--spacing-md)",
+        lg: "var(--spacing-lg)",
+        xl: "var(--spacing-xl)",
+      },
+      borderRadius: {
+        xs: "var(--radius-xs)",
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
+      },
+      fontSize: {
+        micro: "var(--text-micro)",
+        caption: "var(--text-caption)",
+        body: "var(--text-body)",
+        subhead: "var(--text-subhead)",
+        title: "var(--text-title)",
+      },
+    },
+  },
+  plugins: [],
+};
