@@ -15,6 +15,10 @@ fn main() {
     let dist = manifest.join("../web/dist");
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("ui_embed.rs");
     println!("cargo:rerun-if-changed=build.rs");
+    // The directory itself, so a file added or removed by a rebuild of the
+    // web shell re-runs this script; per-file lines below catch edits.
+    println!("cargo:rerun-if-changed={}", dist.display());
+    println!("cargo:rerun-if-changed={}", dist.join("assets").display());
     let release = env::var("PROFILE").as_deref() == Ok("release");
     if !release {
         fs::write(&out, "pub static FILES: &[(&str, &[u8])] = &[];\n").expect("write ui_embed.rs");

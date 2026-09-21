@@ -1,5 +1,5 @@
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
-import { noteArrival } from "./probe";
+import { noteArrival, probeEnabled } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
 
 export type DispatchFn = (event: {
@@ -35,8 +35,16 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
   let terminalSequence = 0;
   let reconnectTimer: number | undefined;
 
+  // Decided once: the probe is a measurement seam, not a per-frame branch.
+  const probing = probeEnabled();
+
   const dispatch: DispatchFn = (event) => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      // A key typed while reconnecting is lost, not queued; the badge shows
+      // the state and the log keeps the fact.
+      useShellStore.getState().noteDiagnostic(`dispatch dropped: ${event.kind} while socket not open`);
+      return;
+    }
     socket.send(JSON.stringify(event));
   };
 
@@ -61,7 +69,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
       );
     });
     ws.addEventListener("message", (event) => {
-      noteArrival();
+      if (probing) noteArrival();
       const frame = JSON.parse(String(event.data)) as {
         type: string;
         payload?: { revision?: number; terminal_sequence?: number };
