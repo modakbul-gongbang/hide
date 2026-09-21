@@ -864,6 +864,19 @@ impl Runtime {
             .flat_map(|tab| tab.panes.iter())
             .map(|pane| pane.id.clone())
             .collect::<HashSet<_>>();
+        // The lineage comes first because the read fingerprint carries what
+        // each row's descendants are doing, and that is only known once the
+        // tree is built (PRD B5).
+        let lineage_pruned = crate::sidebar::prune_lineage_expansion(
+            &mut self.snapshot.ui_state.expanded_agent_pane_ids,
+            &session.agents,
+            ReadRecordScope::Remote(&prefix),
+        );
+        crate::sidebar::apply_lineage(
+            &mut session.agents,
+            &session.workspaces,
+            &self.snapshot.ui_state.expanded_agent_pane_ids,
+        );
         let mut changes = crate::sidebar::prune_read_records(
             &mut self.snapshot.ui_state.pane_read_records,
             &live_pane_ids,
@@ -874,16 +887,6 @@ impl Runtime {
             &mut self.snapshot.ui_state.pane_read_records,
             focused.as_deref(),
         ));
-        let lineage_pruned = crate::sidebar::prune_lineage_collapse(
-            &mut self.snapshot.ui_state.collapsed_agent_pane_ids,
-            &session.agents,
-            ReadRecordScope::Remote(&prefix),
-        );
-        crate::sidebar::apply_lineage(
-            &mut session.agents,
-            &session.workspaces,
-            &self.snapshot.ui_state.collapsed_agent_pane_ids,
-        );
         if lineage_pruned {
             self.persist_ui_state();
         }
@@ -1090,179 +1093,6 @@ impl Runtime {
             &self.snapshot.navigator.agents,
         );
         changed | delegated_tabs_changed | self.refresh_inactive_groups()
-    }
-
-    /// Whether a delegated child's clock should be running at all.
-    ///
-    /// A finished child is not stuck, a released pane has no session to be
-    /// stuck in, an unknown activity gives nothing to measure, and a remote
-    /// pane is uninstrumented by decision (PRD B19, D-51).
-    pub(super) fn stall_eligible(&self, agent: &SidebarAgentSnapshot) -> bool {
-        if !agent.delegated || crate::agent_hooks::is_remote_pane(&agent.pane_id) {
-            return false;
-        }
-        if agent.activity == "unknown" {
-            return false;
-        }
-        if self
-            .terminal_session_lifecycles
-            .get(&agent.pane_id)
-            .is_some_and(|lifecycle| lifecycle.state == "released")
-        {
-            return false;
-        }
-        // Waiting on the operator, or running with nothing to show for it.
-        // A stopped child with no demand has finished, which is not waiting.
-        agent.demand != "none" || agent.blocked || agent.activity == "working"
-    }
-
-    /// Advances every eligible child's clock and drops the rest.
-    ///
-    /// While the server is away the clocks hold their reading rather than
-    /// counting: a disconnection is Hide's blindness, not the agent being
-    /// stuck (PRD B20, D-54).
-    pub(super) fn advance_stall_clocks(&mut self, agents: &[SidebarAgentSnapshot], now: u64) {
-        let connected = self.snapshot.status.herdr.state == "connected";
-        let mut live = BTreeSet::new();
-        for agent in agents {
-            if !self.stall_eligible(agent) {
-                continue;
-            }
-            live.insert(agent.pane_id.clone());
-            let fingerprint = (
-                agent.state_change_seq,
-                agent.demand.clone(),
-                agent.activity.clone(),
-            );
-            match self.stall_clocks.get_mut(&agent.pane_id) {
-                Some(clock) if clock.fingerprint == fingerprint => {
-                    if connected {
-                        clock.stalled_ms = clock.elapsed(now);
-                    }
-                    clock.last_sample_unix_ms = now;
-                }
-                _ => {
-                    self.stall_clocks.insert(
-                        agent.pane_id.clone(),
-                        StallClock {
-                            fingerprint,
-                            stalled_ms: 0,
-                            last_sample_unix_ms: now,
-                        },
-                    );
-                }
-            }
-        }
-        self.stall_clocks
-            .retain(|pane_id, _| live.contains(pane_id));
-    }
-
-    /// What each lineage root should be told about its descendants, as of
-    /// `now`. A pure read, so the coordinator can ask whether a threshold is
-    /// about to be crossed without changing anything.
-    ///
-    /// The notice lands on the root rather than climbing one level at a time:
-    /// at depth three, one level per threshold would keep the operator
-    /// waiting forty-five minutes for news of something stuck for fifteen
-    /// (PRD B18, D-62).
-    pub(super) fn stall_escalations(
-        &self,
-        agents: &[SidebarAgentSnapshot],
-        now: u64,
-    ) -> BTreeMap<String, (&'static str, String, String)> {
-        let mut worst: BTreeMap<String, (u64, u8, &'static str, String, String)> = BTreeMap::new();
-        for agent in agents {
-            let Some(clock) = self.stall_clocks.get(&agent.pane_id) else {
-                continue;
-            };
-            if !self.stall_eligible(agent) {
-                continue;
-            }
-            let elapsed = clock.elapsed(now);
-            let level = if elapsed >= STALL_HARD_MS {
-                "hard"
-            } else if elapsed >= STALL_SOFT_MS {
-                "soft"
-            } else {
-                continue;
-            };
-            let root = agent
-                .lineage_path_pane_ids
-                .first()
-                .cloned()
-                .unwrap_or_else(|| agent.pane_id.clone());
-            let name = agent.identity_label.clone();
-            let notice = format!(
-                "{name} has been waiting {} minutes on {}",
-                elapsed / 60_000,
-                waiting_on(agent)
-            );
-            let priority = stall_priority(agent);
-            let candidate = (elapsed, priority, level, notice, agent.pane_id.clone());
-            // Longest wait first, and on a tie the one asking for the most.
-            // Without the second key the notice names whichever sibling the
-            // row order happened to reach first, which is not an answer.
-            match worst.get(&root) {
-                Some(best) if best.0 > elapsed => {}
-                Some(best) if best.0 == elapsed && best.1 <= priority => {}
-                _ => {
-                    worst.insert(root, candidate);
-                }
-            }
-        }
-        worst
-            .into_iter()
-            .map(|(root, (_, _, level, notice, pane_id))| (root, (level, notice, pane_id)))
-            .collect()
-    }
-
-    /// Runs the clocks and writes what they say onto the rows.
-    pub(super) fn apply_stall_escalation(&mut self, agents: &mut [SidebarAgentSnapshot], now: u64) {
-        self.advance_stall_clocks(agents, now);
-        let escalations = self.stall_escalations(agents, now);
-        let hard_children = escalations
-            .values()
-            .filter(|(level, _, _)| *level == "hard")
-            .map(|(_, _, pane_id)| pane_id.clone())
-            .collect::<BTreeSet<_>>();
-        for agent in agents.iter_mut() {
-            let (level, notice) = match escalations.get(&agent.pane_id) {
-                Some((level, notice, _)) => ((*level).to_owned(), Some(notice.clone())),
-                None => (String::new(), None),
-            };
-            agent.stall_level = level;
-            agent.stall_notice = notice;
-            // The child that ran out of time stops being drawn as somebody
-            // else's work, because from here on it is the operator's.
-            if hard_children.contains(&agent.pane_id) {
-                agent.delegated = false;
-            }
-        }
-        crate::sidebar::rederive_ownership(agents);
-    }
-
-    /// Whether a stall threshold has been crossed since the last publish.
-    ///
-    /// The coordinator asks this on the agent tick it already runs, so a
-    /// stalled session - which by definition reports nothing new - still
-    /// reaches the operator without a timer of Hide's own (PRD B36).
-    pub fn stall_publish_due(&self) -> bool {
-        self.stall_publish_due_at(unix_milliseconds())
-    }
-
-    pub(super) fn stall_publish_due_at(&self, now: u64) -> bool {
-        if self.snapshot.status.herdr.state != "connected" {
-            return false;
-        }
-        let agents = &self.snapshot.navigator.agents;
-        let escalations = self.stall_escalations(agents, now);
-        agents.iter().any(|agent| {
-            let level = escalations
-                .get(&agent.pane_id)
-                .map(|(level, _, _)| *level)
-                .unwrap_or("");
-            agent.stall_level != level
-        })
     }
 
     /// Marks the tabs that exist only to hold delegated children, and asks
@@ -1935,15 +1765,40 @@ impl Runtime {
         crate::sidebar::apply_lineage(
             &mut self.snapshot.navigator.agents,
             &self.snapshot.navigator.workspaces,
-            &self.snapshot.ui_state.collapsed_agent_pane_ids,
+            &self.snapshot.ui_state.expanded_agent_pane_ids,
         );
         for remote in &mut self.snapshot.status.remote {
             if let Some(session) = &mut remote.session {
                 crate::sidebar::apply_lineage(
                     &mut session.agents,
                     &session.workspaces,
-                    &self.snapshot.ui_state.collapsed_agent_pane_ids,
+                    &self.snapshot.ui_state.expanded_agent_pane_ids,
                 );
+            }
+        }
+    }
+
+    /// Logs the descendants whose activity Herdr cannot classify, once per
+    /// change in that count per row: they are left off the badge because a
+    /// count the projection cannot vouch for is not drawn (PRD B7).
+    pub(super) fn log_unknown_descendants(
+        previous: &[SidebarAgentSnapshot],
+        current: &[SidebarAgentSnapshot],
+    ) {
+        for agent in current {
+            let unknown = agent.descendant_counts.unknown;
+            let before = previous
+                .iter()
+                .find(|row| row.pane_id == agent.pane_id)
+                .map(|row| row.descendant_counts.unknown)
+                .unwrap_or(0);
+            if unknown > 0 && unknown != before {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "session",
+                    "kind": "lineage.unknown_descendants",
+                    "pane_id": agent.pane_id,
+                    "unknown": unknown,
+                }));
             }
         }
     }

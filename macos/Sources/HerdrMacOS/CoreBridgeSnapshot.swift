@@ -394,11 +394,11 @@ struct CoreUIStateSnapshot: Decodable {
     /// instead of a row in the pane-keyed map.
     let editorTextScale: Double
 
-    var collapsedAgentPaneIDs: [String] = []
+    var expandedAgentPaneIDs: [String] = []
     var projectBaseBranches: [String: String] = [:]
 
     enum CodingKeys: String, CodingKey {
-        case collapsedAgentPaneIDs = "collapsed_agent_pane_ids"
+        case expandedAgentPaneIDs = "expanded_agent_pane_ids"
         case projectBaseBranches = "project_base_branches"
         case leftSidebarVisible = "left_sidebar_visible"
         case rightPanelVisible = "right_panel_visible"
@@ -424,7 +424,7 @@ struct CoreUIStateSnapshot: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        collapsedAgentPaneIDs = try container.decodeIfPresent([String].self, forKey: .collapsedAgentPaneIDs) ?? []
+        expandedAgentPaneIDs = try container.decodeIfPresent([String].self, forKey: .expandedAgentPaneIDs) ?? []
         projectBaseBranches = try container.decodeIfPresent([String: String].self, forKey: .projectBaseBranches) ?? [:]
         leftSidebarVisible = try container.decodeIfPresent(Bool.self, forKey: .leftSidebarVisible) ?? true
         rightPanelVisible = try container.decodeIfPresent(Bool.self, forKey: .rightPanelVisible) ?? true

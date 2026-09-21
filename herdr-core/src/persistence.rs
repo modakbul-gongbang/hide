@@ -37,8 +37,13 @@ struct StoredUiState {
     expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     project_base_branches: BTreeMap<String, String>,
+    /// The folded-by-default agent tree's open rows. The former
+    /// `collapsed_agent_pane_ids` key is ignored on load and dropped on the
+    /// next write: the ids it held name panes of some earlier Herdr server,
+    /// and a first launch after the upgrade starts every parent folded
+    /// (PRD D-11).
     #[serde(default)]
-    collapsed_agent_pane_ids: Vec<String>,
+    expanded_agent_pane_ids: Vec<String>,
     selected_path: Option<String>,
     selected_pane_id: Option<String>,
     #[serde(default)]
@@ -144,7 +149,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
                 .expanded_inactive_checkout_project_paths,
             expanded_inactive_project_device_ids: stored.expanded_inactive_project_device_ids,
             project_base_branches: stored.project_base_branches,
-            collapsed_agent_pane_ids: stored.collapsed_agent_pane_ids,
+            expanded_agent_pane_ids: stored.expanded_agent_pane_ids,
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
             shortcut_bindings: stored.shortcut_bindings,
@@ -191,7 +196,7 @@ pub fn save(
             .clone(),
         expanded_inactive_project_device_ids: state.expanded_inactive_project_device_ids.clone(),
         project_base_branches: state.project_base_branches.clone(),
-        collapsed_agent_pane_ids: state.collapsed_agent_pane_ids.clone(),
+        expanded_agent_pane_ids: state.expanded_agent_pane_ids.clone(),
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
         shortcut_bindings: state.shortcut_bindings.clone(),
@@ -239,10 +244,10 @@ mod tests {
     fn retired_git_panel_restores_overview_without_losing_other_ui_state() {
         let mut persisted = serde_json::to_value(UiStateSnapshot::default()).unwrap();
         persisted["right_panel_section"] = serde_json::json!("git");
-        persisted["collapsed_agent_pane_ids"] = serde_json::json!(["parent"]);
+        persisted["expanded_agent_pane_ids"] = serde_json::json!(["parent"]);
         let state: UiStateSnapshot = serde_json::from_value(persisted).unwrap();
         assert_eq!(state.right_panel_section, RightPanelSection::Overview);
-        assert_eq!(state.collapsed_agent_pane_ids, ["parent"]);
+        assert_eq!(state.expanded_agent_pane_ids, ["parent"]);
         assert_eq!(
             serde_json::to_value(&state).unwrap()["right_panel_section"],
             "overview"
@@ -251,6 +256,37 @@ mod tests {
             RightPanelSection::parse("git"),
             Some(RightPanelSection::Overview)
         );
+    }
+
+    // PRD D-11: the folded set is not migrated. An old store's collapsed
+    // ids name panes of a server that has since been restarted, so they are
+    // dropped and every parent starts folded.
+    #[test]
+    fn a_stored_collapsed_set_is_ignored_and_every_parent_starts_folded() {
+        let root =
+            std::env::temp_dir().join(format!("herdr-core-collapsed-{}", std::process::id()));
+        let path = root.join("state.json");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        save(
+            &path,
+            &UiStateSnapshot::default(),
+            &PaneTerminalSizes::new(),
+        )
+        .unwrap();
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        persisted["collapsed_agent_pane_ids"] = serde_json::json!(["w1:p1", "w1:p2"]);
+        fs::write(&path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+        let (state, _, disposition) = load(&path);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert!(state.expanded_agent_pane_ids.is_empty());
+        save(&path, &state, &PaneTerminalSizes::new()).unwrap();
+        let rewritten: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(rewritten.get("collapsed_agent_pane_ids").is_none());
+        assert_eq!(rewritten["expanded_agent_pane_ids"], serde_json::json!([]));
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -267,6 +303,12 @@ mod tests {
                 demand: "question".to_owned(),
                 activity: "stopped".to_owned(),
                 completed: false,
+                descendant_signals: [crate::model::DescendantSignal {
+                    pane_id: "w1:p2".to_owned(),
+                    kind: "question".to_owned(),
+                }]
+                .into_iter()
+                .collect(),
             },
         );
         save(&path, &state, &PaneTerminalSizes::new()).expect("state saves");

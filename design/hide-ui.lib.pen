@@ -6075,42 +6075,6 @@
         },
         {
           "type": "text",
-          "id": "YwBYo",
-          "name": "Escalated child label",
-          "fill": "$--color-secondary",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Escalated child",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-caption",
-          "fontWeight": "normal"
-        },
-        {
-          "id": "L0Zg5R",
-          "type": "ref",
-          "ref": "HXWFK",
-          "name": "Escalated child",
-          "width": "fill_container",
-          "descendants": {
-            "PCeNa": {
-              "content": "!",
-              "fill": "$--color-warning"
-            },
-            "x0h40": {
-              "content": "검토 승인 필요",
-              "fill": "$--color-primary"
-            },
-            "X6LdE": {
-              "content": "Approval",
-              "fill": "$--color-warning"
-            },
-            "BsCNW": {
-              "enabled": false
-            }
-          }
-        },
-        {
-          "type": "text",
           "id": "D4odB",
           "name": "Opacity caveat",
           "fill": "$--color-secondary",
@@ -9094,38 +9058,6 @@
             },
             "o2Df2F/BsCNW": {
               "enabled": false
-            }
-          }
-        },
-        {
-          "type": "text",
-          "id": "Vowt3",
-          "name": "Hard stall / escalation label",
-          "fill": "$--color-secondary",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Hard stall / escalation",
-          "fontFamily": "$--font-ui",
-          "fontSize": "$--text-caption",
-          "fontWeight": "normal"
-        },
-        {
-          "id": "rncfK",
-          "type": "ref",
-          "ref": "n1zn1O",
-          "name": "Hard stall / escalation",
-          "width": "fill_container",
-          "descendants": {
-            "o2Df2F/PCeNa": {
-              "content": "!",
-              "fill": "$--color-warning"
-            },
-            "o2Df2F/X6LdE": {
-              "content": "Approval",
-              "fill": "$--color-warning"
-            },
-            "o2Df2F/BsCNW": {
-              "content": "자식 확인 필요"
             }
           }
         },

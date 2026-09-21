@@ -295,8 +295,7 @@ private func focusOutcome(
 
 private func row(
     paneID: String,
-    delegated: Bool,
-    stallNotice: String? = nil
+    delegated: Bool
 ) -> SidebarAgent {
     var agent = SidebarAgent(
         id: paneID,
@@ -314,13 +313,12 @@ private func row(
         lastActivity: "1"
     )
     agent.delegated = delegated
-    agent.stallNotice = stallNotice
     return agent
 }
 
-/// PRD B11, B21, B17, B18, D-36, D-60: the row carries ownership, the stall
-/// notice and the uninstrumented mark, and every one of them has words.
-@Test func theSidebarRowCarriesOwnershipStallAndInstrumentation() {
+/// PRD B11, B21, D-36, D-60: the row carries ownership and the
+/// uninstrumented mark, and each of them has words.
+@Test func theSidebarRowCarriesOwnershipAndInstrumentation() {
     let mine = AgentRowPresentation(
         agent: row(paneID: "w1:p1", delegated: false),
         density: .compact,
@@ -328,15 +326,10 @@ private func row(
         children: CorePaneChildren(instrumented: true)
     )
     #expect(!mine.delegated)
-    #expect(mine.stallNotice == nil)
     #expect(mine.uninstrumentedReason == nil, "an instrumented pane has no mark")
 
     let theirs = AgentRowPresentation(
-        agent: row(
-            paneID: "w1:p2",
-            delegated: true,
-            stallNotice: "Implementor has been waiting 16 minutes on an approval"
-        ),
+        agent: row(paneID: "w1:p2", delegated: true),
         density: .compact,
         connected: true,
         children: CorePaneChildren(
@@ -347,7 +340,6 @@ private func row(
         )
     )
     #expect(theirs.delegated)
-    #expect(theirs.stallNotice?.contains("16 minutes") == true)
     #expect(theirs.uninstrumentedReason?.contains("not installed") == true)
     // The symbol never carries the meaning by itself.
     #expect(theirs.uninstrumentedLabel?.isEmpty == false)

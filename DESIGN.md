@@ -172,7 +172,13 @@ It replaced a step that shrank after two levels, which kept deep trees narrow at
 `lineageChevronWidth` reserves 16pt on every project agent row for the disclosure control, and that column is where the connector lives: the trunk drops from the control that opens the branch, so a branch and the thing that shows or hides it are one column rather than two.
 The disclosure occupies the first identity line rather than the center of a multiline row, and the descending rail starts below its glyph.
 Continuing ancestor rails remain in that ancestor parent column through deeper descendants.
-`lineageElbowY` places the turn at the row's status mark, a fixed offset from the row's top rather than a fraction of its height, so a row that grows a stall notice does not slide the connector off the mark.
+`lineageElbowY` places the turn at the row's status mark, a fixed offset from the row's top rather than a fraction of its height, so a row that grows a qualifier line does not slide the connector off the mark.
+The 16pt column is the row's role column and it draws one glyph: `chevron.right` or `chevron.down` when the row has descendants to fold or open, `arrow.turn.down.right` when the row is a child drawn away from its parent, and nothing otherwise.
+The chevron toggles the fold in the project tree; on a raised Needs You or Done row, and in the Agents view, it only says the descendants exist, because those rows never unfold.
+The return glyph is the way back: its tooltip and accessibility help name the parent (`Return to parent <name>`) and clicking it selects the parent's pane, the same action the pane header's Return control performs.
+It appears on a child listed under its own worktree, where the tree has rebased it to depth zero, and on a child listed flat in the Agents view; under its parent the tree line already says whose it is.
+An orphan keeps the `↳ from an agent Hide can't see` line beneath its row, because there is no parent to return to.
+Descendants start folded, and the fold persists per pane id for as long as the pane exists.
 `HideTheme.gitRowFontSize` (11pt) and `HideTheme.gitDetailFontSize` (10pt) are the History board's row and detail sizes; the Overview draws its group headers on the shared scale instead.
 Checkout titles use `HideTheme.Typography.subhead` and `checkoutRowHeight` (36pt), with primary text contrast even when no terminal is attached.
 The one-line checkout row reserves fixed columns for its kind glyph and right-edge chevron, with the title and last-commit age between them, so disclosure and agent changes do not move its identity.
@@ -201,6 +207,11 @@ The second line is chosen by the core from the row's group and drawn as given, s
 
 A row with no sentence draws the status word instead, `Typography.caption` medium in the mark's color, so a row is never left with an empty second line; beside a sentence the word is not drawn, because the mark and the group heading already say it and the two together took a third of the row.
 A delegated row's sentence is `muted`, like the rest of it.
+A row whose descendants are folded, and every raised row, wears the descendant badge on its first line, before the elapsed time: a `badgeHeight` capsule filled with `elevated`, `spacingXS` horizontal padding, one cell per non-zero state in the order error, approval, question, working, done.
+Each cell is the row mark of that state (`×` `!` `?` `●` `✓`, caption bold monospaced in the state's semantic color) followed by the count in `Typography.micro` monospaced `secondary`, cells `spacingXS` apart and mark and count `spacingXXS` apart.
+The counts are the core's `descendant_counts` and sum every live descendant; a row with none, or with only ready descendants, wears no badge.
+Opening the fold removes the badge, because the opened rows carry their own marks.
+Under an opened parent, a child running in another worktree names it on the qualifier line with the `GitIcon.worktree` glyph and the worktree name in `Typography.micro` `muted`; a child in the parent's own worktree has no qualifier, and the former floating worktree chip beneath the row is gone.
 The sentence is one line with tail truncation, and the full text is the row tooltip and the accessibility label, which reads name, agent kind, status word, sentence in that order even when the word left the screen.
 There is no third gray for the sentence: a `muted` step between `secondary` and `primary` was tried and the two grays did not separate in the rendered row.
 Only a collapsed Workspace can gain a second line.
@@ -276,7 +287,7 @@ Zoom or Restore stays at the right edge, secondary fork, port, and sibling actio
 Ownership is drawn as emphasis, not as a new color or container.
 The operator's own rows are bright; delegated rows are subdued, using the existing emphasized/subdued treatment that Needs You and Done already use.
 Nothing new is introduced for it: a delegated row is simply never emphasized, because it can only be Working or Seen.
-When a stall hands a child back to the operator, its dimming lifts through the same token rather than through a state of its own.
+A child's question or completion reaches the operator through its ancestors: the ancestor row turns unread and its descendant badge changes, and the ancestor's own group does not move.
 
 The uninstrumented mark is drawn in exactly three places, and only on panes where an agent was detected: the pane header's 28pt identity row, the sidebar agent row, and the Overview worktree row's agent line.
 It is a mark plus an accessible name, never a color alone, and its tooltip carries the whole sentence.
