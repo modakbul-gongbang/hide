@@ -7,7 +7,7 @@ The former Final, R2, R3, handoff candidates, and the Overview family-only compa
 ## Product decisions
 
 - Agents opens in `My Work` for each app session and offers `All` as an explicit scope change.
-- `My Work` excludes rows whose core-final ownership is Delegated, while hard escalations and visible orphans remain operator-owned and visible.
+- `My Work` excludes rows whose core-final ownership is Delegated, while visible orphans remain operator-owned and visible.
 - Both scopes preserve Needs You, Done, Working, and Seen instead of replacing status groups with a relationship tree.
 - Selecting an Overview row changes inspection only.
 - The row's Open control is the only action that shows its pane and changes read state.
@@ -61,7 +61,7 @@ Loading, confirmed no agents, filter-empty, disconnected, and populated states r
 During disconnection the last known rows remain visible beneath an explicit stale-data notice.
 
 Ownership is derived from the core's final `delegated` value rather than from depth.
-Depth zero is not ownership, because a hard escalation can clear delegation and an orphan must remain visible.
+Depth zero is not ownership on its own, because an orphan must remain visible as the operator's.
 Missing parent lineage never becomes evidence that a pane was independently started.
 
 ## Pane header and focus

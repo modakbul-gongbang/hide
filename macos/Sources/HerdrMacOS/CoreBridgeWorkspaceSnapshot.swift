@@ -1190,13 +1190,12 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
     var spawnOriginPaneID: String? = nil
     var lineageCollapsed: Bool = false
     /// Whether this row is somebody else's work. It is derived from the
-    /// lineage by the core, and it lifts when a stall hands the child back.
+    /// lineage by the core, and it lifts only when the parent is gone.
     var delegated: Bool = false
-    /// How long a delegated descendant has been waiting: empty, `soft`, or
-    /// `hard`. It is set on the lineage root, not on the stalled child.
-    var stallLevel: String = ""
-    /// The sentence naming that descendant and what it is waiting on.
-    var stallNotice: String? = nil
+    /// What this row's live descendants are doing, by state, for the badge
+    /// the row wears while they are folded away. All zero for a row with no
+    /// descendants worth a mark.
+    var descendantCounts = DescendantCounts()
 
     /// Fixtures and tests build a row directly. Every derived value defaults
     /// to the quiet reading, so a fixture states only what it is exercising.
@@ -1277,8 +1276,8 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         spawnOriginPaneID = try container.decodeIfPresent(String.self, forKey: .spawnOriginPaneID)
         lineageCollapsed = try container.decodeIfPresent(Bool.self, forKey: .lineageCollapsed) ?? false
         delegated = try container.decodeIfPresent(Bool.self, forKey: .delegated) ?? false
-        stallLevel = try container.decodeIfPresent(String.self, forKey: .stallLevel) ?? ""
-        stallNotice = try container.decodeIfPresent(String.self, forKey: .stallNotice)
+        descendantCounts = try container.decodeIfPresent(DescendantCounts.self, forKey: .descendantCounts)
+            ?? DescendantCounts()
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1313,7 +1312,44 @@ struct SidebarAgent: Decodable, Equatable, Identifiable {
         case spawnOriginPaneID = "spawn_origin_pane_id"
         case lineageCollapsed = "lineage_collapsed"
         case delegated
-        case stallLevel = "stall_level"
-        case stallNotice = "stall_notice"
+        case descendantCounts = "descendant_counts"
     }
+}
+
+/// How many of a row's live descendants are in each state the badge draws.
+///
+/// The core counts every descendant, not only the direct children, and
+/// leaves out the ones whose activity Herdr cannot classify; the shell
+/// draws the counts it is given and computes none (design rule 4).
+struct DescendantCounts: Decodable, Equatable {
+    var error: Int = 0
+    var approval: Int = 0
+    var question: Int = 0
+    var working: Int = 0
+    var done: Int = 0
+
+    init(error: Int = 0, approval: Int = 0, question: Int = 0, working: Int = 0, done: Int = 0) {
+        self.error = error
+        self.approval = approval
+        self.question = question
+        self.working = working
+        self.done = done
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case error, approval, question, working, done
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        error = try container.decodeIfPresent(Int.self, forKey: .error) ?? 0
+        approval = try container.decodeIfPresent(Int.self, forKey: .approval) ?? 0
+        question = try container.decodeIfPresent(Int.self, forKey: .question) ?? 0
+        working = try container.decodeIfPresent(Int.self, forKey: .working) ?? 0
+        done = try container.decodeIfPresent(Int.self, forKey: .done) ?? 0
+    }
+
+    /// Whether the badge has anything to draw. A row whose descendants are
+    /// all merely ready wears no badge rather than an empty one.
+    var isEmpty: Bool { error + approval + question + working + done == 0 }
 }

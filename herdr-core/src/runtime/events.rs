@@ -458,7 +458,7 @@ pub(super) struct UiStateUpdatePayload {
     #[serde(default)]
     pub(super) collapsed_checkout_ids: Option<Vec<String>>,
     #[serde(default)]
-    pub(super) collapsed_agent_pane_ids: Option<Vec<String>>,
+    pub(super) expanded_agent_pane_ids: Option<Vec<String>>,
     pub(super) selected_path: Option<String>,
     pub(super) selected_pane_id: Option<String>,
     #[serde(default)]
@@ -2606,11 +2606,11 @@ impl Runtime {
                     );
                     return true;
                 }
-                let collapsed = &mut self.snapshot.ui_state.collapsed_agent_pane_ids;
-                if collapsed.contains(&payload.pane_id) {
-                    collapsed.retain(|pane| pane != &payload.pane_id);
+                let expanded = &mut self.snapshot.ui_state.expanded_agent_pane_ids;
+                if expanded.contains(&payload.pane_id) {
+                    expanded.retain(|pane| pane != &payload.pane_id);
                 } else {
-                    collapsed.push(payload.pane_id);
+                    expanded.push(payload.pane_id);
                 }
                 self.refresh_agent_lineage();
                 self.persist_ui_state();
@@ -2657,9 +2657,9 @@ impl Runtime {
                     expanded_inactive_project_device_ids: current
                         .expanded_inactive_project_device_ids,
                     project_base_branches: current.project_base_branches,
-                    collapsed_agent_pane_ids: payload
-                        .collapsed_agent_pane_ids
-                        .unwrap_or(current.collapsed_agent_pane_ids),
+                    expanded_agent_pane_ids: payload
+                        .expanded_agent_pane_ids
+                        .unwrap_or(current.expanded_agent_pane_ids),
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
                     shortcut_bindings: payload.shortcut_bindings,

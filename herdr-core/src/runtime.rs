@@ -296,40 +296,6 @@ const DIAGNOSTIC_RETENTION: usize = 256;
 /// the screen.
 const ATTACHED_TAB_LIMIT: usize = 5;
 
-/// When a waiting descendant starts showing on its lineage root, and when it
-/// becomes the operator's problem.
-///
-/// Both are fixed. Which numbers are right is not knowable before the feature
-/// has been operated, so there is no setting to get wrong in the meantime
-/// (PRD D-41).
-const STALL_SOFT_MS: u64 = 5 * 60_000;
-const STALL_HARD_MS: u64 = 15 * 60_000;
-
-/// Hide's own record of when it first saw a pane in the state it is in.
-///
-/// Herdr sends no timestamp with `state_change_seq`, so the clock has to be
-/// Hide's. It lives only in memory: a restart starts every clock again, which
-/// is what stops a morning launch from raising a screenful of escalations for
-/// work that was never stuck (PRD B20, D-54).
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct StallClock {
-    /// What the pane looked like when this clock started. Herdr's sequence
-    /// alone is not enough: it does not always rise when only plugin tokens
-    /// change, which is the same gap the read record covers.
-    fingerprint: (Option<u64>, String, String),
-    /// Time already counted, excluding any stretch the server was away for.
-    stalled_ms: u64,
-    last_sample_unix_ms: u64,
-}
-
-impl StallClock {
-    /// How long this pane has been waiting, as of `now`.
-    fn elapsed(&self, now: u64) -> u64 {
-        self.stalled_ms
-            .saturating_add(now.saturating_sub(self.last_sample_unix_ms))
-    }
-}
-
 /// How long a relocation waits before Hide asks again.
 ///
 /// A failed move is retried on the next ingest that finds the child still
@@ -798,9 +764,6 @@ pub struct Runtime {
     /// released. Herdr renders a pane for every attached client, so an attach
     /// nobody is looking at costs a child process here and a render there for
     /// the life of the process.
-    /// How long each delegated child has been in the state it is in. Keyed by
-    /// pane id, in memory only.
-    stall_clocks: BTreeMap<String, StallClock>,
     /// Delegated child panes Hide has asked Herdr to move out of their
     /// parent's tab, and when it asked. A move that fails is retried quietly
     /// on a later ingest; it never reaches the pane header, because the
@@ -1109,7 +1072,6 @@ impl Runtime {
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
             panes_scrolled_before_size: HashSet::new(),
-            stall_clocks: BTreeMap::new(),
             pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
@@ -1548,28 +1510,6 @@ fn worktree_agent_line(
         uninstrumented_reason: worst.map(|reason| reason.message().to_owned()),
         uninstrumented_label: worst.map(|reason| reason.accessibility_label().to_owned()),
         uninstrumented_code: worst.map(|reason| reason.code().to_owned()),
-    }
-}
-
-/// How badly one waiting child needs an answer, worst first. It breaks ties
-/// between descendants that have waited exactly as long.
-fn stall_priority(agent: &SidebarAgentSnapshot) -> u8 {
-    match agent.demand.as_str() {
-        "error" => 0,
-        "approval" => 1,
-        "question" => 2,
-        _ if agent.blocked => 1,
-        _ => 3,
-    }
-}
-
-fn waiting_on(agent: &SidebarAgentSnapshot) -> &'static str {
-    match agent.demand.as_str() {
-        "error" => "an error",
-        "question" => "a question",
-        "approval" => "an approval",
-        _ if agent.blocked => "an approval",
-        _ => "no visible progress",
     }
 }
 

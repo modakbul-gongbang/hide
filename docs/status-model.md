@@ -9,14 +9,14 @@ What it needs from the operator, whether it is running, whether it has reported 
 - Activity: working, stopped, unknown.
 - Completion: reported, not reported.
 - Read: read, unread.
-- Ownership: operator, delegated, escalated.
+- Ownership: operator, delegated.
 
 `herdr-core/src/sidebar.rs` is the single owner of all five.
-It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
+It also derives everything a view draws from them - the group, the mark, whether the row is emphasized, the status word, the descendant badge, and whether closing the pane needs a confirmation or a fresh status check - so no surface decides any of it a second time.
 
 Ownership is not stored anywhere.
-It is read back off the row: a row whose lineage depth is greater than zero is delegated, and a row whose stall level is `hard` is escalated regardless of depth.
-`ownership_of` is the only function that makes that judgement, and `rederive_ownership` is what reapplies every derived value after the lineage or a stall clock moves.
+It is read back off the row: a row whose lineage depth is greater than zero is delegated, and every other row, including an orphan whose parent is gone, is the operator's.
+`ownership_of` is the only function that makes that judgement, and `apply_lineage` reapplies every derived value once the lineage is known.
 
 ## Hide owns the read axis, at pane level
 
@@ -48,6 +48,19 @@ An idle lifecycle or `status_idle` token reports a ready stopped pane and does n
 The completion fact is part of the pane read fingerprint, so a ready-to-completed transition becomes unread even when Herdr's process-local sequence does not move.
 Herdr's done/idle distinction supplies completion evidence only; Hide's own pane record remains the sole read authority.
 
+## A descendant's change turns its ancestors unread
+
+The fingerprint carries one more element: the outstanding demands and reported completions of the row's live descendants, each keyed by the descendant's pane (`PaneReadRecord::descendant_signals`).
+A descendant entering a question, approval or error, moving between those three, or finishing a turn adds a signal the record does not hold, and every ancestor row becomes unread through the same comparison its own state change would use; there is no second store, timer or event.
+A signal that goes away does not turn anything on: a question being answered, a finished child starting new work, or a child pane closing is trimmed from the record on the next projection, so the same descendant is news again the next time it asks or finishes.
+Reading the ancestor records the signals it shows at that moment and nothing more.
+
+Nothing here moves an ancestor between groups.
+An ancestor's group is decided by its own demand, activity, completion and read axes, so a child's question leaves a working root in Working and an idle, completed root in Done, and never puts either in Needs You.
+That is the whole boundary: a child is asked for its status through its parent, and a parent that has heard from a child is drawn bright until the operator looks at it.
+
+Regression owners: `a_descendants_demand_or_completion_turns_every_ancestor_unread_and_nothing_else_does`, `an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_you`.
+
 ## Herdr token contract: both forms mean the same demand
 
 Herdr reports attention state as suffixed string tokens, not booleans:
@@ -64,7 +77,7 @@ The suffix is Herdr's answer to a question Hide no longer asks it, so reading th
 
 | Group | Membership |
 | --- | --- |
-| Needs You | An unread demand - question, approval or error - a pane Herdr reports as blocked right now, or a lineage root whose descendant has been stalled past the hard threshold |
+| Needs You | An unread demand - question, approval or error - or a pane Herdr reports as blocked right now |
 | Done | No demand, stopped, completion reported, and unread |
 | Working | Running |
 | Seen | Everything else: ready idle, read demands, read completions, unknown |
@@ -90,7 +103,7 @@ Done is therefore scoped to the lineage root: a delegated child that finishes le
 
 ## Where a parent comes from
 
-Ownership, the tree, the breadcrumb and the stall clock all start from one fact per agent: the pane it was spawned from.
+Ownership, the tree, the breadcrumb and the descendant badge all start from one fact per agent: the pane it was spawned from.
 Herdr records no lineage, so that fact has one source, read once in `wire.rs::lineage_parent` and nowhere else, so every row and every view sees the same parent: the pane token `parent_pane`, whose value is the parent's pane id, written by whoever created the pane through `pane.report_metadata`.
 
 Hide's own fork writes it under the source `hide` after `pane.split` and `agent.start`.
@@ -101,22 +114,17 @@ The token is display-only in Herdr's own terms and dies with the pane, so a clos
 
 Regression owner: `a_parent_declared_as_a_pane_token_is_the_lineage`.
 
-## The stall clock
+## The descendant badge
 
-Delegation is only safe if work that stops being anybody's problem comes back.
-Each delegated row that is waiting on somebody, or running with nothing to show for it, carries a clock.
-A finished child is not stuck, a released pane has no session to be stuck in, an unknown activity gives nothing to measure, and a remote pane is uninstrumented by decision; none of those are timed.
+A row with descendants reports them on its first line, before the elapsed time: one mark and count per state, error, then approval, question, working and done, with zero states left out and the marks the rows themselves use.
+The counts are `descendant_counts` on the row, derived on the lineage pass over every live descendant rather than the direct children only, so a grandchild's question reaches the root as `?1`.
+A descendant that is merely ready adds nothing, and one whose activity Herdr reports as unknown is left off the badge and written to the diagnostic log (`lineage.unknown_descendants`), because a count the projection cannot vouch for is not drawn.
+A closed pane leaves the list and therefore the badge on the next projection.
 
-The clock measures one uninterrupted wait, so any move in the agent's own state - Herdr's sequence, its demand, or its activity - starts it over.
-While the server is away every clock holds its reading rather than counting, because that gap is Hide's blindness and not the agent being stuck.
+The badge is drawn while the row's descendants are folded away and leaves when they are opened, since the opened rows carry their own marks; a raised row in Needs You or Done never unfolds and always wears it.
+Descendants are folded by default: `expanded_agent_pane_ids` in the persisted UI state names the panes the operator opened, it lives as long as the pane id does, and an older store's collapsed set is ignored rather than migrated, so the first launch after the change starts every parent folded.
 
-At five minutes the lineage root carries a notice naming the descendant and what it is waiting on, and its group does not change.
-At fifteen the child stops being drawn as somebody else's work and the root enters Needs You.
-The notice lands on the root rather than climbing one level per threshold: at depth three, one level at a time would keep the operator waiting forty-five minutes for news of something stuck for fifteen.
-When two descendants have waited exactly as long, the notice names the one asking for the most.
-
-A stalled session is by definition one that reports nothing new, so nothing new arrives to trigger a publish.
-The `agent.list` tick that already runs once a second asks `stall_publish_due` instead, which is a pure in-memory comparison; no timer of Hide's own exists for this.
+Regression owners: `the_descendant_badge_sums_every_live_descendant_and_skips_ready_and_unknown_ones`, `lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappearance`, `the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated`, and the Swift `DelegatedRowPresentationTests`.
 
 Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
 The label plugin's `sort_rank` token is not read.

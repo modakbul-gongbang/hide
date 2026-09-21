@@ -160,7 +160,7 @@ private struct AgentScopePicker: View {
             identifier: { "agents-scope-\($0.rawValue)" },
             optionHelp: {
                 $0 == .mine
-                    ? "Show work currently owned by you. Escalated and orphaned work remains visible."
+                    ? "Show work currently owned by you. Orphaned work remains visible."
                     : "Show all work, including delegated agents."
             },
             equalWidth: true
@@ -1041,90 +1041,105 @@ private struct AgentNavigatorRow: View {
     }
 
     private var relationshipLeadingInset: CGFloat {
-        guard showsWorkspace else { return HideTheme.spacingNone }
-        return density.leadingPadding + HideTheme.agentMarkWidth + density.badgeSize
+        let column = showsWorkspace ? density.leadingPadding : HideTheme.compactAgentLeadingInset
+        return column + HideTheme.lineageChevronWidth + HideTheme.agentMarkWidth + density.badgeSize
             + density.iconSpacing * 2
     }
 
+    private var presentation: AgentRowPresentation {
+        AgentRowPresentation(
+            agent: agent,
+            density: density,
+            connected: model.agentsConnected,
+            // The same instrumentation the pane header resolved,
+            // read off the pane rather than judged again here.
+            children: model.paneMetadata(for: agent.paneID)?.children
+        )
+    }
+
+    /// The parent's name for the return glyph, from the row the parent
+    /// still has; the core's hint text is the fallback when it has none.
+    private func parentLabel(_ paneID: String) -> String {
+        model.paneIdentity(for: paneID)
+            ?? (agent.raisedHint ?? agent.lineageHint)?.replacingOccurrences(of: "↳ from ", with: "")
+            ?? "parent"
+    }
+
+    /// The leading role column: the fold toggle, the way back to a parent,
+    /// or the blank that keeps the marks in one column (PRD B9, B10, B12).
+    @ViewBuilder
+    private func roleColumn(_ role: AgentRowRole) -> some View {
+        switch role {
+        case .disclosure(let collapsed, let interactive):
+            Button {
+                model.core.dispatch(kind: "agent_tree_toggle", payload: ["pane_id": agent.paneID])
+            } label: {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .foregroundStyle(HideTheme.muted)
+            }
+            .buttonStyle(HideInteractiveButtonStyle())
+            .frame(width: HideTheme.lineageChevronWidth, height: density.badgeSize)
+            // A raised row never unfolds, so its chevron only says the
+            // descendants exist; the tree is where they open.
+            .disabled(!interactive)
+            .hideTooltip(
+                interactive
+                    ? (collapsed ? "Expand descendants" : "Collapse descendants")
+                    : "Has descendants; open them in the project tree"
+            )
+        case .returnToParent(let paneID):
+            let label = parentLabel(paneID)
+            Button {
+                model.selectAgent(paneID: paneID)
+            } label: {
+                Image(systemName: "arrow.turn.down.right")
+                    .foregroundStyle(HideTheme.muted)
+            }
+            .buttonStyle(HideInteractiveButtonStyle())
+            .frame(width: HideTheme.lineageChevronWidth, height: density.badgeSize)
+            .accessibilityLabel("Return to parent \(label)")
+            .hideTooltip("Return to parent \(label)")
+        case .blank:
+            Color.clear
+                .frame(width: HideTheme.lineageChevronWidth, height: density.badgeSize)
+                .accessibilityHidden(true)
+        }
+    }
+
     var body: some View {
+        let presentation = presentation
         VStack(alignment: .leading, spacing: HideTheme.spacingXXS) {
             HStack(alignment: .top, spacing: HideTheme.spacingNone) {
-                if !showsWorkspace {
-                    Button {
-                        model.core.dispatch(kind: "agent_tree_toggle", payload: ["pane_id": agent.paneID])
-                    } label: {
-                        Image(systemName: agent.lineageCollapsed ? "chevron.right" : "chevron.down")
-                            .foregroundStyle(HideTheme.muted)
-                    }
-                    .buttonStyle(HideInteractiveButtonStyle())
-                    .frame(width: HideTheme.lineageChevronWidth, height: HideTheme.compactAgentBadgeSize)
-                    .padding(.top, HideTheme.compactAgentRowVerticalPadding)
+                roleColumn(presentation.role)
+                    .padding(.top, density.verticalPadding)
                     // The toggle sits directly above the line it opens, so
                     // the branch starts at its own control instead of
                     // floating a column away from it.
-                    .padding(.leading, HideTheme.compactAgentLeadingInset)
-                    .opacity(agent.lineageChildPaneIDs.isEmpty ? 0 : 1)
-                    .disabled(agent.lineageChildPaneIDs.isEmpty)
-                    .accessibilityHidden(agent.lineageChildPaneIDs.isEmpty)
-                    .hideTooltip(agent.lineageCollapsed ? "Expand descendants" : "Collapse descendants")
-                }
+                    .padding(.leading, showsWorkspace ? density.leadingPadding : HideTheme.compactAgentLeadingInset)
                 AgentRow(
-                    presentation: AgentRowPresentation(
-                        agent: agent,
-                        density: density,
-                        connected: model.agentsConnected,
-                        // The same instrumentation the pane header resolved,
-                        // read off the pane rather than judged again here.
-                        children: model.paneMetadata(for: agent.paneID)?.children
-                    ),
+                    presentation: presentation,
                     style: .shell(density: density),
                     density: density,
                     isFocused: model.focusedPaneID == agent.paneID,
                     shortcutNumber: model.agentShortcutNumber(paneID: agent.paneID),
                     shortcutVisible: shortcutVisible,
-                    leadingInset: showsWorkspace ? nil : HideTheme.spacingNone,
+                    leadingInset: HideTheme.spacingNone,
                     action: { model.selectAgent(agent) }
                 )
             }
-            if !showsWorkspace, let badge = agent.lineageWorktreeBadge {
-                HideBadge(label: badge, color: HideTheme.secondary)
-            }
-            if let hint = showsWorkspace ? agent.raisedHint : agent.lineageHint {
-                let fallbackParentLabel = hint.replacingOccurrences(of: "↳ from ", with: "")
-                let parentLabel = agent.spawnOriginPaneID.flatMap(model.paneIdentity(for:))
-                    ?? fallbackParentLabel
-                // Keep the relationship in the same leading metadata slot as
-                // the agent identity instead of drawing a debug-looking line
-                // at the sidebar edge. When the origin remains live this is
-                // also the direct return action (PRD B7, B9, B23).
-                if let origin = agent.spawnOriginPaneID {
-                    Button {
-                        model.selectAgent(paneID: origin)
-                    } label: {
-                        HStack(spacing: HideTheme.spacingXXS) {
-                            Image(systemName: "arrow.turn.up.left")
-                            Text(parentLabel)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        .hideFont(size: HideTheme.Typography.micro, weight: .medium)
-                        .foregroundStyle(HideTheme.secondary)
-                    }
-                    .buttonStyle(HideInteractiveButtonStyle())
-                    .padding(.leading, relationshipLeadingInset)
-                    .accessibilityLabel("Return to parent \(parentLabel)")
-                    .hideTooltip("Return to parent \(parentLabel)")
-                } else {
-                    HStack(spacing: HideTheme.spacingXXS) {
-                        Image(systemName: "arrow.turn.up.left")
-                        Text(parentLabel)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    .hideFont(size: HideTheme.Typography.micro)
-                    .foregroundStyle(HideTheme.muted)
-                    .padding(.leading, relationshipLeadingInset)
+            // An orphan keeps the line that says whose it was; a child whose
+            // parent is still listed says so in the role column instead
+            // (PRD B10).
+            if agent.lineageOrphan, let hint = showsWorkspace ? agent.raisedHint : agent.lineageHint {
+                HStack(spacing: HideTheme.spacingXXS) {
+                    Image(systemName: "arrow.turn.up.left")
+                    Text(hint.replacingOccurrences(of: "↳ from ", with: ""))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                .hideFont(size: HideTheme.Typography.micro)
+                .foregroundStyle(HideTheme.muted)
+                .padding(.leading, relationshipLeadingInset)
             }
         }
         .padding(.leading, showsWorkspace ? HideTheme.spacingNone : HideTheme.lineageInset(depth: agent.lineageDepth))

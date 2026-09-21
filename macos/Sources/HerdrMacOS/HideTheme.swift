@@ -255,6 +255,8 @@ enum HideTheme {
         static let clean = "checkmark"
         static let unavailable = "exclamationmark.circle"
         static let noPullRequest = "minus.circle"
+        /// The worktree a child agent runs in, on its row's qualifier line.
+        static let worktree = "arrow.triangle.branch"
     }
     static let gitSectionIcon = "externaldrive.badge.checkmark"
     static let gitPullRequestIcon = "arrow.triangle.pull"
@@ -297,7 +299,7 @@ enum HideTheme {
     /// How far below a row's top its status mark is centered.
     ///
     /// A fixed offset, not a fraction of the row: a row grows downward when
-    /// it carries a stall notice or a second summary line, and an elbow tied
+    /// it carries a qualifier or a second summary line, and an elbow tied
     /// to the height would slide off the mark exactly when it did.
     static let lineageElbowY: CGFloat = compactAgentRowVerticalPadding + compactAgentBadgeSize / 2
     /// The compact row's vertical padding, shared with `AgentRowDensity` so

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -228,10 +228,9 @@ impl AgentGroup {
 /// The distinction exists because delegation is only real if the operator
 /// stops being called for the delegated work. A child's question, approval,
 /// error or completion is the parent's problem: it shows on the parent's
-/// badge and never raises the operator's own attention groups (PRD B15, B16,
-/// D-35, D-38). A child stuck long enough to be nobody's problem comes back
-/// as the operator's through `Escalated`, which is the whole point of the
-/// safety net (PRD B18, D-42).
+/// badge, turns the parent's row unread, and never raises the operator's own
+/// attention groups (PRD B15, B16, D-35, D-38). There is no clock that hands
+/// a child back: the parent is asked for its status, not the child.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Ownership {
     /// The operator's own work: a lineage root, or an orphan whose parent is
@@ -239,9 +238,6 @@ pub enum Ownership {
     Operator,
     /// Delegated work. Its demands stay with its parent.
     Delegated,
-    /// Delegated work that stalled past the hard threshold, so ownership has
-    /// come back to the operator.
-    Escalated,
 }
 
 /// The group a row belongs to, given who owns it.
@@ -262,7 +258,7 @@ pub fn agent_group_for(
             AgentGroup::Seen
         };
     }
-    if blocked || ownership == Ownership::Escalated || (demand != AgentDemand::None && unread) {
+    if blocked || (demand != AgentDemand::None && unread) {
         AgentGroup::NeedsYou
     } else if demand == AgentDemand::None
         && activity == AgentActivity::Stopped
@@ -595,10 +591,15 @@ pub fn project_agents(payload: SessionSnapshotPayload) -> AgentProjection {
 /// the canonical agent list. Child ordering belongs to this view alone.
 /// Missing and cyclic parent references are visible orphan roots, so malformed
 /// external lineage cannot hide an agent or recurse forever.
+///
+/// The same walk that finds each row's ancestors also hands the row's own
+/// state up to every one of them, so the descendant badge and the descendant
+/// signals the read record compares are derived on this pass and nowhere
+/// else (PRD B3, B4, B5, D-05).
 pub fn apply_lineage(
     agents: &mut [SidebarAgentSnapshot],
     workspaces: &[crate::model::WorkspaceSnapshot],
-    collapsed: &[String],
+    expanded: &[String],
 ) {
     let by_pane = agents
         .iter()
@@ -665,15 +666,34 @@ pub fn apply_lineage(
                 .cmp(&agents[*left].last_activity)
         });
     }
+    // Walk each row to its root, remembering the way, so the breadcrumb is
+    // the same walk the depth already costs rather than a second traversal.
+    // The same walk tells every ancestor what this row is doing, and it runs
+    // before the rows are written so an ancestor that comes earlier in the
+    // list has heard from every descendant by then. A closed pane is no
+    // longer a row, so it drops out of every count on the next projection
+    // (PRD D-12).
+    let mut ancestry = Vec::with_capacity(agents.len());
+    let mut descendant_counts =
+        vec![crate::model::DescendantCountsSnapshot::default(); agents.len()];
+    let mut descendant_signals = vec![BTreeSet::new(); agents.len()];
     for index in 0..agents.len() {
-        // Walk to the root, remembering the way, so the breadcrumb is the
-        // same walk the depth already costs rather than a second traversal.
         let mut ancestors = Vec::new();
         let mut root = index;
         while let Some(parent) = parents[root] {
             ancestors.push(parent);
             root = parent;
         }
+        let state = descendant_state(&agents[index]);
+        let signals = descendant_signals_of(&agents[index]);
+        for ancestor in &ancestors {
+            state.count_into(&mut descendant_counts[*ancestor]);
+            descendant_signals[*ancestor].extend(signals.iter().cloned());
+        }
+        ancestry.push((ancestors, root));
+    }
+    for index in 0..agents.len() {
+        let (mut ancestors, root) = std::mem::take(&mut ancestry[index]);
         let depth = ancestors.len();
         ancestors.reverse();
         let path = ancestors
@@ -739,17 +759,87 @@ pub fn apply_lineage(
         // than printing a dead end. Only set while that pane still holds an
         // agent Hide can name; an ended one is text and nothing more.
         agent.spawn_origin_pane_id = spawn_parent.and(spawned_from);
-        agent.lineage_collapsed = collapsed.contains(&agent.pane_id);
+        // Folded is the default: a row with descendants opens only while
+        // the operator has it in the expanded set (PRD D-06).
+        agent.lineage_collapsed = !expanded.contains(&agent.pane_id);
+        agent.descendant_counts = descendant_counts[index];
+        agent.descendant_signals = std::mem::take(&mut descendant_signals[index]);
     }
     // Ownership was unknown when the rows were first derived, because it is
     // the lineage that decides it. Rederiving here is what keeps every caller
     // of this function on one answer instead of each remembering to ask
     // (engineering rule 13). The order is left alone: this function is read
-    // by index while it walks the tree, and sorting is the ingest's last
-    // step, after the stall clocks have had their say.
+    // by index while it walks the tree, and the read pass that follows it
+    // on every ingest is what sorts.
     for agent in agents.iter_mut() {
         derive_from_axes(agent);
     }
+}
+
+/// What one descendant contributes to its ancestors' badges.
+#[derive(Clone, Copy)]
+enum DescendantState {
+    Error,
+    Approval,
+    Question,
+    Working,
+    Done,
+    /// Stopped with nothing reported: a ready pane, which is not news.
+    Ready,
+    Unknown,
+}
+
+impl DescendantState {
+    fn count_into(self, counts: &mut crate::model::DescendantCountsSnapshot) {
+        match self {
+            Self::Error => counts.error += 1,
+            Self::Approval => counts.approval += 1,
+            Self::Question => counts.question += 1,
+            Self::Working => counts.working += 1,
+            Self::Done => counts.done += 1,
+            Self::Ready => {}
+            Self::Unknown => counts.unknown += 1,
+        }
+    }
+}
+
+/// The one state a descendant counts under: its demand first, then whether
+/// it is running, then whether it reported a completion. The order is the
+/// badge's own, worst first (PRD D-08).
+fn descendant_state(agent: &SidebarAgentSnapshot) -> DescendantState {
+    let (demand, activity, _) = axes_of(agent);
+    match demand {
+        AgentDemand::Error => DescendantState::Error,
+        AgentDemand::Approval => DescendantState::Approval,
+        AgentDemand::Question => DescendantState::Question,
+        AgentDemand::None => match activity {
+            AgentActivity::Working => DescendantState::Working,
+            AgentActivity::Stopped if agent.completed => DescendantState::Done,
+            AgentActivity::Stopped => DescendantState::Ready,
+            AgentActivity::Unknown => DescendantState::Unknown,
+        },
+    }
+}
+
+/// The signals one descendant sends up its lineage: its outstanding demand,
+/// and its completion, each on its own so that a demand being cleared from a
+/// finished child does not read as a fresh completion (PRD B5, B6).
+fn descendant_signals_of(agent: &SidebarAgentSnapshot) -> Vec<crate::model::DescendantSignal> {
+    let (demand, activity, _) = axes_of(agent);
+    let mut signals = Vec::with_capacity(2);
+    if demand != AgentDemand::None {
+        signals.push(crate::model::DescendantSignal {
+            pane_id: agent.pane_id.clone(),
+            kind: demand.name().to_owned(),
+        });
+    }
+    if activity == AgentActivity::Stopped && agent.completed {
+        signals.push(crate::model::DescendantSignal {
+            pane_id: agent.pane_id.clone(),
+            kind: "completed".to_owned(),
+        });
+    }
+    signals
 }
 
 /// One agent, as every surface that names an agent in a line draws it: the
@@ -897,28 +987,16 @@ pub fn project_lineage_path(
         .collect()
 }
 
-/// Re-derives every value that depends on ownership, then reorders.
-///
-/// The read pass runs before the lineage is known, so ownership is settled
-/// afterwards and the groups it decides have to be recomputed rather than
-/// left describing a row nobody owned yet.
-pub fn rederive_ownership(agents: &mut [SidebarAgentSnapshot]) {
-    for agent in agents.iter_mut() {
-        derive_from_axes(agent);
-    }
-    sort_agents(agents);
-}
-
-/// Collapse state belongs to pane existence, not whether it currently has
+/// Expansion state belongs to pane existence, not whether it currently has
 /// children. A fresh scoped agent list may evict it; a stale list may not.
-pub fn prune_lineage_collapse(
-    collapsed: &mut Vec<String>,
+pub fn prune_lineage_expansion(
+    expanded: &mut Vec<String>,
     agents: &[SidebarAgentSnapshot],
     scope: ReadRecordScope<'_>,
 ) -> bool {
-    let before = collapsed.len();
-    collapsed.retain(|pane| !scope.owns(pane) || agents.iter().any(|agent| &agent.pane_id == pane));
-    before != collapsed.len()
+    let before = expanded.len();
+    expanded.retain(|pane| !scope.owns(pane) || agents.iter().any(|agent| &agent.pane_id == pane));
+    before != expanded.len()
 }
 
 /// The one ordering every agent surface reads: the two sidebar views, the pet
@@ -964,9 +1042,7 @@ fn axes_of(agent: &SidebarAgentSnapshot) -> (AgentDemand, AgentActivity, bool) {
 
 /// Reads a row's ownership back off its published fields.
 pub fn ownership_of(agent: &SidebarAgentSnapshot) -> Ownership {
-    if agent.stall_level == "hard" {
-        Ownership::Escalated
-    } else if agent.delegated {
+    if agent.delegated {
         Ownership::Delegated
     } else {
         Ownership::Operator
@@ -1094,8 +1170,8 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         delegated: false,
-        stall_level: String::new(),
-        stall_notice: None,
+        descendant_counts: crate::model::DescendantCountsSnapshot::default(),
+        descendant_signals: BTreeSet::new(),
         lineage_parent_pane_id: None,
         lineage_path_pane_ids: Vec::new(),
         lineage_sibling_pane_ids: Vec::new(),
@@ -1158,7 +1234,8 @@ pub struct ReadRecordChange {
     pub evicted: bool,
 }
 
-/// What the operator is looking at on this pane right now.
+/// What the operator is looking at on this pane right now, including what
+/// its descendants are asking for or have finished.
 fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
     PaneReadRecord {
         state_change_seq: agent.state_change_seq,
@@ -1166,7 +1243,25 @@ fn read_fingerprint(agent: &SidebarAgentSnapshot) -> PaneReadRecord {
         demand: agent.demand.clone(),
         activity: agent.activity.clone(),
         completed: agent.completed,
+        descendant_signals: agent.descendant_signals.clone(),
     }
+}
+
+/// Whether a record still covers what the row shows now.
+///
+/// The row's own fields have to match exactly. A descendant signal is news
+/// only when it is missing from the record: a signal the record holds and
+/// the row no longer shows is a question answered or a finished child back
+/// at work, neither of which calls the operator (PRD B5, B6).
+fn record_covers(record: &PaneReadRecord, current: &PaneReadRecord) -> bool {
+    record.state_change_seq == current.state_change_seq
+        && record.session_id == current.session_id
+        && record.demand == current.demand
+        && record.activity == current.activity
+        && record.completed == current.completed
+        && current
+            .descendant_signals
+            .is_subset(&record.descendant_signals)
 }
 
 /// Rebases process-local sequence values after a Herdr connection bootstrap.
@@ -1258,15 +1353,32 @@ pub fn apply_read_state(
 ) -> Vec<ReadRecordChange> {
     let mut changes = Vec::new();
     for agent in agents.iter_mut() {
-        if operator_pane_id != Some(agent.pane_id.as_str()) {
+        if operator_pane_id == Some(agent.pane_id.as_str()) {
+            let current = read_fingerprint(agent);
+            if records.get(&agent.pane_id) != Some(&current) {
+                records.insert(agent.pane_id.clone(), current.clone());
+                changes.push(ReadRecordChange {
+                    pane_id: agent.pane_id.clone(),
+                    record: current,
+                    evicted: false,
+                });
+            }
             continue;
         }
-        let current = read_fingerprint(agent);
-        if records.get(&agent.pane_id) != Some(&current) {
-            records.insert(agent.pane_id.clone(), current.clone());
+        // A descendant signal that has gone away is dropped from the record
+        // so the same descendant can be news again later; dropping never
+        // changes the read axis, because a subset stays a subset.
+        let Some(record) = records.get_mut(&agent.pane_id) else {
+            continue;
+        };
+        let before = record.descendant_signals.len();
+        record
+            .descendant_signals
+            .retain(|signal| agent.descendant_signals.contains(signal));
+        if record.descendant_signals.len() != before {
             changes.push(ReadRecordChange {
                 pane_id: agent.pane_id.clone(),
-                record: current,
+                record: record.clone(),
                 evicted: false,
             });
         }
@@ -1292,7 +1404,9 @@ fn derive_read_state(
         // the ledger has caught up in this dispatch, so the two projections
         // agree regardless of which one the runtime builds first.
         let read = operator_pane_id == Some(agent.pane_id.as_str())
-            || records.get(&agent.pane_id) == Some(&read_fingerprint(agent));
+            || records
+                .get(&agent.pane_id)
+                .is_some_and(|record| record_covers(record, &read_fingerprint(agent)));
         agent.unread = !read;
         derive_from_axes(agent);
     }
@@ -2049,6 +2163,7 @@ mod tests {
                 demand: "none".to_owned(),
                 activity: "stopped".to_owned(),
                 completed: false,
+                descendant_signals: BTreeSet::new(),
             },
         );
         apply_read_state(&mut agents, &mut records, None);

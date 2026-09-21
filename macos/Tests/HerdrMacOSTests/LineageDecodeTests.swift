@@ -95,20 +95,19 @@ import Testing
     #expect(children.subagents.isSilent, "unknown is not zero")
 }
 
-@Test func anAgentRowCarriesItsOwnershipAndAnyStallNotice() throws {
+@Test func anAgentRowCarriesItsOwnershipAndDescendantCounts() throws {
     let payload = """
     {
         "id": "Observer", "pane_id": "w1:p1", "workspace_label": "hide",
         "agent_kind": "claude", "demand": "none", "activity": "working",
-        "unread": false, "blocked": false, "group": "needs_you",
-        "symbol": "\\u25cf", "emphasized": true, "status_label": "Working",
+        "unread": false, "blocked": false, "group": "working",
+        "symbol": "\\u25cf", "emphasized": false, "status_label": "Working",
         "requires_close_confirmation": true,
         "identity_label": "전체 작업 조율과 긴 한국어 작업 이름",
         "detail": "waiting", "status_word_visible": true,
         "elapsed": "16m", "last_activity": "1",
         "delegated": false,
-        "stall_level": "hard",
-        "stall_notice": "Implementor has been waiting 16 minutes on an approval"
+        "descendant_counts": {"error": 0, "approval": 1, "question": 2, "working": 3, "done": 0}
     }
     """
     let agent = try JSONDecoder().decode(SidebarAgent.self, from: Data(payload.utf8))
@@ -116,8 +115,7 @@ import Testing
     #expect(agent.detail == "waiting")
     #expect(agent.statusWordVisible)
     #expect(!agent.delegated)
-    #expect(agent.stallLevel == "hard")
-    #expect(agent.stallNotice?.contains("16 minutes") == true)
+    #expect(agent.descendantCounts == DescendantCounts(approval: 1, question: 2, working: 3))
 
     // An older core, or a row with nothing to say, reads as the quiet answer.
     let quiet = """
@@ -135,8 +133,7 @@ import Testing
     #expect(child.delegated)
     #expect(child.detail == nil)
     #expect(child.statusWordVisible, "an older core without the flag keeps the word, as before")
-    #expect(child.stallLevel.isEmpty)
-    #expect(child.stallNotice == nil)
+    #expect(child.descendantCounts.isEmpty, "a row with no descendant counts wears no badge")
     #expect(child.group == "seen", "a delegated question is not the operator's Needs You")
 }
 

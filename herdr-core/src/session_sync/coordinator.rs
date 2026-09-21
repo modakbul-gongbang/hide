@@ -172,8 +172,7 @@ fn run_coordinator(
                         .as_mut()
                         .expect("active subscription always has a replica");
                     let requested =
-                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref())
-                            || stall_tick_needs_publish(&context);
+                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
                     if requested {
                         current.replace_agents(agents);
                         match current.refresh_published_state() {
@@ -766,33 +765,6 @@ fn sweep_subagent_counters(home: &std::path::Path, replica: &SessionReplica) {
             "message": error.to_string(),
         })),
     }
-}
-
-/// Whether a stall threshold has been crossed since the last publish.
-///
-/// A stalled agent is by definition one that reports nothing new, so
-/// `agent_tick_needs_publish` says no for exactly as long as the operator
-/// most needs to hear about it. Asking the runtime on the tick that already
-/// runs keeps the escalation on the clock without a timer of Hide's own
-/// (PRD B36). It is a pure in-memory read of the snapshot, so it holds the
-/// mutex no longer than the comparison itself.
-///
-/// Only the local coordinator asks. A remote target's rows are projected
-/// from another machine's session and are not what the local stall clocks
-/// are counting.
-fn stall_tick_needs_publish(context: &SessionSyncContext) -> bool {
-    if !matches!(context.target, SessionSyncTarget::Local { .. }) {
-        return false;
-    }
-    let Some(runtime) = context.runtime.upgrade() else {
-        return false;
-    };
-    let due = match runtime.lock() {
-        Ok(guard) => guard.stall_publish_due(),
-        Err(_) => false,
-    };
-    drop(runtime);
-    due
 }
 
 /// Reads the replacement active tab for every workspace still waiting for

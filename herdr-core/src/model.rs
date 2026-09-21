@@ -376,7 +376,7 @@ pub struct SidebarAgentSnapshot {
     /// work, a descendant is work the root delegated. It is the fourth derived
     /// axis beside demand, activity and read, and it is advice rather than a
     /// boundary - a delegated pane is still selectable and still takes input,
-    /// because the operator has to be able to reach one when it escalates
+    /// because the operator has to be able to read a child's blocked prompt
     /// (PRD D-36, D-56).
     ///
     /// An orphan is a root again: when the parent is gone, ownership comes
@@ -399,14 +399,18 @@ pub struct SidebarAgentSnapshot {
     /// A root has none: the layer above a root is the sidebar, not the
     /// breadcrumb, and independent roots are not one another's siblings.
     pub lineage_sibling_pane_ids: Vec<String>,
-    /// How long a descendant of this agent has been waiting: `none`, `soft`
-    /// or `hard`. It is set on the lineage root, never on the descendant that
-    /// is actually stuck, because the operator reads the list of roots and a
-    /// notice three levels down would not be seen (PRD B17, B18, D-62).
-    pub stall_level: String,
-    /// What the stall notice says: which descendant, how long, and what it is
-    /// waiting for. `None` unless `stall_level` is `soft` or `hard`.
-    pub stall_notice: Option<String>,
+    /// What every live descendant of this row is doing, counted by state, for
+    /// the badge the row wears while its descendants are folded away. It is
+    /// derived on the lineage pass and counts all descendants, not only the
+    /// direct children, because a grandchild's question is still this row's
+    /// to answer (PRD B3, B4, D-05).
+    pub descendant_counts: DescendantCountsSnapshot,
+    /// The demands and completions of this row's live descendants, keyed by
+    /// the descendant pane. It is what the read record compares against, so
+    /// a descendant asking or finishing turns this row unread the same way
+    /// its own state change would (PRD B5, B6, D-03).
+    #[serde(skip_serializing)]
+    pub descendant_signals: BTreeSet<DescendantSignal>,
     /// Tree-only presentation. The canonical agent list and its read axes stay flat.
     pub lineage_depth: usize,
     pub lineage_child_pane_ids: Vec<String>,
@@ -863,9 +867,49 @@ pub struct AgentChipSnapshot {
     pub emphasized: bool,
     pub symbol: String,
     pub status_label: String,
-    /// Whether this child is still delegated work. It lifts when the child
-    /// has been stalled long enough to become the operator's problem.
+    /// Whether this child is still delegated work. It lifts only when the
+    /// child's parent is gone and the child is a root again.
     pub delegated: bool,
+}
+
+/// How many live descendants of a row are in each state the badge draws.
+///
+/// Every count is a real count over rows the projection holds; a descendant
+/// whose activity Herdr reports as unknown is in none of them, because a
+/// badge that cannot say what a child is doing has nothing to claim, and the
+/// exclusion goes to the diagnostic log instead (PRD B7).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct DescendantCountsSnapshot {
+    pub error: u32,
+    pub approval: u32,
+    pub question: u32,
+    pub working: u32,
+    pub done: u32,
+    /// Descendants Herdr cannot classify. Not drawn; the log carries it.
+    #[serde(skip_serializing)]
+    pub unknown: u32,
+}
+
+impl DescendantCountsSnapshot {
+    /// Whether any drawn count is above zero, so a row with descendants that
+    /// are all merely ready wears no badge rather than an empty one.
+    pub fn any_drawn(&self) -> bool {
+        self.error + self.approval + self.question + self.working + self.done > 0
+    }
+}
+
+/// One thing a descendant is doing that its ancestors are told about: an
+/// outstanding demand, or a completion.
+///
+/// It is the unit the read record keeps per ancestor. A signal that appears
+/// turns the ancestor unread; a signal that goes away does not, because a
+/// question being answered or a finished child starting new work is not
+/// news the operator has to act on (PRD B5, B6).
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct DescendantSignal {
+    pub pane_id: String,
+    /// `question`, `approval`, `error` or `completed`.
+    pub kind: String,
 }
 
 /// The in-process subagents a pane's session reports.
@@ -1190,8 +1234,14 @@ pub struct UiStateSnapshot {
     pub expanded_inactive_project_device_ids: Vec<String>,
     #[serde(default)]
     pub project_base_branches: BTreeMap<String, String>,
+    /// Agent panes whose descendants the operator opened in the sidebar tree.
+    /// Absence is the default folded state, so a row with children starts
+    /// folded and shows its descendant badge until the operator opens it.
+    /// The set is keyed by pane id and lives as long as the pane does: a
+    /// Herdr restart mints new ids, so it starts folded again (PRD D-06,
+    /// D-11).
     #[serde(default)]
-    pub collapsed_agent_pane_ids: Vec<String>,
+    pub expanded_agent_pane_ids: Vec<String>,
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
@@ -1271,6 +1321,13 @@ pub struct PaneReadRecord {
     /// becomes unread even when Herdr's process-local sequence does not move.
     #[serde(default)]
     pub completed: bool,
+    /// The descendant demands and completions the operator had seen when this
+    /// pane was last read. A descendant signal missing from here is news and
+    /// keeps the pane unread; one that has since gone away is trimmed on the
+    /// next projection, so the same descendant can be news again after it
+    /// works and finishes a second time (PRD B5, B6, B8).
+    #[serde(default)]
+    pub descendant_signals: BTreeSet<DescendantSignal>,
 }
 
 /// The scale a pane has until the user zooms it.
@@ -1309,7 +1366,7 @@ impl Default for UiStateSnapshot {
             expanded_inactive_checkout_project_paths: Vec::new(),
             expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),
-            collapsed_agent_pane_ids: Vec::new(),
+            expanded_agent_pane_ids: Vec::new(),
             selected_path: None,
             selected_pane_id: None,
             shortcut_bindings: BTreeMap::new(),

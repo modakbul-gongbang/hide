@@ -1781,13 +1781,11 @@ impl Runtime {
         }
         if let Some(mut agents) = agents {
             self.place_agents_in_navigator(&mut agents);
-            changed |= self.apply_pane_read_state(
-                &mut agents,
-                ReadRecordScope::Local,
-                live_pane_ids.as_ref(),
-            );
-            if crate::sidebar::prune_lineage_collapse(
-                &mut self.snapshot.ui_state.collapsed_agent_pane_ids,
+            // The lineage is built before the read axis is applied, because
+            // the read fingerprint carries what each row's descendants are
+            // asking for and that is only known once the tree exists.
+            if crate::sidebar::prune_lineage_expansion(
+                &mut self.snapshot.ui_state.expanded_agent_pane_ids,
                 &agents,
                 ReadRecordScope::Local,
             ) {
@@ -1797,11 +1795,16 @@ impl Runtime {
             crate::sidebar::apply_lineage(
                 &mut agents,
                 &self.snapshot.navigator.workspaces,
-                &self.snapshot.ui_state.collapsed_agent_pane_ids,
+                &self.snapshot.ui_state.expanded_agent_pane_ids,
             );
-            self.apply_stall_escalation(&mut agents, unix_milliseconds());
+            changed |= self.apply_pane_read_state(
+                &mut agents,
+                ReadRecordScope::Local,
+                live_pane_ids.as_ref(),
+            );
             changed |= self.sync_conversation_modes(&agents);
             if self.snapshot.navigator.agents != agents {
+                Self::log_unknown_descendants(&self.snapshot.navigator.agents, &agents);
                 self.snapshot.navigator.agents = agents;
                 changed = true;
             }
