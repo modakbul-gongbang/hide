@@ -327,23 +327,28 @@ fn handle_client_text(state: &AppState, text: &str) -> Result<Option<Value>, Str
 }
 
 /// The one place the `$HOME` boundary is enforced (PRD S2 B10): a
-/// `remote_file_list` or `create_workspace` whose path does not resolve under
-/// home is answered with a `path_refused` frame and never reaches the core. A
-/// `remote_file_list` for the `local` target is the web shell's directory
+/// `remote_file_list` for the `local` target or a `create_workspace` whose
+/// path does not resolve under home is answered with a `path_refused` frame
+/// and never reaches the core. The local listing is the web shell's directory
 /// autocomplete, which the core has no event for, so hided answers it as a
-/// `directory_list` frame. An accepted path is rewritten to the canonical path
-/// that was checked. Every other event kind passes untouched.
+/// `directory_list` frame; a `remote_file_list` for any other target names a
+/// path on that remote machine, which this boundary knows nothing about, and
+/// is forwarded as it came. An accepted workspace path is rewritten to the
+/// canonical path that was checked. Every other event kind passes untouched.
 fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
     let kind = event.get("kind").and_then(Value::as_str)?.to_owned();
-    let (field, local_listing) = match kind.as_str() {
-        "remote_file_list" => (
-            "root_path",
-            event
+    let field = match kind.as_str() {
+        "remote_file_list" => {
+            let local = event
                 .pointer("/payload/target_id")
                 .and_then(Value::as_str)
-                .is_some_and(|target| target == "local"),
-        ),
-        "create_workspace" => ("path", false),
+                .is_some_and(|target| target == "local");
+            if !local {
+                return None;
+            }
+            "root_path"
+        }
+        "create_workspace" => "path",
         _ => return None,
     };
     let raw = event
@@ -351,17 +356,12 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let outcome = if local_listing {
+    let outcome = if kind == "remote_file_list" {
         boundary
             .list(&raw)
             .map(|listing| json!({"type": "directory_list", "payload": listing}))
-    } else if kind == "create_workspace" {
-        boundary.resolve_workspace(&raw).map(|real| {
-            event["payload"][field] = Value::String(real.display().to_string());
-            Value::Null
-        })
     } else {
-        boundary.resolve_dir(&raw).map(|real| {
+        boundary.resolve_workspace(&raw).map(|real| {
             event["payload"][field] = Value::String(real.display().to_string());
             Value::Null
         })
@@ -379,7 +379,12 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
     }
 }
 
+/// Characters of a refused path the log keeps; the path is client input, so
+/// the log line is capped rather than grown with it.
+const LOGGED_PATH_CAP: usize = 256;
+
 fn log_path_refusal(kind: &str, path: &str, refusal: Refusal) {
+    let logged: String = path.chars().take(LOGGED_PATH_CAP).collect();
     eprintln!(
         "{}",
         json!({
@@ -387,7 +392,8 @@ fn log_path_refusal(kind: &str, path: &str, refusal: Refusal) {
             "kind": "path.refused",
             "event": kind,
             "reason": refusal.code(),
-            "path": path,
+            "path": logged,
+            "path_truncated": logged.len() < path.len(),
         })
     );
 }

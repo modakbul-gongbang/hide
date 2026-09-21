@@ -2,12 +2,14 @@
 //! behind (PRD web-shell-pivot-s2, D-09 and B10).
 //!
 //! The web shell only draws what this module answers: a directory listing for
-//! its path autocomplete and a refusal with a reason code. Both are decided on
-//! the real path (`canonicalize`), so a symlink that leaves home, a `..`
-//! segment, or an encoded segment that happens to exist all resolve before the
-//! containment test runs. The boundary root is read from `HOME` at boot and is
-//! not configurable (`practices/env.md`); an allowed-roots setting is an S5
-//! candidate.
+//! its path autocomplete and a refusal with a reason code. A path is tested
+//! twice: as written, before the filesystem is touched, so a refusal for a
+//! path outside home carries one reason (`outside_home`) whether or not the
+//! path exists; then on its real path (`canonicalize`), so a symlink under home
+//! that leaves it is caught too. `..` and encoded segments are refused on
+//! shape or resolve like any other name. The boundary root is read from `HOME`
+//! at boot and is not configurable (`practices/env.md`); an allowed-roots
+//! setting is an S5 candidate.
 //!
 //! Nothing here reaches the core: a refused path is answered to the client and
 //! logged, and an accepted path is forwarded as the canonical path that was
@@ -67,7 +69,11 @@ pub const LIST_CAP: usize = 500;
 
 #[derive(Clone, Debug)]
 pub struct Boundary {
+    /// The real home directory every accepted path resolves under.
     home: PathBuf,
+    /// Home as `HOME` names it; a client writes paths under this spelling
+    /// when home itself sits behind a symlink (`/var` for `/private/var`).
+    home_as_given: PathBuf,
 }
 
 impl Boundary {
@@ -81,7 +87,10 @@ impl Boundary {
         if !real.is_dir() {
             return Err(format!("HOME {} is not a directory", home.display()));
         }
-        Ok(Self { home: real })
+        Ok(Self {
+            home: real,
+            home_as_given: home.to_path_buf(),
+        })
     }
 
     pub fn home(&self) -> &Path {
@@ -91,6 +100,8 @@ impl Boundary {
     /// The canonical directory for `raw` when it is home or under home.
     /// `~` and `~/...` name the home directory, so a client can start its
     /// listing without knowing the path; the answer carries the real one.
+    /// A path written outside home is refused before the filesystem is read,
+    /// so the reason never says whether such a path exists.
     pub fn resolve_dir(&self, raw: &str) -> Result<PathBuf, Refusal> {
         let expanded;
         let raw = if raw == "~" || raw.starts_with("~/") {
@@ -113,6 +124,9 @@ impl Boundary {
             // directory is not one the input field produces; refusing the
             // shape keeps the log readable when it appears.
             return Err(Refusal::InvalidPath);
+        }
+        if !path.starts_with(&self.home) && !path.starts_with(&self.home_as_given) {
+            return Err(Refusal::OutsideHome);
         }
         let real = match path.canonicalize() {
             Ok(real) => real,
@@ -272,6 +286,61 @@ mod tests {
             f.boundary.resolve_workspace(&sibling_prefix),
             Err(Refusal::OutsideHome),
             "a sibling whose name starts with the home path is outside"
+        );
+    }
+
+    #[test]
+    fn a_path_outside_home_gets_one_reason_whether_or_not_it_exists() {
+        let f = fixture();
+        let existing_dir = s(&f.outside.join("secret"));
+        let missing_dir = s(&f.outside.join("nope"));
+        let existing_file = s(&f.outside.join("secret/marker.txt"));
+        fs::write(&existing_file, "x").unwrap();
+        for path in [
+            &existing_dir,
+            &missing_dir,
+            &existing_file,
+            &"/etc/nope-zzz".to_owned(),
+        ] {
+            assert_eq!(
+                f.boundary.resolve_workspace(path),
+                Err(Refusal::OutsideHome),
+                "{path}: the reason must not tell whether it exists"
+            );
+            assert_eq!(f.boundary.list(path), Err(Refusal::OutsideHome), "{path}");
+        }
+        // A symlink into home from outside is still outside: the path as
+        // written decides, not where it leads.
+        let inbound = f.outside.join("inbound");
+        symlink(f.home.join("projects/alpha"), &inbound).unwrap();
+        assert_eq!(
+            f.boundary.resolve_workspace(&s(&inbound)),
+            Err(Refusal::OutsideHome)
+        );
+    }
+
+    #[test]
+    fn home_spelled_as_given_resolves_when_home_is_a_symlink() {
+        let outer = tempfile::tempdir().unwrap();
+        let real_home = outer.path().join("real-home");
+        fs::create_dir_all(real_home.join("projects/alpha")).unwrap();
+        let link_home = outer.path().join("link-home");
+        symlink(&real_home, &link_home).unwrap();
+        let boundary = Boundary::new(&link_home).unwrap();
+        let canonical = real_home.canonicalize().unwrap();
+        assert_eq!(boundary.home(), canonical);
+        assert_eq!(
+            boundary.resolve_workspace(&s(&link_home.join("projects/alpha"))),
+            Ok(canonical.join("projects/alpha")),
+            "the spelling HOME uses is under home"
+        );
+        assert_eq!(
+            boundary.resolve_workspace(&s(&canonical.join("projects/alpha"))),
+            Ok(canonical.join("projects/alpha"))
+        );
+        assert_eq!(
+            boundary.list(&s(&link_home)).unwrap().root_path,
+            s(&canonical)
         );
     }
 

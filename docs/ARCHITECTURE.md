@@ -254,8 +254,10 @@ Closing mirrors the Swift flow in `web/src/close.ts`: an unknown activity status
 ### The `$HOME` filesystem boundary
 
 `hided/src/boundary.rs` is the one place the boundary is enforced, in the dispatch path before an event reaches the core (`server::apply_boundary`).
-A `remote_file_list` or `create_workspace` whose path does not resolve under `$HOME` by real path (a `..` segment, a symlink whose target leaves home, a file, a missing directory, a relative path) is answered to that client as a `path_refused` frame with a reason code (`outside_home`, `home_root`, `not_found`, `not_a_directory`, `invalid_path`), logged as `path.refused`, and never forwarded.
-An accepted path is forwarded as the canonical path that was checked.
+A `create_workspace`, or a `remote_file_list` for the `local` target, whose path does not resolve under `$HOME` (a `..` segment, a symlink whose target leaves home, a file, a missing directory, a relative path) is answered to that client as a `path_refused` frame with a reason code (`outside_home`, `home_root`, `not_found`, `not_a_directory`, `invalid_path`), logged as `path.refused` with the path capped at `LOGGED_PATH_CAP`, and never forwarded.
+The path is tested as written before the filesystem is read, so any path outside home gets `outside_home` whether or not it exists, and a client holding the token cannot probe the rest of the disk for existence; a path under home is then resolved by real path so a symlink that leaves home is caught.
+An accepted workspace path is forwarded as the canonical path that was checked.
+A `remote_file_list` for any other target names a path on that remote machine, which the boundary knows nothing about, and is forwarded untouched; the core's own checks on it are unchanged.
 A `remote_file_list` for the `local` target is answered by hided itself as a `directory_list` frame, because the core's event lists a registered remote target's checkout and has no local listing; the listing carries subdirectories only, hides dotted names and symlinks that leave home, and is capped at `LIST_CAP` with `truncated` set.
 A request of `~` lists the home directory and answers with its real path, which is how the web shell learns `$HOME` for the checks it can make before sending anything (outside home by prefix, already registered, not in the listing it holds).
 The boundary root is read from `HOME` at boot and is not configurable; an allowed-roots setting is an S5 candidate.

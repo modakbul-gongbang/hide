@@ -426,6 +426,10 @@ async fn local_listing_and_refusals_are_answered_by_hided() {
             "not_a_directory",
         ),
         (outside.path().display().to_string(), "outside_home"),
+        (
+            outside.path().join("nope").display().to_string(),
+            "outside_home",
+        ),
         (home.display().to_string(), "home_root"),
         ("relative/path".to_owned(), "invalid_path"),
     ];
@@ -448,5 +452,46 @@ async fn local_listing_and_refusals_are_answered_by_hided() {
     .await;
     assert_eq!(refused_list["payload"]["reason"], "outside_home");
     assert_eq!(refused_list["payload"]["kind"], "remote_file_list");
+    running.stop();
+}
+
+#[tokio::test]
+async fn a_remote_listing_for_another_target_is_forwarded_untouched() {
+    let (_dir, running) = start().await;
+    let outside = tempfile::tempdir().unwrap();
+    let mut socket = live_socket(&running).await;
+    // The path is on the remote machine; locally it is outside home, so a
+    // boundary that wrongly ran would answer `path_refused`. The core has no
+    // such target and records that instead, which shows the event arrived.
+    socket
+        .send(Message::Text(
+            json!({
+                "schema_version": 2,
+                "kind": "remote_file_list",
+                "payload": {"target_id": "mini", "root_path": outside.path().display().to_string()},
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let reaction = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let frame = first_frame(&mut socket).await;
+            assert_ne!(
+                frame["type"], "path_refused",
+                "a non-local listing must not meet the local boundary"
+            );
+            if frame.to_string().contains("remote.files.unknown_target") {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("the core's reaction to the forwarded event");
+    assert!(matches!(
+        reaction["type"].as_str(),
+        Some("delta" | "snapshot")
+    ));
     running.stop();
 }
