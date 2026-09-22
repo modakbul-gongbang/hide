@@ -277,6 +277,33 @@ A request of `~` lists the home directory and answers with its real path, which 
 The boundary root is read from `HOME` at boot and is not configurable; an allowed-roots setting is an S5 candidate.
 Both frames and the reason codes are in `contracts/hided-ws.schema.json`.
 
+### The checkout-root boundary and the Explorer frames
+
+`hided` widens the file line from `$HOME` to the registered checkout roots the core snapshot carries (PRD S3 D-01, B11).
+Every Explorer path - listing, open, reveal, save, create, rename, move, trash, index and file bytes - is checked against the root the event names, or the focused checkout's root, on the real path.
+A path under a root is walked one component at a time from that root, so a symlink whose target leaves the checkout is refused as `outside_checkout` before its target is read, and a sibling whose name merely starts with the root's path is not inside it.
+Roots come from `rest.navigator.workspaces` (a local workspace whose checkout exists) and are replaced wholesale on every core change notification (`refresh_roots`), so a registration that goes away takes its boundary with it.
+`apply_boundary` answers a refused path with a `path_refused` frame and a `path.refused` log line, and forwards an accepted one as the canonical path that was checked.
+`file_list` answers the Explorer's listing for one folder under a root: files and directories, hidden names included, `.git` dropped, directories first then the Swift natural order, capped at `LIST_CAP`.
+`file_bytes` streams a file's bytes behind the same boundary: the client names a path, an offset and a length, and the daemon answers with one or more binary frames (a 4-byte big-endian header length, the header JSON, then the bytes) of at most 4 MiB, refusing a read past `MAX_FILE_BYTES` (256 MiB) with a `file_bytes_error` frame; the image, PDF and video viewers read through it and build a blob, and no HTTP endpoint serves file bytes (S1 D-03).
+`file_index` is the ⌘P index (`hided/src/index.rs`): one lazy walk per root honoring `.gitignore` without a git process, capped at 50,000 files, ranked by the Swift fuzzy score and returned as at most 80 rows; the first query for a root answers `indexing: true` while the walk runs.
+`directory_changed` is the watch (`hided/src/watch.rs`): one owner task watches the focused checkout's root and its most recently expanded folders, at most 64 in total, releasing the least recently expanded first, and announces a change once the burst goes quiet (200 ms).
+The web's listing cache uses the same 64 (`web/src/watch.ts`) and draws a refresh badge on a folder past the cap instead of a live listing.
+Terminal attachments (`hided/src/attachments.rs`) are the bytes-in path: the browser reads a dropped file's or pasted image's bytes but cannot name its path, so it stages one file per upload in binary frames and commits a batch, and hided writes the staged files and sends the one `terminal_attachment` the Swift shell sends, with the staged paths as `paths`.
+A clipboard image stages at the exact path the core reads it from, and hided reports `terminal_attachment_ready` itself.
+The caps are 20 MiB per file and 40 MiB and 8 files per batch, checked here and again in the core; a refusal is one line over the pane (B15).
+Every frame and reason code lives in `contracts/hided-ws.schema.json`.
+
+### The Explorer, editor and viewers
+
+The sidebar's third mode is the Explorer (`web/src/ExplorerTree.tsx`): the core owns which folders are expanded (`ui_state.expanded_paths`) and hided answers one listing per folder, so a row is a pure function of those, the checkout's changed-file set and the file's icon (`web/src/explorer.ts`, unit-tested without a browser).
+`@tanstack/react-virtual` lays out a 10,000-row folder; nothing in a row runs git or reads the disk (B16).
+The core computes a checkout's changed files only while its Explorer or Changes surface is visible, so Explorer mode sends that ui state (`right_panel_visible`, `right_panel_section: "explorer"`) or the rows carry no Git colour.
+A single click opens the checkout's preview tab, a double click or ⌘⇧K promotes it, and the tab strip draws file and diff entries beside Herdr tabs, in italics while preview.
+The editor is CodeMirror 6 (`web/src/editor/`): language packs load per document kind, ⌘S is one `file_save` carrying the open document's timestamp, a disk change becomes the core's conflict choice, and Markdown Live hides the same markup the Swift view hides (`markdownLive.ts` is a pure plan).
+Image, PDF and video viewers read hided's bytes; the web decides video from the extension because the core has no Video kind (D-09).
+Unsaved buffers live in IndexedDB (`web/src/buffers.ts`) and reconcile against the core on reconnect: an open document's buffer is restored, a closed document's is discarded with a diagnostic (B8).
+
 ### The shortcut registry
 
 `web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
@@ -291,7 +318,9 @@ The Electron column is empty until that host exists (TODO: fill it from `ShellMe
 | New workspace | ⌘⇧N | ⌥⇧N (moved) | TODO |
 | Next / previous recent tab | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | TODO |
 | Next / previous recent project | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | TODO |
-| Search, Open file, Project home, Toggle right panel | ⌘K, ⌘P, ⌘⇧H, ⌘⇧B | same chords, intercepted; answered "준비 중" until S3 | TODO |
+| Search, Open file, Toggle right panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | TODO |
+| Project home | ⌘⇧H | same chord, answered "준비 중" | TODO |
+| Save file | ⌘S | ⌘S | TODO |
 | Toggle left sidebar, Toggle sidebar view, Find in pane, Keep open | ⌘B, ⌘E, ⌘F, ⌘⇧K | same chords | TODO |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | TODO |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | TODO |
