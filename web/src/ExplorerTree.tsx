@@ -76,6 +76,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   const selectedPath = useShellStore((s) => s.rest?.ui_state?.selected_path ?? null);
   const pathRefusal = useShellStore((s) => s.pathRefusal);
   const operation = useShellStore((s) => s.rest?.explorer_operation ?? null);
+  const folderChanges = useShellStore((s) => s.folderChanges);
   const invalidateListings = useShellStore((s) => s.invalidateListings);
   const selection = useUiStore((s) => s.explorerSelection);
   const setSelection = useUiStore((s) => s.setExplorerSelection);
@@ -87,6 +88,8 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   // Folders this pane has asked hided for and not yet heard about; a refusal
   // keeps its entry so a refused folder is not re-asked on every render.
   const pending = useRef<Set<string>>(new Set());
+  /** The watch-frame count already acted on, per folder. */
+  const seenChanges = useRef<Record<string, number>>({});
 
   const expandedKey = expandedPaths.join("\n");
   const rows = useMemo(
@@ -110,6 +113,17 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     if (!rootPath) return;
     const watched = watchedFolders(rootPath, expandedPaths);
     const watchedNow = new Set(watched);
+    // A watch frame that landed while a listing was in flight must be re-read:
+    // its folder drops its pending marker and its (possibly older) listing.
+    const bumped: string[] = [];
+    for (const [path, count] of Object.entries(folderChanges)) {
+      if ((seenChanges.current[path] ?? 0) === count) continue;
+      seenChanges.current[path] = count;
+      if (!watchedNow.has(path)) continue;
+      pending.current.delete(path);
+      bumped.push(path);
+    }
+    if (bumped.length > 0) invalidateListings(bumped);
     invalidateListings(
       expandedUnderRoot(rootPath, expandedPaths).filter((path) => path !== rootPath && !watchedNow.has(path)),
     );
@@ -121,7 +135,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     for (const folder of [...pending.current]) {
       if (listings[folder]) pending.current.delete(folder);
     }
-  }, [rootPath, expandedPaths, listings, refreshTick, actions, invalidateListings]);
+  }, [rootPath, expandedPaths, listings, refreshTick, folderChanges, actions, invalidateListings]);
 
   // A reveal (or an open from anywhere) sets the core's selected_path; the
   // local cursor follows it so the tree highlights what was revealed.
@@ -266,7 +280,10 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           aria-label="Refresh the file tree"
           title="Refresh"
           onClick={() => {
+            // A cached listing is dropped too, so the button re-reads what it
+            // is showing rather than only the folders it never listed.
             pending.current.clear();
+            invalidateListings(watchedFolders(rootPath, expandedPaths));
             setRefreshTick((tick) => tick + 1);
           }}
         >

@@ -107,13 +107,6 @@ pub const LIST_CAP: usize = 500;
 /// kernel's own limit for one lookup is the same order.
 const SYMLINK_HOPS: usize = 40;
 
-/// Paths one attachment event may carry; the core refuses a batch past this,
-/// so the daemon drops the excess instead of losing the whole event.
-pub const MAX_ATTACHMENT_FILES: usize = 8;
-
-/// Bytes one attachment path may hold, the same cap the core enforces.
-pub const MAX_PATH_BYTES: usize = 4096;
-
 /// Bytes one `file_bytes` request may name, for the whole file or one range.
 /// A viewer reads a document into memory, so the daemon refuses a read past
 /// this rather than growing an unbounded allocation (engineering 15).
@@ -125,17 +118,6 @@ pub const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 /// rather than the last word on the name.
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\0')
-}
-
-/// Whether one path in an attachment event is forwarded: absolute, within the
-/// byte cap, and free of control characters. The core refuses the whole batch
-/// when one path fails, so the daemon drops the failing path and the rest of
-/// the batch still arrives.
-pub fn valid_attachment_path(path: &str) -> bool {
-    !path.is_empty()
-        && path.len() <= MAX_PATH_BYTES
-        && Path::new(path).is_absolute()
-        && !path.chars().any(char::is_control)
 }
 
 /// Lexical normalization of an absolute path: `.` dropped, `..` applied to
@@ -1374,20 +1356,12 @@ mod tests {
     }
 
     #[test]
-    fn names_and_attachment_paths_are_gated_by_shape() {
+    fn names_are_gated_by_shape() {
         for name in ["main.rs", "a b", ".hidden", "한글.txt"] {
             assert!(valid_name(name), "{name}");
         }
         for name in ["", ".", "..", "a/b", "\0"] {
             assert!(!valid_name(name), "{name:?}");
         }
-        assert!(valid_attachment_path("/tmp/hide-shot.png"));
-        assert!(!valid_attachment_path("tmp/shot.png"));
-        assert!(!valid_attachment_path("/tmp/shot\n.png"));
-        assert!(!valid_attachment_path(&format!(
-            "/tmp/{}",
-            "a".repeat(MAX_PATH_BYTES)
-        )));
-        assert!(!valid_attachment_path(""));
     }
 }

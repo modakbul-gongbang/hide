@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { configureFileBytes, receiveBytes, receiveBytesError, requestFileBytes } from "./fileBytes";
+import { clearPending, configureFileBytes, receiveBytes, receiveBytesError, receiveBytesRefusal, requestFileBytes } from "./fileBytes";
 
 /** The frame hided sends: 4-byte big-endian header length, header JSON, bytes. */
 function frame(header: Record<string, unknown>, bytes: number[]): ArrayBuffer {
@@ -32,10 +32,33 @@ describe("file bytes", () => {
     await expect(promise).resolves.toEqual(new Uint8Array([1, 2, 3, 4, 5]));
   });
 
-  it("carries a range request's offset and length", () => {
+  it("carries a range request's offset and length", async () => {
     const { events } = captureDispatch();
-    void requestFileBytes("/repo/clip.mp4", { offset: 16, length: 8 });
+    const pending = requestFileBytes("/repo/clip.mp4", { offset: 16, length: 8 });
     expect(events[0]).toMatchObject({ path: "/repo/clip.mp4", offset: 16, length: 8 });
+    // This read is never answered; the next test's cleanup must not surface it
+    // as an unhandled rejection.
+    pending.catch(() => {});
+    clearPending("test_cleanup");
+    await expect(pending).rejects.toThrow("test_cleanup");
+  });
+
+  it("settles every read of a refused path with the daemon's reason", async () => {
+    const { events } = captureDispatch();
+    const first = requestFileBytes("/outside/secret.bin");
+    const second = requestFileBytes("/outside/secret.bin");
+    expect(events).toHaveLength(2);
+    receiveBytesRefusal("/outside/secret.bin", "outside_checkout");
+    await expect(first).rejects.toThrow("outside_checkout");
+    await expect(second).rejects.toThrow("outside_checkout");
+  });
+
+  it("fails every in-flight read when the socket goes", async () => {
+    const { events } = captureDispatch();
+    const promise = requestFileBytes("/repo/shot.png");
+    expect(events).toHaveLength(1);
+    clearPending("socket_closed");
+    await expect(promise).rejects.toThrow("socket_closed");
   });
 
   it("rejects with the daemon's reason and ignores a frame for an unknown request", async () => {

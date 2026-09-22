@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { configureAttachments, frameChunk, receiveAttachmentRefusal, refusalText, submitAttachments } from "./attachments";
+import {
+  configureAttachments,
+  frameChunk,
+  preflightRefusal,
+  receiveAttachmentRefusal,
+  refusalText,
+  submitAttachments,
+  type AttachmentInput,
+} from "./attachments";
 import { useShellStore } from "./store";
 
 function capture() {
@@ -40,6 +48,22 @@ describe("attachment upload", () => {
     const { header, body } = decodeFrame(binaries[0]!);
     expect(header).toMatchObject({ offset: 0, eof: true });
     expect(Array.from(body)).toEqual([9, 9, 9]);
+  });
+
+  it("stages a clipboard image under the batch id the core reads it from", () => {
+    const { events } = capture();
+    submitAttachments("pane-2", [{ name: "shot.png", bytes: new Uint8Array([1]) }], true, true);
+    const stage = events[0]!.payload.request_id as string;
+    expect(stage).toBe(events[1]!.payload.request_id);
+    expect(events[0]!.payload).toMatchObject({ clipboard: true });
+  });
+
+  it("refuses a batch past the daemon's caps before uploading it", () => {
+    const bytes = (size: number): AttachmentInput => ({ name: "x", bytes: new Uint8Array(size) });
+    expect(preflightRefusal([bytes(1)])).toBeNull();
+    expect(preflightRefusal([bytes(20 * 1024 * 1024 + 1)])).toBe("too_large");
+    expect(preflightRefusal(Array.from({ length: 9 }, () => bytes(1)))).toBe("too_many_files");
+    expect(preflightRefusal([bytes(20 * 1024 * 1024), bytes(20 * 1024 * 1024), bytes(1)])).toBe("batch_too_large");
   });
 
   it("routes a refusal to the pane the request belonged to", () => {

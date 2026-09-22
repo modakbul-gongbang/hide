@@ -27,6 +27,29 @@ pub const MAX_FILES: usize = 8;
 /// is generous; older files are removed only as newer ones arrive.
 const STAGED_KEEP: usize = 512;
 
+/// Stages one connection may have open at once; past it the oldest open stage
+/// is dropped, so an abandoned upload cannot hold file descriptors forever.
+const MAX_OPEN_UPLOADS: usize = 64;
+
+/// One client-supplied name, flattened to a single relative component: a
+/// separator, a control character, or a parent segment would let the client
+/// name a path hided did not choose. Returns `None` for a shape no stage may
+/// carry.
+fn safe_component(value: &str) -> Option<String> {
+    if value.is_empty() || value.len() > 128 {
+        return None;
+    }
+    if value == "."
+        || value == ".."
+        || value
+            .chars()
+            .any(|c| c == '/' || c == '\\' || c.is_control())
+    {
+        return None;
+    }
+    Some(value.to_owned())
+}
+
 struct Upload {
     path: PathBuf,
     file: Option<File>,
@@ -36,7 +59,18 @@ struct Upload {
 #[derive(Default)]
 struct State {
     uploads: HashMap<String, Upload>,
+    /// The open stages in arrival order, oldest first, so the cap can drop one.
+    open: VecDeque<String>,
     staged: VecDeque<PathBuf>,
+}
+
+/// Removes one upload and its file, everywhere the state names it.
+fn drop_upload(state: &mut State, request_id: &str) {
+    if let Some(upload) = state.uploads.remove(request_id) {
+        let _ = std::fs::remove_file(&upload.path);
+        state.staged.retain(|path| path != &upload.path);
+    }
+    state.open.retain(|id| id != request_id);
 }
 
 pub struct Attachments {
@@ -83,21 +117,27 @@ impl Attachments {
         if size > MAX_FILE_BYTES {
             return Err("too_large");
         }
-        let safe: String = name
-            .chars()
-            .map(|c| {
-                if c == '/' || c == '\\' || c == '\0' {
-                    '_'
-                } else {
-                    c
-                }
-            })
-            .collect();
-        let path = if clipboard {
-            self.clipboard_root.join(format!("hide-{request_id}.png"))
-        } else {
-            self.dir.join(format!("{request_id}-{safe}"))
+        // Both components are client input; the id is flattened the same way
+        // the name is, so the joined path is always one file directly in the
+        // staging directory and can never name another path.
+        let Some(request_id) = safe_component(request_id) else {
+            return Err("invalid_request_id");
         };
+        let name = safe_component(name).unwrap_or_else(|| "attachment.bin".to_owned());
+        let root = if clipboard {
+            &self.clipboard_root
+        } else {
+            &self.dir
+        };
+        let file_name = if clipboard {
+            format!("hide-{request_id}.png")
+        } else {
+            format!("{request_id}-{name}")
+        };
+        let path = root.join(&file_name);
+        if path.parent() != Some(root.as_path()) {
+            return Err("invalid_request_id");
+        }
         let file = File::create(&path).map_err(|_| "stage_failed")?;
         let mut state = self
             .state
@@ -110,8 +150,20 @@ impl Attachments {
                 let _ = std::fs::remove_file(old);
             }
         }
+        // An abandoned stage would otherwise hold its file descriptor for the
+        // daemon's life; the oldest open one goes instead.
+        while state.open.len() >= MAX_OPEN_UPLOADS {
+            let Some(oldest) = state.open.pop_front() else {
+                break;
+            };
+            if let Some(upload) = state.uploads.remove(&oldest) {
+                let _ = std::fs::remove_file(&upload.path);
+                state.staged.retain(|path| path != &upload.path);
+            }
+        }
+        state.open.push_back(request_id.clone());
         state.uploads.insert(
-            request_id.to_owned(),
+            request_id,
             Upload {
                 path: path.clone(),
                 file: Some(file),
@@ -157,21 +209,25 @@ impl Attachments {
                 return Err("too_many_files");
             }
             if let Some(stage) = stages.first() {
-                let state = self
+                let mut state = self
                     .state
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 match state.uploads.get(stage) {
-                    Some(upload) if upload.file.is_none() => return Ok(Vec::new()),
+                    Some(upload) if upload.file.is_none() => {}
                     _ => return Err("unknown_stage"),
                 }
+                // Committed: the file stays for the core to read, the open
+                // stage entry does not.
+                state.uploads.remove(stage);
+                state.open.retain(|id| id != stage);
             }
             return Ok(Vec::new());
         }
         if stages.len() > MAX_FILES || stages.is_empty() {
             return Err("too_many_files");
         }
-        let state = self
+        let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -190,6 +246,12 @@ impl Attachments {
             }
             paths.push(upload.path.display().to_string());
         }
+        // Committed: the files stay for the core to read, the open stage
+        // entries do not.
+        for stage in stages {
+            state.uploads.remove(stage);
+        }
+        state.open.retain(|id| !stages.contains(id));
         Ok(paths)
     }
 
@@ -222,10 +284,7 @@ impl Attachments {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(upload) = state.uploads.remove(request_id) {
-            let _ = std::fs::remove_file(&upload.path);
-            state.staged.retain(|path| path != &upload.path);
-        }
+        drop_upload(&mut state, request_id);
     }
 }
 
@@ -272,6 +331,47 @@ mod tests {
         );
         let too_many: Vec<String> = (0..(MAX_FILES + 1)).map(|i| format!("r{i}")).collect();
         assert_eq!(service.commit(&too_many, false), Err("too_many_files"));
+    }
+
+    #[test]
+    fn a_stage_id_that_names_a_path_is_refused() {
+        let (_dir, service) = attachments();
+        for id in ["../escape", "/tmp/absolute", "a/b", "", ".", ".."] {
+            assert_eq!(
+                service.begin(id, "shot.png", 1, false),
+                Err("invalid_request_id"),
+                "{id:?}"
+            );
+        }
+        // The accepted id lands directly in the staging directory.
+        service.begin("ok-id", "shot.png", 1, false).unwrap();
+        assert_eq!(service.write("ok-id", &[1], true), Ok(true));
+        let path = service.commit(&["ok-id".to_owned()], false).unwrap();
+        assert!(path[0].contains("/attachments/ok-id-shot.png"), "{path:?}");
+    }
+
+    #[test]
+    fn abandoned_stages_are_bounded_and_their_files_go_with_them() {
+        let (_dir, service) = attachments();
+        for index in 0..(MAX_OPEN_UPLOADS + 2) {
+            service.begin(&format!("s{index}"), "x", 1, false).unwrap();
+        }
+        assert_eq!(service.write("s0", &[1], true), Err("unknown_stage"));
+        assert_eq!(service.write("s1", &[1], true), Err("unknown_stage"));
+        assert_eq!(
+            service.write(&format!("s{}", MAX_OPEN_UPLOADS + 1), &[1], true),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn a_committed_stage_is_released_but_its_file_stays() {
+        let (_dir, service) = attachments();
+        service.begin("r1", "shot.png", 1, false).unwrap();
+        service.write("r1", &[1], true).unwrap();
+        let paths = service.commit(&["r1".to_owned()], false).unwrap();
+        assert!(std::path::Path::new(&paths[0]).is_file());
+        assert_eq!(service.write("r1", &[1], true), Err("unknown_stage"));
     }
 
     #[test]

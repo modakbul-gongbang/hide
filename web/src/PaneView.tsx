@@ -141,7 +141,7 @@ export const PaneView = memo(function PaneView({
       </header>
       <div className="h-[var(--size-hairline)] shrink-0 bg-divider" />
       <div className="relative min-h-0 flex-1">
-        <div ref={hostRef} className="absolute inset-0" />
+        <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} />
         {refusal?.pane_id === paneId ? (
           <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-panel px-sm py-xxs text-caption text-danger" data-pane-attachment-refusal="true">
             <span className="min-w-0 flex-1 truncate">{refusalText(refusal.reason)}</span>

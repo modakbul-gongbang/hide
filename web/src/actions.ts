@@ -74,8 +74,32 @@ export function createActions(dispatch: DispatchFn) {
     }
   };
 
+  /**
+   * The folder chain to an opened file under the focused checkout, so the
+   * Explorer shows and highlights the row without the core's `reveal_path`,
+   * which would open a pinned tab (B3).
+   */
+  const revealAncestors = (path: string) => {
+    const state = rest()?.ui_state;
+    const root = rest()?.navigator?.root_path;
+    if (!state || !root || !path.startsWith(`${root}/`)) return;
+    const parts = path.slice(root.length + 1).split("/");
+    parts.pop();
+    const expanded = new Set(state.expanded_paths ?? []);
+    let changed = false;
+    for (let depth = 1; depth <= parts.length; depth += 1) {
+      const ancestor = `${root}/${parts.slice(0, depth).join("/")}`;
+      if (!expanded.has(ancestor)) {
+        expanded.add(ancestor);
+        changed = true;
+      }
+    }
+    if (changed) updateUiState({ expanded_paths: [...expanded] });
+  };
+
   return {
     dispatch,
+    revealAncestors,
 
     createTab() {
       const here = current();
@@ -288,6 +312,7 @@ export function createActions(dispatch: DispatchFn) {
     openFile(path: string, preview: boolean) {
       const here = current();
       if (!here) return diagnostic("file_open: no focused checkout");
+      revealAncestors(path);
       dispatch({
         schema_version: 2,
         kind: "file_open",

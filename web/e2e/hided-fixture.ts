@@ -39,6 +39,16 @@ export async function startHided(herdr: HerdrFixture, label = "s2"): Promise<Dae
   }
   const stop = () => {
     child.kill();
+    // The daemon may still be writing its state file (and, with S3, staged
+    // files) as it dies; removing the directory under it fails with ENOTEMPTY.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return;
+      } catch {
+        spawnSync("/bin/sleep", ["0.05"]);
+      }
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   };
   for (let i = 0; i < 50; i += 1) {

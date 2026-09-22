@@ -1,6 +1,6 @@
 import { configureAttachments, receiveAttachmentRefusal } from "./attachments";
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
-import { receiveBytes, receiveBytesError } from "./fileBytes";
+import { clearPending, receiveBytes, receiveBytesError, receiveBytesRefusal } from "./fileBytes";
 import { noteArrival, probeEnabled } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
 
@@ -100,6 +100,13 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
         receiveAttachmentRefusal(frame.payload as unknown as { request_id: string; reason: string });
         return;
       }
+      // A refused file_bytes path is answered to the viewer that asked, not
+      // the Explorer's refusal line.
+      if (frame.type === "path_refused" && (frame.payload as { kind?: string } | undefined)?.kind === "file_bytes") {
+        const refusal = frame.payload as unknown as { path: string; reason: string };
+        receiveBytesRefusal(refusal.path, refusal.reason);
+        return;
+      }
       const chunks = useShellStore.getState().applyFrame(frame);
       revision = useShellStore.getState().revision;
       terminalSequence = useShellStore.getState().terminalSequence;
@@ -109,6 +116,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       healthFails = 0;
     });
     ws.addEventListener("close", (event) => {
+      clearPending("socket_closed");
       if (closed) return;
       if (event.code >= 4001 && event.code <= 4004) {
         useShellStore.getState().setConnection("gone", true);

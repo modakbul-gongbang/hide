@@ -251,6 +251,8 @@ export type SnapshotRest = {
   navigator?: {
     focused_workspace_id?: string | null;
     focused_checkout_id?: string | null;
+    /** The focused checkout's root, which the Explorer reveals under. */
+    root_path?: string | null;
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];

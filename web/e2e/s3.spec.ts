@@ -465,6 +465,18 @@ test("a dropped file reaches the terminal as an attachment", async ({ page }) =>
     const logs = herdr.inputLogs.map((file) => file);
     const read = () => logs.map((file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "")).join("\n");
     await expect.poll(read, { timeout: 15_000 }).toContain("dropped.png");
+
+    // ⌘V of an image: the same flow, with the image staged at the path the core
+    // reads a clipboard attachment from (B14).
+    await page.evaluate((base64) => {
+      const binary = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const file = new File([binary], "clipboard.png", { type: "image/png" });
+      const data = new DataTransfer();
+      data.items.add(file);
+      const target = document.querySelector("[data-terminal-host]") as HTMLElement;
+      target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
+    }, PNG.toString("base64"));
+    await expect.poll(read, { timeout: 15_000 }).toContain("TerminalClipboard");
     await expect(page.locator("[data-pane-attachment-refusal]")).toHaveCount(0);
     await screenshot(page, "s3-attachment-drop");
   } finally {

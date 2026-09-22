@@ -106,7 +106,8 @@
             "path_rename",
             "path_move",
             "path_trash",
-            "file_bytes"
+            "file_bytes",
+            "file_index"
           ]
         },
         "path": { "type": "string" },

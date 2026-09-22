@@ -619,7 +619,9 @@ async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
             }
         };
         buffer.truncate(read);
-        let eof = cursor + read as u64 >= end;
+        // A file that shrank between the size read and this read answers 0
+        // bytes; that ends the stream rather than spinning on it.
+        let eof = read == 0 || cursor + read as u64 >= end;
         let header = json!({
             "type": "file_bytes",
             "request_id": request_id,
@@ -675,7 +677,6 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
         "path_rename" => explorer_rename(boundary, event, &kind),
         "path_move" => explorer_move(boundary, event, &kind),
         "path_trash" => explorer_trash(boundary, event, &kind),
-        "terminal_attachment" => attachments(event),
         _ => None,
     }
 }
@@ -841,36 +842,6 @@ fn explorer_trash(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<
     rewrite(event, kind, "select_after", |raw| {
         boundary.resolve_in_root(&root, raw)
     })
-}
-
-/// An attachment carries paths the shell staged itself - a screenshot it wrote
-/// for the clipboard, a file the operator dragged in - so the boundary checks
-/// the shape of each rather than a root. A path that fails the shape, and any
-/// path past the batch cap, is dropped here and the drop is logged; the core
-/// refuses the whole batch, which would lose the ones that were fine.
-fn attachments(event: &mut Value) -> Option<Value> {
-    let paths = event.pointer("/payload/paths").and_then(Value::as_array)?;
-    let sent = paths.len();
-    let kept: Vec<Value> = paths
-        .iter()
-        .filter(|path| path.as_str().is_some_and(boundary::valid_attachment_path))
-        .take(boundary::MAX_ATTACHMENT_FILES)
-        .cloned()
-        .collect();
-    if kept.len() == sent {
-        return None;
-    }
-    eprintln!(
-        "{}",
-        json!({
-            "component": "hided",
-            "kind": "attachment.dropped",
-            "sent": sent,
-            "kept": kept.len(),
-        })
-    );
-    event["payload"]["paths"] = Value::Array(kept);
-    None
 }
 
 /// Characters of a refused path the log keeps; the path is client input, so

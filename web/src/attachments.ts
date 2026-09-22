@@ -15,8 +15,20 @@ export type AttachmentInput = { name: string; bytes: Uint8Array };
 type Sender = { dispatch: DispatchFn; sendBinary: (bytes: Uint8Array) => void };
 
 let sender: Sender | null = null;
-/** The pane an in-flight request belongs to, so a refusal names its pane. */
+/** The pane a request belongs to, so a refusal names its pane. A refusal
+ * arrives after the commit, so entries are kept until one does; the map is
+ * capped so a long session cannot grow it without bound. */
 const paneByRequest = new Map<string, string>();
+const MAX_TRACKED_REQUESTS = 64;
+
+function rememberPane(requestId: string, paneId: string): void {
+  paneByRequest.set(requestId, paneId);
+  while (paneByRequest.size > MAX_TRACKED_REQUESTS) {
+    const oldest = paneByRequest.keys().next().value;
+    if (oldest === undefined) break;
+    paneByRequest.delete(oldest);
+  }
+}
 
 export function configureAttachments(value: Sender): void {
   sender = value;
@@ -78,13 +90,22 @@ function sendChunks(requestId: string, bytes: Uint8Array): void {
  */
 export function submitAttachments(paneId: string, files: AttachmentInput[], clipboard: boolean, bracketedPaste: boolean): void {
   if (!sender || files.length === 0) return;
+  // The caps the daemon enforces, checked before a byte leaves the page: a
+  // 2 GiB drop must not be read into memory to be refused.
+  const reason = preflightRefusal(files);
+  if (reason) {
+    useShellStore.getState().setAttachmentRefusal({ pane_id: paneId, reason });
+    return;
+  }
   const batch = crypto.randomUUID();
-  paneByRequest.set(batch, paneId);
+  rememberPane(batch, paneId);
   const stages: string[] = [];
   for (const [index, file] of files.entries()) {
-    const stage = `${batch}-${index}`;
+    // A clipboard image stages at the one path the core reads it from, so its
+    // stage id is the batch id the commit and the readiness report carry.
+    const stage = clipboard ? batch : `${batch}-${index}`;
     stages.push(stage);
-    paneByRequest.set(stage, paneId);
+    rememberPane(stage, paneId);
     sender.dispatch({
       schema_version: 2,
       kind: "attachment_stage",
@@ -104,6 +125,21 @@ export function submitAttachments(paneId: string, files: AttachmentInput[], clip
     },
   });
 }
+
+/** The cap a batch fails, or null when it is within every one of them. */
+export function preflightRefusal(files: AttachmentInput[]): string | null {
+  if (files.length === 0) return "too_many_files";
+  if (files.length > MAX_FILES) return "too_many_files";
+  if (files.some((file) => file.bytes.byteLength > MAX_FILE_BYTES)) return "too_large";
+  const total = files.reduce((sum, file) => sum + file.bytes.byteLength, 0);
+  if (total > MAX_BATCH_BYTES) return "batch_too_large";
+  return null;
+}
+
+/** The caps the daemon enforces, so the page refuses the same shapes first. */
+export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+export const MAX_BATCH_BYTES = 40 * 1024 * 1024;
+export const MAX_FILES = 8;
 
 /** The image files a clipboard or drop carries, as attachment inputs. */
 export function imageInputs(files: FileList | null): File[] {

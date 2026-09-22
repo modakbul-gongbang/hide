@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -43,6 +43,16 @@ async function startHided(extra: Record<string, string> = {}): Promise<Daemon> {
   }
   const stop = () => {
     child.kill();
+    // The daemon may still be writing its state file as it dies; removing the
+    // directory under it fails with ENOTEMPTY.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+        return;
+      } catch {
+        spawnSync("/bin/sleep", ["0.05"]);
+      }
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   };
   for (let i = 0; i < 50; i += 1) {

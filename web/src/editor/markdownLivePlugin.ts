@@ -44,7 +44,12 @@ class CheckboxWidget extends WidgetType {
     input.addEventListener("mousedown", (event) => event.preventDefault());
     input.addEventListener("click", (event) => {
       event.preventDefault();
-      view.dispatch({ changes: { from: this.from, to: this.to, insert: this.checked ? "[ ]" : "[x]" } });
+      view.dispatch({
+        changes: { from: this.from, to: this.to, insert: this.checked ? "[ ]" : "[x]" },
+        // The toggle is an operator edit like a keystroke, so the draft event
+        // reaches the core and the tab turns dirty.
+        userEvent: "input",
+      });
     });
     return input;
   }

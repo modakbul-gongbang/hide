@@ -83,6 +83,9 @@ type Store = {
   fileIndex: FileIndexResult | null;
   /** The last attachment the daemon refused, drawn as one line over its pane (B15). */
   attachmentRefusal: { pane_id: string; reason: string } | null;
+  /** Watch frames per folder, counted so the Explorer re-reads even a folder
+   * whose listing was in flight when the change landed. */
+  folderChanges: Record<string, number>;
   /** The newest `DIAGNOSTIC_CAP` entries; older ones are counted in `diagnosticsDropped`. */
   diagnostics: string[];
   diagnosticsDropped: number;
@@ -142,6 +145,7 @@ export const useShellStore = create<Store>((set, get) => ({
   pathRefusal: null,
   fileIndex: null,
   attachmentRefusal: null,
+  folderChanges: {},
   diagnostics: [],
   diagnosticsDropped: 0,
   viewGeneration: 0,
@@ -197,10 +201,13 @@ export const useShellStore = create<Store>((set, get) => ({
       return [];
     }
     if (frame.type === "directory_changed") {
-      // A watched folder moved; its cached listing is dropped so the Explorer
-      // re-reads it, without a reload of the whole tree (B2).
+      // A watched folder moved; its cached listing is dropped and the count
+      // lets the Explorer re-read even a listing that was still in flight.
       const path = payload.path;
-      if (path) get().invalidateListings([path]);
+      if (path) {
+        get().invalidateListings([path]);
+        set({ folderChanges: { ...get().folderChanges, [path]: (get().folderChanges[path] ?? 0) + 1 } });
+      }
       return [];
     }
     if (frame.type === "file_index_result") {

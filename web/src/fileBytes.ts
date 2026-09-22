@@ -75,6 +75,27 @@ export function receiveBytesError(payload: { request_id: string; reason: string 
 }
 
 /**
+ * A boundary refusal names the path, not a request id, so every read of that
+ * path is settled with the daemon's reason: the viewer shows one line instead
+ * of waiting forever.
+ */
+export function receiveBytesRefusal(path: string, reason: string): void {
+  for (const [requestId, entry] of pending) {
+    if (entry.path !== path) continue;
+    pending.delete(requestId);
+    entry.reject(new Error(reason));
+  }
+}
+
+/** A socket that is gone cannot answer; every in-flight read fails at once. */
+export function clearPending(reason: string): void {
+  for (const [requestId, entry] of pending) {
+    pending.delete(requestId);
+    entry.reject(new Error(reason));
+  }
+}
+
+/**
  * Reads a file under a registered checkout root. `length` absent reads to the
  * end; a range read names an offset and a length. The promise rejects with the
  * daemon's reason code (`outside_checkout`, `too_large`, `read_failed`, ...).

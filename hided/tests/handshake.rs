@@ -1065,6 +1065,21 @@ async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
     assert_eq!(refused["type"], "attachment_refused");
     assert_eq!(refused["payload"]["reason"], "too_large");
 
+    // A stage id that names a path is refused before anything is written.
+    let refused = send_event_expecting(
+        &mut socket,
+        "attachment_stage",
+        json!({
+            "request_id": "../escape",
+            "name": "shot.png",
+            "size": 1,
+            "clipboard": false,
+        }),
+        |frame| frame["type"] == "attachment_refused",
+    )
+    .await;
+    assert_eq!(refused["payload"]["reason"], "invalid_request_id");
+
     let refused = send_event_expecting(
         &mut socket,
         "attachment_commit",
