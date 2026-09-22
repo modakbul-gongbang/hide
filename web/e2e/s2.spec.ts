@@ -237,11 +237,15 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
       .poll(() => outer.evaluate((el) => (el as HTMLElement).style.gridTemplateColumns), { timeout: 10_000 })
       .not.toBe(before);
 
-    // ⌥⇧W closes the focused idle pane; Herdr's new geometry redraws the grid.
+    // ⌥⇧W closes the focused idle pane; Herdr's new geometry redraws the grid,
+    // and the closed pane's terminal is disposed, not parked (D-05).
+    const closingPane = (await page.evaluate(() => window.__hideProbe?.paneId()))!;
     await page.keyboard.press("Alt+Shift+KeyW");
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
     await expect.poll(() => sent.get("close_pane")).toBe(1);
     await expect(page.locator("[data-confirm-close]")).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__hideProbe?.liveTerminals() ?? [])).not.toContain(closingPane);
+    await expect(page.locator("[data-terminal-parking] [data-terminal]")).toHaveCount(0);
 
     // Dragging a tab onto another sends one reorder_tab; the strip redraws in the core's order.
     const secondTab = page.locator(`[data-tab="${tabs[1]}"]`);

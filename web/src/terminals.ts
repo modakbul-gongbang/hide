@@ -41,6 +41,9 @@ type Instance = {
 
 const instances = new Map<string, Instance>();
 
+/** The most lines one `terminal_scroll` carries (the core reads a u16). */
+const SCROLL_LINES_MAX = 65535;
+
 let parking: HTMLDivElement | null = null;
 
 /** A hidden lot in the document, so a parked terminal keeps its canvas and layout state. */
@@ -114,6 +117,20 @@ export function liveTerminalIds(): string[] {
   return [...instances.keys()];
 }
 
+/** Pane ids the core streams right now: listed in the terminal section and not released. */
+export function attachedPaneIds(): string[] {
+  return (useShellStore.getState().rest?.terminal?.panes ?? [])
+    .filter((pane) => pane.transport_state !== "released")
+    .map((pane) => pane.pane_id);
+}
+
+function disposeInstance(paneId: string, instance: Instance) {
+  instance.disposeHandlers();
+  instance.term.dispose();
+  instance.element.remove();
+  instances.delete(paneId);
+}
+
 function sendGrid(paneId: string, instance: Instance, newView: boolean) {
   if (!instance.host) return;
   instance.fit.fit();
@@ -159,9 +176,12 @@ function flushWheel(paneId: string, instance: Instance) {
     kind: "terminal_scroll",
     payload: {
       pane_id: paneId,
-      // Wheel deltas grow downward; Herdr's `up` shows older lines.
+      // A DOM deltaY grows downward while AppKit's scrollingDeltaY grows
+      // upward, so this ternary is the mirror of the Swift one, not its
+      // opposite; Herdr's `up` shows older lines. The core's line count is
+      // a u16, so a scripted burst is clamped rather than refused.
       direction: rows > 0 ? "down" : "up",
-      lines: Math.abs(rows),
+      lines: Math.min(Math.abs(rows), SCROLL_LINES_MAX),
       column: wheel.column,
       row: wheel.row,
       modifiers: wheel.modifiers,
@@ -292,20 +312,22 @@ export function attachTerminal(
     shown.observer = null;
     shown.host = null;
     parkingLot().append(shown.element);
+    // A pane closed while shown left the core's list before its view
+    // unmounted, so the park decides for itself instead of waiting for a
+    // later change to sweep it.
+    if (!attachedPaneIds().includes(paneId)) disposeInstance(paneId, shown);
   };
 }
 
 /**
  * Disposes every parked instance whose pane the core no longer streams:
  * released beyond the attach window, or gone with its tab. A shown pane is
- * left to its view, which parks it first.
+ * skipped here; its park checks the same list when the view unmounts.
  */
-export function retainTerminals(attached: ReadonlySet<string>) {
+export function retainTerminals() {
+  const attached = new Set(attachedPaneIds());
   for (const [paneId, instance] of instances) {
     if (attached.has(paneId) || instance.host) continue;
-    instance.disposeHandlers();
-    instance.term.dispose();
-    instance.element.remove();
-    instances.delete(paneId);
+    disposeInstance(paneId, instance);
   }
 }

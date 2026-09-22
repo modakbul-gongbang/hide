@@ -63,7 +63,7 @@ def page_metrics(port):
 
 
 def main():
-    phase, chrome_pid, hided_pid, port = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+    phase, chrome_pid, hided_pid, port = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
     tree = [chrome_pid] + children(chrome_pid)
     processes = [{"pid": p, "type": chrome_type(p), "rss_kb": rss_kb(p)} for p in tree]
     doc = {
