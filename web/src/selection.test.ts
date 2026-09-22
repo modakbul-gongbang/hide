@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rowContinues, selectionToText, type CellRow } from "./selection";
+import { dedent, rowContinues, selectionToText, type CellRow } from "./selection";
 
 /** A row of `width` cells holding `text`, padded with written spaces the way a Herdr frame draws it. */
 function row(text: string, width: number): CellRow {
@@ -33,6 +33,20 @@ describe("selectionToText", () => {
     const wide: CellRow = ["a", "b", "가", null];
     expect(rowContinues(wide)).toBe(true);
     expect(selectionToText([wide, row("c", 4)], 0, 4)).toBe("ab가c");
+  });
+
+  it("removes the margin every line shares and keeps the indentation between lines", () => {
+    const rows = [row("  fn main() {", 20), row("      body();", 20), row("", 20), row("  }", 20)];
+    expect(selectionToText(rows, 0, 20)).toBe("fn main() {\n    body();\n\n}");
+  });
+
+  it("strips a single line's leading spaces entirely", () => {
+    expect(selectionToText([row("    indented", 16)], 0, 16)).toBe("indented");
+  });
+
+  it("keeps a selection whose lines share no margin as it is", () => {
+    expect(dedent("a\n  b")).toBe("a\n  b");
+    expect(dedent("")).toBe("");
   });
 
   it("treats a cell nothing was written to as a space inside a row and as nothing at its end", () => {

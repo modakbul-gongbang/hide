@@ -240,12 +240,19 @@ function onWheel(paneId: string, instance: Instance, event: WheelEvent) {
 
 type CellGeometry = { rect: DOMRect; cols: number; rows: number; colWidth: number; rowHeight: number };
 
-/** The shown pane's cell grid over its host, or null while parked. */
+/**
+ * The shown pane's cell grid, or null while parked. The grid is read from
+ * xterm's own screen element, which is exactly `cols` by `rows` cells: the
+ * host is larger by the fit's remainder, so a cell derived from the host
+ * drifts by up to one row and one column toward the far edge, which is where
+ * a one-row button in a full-screen program sits.
+ */
 function cellGeometry(instance: Instance): CellGeometry | null {
-  const host = instance.host;
-  if (!host) return null;
+  if (!instance.host) return null;
   const { term } = instance;
-  const rect = host.getBoundingClientRect();
+  const screen = instance.element.querySelector(".xterm-screen");
+  if (!screen) return null;
+  const rect = screen.getBoundingClientRect();
   return {
     rect,
     cols: term.cols,
