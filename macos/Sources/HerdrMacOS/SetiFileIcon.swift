@@ -33,14 +33,14 @@ enum SetiFileIconCatalog {
         )
         assign(
             [".dockerignore"],
-            icon("\u{E025}", "#519ABA", "shippingbox")
+            icon("\u{E025}", HideTheme.fileIconBlueHex, "shippingbox")
         )
         assign(
             [
                 "makefile", "gnumakefile", "cmakelists.txt", "justfile",
                 "rakefile", "gemfile", "procfile", "brewfile",
             ],
-            icon("\u{E05F}", "#E37933", "hammer")
+            icon("\u{E05F}", HideTheme.fileIconOrangeHex, "hammer")
         )
         assign(
             [
@@ -48,7 +48,7 @@ enum SetiFileIconCatalog {
                 ".bashrc", ".bash_profile", ".bash_logout", ".profile",
                 ".inputrc", ".hushlogin", ".envrc",
             ],
-            icon("\u{E089}", "#8DC149", "terminal")
+            icon("\u{E089}", HideTheme.fileIconGreenHex, "terminal")
         )
         assign(
             [
@@ -60,7 +60,7 @@ enum SetiFileIconCatalog {
         )
         assign(
             ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
-            icon("\u{E05D}", "#8DC149", "lock")
+            icon("\u{E05D}", HideTheme.fileIconGreenHex, "lock")
         )
         return table
     }()
@@ -76,13 +76,13 @@ enum SetiFileIconCatalog {
             return named
         }
         if lowercased.hasPrefix("readme") {
-            return icon("\u{E04D}", "#519ABA", "info.circle")
+            return icon("\u{E04D}", HideTheme.fileIconBlueHex, "info.circle")
         }
         if ["license", "licence", "copying"].contains(where: lowercased.hasPrefix) {
-            return icon("\u{E05A}", "#CBCB41", "doc.text")
+            return icon("\u{E05A}", HideTheme.fileIconYellowHex, "doc.text")
         }
         if lowercased.hasPrefix("dockerfile") {
-            return icon("\u{E025}", "#519ABA", "shippingbox")
+            return icon("\u{E025}", HideTheme.fileIconBlueHex, "shippingbox")
         }
         if lowercased.hasPrefix(".env") {
             return icon("\u{E019}", HideTheme.fileIconNeutralHex, "gearshape")
@@ -93,27 +93,27 @@ enum SetiFileIconCatalog {
             return icon("\u{E019}", HideTheme.fileIconNeutralHex, "gearshape")
         }
         if lowercased.hasSuffix(".lock") {
-            return icon("\u{E05D}", "#8DC149", "lock")
+            return icon("\u{E05D}", HideTheme.fileIconGreenHex, "lock")
         }
 
         return switch URL(fileURLWithPath: fileName).pathExtension.lowercased() {
-        case "swift": icon("\u{E092}", "#E37933", "swift")
+        case "swift": icon("\u{E092}", HideTheme.fileIconOrangeHex, "swift")
         case "rs": icon("\u{E082}", HideTheme.fileIconNeutralHex, "gearshape.2")
-        case "ts": icon("\u{E099}", "#519ABA", "t.square")
-        case "tsx", "jsx": icon("\u{E07D}", "#519ABA", "atom")
-        case "js", "mjs", "cjs": icon("\u{E051}", "#CBCB41", "j.square")
-        case "md", "markdown": icon("\u{E060}", "#519ABA", "text.book.closed")
-        case "json", "jsonc", "jsonl": icon("\u{E055}", "#CBCB41", "curlybraces")
+        case "ts": icon("\u{E099}", HideTheme.fileIconBlueHex, "t.square")
+        case "tsx", "jsx": icon("\u{E07D}", HideTheme.fileIconBlueHex, "atom")
+        case "js", "mjs", "cjs": icon("\u{E051}", HideTheme.fileIconYellowHex, "j.square")
+        case "md", "markdown": icon("\u{E060}", HideTheme.fileIconBlueHex, "text.book.closed")
+        case "json", "jsonc", "jsonl": icon("\u{E055}", HideTheme.fileIconYellowHex, "curlybraces")
         case "toml", "ini", "cfg", "conf", "config", "env", "plist":
             icon("\u{E019}", HideTheme.fileIconNeutralHex, "gearshape")
-        case "yaml", "yml": icon("\u{E0A7}", "#A074C4", "list.bullet.indent")
-        case "sh", "bash", "zsh", "fish": icon("\u{E089}", "#8DC149", "terminal")
-        case "py", "pyw": icon("\u{E07B}", "#519ABA", "chevron.left.forwardslash.chevron.right")
+        case "yaml", "yml": icon("\u{E0A7}", HideTheme.fileIconPurpleHex, "list.bullet.indent")
+        case "sh", "bash", "zsh", "fish": icon("\u{E089}", HideTheme.fileIconGreenHex, "terminal")
+        case "py", "pyw": icon("\u{E07B}", HideTheme.fileIconBlueHex, "chevron.left.forwardslash.chevron.right")
         case "png", "jpg", "jpeg", "gif", "webp", "tiff", "heic", "avif":
-            icon("\u{E04C}", "#A074C4", "photo")
-        case "svg": icon("\u{E091}", "#A074C4", "scribble.variable")
-        case "html", "htm": icon("\u{E048}", "#E37933", "chevron.left.forwardslash.chevron.right")
-        case "css", "scss", "sass", "less": icon("\u{E01D}", "#519ABA", "paintbrush")
+            icon("\u{E04C}", HideTheme.fileIconPurpleHex, "photo")
+        case "svg": icon("\u{E091}", HideTheme.fileIconPurpleHex, "scribble.variable")
+        case "html", "htm": icon("\u{E048}", HideTheme.fileIconOrangeHex, "chevron.left.forwardslash.chevron.right")
+        case "css", "scss", "sass", "less": icon("\u{E01D}", HideTheme.fileIconBlueHex, "paintbrush")
         case "txt", "log": icon("\u{E023}", HideTheme.fileIconDocumentHex, "doc.text")
         default: fallback
         }

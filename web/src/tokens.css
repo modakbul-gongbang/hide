@@ -20,6 +20,11 @@
   --color-agent-working: #61a6ff;
   --color-file-neutral: #9c9c9d;
   --color-file-document: #d3d3d4;
+  --color-file-blue: #519aba;
+  --color-file-green: #8dc149;
+  --color-file-orange: #e37933;
+  --color-file-yellow: #cbcb41;
+  --color-file-purple: #a074c4;
   --color-pr-open: #3fb950;
   --color-pr-merged: #a371f7;
   --color-pr-closed: #f85149;
