@@ -5,7 +5,11 @@
 // Sidebar rows exist only for panes Herdr classifies as an agent, and the
 // pinned Herdr classifies by the process it started, so each pane runs a
 // tiny compiled `claude` that copies stdin to stdout. A copied /bin/cat
-// would not do: macOS kills a relocated platform binary.
+// would not do: macOS kills a relocated platform binary. Like a real TUI it
+// reads the terminal raw, byte by byte with no line discipline echo, and it
+// appends every byte it reads to `HIDE_E2E_INPUT_LOG`: that file is what the
+// PTY received, which is how a test tells a click's mouse report from what
+// the shell only sent (PRD S2 B20).
 
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
@@ -22,6 +26,8 @@ export type HerdrFixture = {
   workspace: string;
   tab: string;
   panes: [string, string];
+  /** Per agent pane, the file its `claude` shim appends every byte the PTY delivered to. */
+  inputLogs: [string, string];
   /** The PATH the fixture's `claude` shim is on, for panes created later. */
   fixturePath: string;
   /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
@@ -29,10 +35,25 @@ export type HerdrFixture = {
   stop: () => void;
 };
 
-const SHIM_SOURCE = `#include <unistd.h>
+const SHIM_SOURCE = `#include <fcntl.h>
+#include <stdlib.h>
+#include <termios.h>
+#include <unistd.h>
 int main(void) {
+  const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
+  int log = log_path ? open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
+  struct termios tio;
+  if (tcgetattr(0, &tio) == 0) {
+    tio.c_lflag &= ~(ICANON | ECHO);
+    tio.c_cc[VMIN] = 1;
+    tio.c_cc[VTIME] = 0;
+    tcsetattr(0, TCSANOW, &tio);
+  }
   char b[4096]; ssize_t n;
-  while ((n = read(0, b, sizeof b)) > 0) { if (write(1, b, (size_t)n) < 0) return 1; }
+  while ((n = read(0, b, sizeof b)) > 0) {
+    if (log >= 0 && write(log, b, (size_t)n) < 0) return 1;
+    if (write(1, b, (size_t)n) < 0) return 1;
+  }
   return 0;
 }
 `;
@@ -143,6 +164,7 @@ export async function startHerdr(): Promise<HerdrFixture> {
     const workspaces = snapshot.result?.snapshot?.workspaces ?? [];
     if (workspaces.length !== 0) throw new Error("private herdr server already has workspaces");
 
+    const inputLogs: [string, string] = [path.join(root, "input-one.log"), path.join(root, "input-two.log")];
     const created = herdr(env, bin, [
       "workspace",
       "create",
@@ -152,6 +174,8 @@ export async function startHerdr(): Promise<HerdrFixture> {
       "e2e",
       "--env",
       `PATH=${fixturePath}`,
+      "--env",
+      `HIDE_E2E_INPUT_LOG=${inputLogs[0]}`,
       "--focus",
     ]) as { result: { workspace: { workspace_id: string }; tab: { tab_id: string }; root_pane: { pane_id: string } } };
     const first = created.result.root_pane.pane_id;
@@ -163,6 +187,8 @@ export async function startHerdr(): Promise<HerdrFixture> {
       "right",
       "--env",
       `PATH=${fixturePath}`,
+      "--env",
+      `HIDE_E2E_INPUT_LOG=${inputLogs[1]}`,
       "--no-focus",
     ]) as { result: { pane: { pane_id: string } } };
     const second = split.result.pane.pane_id;
@@ -191,6 +217,7 @@ export async function startHerdr(): Promise<HerdrFixture> {
       workspace: created.result.workspace.workspace_id,
       tab: created.result.tab.tab_id,
       panes: [first, second],
+      inputLogs,
       fixturePath,
       run: (args) => herdr(env, bin, args),
       stop,

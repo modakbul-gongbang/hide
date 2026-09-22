@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { wheelModifiers, wheelRows } from "./wheel";
+import { pointerModifiers, wheelRows } from "./wheel";
 
 describe("wheelRows", () => {
   it("accumulates trackpad pixels into whole rows and keeps the remainder", () => {
@@ -23,9 +23,9 @@ describe("wheelRows", () => {
   });
 });
 
-describe("wheelModifiers", () => {
+describe("pointerModifiers", () => {
   it("packs crossterm's bitset", () => {
-    expect(wheelModifiers({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })).toBe(1);
-    expect(wheelModifiers({ shiftKey: false, ctrlKey: true, altKey: true, metaKey: true })).toBe(14);
+    expect(pointerModifiers({ shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })).toBe(1);
+    expect(pointerModifiers({ shiftKey: false, ctrlKey: true, altKey: true, metaKey: true })).toBe(14);
   });
 });

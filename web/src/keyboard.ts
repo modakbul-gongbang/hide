@@ -112,19 +112,26 @@ export function installKeyboard(actions: Actions): () => void {
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
+      // An Escape the shell answers is consumed here: the pane's textarea is
+      // still the focused element under the sheet or a cycle, and xterm
+      // would send the same press to the program as an ESC byte.
+      const consume = () => {
+        event.preventDefault();
+        event.stopPropagation();
+      };
       if (ui().cycle) {
         ui().setCycle(null);
-        event.preventDefault();
+        consume();
         return;
       }
       if (ui().pendingClose) {
         actions.keepOpen();
-        event.preventDefault();
+        consume();
         return;
       }
       if (ui().overlay !== "none") {
         ui().closeOverlay();
-        event.preventDefault();
+        consume();
         return;
       }
       return;

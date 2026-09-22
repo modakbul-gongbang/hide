@@ -96,7 +96,7 @@ async function screen(page: Page): Promise<string> {
 
 test.describe.configure({ timeout: 90_000 });
 
-test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
+test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, context }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
@@ -184,6 +184,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
     // terminal_scroll per batch and the core's viewport follows (B19).
     const shellPane = page.locator('[data-pane-view][data-focused="true"]');
     await expect(shellPane).toHaveAttribute("data-transport", /connected|controlling|idle/, { timeout: 15_000 });
+    const shellPaneId = (await shellPane.getAttribute("data-pane-view"))!;
     await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
     await shellPane.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type("seq 1 100\n");
@@ -222,6 +223,61 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
     expect(sent.get("key") ?? 0).toBe(keysBeforeLess);
     await page.keyboard.press("q");
     await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/fixture %\s*$/);
+
+    // A single click in a pane is one terminal_click with the pressed cell
+    // (B20). The core answers it with the SGR report a mouse-tracking
+    // program asked for, and that report is the only thing the PTY gets:
+    // the shim logs every byte it reads, and no key event went out, so
+    // xterm wrote no mouse report of its own.
+    const agentPane = herdr.panes[1];
+    const agentBox = (await page.locator(`[data-pane-view="${agentPane}"] [data-terminal]`).boundingBox())!;
+    const agentGrid = (await page.evaluate((id) => window.__hideProbe?.paneGrid(id) ?? null, agentPane))!;
+    const cell = { column: 4, row: 2 };
+    const focusBefore = sent.get("focus_pane") ?? 0;
+    const keysBeforeClick = sent.get("key") ?? 0;
+    const inputBefore = fs.existsSync(herdr.inputLogs[1]) ? fs.statSync(herdr.inputLogs[1]).size : 0;
+    await page.mouse.click(
+      agentBox.x + (cell.column + 0.5) * (agentBox.width / agentGrid.cols),
+      agentBox.y + (cell.row + 0.5) * (agentBox.height / agentGrid.rows),
+    );
+    await expect.poll(() => sent.get("terminal_click")).toBe(1);
+    expect(lastSent.get("terminal_click")).toEqual({ pane_id: agentPane, column: cell.column, row: cell.row, modifiers: 0 });
+    await expect.poll(() => sent.get("focus_pane")).toBe(focusBefore + 1);
+    const report = `\x1b[<0;${cell.column + 1};${cell.row + 1}M\x1b[<0;${cell.column + 1};${cell.row + 1}m`;
+    await expect
+      .poll(() => (fs.existsSync(herdr.inputLogs[1]) ? fs.readFileSync(herdr.inputLogs[1], "latin1").slice(inputBefore) : ""), { timeout: 10_000 })
+      .toBe(report);
+    expect(sent.get("key") ?? 0).toBe(keysBeforeClick);
+
+    // A drag selects locally and is not a click. Its copy is what a native
+    // terminal gives (B20): no padding to the column edge, the wrapped line
+    // joined back into one, and the real line ends kept.
+    const shellView = page.locator(`[data-pane-view="${shellPaneId}"]`);
+    await shellView.locator(".xterm-helper-textarea").focus();
+    await expect(shellView).toHaveAttribute("data-focused", "true");
+    const shellGrid = (await page.evaluate((id) => window.__hideProbe?.paneGrid(id) ?? null, shellPaneId))!;
+    const wrapped = "w".repeat(shellGrid.cols + 7);
+    await page.keyboard.type(`clear; echo ${wrapped}; echo short; echo; echo end\n`);
+    await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/^w+\s*\n\s*w+\s*\n\s*short\s*\n\s*\n\s*end/);
+    const shellHost = (await shellView.locator("[data-terminal]").boundingBox())!;
+    const shellCell = (column: number, row: number) => ({
+      x: shellHost.x + (column + 0.5) * (shellHost.width / shellGrid.cols),
+      y: shellHost.y + (row + 0.5) * (shellHost.height / shellGrid.rows),
+    });
+    const clicksBeforeDrag = sent.get("terminal_click") ?? 0;
+    // Dragged from the empty row back to the first cell: the split's divider
+    // grab area covers the pane's first column, so the press starts inside.
+    const pressAt = shellCell(shellGrid.cols - 2, 3);
+    const dragTo = shellCell(0, 0);
+    await page.mouse.move(pressAt.x, pressAt.y);
+    await page.mouse.down();
+    await page.mouse.move(dragTo.x - shellHost.width / shellGrid.cols, dragTo.y, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, shellPaneId)).toBe(`${wrapped}\nshort\n`);
+    expect(sent.get("terminal_click") ?? 0).toBe(clicksBeforeDrag);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.keyboard.press("Meta+KeyC");
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${wrapped}\nshort\n`);
 
     await page.keyboard.press("Meta+Alt+Enter");
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-zoomed", "true");
@@ -289,6 +345,10 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
 
     // ⌘/ opens the sheet from the registry with the seven moved chords marked.
+    // The pane keeps keyboard focus under the sheet, and the Escape that
+    // closes it is the shell's alone: no ESC byte reaches the program.
+    await page.locator('[data-pane-view][data-focused="true"] .xterm-helper-textarea').focus();
+    const keysBeforeSheet = sent.get("key") ?? 0;
     await page.keyboard.press("Meta+Slash");
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
     await expect(page.locator("[data-shortcut]")).toHaveCount(25);
@@ -296,6 +356,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-shortcut-sheet]")).toHaveCount(0);
+    expect(sent.get("key") ?? 0).toBe(keysBeforeSheet);
 
     // ⌘F is intercepted from Chrome: the find bar opens instead.
     await page.keyboard.press("Meta+KeyF");

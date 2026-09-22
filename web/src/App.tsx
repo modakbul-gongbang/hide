@@ -11,7 +11,7 @@ import { Sidebar } from "./sidebar";
 import { focusedCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { TabBar } from "./TabBar";
-import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor } from "./terminals";
+import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { useUiStore } from "./ui";
 import { connectShell, type DispatchFn } from "./ws";
 
@@ -38,6 +38,7 @@ export function App() {
         attachedPaneIds,
         liveTerminalIds,
         (paneId) => terminalFor(paneId),
+        terminalSelectionText,
       );
     }
     // The MRU behind ⌥`/⌥Tab and the project row follows what the core

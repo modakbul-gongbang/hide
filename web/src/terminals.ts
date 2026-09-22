@@ -11,6 +11,13 @@
 // The wheel is Herdr's too (PRD S2 B19): the pane has no local scrollback,
 // so a wheel batch becomes one `terminal_scroll` per animation frame and the
 // core answers with the viewport it now shows.
+//
+// A pointer gesture follows the Swift `TerminalPointerRoutingState` (PRD S2
+// B20): a drag selects locally, and a single primary click that never
+// dragged is replayed on release as one `terminal_click` with the pressed
+// cell; the core decides whether the program gets a mouse report. ⌥ + press
+// and a multi-click stay local. A copy of the selection is assembled here
+// (`selection.ts`), not by xterm.
 
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -18,7 +25,8 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { mapModifiedKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
-import { wheelModifiers, wheelRows } from "./wheel";
+import { selectionToText, type CellRow } from "./selection";
+import { pointerModifiers, wheelRows } from "./wheel";
 import { useShellStore, type TerminalChunk } from "./store";
 import type { DispatchFn } from "./ws";
 
@@ -36,6 +44,8 @@ type Instance = {
   stale: boolean;
   /** Wheel rows accumulated toward the next flush, and the pending flush. */
   wheel: { rows: number; remainder: number; column: number; row: number; modifiers: number; frame: number | null };
+  /** The cell of a primary press that may still become a click, or null once it dragged or was not one. */
+  press: { column: number; row: number } | null;
   disposeHandlers: () => void;
 };
 
@@ -199,20 +209,105 @@ function onWheel(paneId: string, instance: Instance, event: WheelEvent) {
   // Herdr and nothing to the PTY.
   if (event.altKey) return;
   event.preventDefault();
-  const host = instance.host;
-  if (!host) return;
-  const { term } = instance;
-  const rect = host.getBoundingClientRect();
-  const rowHeight = term.rows > 0 ? rect.height / term.rows : 0;
-  const colWidth = term.cols > 0 ? rect.width / term.cols : 0;
+  const geometry = cellGeometry(instance);
+  if (!geometry) return;
   const wheel = instance.wheel;
-  const moved = wheelRows(event.deltaY, event.deltaMode, rowHeight, wheel.remainder);
+  const moved = wheelRows(event.deltaY, event.deltaMode, geometry.rowHeight, wheel.remainder);
   wheel.remainder = moved.remainder;
   wheel.rows += moved.rows;
-  wheel.column = colWidth > 0 ? Math.max(0, Math.min(term.cols - 1, Math.floor((event.clientX - rect.left) / colWidth))) : 0;
-  wheel.row = rowHeight > 0 ? Math.max(0, Math.min(term.rows - 1, Math.floor((event.clientY - rect.top) / rowHeight))) : 0;
-  wheel.modifiers = wheelModifiers(event);
+  const cell = cellAt(geometry, event);
+  wheel.column = cell.column;
+  wheel.row = cell.row;
+  wheel.modifiers = pointerModifiers(event);
   if (wheel.frame === null) wheel.frame = requestAnimationFrame(() => flushWheel(paneId, instance));
+}
+
+type CellGeometry = { rect: DOMRect; cols: number; rows: number; colWidth: number; rowHeight: number };
+
+/** The shown pane's cell grid over its host, or null while parked. */
+function cellGeometry(instance: Instance): CellGeometry | null {
+  const host = instance.host;
+  if (!host) return null;
+  const { term } = instance;
+  const rect = host.getBoundingClientRect();
+  return {
+    rect,
+    cols: term.cols,
+    rows: term.rows,
+    colWidth: term.cols > 0 ? rect.width / term.cols : 0,
+    rowHeight: term.rows > 0 ? rect.height / term.rows : 0,
+  };
+}
+
+/** The zero-based cell under the pointer, clamped to the grid. */
+function cellAt(geometry: CellGeometry, event: { clientX: number; clientY: number }): { column: number; row: number } {
+  const { rect, cols, rows, colWidth, rowHeight } = geometry;
+  return {
+    column: colWidth > 0 ? Math.max(0, Math.min(cols - 1, Math.floor((event.clientX - rect.left) / colWidth))) : 0,
+    row: rowHeight > 0 ? Math.max(0, Math.min(rows - 1, Math.floor((event.clientY - rect.top) / rowHeight))) : 0,
+  };
+}
+
+function onMouseDown(instance: Instance, event: MouseEvent) {
+  instance.press = null;
+  // The primary button alone can become a click; ⌥ + press and a second
+  // click of a multi-click are the Swift `application` and `localSelection`
+  // routes, and neither is replayed to the program.
+  if (event.button !== 0 || event.altKey || event.detail !== 1) return;
+  const geometry = cellGeometry(instance);
+  if (!geometry) return;
+  instance.press = cellAt(geometry, event);
+}
+
+function onMouseUp(paneId: string, instance: Instance, event: MouseEvent) {
+  const press = instance.press;
+  instance.press = null;
+  if (!press || event.button !== 0) return;
+  const geometry = cellGeometry(instance);
+  if (!geometry) return;
+  const release = cellAt(geometry, event);
+  // Leaving the pressed cell, or a selection xterm made on the way, is a drag.
+  if (release.column !== press.column || release.row !== press.row || instance.term.hasSelection()) return;
+  instance.dispatch({
+    schema_version: 2,
+    kind: "terminal_click",
+    payload: { pane_id: paneId, column: press.column, row: press.row, modifiers: pointerModifiers(event) },
+  });
+}
+
+/** The text the current drag selection copies, or null when nothing is selected. */
+function selectedText(instance: Instance): string | null {
+  const { term } = instance;
+  const range = term.getSelectionPosition();
+  if (!range) return null;
+  const buffer = term.buffer.active;
+  const rows: CellRow[] = [];
+  for (let y = range.start.y; y <= range.end.y; y += 1) {
+    const line = buffer.getLine(y);
+    const cells: CellRow = [];
+    for (let x = 0; x < term.cols; x += 1) {
+      const cell = line?.getCell(x);
+      cells.push(cell ? (cell.getWidth() === 0 ? null : cell.getChars()) : "");
+    }
+    rows.push(cells);
+  }
+  return selectionToText(rows, range.start.x, range.end.x);
+}
+
+/** The copy text of the pane's selection, for the probe; null without a selection or an instance. */
+export function terminalSelectionText(paneId: string): string | null {
+  const instance = instances.get(paneId);
+  return instance ? selectedText(instance) : null;
+}
+
+function onCopy(instance: Instance, event: ClipboardEvent) {
+  const text = selectedText(instance);
+  if (text === null || !event.clipboardData) return;
+  // One owner again: xterm's own copy handler would put its padded,
+  // hard-broken rows on the clipboard from the same event.
+  event.stopImmediatePropagation();
+  event.preventDefault();
+  event.clipboardData.setData("text/plain", text);
 }
 
 function createInstance(paneId: string, dispatch: DispatchFn, scale: number): Instance {
@@ -242,6 +337,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, scale: number): In
     observer: null,
     stale: false,
     wheel: { rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
+    press: null,
     disposeHandlers: () => {},
   };
   const send = (bytes: Uint8Array) =>
@@ -260,9 +356,22 @@ function createInstance(paneId: string, dispatch: DispatchFn, scale: number): In
   });
   term.onData((data) => send(new TextEncoder().encode(data)));
   const wheel = (event: WheelEvent) => onWheel(paneId, instance, event);
+  const down = (event: MouseEvent) => onMouseDown(instance, event);
+  const up = (event: MouseEvent) => onMouseUp(paneId, instance, event);
+  const copy = (event: ClipboardEvent) => onCopy(instance, event);
   element.addEventListener("wheel", wheel, { capture: true, passive: false });
+  // The press and release are read on the way down and left to xterm, whose
+  // selection needs them. Its own mouse reports never fire: Herdr's frames
+  // carry no mouse mode (`selection.ts` on what they carry), so the program
+  // hears about a click only through the core's terminal_click route.
+  element.addEventListener("mousedown", down, { capture: true });
+  element.addEventListener("mouseup", up, { capture: true });
+  element.addEventListener("copy", copy, { capture: true });
   instance.disposeHandlers = () => {
     element.removeEventListener("wheel", wheel, { capture: true });
+    element.removeEventListener("mousedown", down, { capture: true });
+    element.removeEventListener("mouseup", up, { capture: true });
+    element.removeEventListener("copy", copy, { capture: true });
     if (instance.wheel.frame !== null) cancelAnimationFrame(instance.wheel.frame);
   };
   return instance;

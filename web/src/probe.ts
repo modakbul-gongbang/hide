@@ -28,6 +28,10 @@ export type Probe = {
   liveTerminals: () => string[];
   /** The parsed buffer of any pane's instance, empty when it has none. */
   paneText: (paneId: string) => string;
+  /** The grid an instance currently has, or null when the pane has none. */
+  paneGrid: (paneId: string) => { cols: number; rows: number } | null;
+  /** The text a copy of the pane's drag selection puts on the clipboard, null without one. */
+  paneSelection: (paneId: string) => string | null;
 };
 
 declare global {
@@ -83,6 +87,7 @@ export function installProbe(
   attachedPanes: () => string[] = () => [],
   liveTerminals: () => string[] = () => [],
   terminalOf: (paneId: string) => Terminal | null = () => null,
+  selectionOf: (paneId: string) => string | null = () => null,
 ): void {
   window.__hideProbe = {
     paneId,
@@ -93,6 +98,11 @@ export function installProbe(
       const current = terminalOf(id);
       return current ? screenText(current) : "";
     },
+    paneGrid: (id) => {
+      const current = terminalOf(id);
+      return current ? { cols: current.cols, rows: current.rows } : null;
+    },
+    paneSelection: selectionOf,
     screenText: () => {
       const current = term();
       return current ? screenText(current) : "";
