@@ -3,103 +3,14 @@
 // the shortcut sheet, zoom, a pane close and a divider drag. Every command
 // runs against a private server; the operator's Herdr is never touched.
 
-import { expect, test, type Page, type WebSocket } from "@playwright/test";
-import { spawn } from "node:child_process";
+import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { startHerdr } from "./herdr-fixture";
+import { startHided } from "./hided-fixture";
+import { countSent, screenshot } from "./wire";
 
 type Daemon = { origin: string; token: string; home: string; stop: () => void };
-
-async function startHided(herdr: HerdrFixture): Promise<Daemon> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-s2-"));
-  const home = path.join(dir, "home");
-  fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
-  fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
-  fs.writeFileSync(path.join(home, "projects", "notes.txt"), "x");
-  const env = { ...process.env };
-  for (const key of ["HERDR_SOCKET_PATH", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"]) delete env[key];
-  const child = spawn(path.resolve("..", "target", "debug", "hided"), [], {
-    env: {
-      ...env,
-      HOME: home,
-      HIDE_STATE_DIR: path.join(dir, "hide"),
-      HIDE_KEEP_ALIVE: "1",
-      HIDE_PORT: "0",
-      HIDED_UI_DIR: path.resolve("dist"),
-      HERDR_SOCKET_PATH: herdr.socket,
-      HERDR_BIN_PATH: herdr.bin,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const logDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
-  if (logDir) {
-    const log = fs.createWriteStream(path.join(logDir, `hided-s2-${path.basename(dir)}.log`), { flags: "a" });
-    child.stdout?.pipe(log);
-    child.stderr?.pipe(log);
-  }
-  const stop = () => {
-    child.kill();
-    fs.rmSync(dir, { recursive: true, force: true });
-  };
-  for (let i = 0; i < 50; i += 1) {
-    const statePath = path.join(dir, "hide", "hided.json");
-    if (fs.existsSync(statePath)) {
-      try {
-        // The file may be mid-write on the first read; the next tick reads it whole.
-        const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as { port: number; token: string };
-        const origin = `http://127.0.0.1:${state.port}`;
-        if ((await fetch(`${origin}/health`)).ok) return { origin, token: state.token, home: fs.realpathSync(home), stop };
-      } catch {
-        /* still starting */
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  stop();
-  throw new Error("hided did not write a state file");
-}
-
-/**
- * Counts client events by kind as the page sends them; one action must be
- * one event. `last` keeps the newest payload per kind for shape assertions.
- */
-function countSent(page: Page, last: Map<string, Record<string, unknown>> = new Map()): Map<string, number> {
-  const counts = new Map<string, number>();
-  // With HIDE_E2E_TRACE the wire is narrated with timestamps, so a failed
-  // flow shows which side moved and when; Playwright prints it for a failure.
-  const trace = process.env.HIDE_E2E_TRACE ? (line: string) => console.log(`[${Date.now()}] ${line}`) : null;
-  page.on("pageerror", (error) => console.log(`[pageerror] ${error.message}`));
-  page.on("websocket", (ws: WebSocket) => {
-    ws.on("socketerror", (error) => console.log(`[ws error] ${error}`));
-    ws.on("close", () => trace?.("ws closed"));
-    ws.on("framereceived", (frame) => {
-      if (!trace) return;
-      const head = String(frame.payload);
-      const focused = /"focused_pane_id":"([^"]*)"/.exec(head);
-      trace(`recv ${head.slice(0, 40)}${focused ? ` focused_pane_id=${focused[1]}` : ""}`);
-    });
-    ws.on("framesent", (frame) => {
-      try {
-        const event = JSON.parse(String(frame.payload)) as { kind?: string; payload?: Record<string, unknown> };
-        if (event.kind) {
-          trace?.(`sent ${event.kind} ${JSON.stringify(event.payload ?? {}).slice(0, 100)}`);
-          counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
-          last.set(event.kind, event.payload ?? {});
-        }
-      } catch {
-        /* the handshake is not an event */
-      }
-    });
-  });
-  return counts;
-}
-
-function screenshot(page: Page, name: string): Promise<unknown> {
-  const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
-  return dir ? page.screenshot({ path: path.join(dir, `${name}.png`) }) : Promise.resolve();
-}
 
 /**
  * Waits until the shell has drawn `paneId` as the focused pane and kept it

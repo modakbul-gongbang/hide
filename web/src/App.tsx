@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
 import { ConnectionBadge } from "./badge";
+import { EditorSurface } from "./Editor";
 import { installKeyboard } from "./keyboard";
 import { ConfirmClose, CycleOverlay, FindBar, NoticeBar } from "./Overlays";
 import { PaneCanvas } from "./PaneGrid";
@@ -8,7 +9,7 @@ import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { focusedCheckout } from "./snapshot";
+import { editorFor, focusedCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { TabBar } from "./TabBar";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
@@ -79,7 +80,7 @@ export function App() {
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TabBar actions={actions} />
           <FindBar actions={actions} />
-          <PaneCanvas dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
+          <Canvas actions={actions} />
         </main>
       </div>
       <CycleOverlay />
@@ -92,4 +93,18 @@ export function App() {
 function ShortcutSheetGate({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overlay === "shortcuts");
   return open ? <ShortcutSheet actions={actions} /> : null;
+}
+
+/**
+ * The center surface. The core keeps the editor's tabs while a terminal tab
+ * shows, so the editor's own `active_tab_id` is what says which one is drawn;
+ * with none, the focused checkout's visible tab is the terminal canvas.
+ */
+function Canvas({ actions }: { actions: Actions }) {
+  const editorShowing = useShellStore((s) => editorFor(s.editor) !== null);
+  return editorShowing ? (
+    <EditorSurface actions={actions} />
+  ) : (
+    <PaneCanvas dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
+  );
 }

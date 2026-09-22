@@ -1,10 +1,11 @@
 import { memo } from "react";
 import type { Actions } from "./actions";
+import { ExplorerTree } from "./ExplorerTree";
 import { NewWorkspace } from "./NewWorkspace";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import type { AgentRow, Checkout, InactiveProjectGroup, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
+import { SIDEBAR_MODES, useUiStore } from "./ui";
 
 function herdrRowLabel(state: string | null): string | null {
   if (state === "unconfigured" || state === "socket_missing") return "Herdr 소켓 없음";
@@ -24,16 +25,16 @@ export function Sidebar({ actions }: { actions: Actions }) {
   return (
     <nav className="flex h-full w-[var(--size-sidebar-ideal)] shrink-0 flex-col bg-sidebar text-primary" data-sidebar={mode}>
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm px-md text-caption">
-        {(["agents", "projects"] as const).map((candidate) => (
+        {SIDEBAR_MODES.map((candidate) => (
           <button
             key={candidate}
             type="button"
             data-sidebar-mode={candidate}
             aria-pressed={mode === candidate}
             className={mode === candidate ? "text-primary" : "text-muted hover:text-secondary"}
-            onClick={() => useUiStore.getState().setSidebarMode(candidate)}
+            onClick={() => actions.showSidebarMode(candidate)}
           >
-            {candidate === "agents" ? "Agents" : "Projects"}
+            {candidate === "agents" ? "Agents" : candidate === "projects" ? "Projects" : "Explorer"}
           </button>
         ))}
         <span className="flex-1" />
@@ -42,8 +43,8 @@ export function Sidebar({ actions }: { actions: Actions }) {
       {status ? (
         <div className="border-b border-divider px-md py-sm text-caption text-muted">{status}</div>
       ) : null}
-      {mode === "agents" ? <AgentList actions={actions} /> : <ProjectList actions={actions} />}
-      <NewWorkspace actions={actions} />
+      {mode === "agents" ? <AgentList actions={actions} /> : mode === "projects" ? <ProjectList actions={actions} /> : <ExplorerTree actions={actions} />}
+      {mode === "explorer" ? null : <NewWorkspace actions={actions} />}
       <button
         type="button"
         data-new-workspace-button="true"

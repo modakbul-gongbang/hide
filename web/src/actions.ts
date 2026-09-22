@@ -4,9 +4,9 @@
 
 import { closeDecision, statusUnknownNotice } from "./close";
 import { lastCheckoutOf } from "./recent";
-import { focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
+import { activeEditorTab, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
+import { useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 
 export type Actions = ReturnType<typeof createActions>;
@@ -24,11 +24,19 @@ export function createActions(dispatch: DispatchFn) {
   const setLeftSidebarVisible = (visible: boolean) => {
     const state = rest()?.ui_state;
     if (!state || state.left_sidebar_visible === visible) return;
-    dispatch({
-      schema_version: 2,
-      kind: "ui_state_update",
-      payload: { ...state, left_sidebar_visible: visible },
-    });
+    updateUiState({ left_sidebar_visible: visible });
+  };
+
+  /**
+   * The core's ui state with one patch applied. The event replaces the whole
+   * state rather than merging it, so every field the snapshot carries rides
+   * along; a field the web omits would fall back to the core's default and
+   * erase a value another surface owns.
+   */
+  const updateUiState = (patch: Record<string, unknown>) => {
+    const state = rest()?.ui_state;
+    if (!state) return;
+    dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...state, ...patch } });
   };
 
   const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"]) => {
@@ -50,6 +58,19 @@ export function createActions(dispatch: DispatchFn) {
 
   const focusCheckout = (workspaceId: string, checkoutId: string) =>
     dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
+
+  /**
+   * Switches the sidebar's mode. Explorer mode also tells the core, because
+   * the core computes a checkout's changed files only while its Explorer or
+   * Changes surface is visible (`Runtime::changes_request`); without that ui
+   * state the tree's rows carry no Git decoration.
+   */
+  const showSidebarMode = (mode: SidebarMode) => {
+    ui().setSidebarMode(mode);
+    if (mode === "explorer") {
+      updateUiState({ right_panel_visible: true, right_panel_section: "explorer" });
+    }
+  };
 
   return {
     dispatch,
@@ -185,8 +206,12 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     toggleSidebarView() {
-      ui().toggleSidebarMode();
+      const order: SidebarMode[] = ["agents", "projects", "explorer"];
+      const index = order.indexOf(ui().sidebarMode);
+      showSidebarMode(order[(index + 1) % order.length] ?? "agents");
     },
+
+    showSidebarMode,
 
     openShortcuts() {
       ui().openOverlay(ui().overlay === "shortcuts" ? "none" : "shortcuts");
@@ -213,6 +238,53 @@ export function createActions(dispatch: DispatchFn) {
 
     listDirectory(path: string) {
       dispatch({ schema_version: 2, kind: "remote_file_list", payload: { target_id: "local", root_path: path } });
+    },
+
+    /** One checkout folder's children, answered by hided as a `directory_list`. */
+    listChildren(root: string, path: string) {
+      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path } });
+    },
+
+    /** The core owns which folders the tree has expanded; this replaces the set. */
+    setExpandedPaths(paths: string[]) {
+      updateUiState({ expanded_paths: paths });
+    },
+
+    /** A single click opens the checkout's preview slot; a double click pins it. */
+    openFile(path: string, preview: boolean) {
+      const here = current();
+      if (!here) return diagnostic("file_open: no focused checkout");
+      dispatch({
+        schema_version: 2,
+        kind: "file_open",
+        payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview },
+      });
+    },
+
+    /** Expands the tree to a path and highlights it; a folder is not opened. */
+    revealPath(path: string, isDirectory: boolean) {
+      const here = current();
+      if (!here) return diagnostic("reveal_path: no focused checkout");
+      dispatch({
+        schema_version: 2,
+        kind: "reveal_path",
+        payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, is_directory: isDirectory },
+      });
+    },
+
+    /** ⌘⇧K: the showing preview tab becomes an ordinary tab. */
+    keepOpenFile() {
+      const tab = activeEditorTab(useShellStore.getState().editor);
+      if (!tab || !tab.preview) return;
+      dispatch({ schema_version: 2, kind: "file_keep_open", payload: { tab_id: tab.id } });
+    },
+
+    focusFileTab(tabId: string) {
+      dispatch({ schema_version: 2, kind: "file_focus", payload: { tab_id: tabId } });
+    },
+
+    closeFileTab(tabId: string) {
+      dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: null } });
     },
 
     /** `step` 0 searches and keeps the current match; +1 and -1 move (core `PaneFindPayload`). */

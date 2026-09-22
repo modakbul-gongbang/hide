@@ -83,7 +83,10 @@ export function installKeyboard(actions: Actions): () => void {
       case "find_in_pane":
         return actions.openFind();
       case "keep_open":
-        return actions.keepOpen();
+        // The same chord answers a pending close and a preview editor tab:
+        // the confirmation is showing first, so it wins when it is.
+        if (ui().pendingClose) return actions.keepOpen();
+        return actions.keepOpenFile();
       case "split_right":
         return actions.split("right");
       case "split_down":

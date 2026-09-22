@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { decorationFor, explorerRows, gitDecorations, relativeTo, rowTitle } from "./explorer";
+import {
+  decorationFor,
+  explorerRows,
+  firstChildSelection,
+  gitDecorations,
+  moveSelection,
+  parentSelection,
+  relativeTo,
+  rowForPath,
+  rowTitle,
+} from "./explorer";
 import type { ChangedFileStatus, ChangesSnapshot } from "./snapshot";
 import type { DirectoryList } from "./store";
 
@@ -157,5 +167,43 @@ describe("git decorations", () => {
     expect(relativeTo(ROOT, ROOT)).toBe(".");
     expect(relativeTo(`${ROOT}/src/a.ts`, ROOT)).toBe("src/a.ts");
     expect(relativeTo("/elsewhere/a.ts", ROOT)).toBe("/elsewhere/a.ts");
+  });
+});
+
+describe("tree navigation", () => {
+  const rows = explorerRows({
+    rootPath: ROOT,
+    listings: { [ROOT]: TOP, [`${ROOT}/src`]: SRC },
+    expandedPaths: [`${ROOT}/src`],
+    changes: null,
+  });
+
+  it("moves the cursor one row and clamps at both ends", () => {
+    expect(moveSelection(rows, null, 1)).toBe(`${ROOT}/src`);
+    expect(moveSelection(rows, `${ROOT}/src`, 1)).toBe(`${ROOT}/src/a.ts`);
+    expect(moveSelection(rows, `${ROOT}/src/a.ts`, 1)).toBe(`${ROOT}/src/nested`);
+    expect(moveSelection(rows, `${ROOT}/src/a.ts`, -1)).toBe(`${ROOT}/src`);
+    expect(moveSelection(rows, `${ROOT}/src`, -1)).toBe(`${ROOT}/src`);
+    expect(moveSelection(rows, `${ROOT}/.gitignore`, 1)).toBe(`${ROOT}/.gitignore`);
+    expect(moveSelection([], `${ROOT}/src`, 1)).toBeNull();
+  });
+
+  it("moves the cursor to the enclosing folder, skipping a deeper sibling", () => {
+    expect(parentSelection(rows, `${ROOT}/src/a.ts`)).toBe(`${ROOT}/src`);
+    expect(parentSelection(rows, `${ROOT}/src/nested`)).toBe(`${ROOT}/src`);
+    expect(parentSelection(rows, `${ROOT}/src`)).toBeNull();
+    expect(parentSelection(rows, null)).toBeNull();
+  });
+
+  it("names the first child only while the folder is expanded with rows under it", () => {
+    expect(firstChildSelection(rows, `${ROOT}/src`)).toBe(`${ROOT}/src/a.ts`);
+    expect(firstChildSelection(rows, `${ROOT}/README.md`)).toBeNull();
+    expect(firstChildSelection(rows, `${ROOT}/.gitignore`)).toBeNull();
+  });
+
+  it("finds the row a path names and reports a path the tree does not show", () => {
+    expect(rowForPath(rows, `${ROOT}/src/a.ts`)?.name).toBe("a.ts");
+    expect(rowForPath(rows, `${ROOT}/gone`)).toBeNull();
+    expect(rowForPath(rows, null)).toBeNull();
   });
 });

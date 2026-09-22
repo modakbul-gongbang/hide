@@ -185,3 +185,47 @@ export function disclosureMark(row: ExplorerRow): string {
   return row.expanded ? "▾" : "▸";
 }
 
+/** The row the operator's path names, or null when the tree does not show it. */
+export function rowForPath(rows: ExplorerRow[], path: string | null): ExplorerRow | null {
+  if (!path) return null;
+  return rows.find((row) => row.path === path) ?? null;
+}
+
+/**
+ * The row `delta` places from `path`, clamped to the tree's ends; a path the
+ * tree no longer shows starts at the first row, so a collapsed or vanished
+ * selection never leaves the cursor off the list.
+ */
+export function moveSelection(rows: ExplorerRow[], path: string | null, delta: number): string | null {
+  if (rows.length === 0) return null;
+  const index = rows.findIndex((row) => row.path === path);
+  const from = index === -1 ? (delta > 0 ? -1 : 0) : index;
+  const next = Math.min(Math.max(from + delta, 0), rows.length - 1);
+  return rows[next]?.path ?? null;
+}
+
+/**
+ * The row one level up from `path`: its parent folder's row, or the nearest
+ * preceding row with a smaller depth when the parent is not shown (a folder
+ * whose row was filtered out). Null at the top.
+ */
+export function parentSelection(rows: ExplorerRow[], path: string | null): string | null {
+  const index = rows.findIndex((row) => row.path === path);
+  const current = index === -1 ? undefined : rows[index];
+  if (!current) return null;
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const candidate = rows[i];
+    if (candidate && candidate.depth < current.depth) return candidate.path;
+  }
+  return null;
+}
+
+/** The first child row of an expanded folder, or null when it has none shown. */
+export function firstChildSelection(rows: ExplorerRow[], path: string | null): string | null {
+  const index = rows.findIndex((row) => row.path === path);
+  const parent = index === -1 ? undefined : rows[index];
+  if (!parent) return null;
+  const child = rows[index + 1];
+  return child && child.depth === parent.depth + 1 ? child.path : null;
+}
+

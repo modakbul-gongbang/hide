@@ -4,7 +4,10 @@
 
 import { create } from "zustand";
 
-export type SidebarMode = "agents" | "projects";
+export type SidebarMode = "agents" | "projects" | "explorer";
+
+/** The order ⌘E walks; the Explorer is the third mode, not a right panel. */
+export const SIDEBAR_MODES: readonly SidebarMode[] = ["agents", "projects", "explorer"];
 
 export type PendingClose = {
   kind: "pane" | "tab";
@@ -25,6 +28,9 @@ export type Cycle = {
 
 type UiStore = {
   sidebarMode: SidebarMode;
+  /** The Explorer row the operator last touched; the core owns the opened
+   * document's `selected_path`, and a reveal syncs that into here. */
+  explorerSelection: string | null;
   overlay: Overlay;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
@@ -32,6 +38,7 @@ type UiStore = {
   notice: { text: string; refreshable: boolean } | null;
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
+  setExplorerSelection: (path: string | null) => void;
   openOverlay: (overlay: Overlay) => void;
   closeOverlay: (overlay?: Overlay) => void;
   setPendingClose: (pending: PendingClose | null) => void;
@@ -41,12 +48,17 @@ type UiStore = {
 
 export const useUiStore = create<UiStore>((set, get) => ({
   sidebarMode: "agents",
+  explorerSelection: null,
   overlay: "none",
   pendingClose: null,
   cycle: null,
   notice: null,
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
-  toggleSidebarMode: () => set({ sidebarMode: get().sidebarMode === "agents" ? "projects" : "agents" }),
+  toggleSidebarMode: () => {
+    const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
+    set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });
+  },
+  setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
   openOverlay: (overlay) => set({ overlay }),
   closeOverlay: (overlay) => {
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });

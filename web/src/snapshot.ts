@@ -252,6 +252,8 @@ export type SnapshotRest = {
   terminal?: { pane_id?: string | null; panes?: TerminalPane[] };
   ui_state?: {
     left_sidebar_visible?: boolean;
+    right_panel_visible?: boolean;
+    right_panel_section?: string;
     workspace_registrations?: WorkspaceRegistration[];
     pane_text_scales?: Record<string, number>;
     expanded_paths?: string[];
@@ -308,6 +310,16 @@ export function activeEditorTab(editor: EditorSnapshot | null): EditorTabSnapsho
   const active = editorFor(editor);
   if (!active) return null;
   return active.tabs.find((tab) => tab.id === active.active_tab_id) ?? null;
+}
+
+/** The editor tab a strip entry stands behind, or null for a Herdr entry. */
+export function editorTabFor(editor: EditorSnapshot | null, tabId: string): EditorTabSnapshot | null {
+  return editor?.tabs.find((tab) => tab.id === tabId) ?? null;
+}
+
+/** The expanded checkout folders the core reports, as a set the tree walks. */
+export function expandedPathSet(rest: SnapshotRest | null): Set<string> {
+  return new Set(rest?.ui_state?.expanded_paths ?? []);
 }
 
 /** The changes of the checkout a listing belongs to, or null when they are another checkout's. */
