@@ -243,6 +243,12 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => sent.get("terminal_click")).toBe(1);
     expect(lastSent.get("terminal_click")).toEqual({ pane_id: agentPane, column: cell.column, row: cell.row, modifiers: 0 });
     await expect.poll(() => sent.get("focus_pane")).toBe(focusBefore + 1);
+    // Herdr confirms a focus later than the core moves it, and a confirmation
+    // still in flight when the next focus_pane goes out is followed as a
+    // move of Herdr's own (ARCHITECTURE.md), which would flip keyboard focus
+    // back mid-typing on a slow runner; each focus waits for Herdr's word.
+    const herdrFocused = () => (herdr.run(["pane", "current"]) as { result: { pane: { pane_id: string } } }).result.pane.pane_id;
+    await expect.poll(herdrFocused, { timeout: 10_000 }).toBe(agentPane);
     const report = `\x1b[<0;${cell.column + 1};${cell.row + 1}M\x1b[<0;${cell.column + 1};${cell.row + 1}m`;
     await expect
       .poll(() => (fs.existsSync(herdr.inputLogs[1]) ? fs.readFileSync(herdr.inputLogs[1], "latin1").slice(inputBefore) : ""), { timeout: 10_000 })
@@ -255,6 +261,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     const shellView = page.locator(`[data-pane-view="${shellPaneId}"]`);
     await shellView.locator(".xterm-helper-textarea").focus();
     await expect(shellView).toHaveAttribute("data-focused", "true");
+    await expect.poll(herdrFocused, { timeout: 10_000 }).toBe(shellPaneId);
     const shellGrid = (await page.evaluate((id) => window.__hideProbe?.paneGrid(id) ?? null, shellPaneId))!;
     const wrapped = "w".repeat(shellGrid.cols + 7);
     await page.keyboard.type(`clear; echo ${wrapped}; echo short; echo; echo end\n`);
