@@ -763,6 +763,7 @@ fn mime_for(path: &std::path::Path) -> &'static str {
         Some("json") => "application/json",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
+        Some("woff") => "font/woff",
         Some("woff2") => "font/woff2",
         _ => "application/octet-stream",
     }
