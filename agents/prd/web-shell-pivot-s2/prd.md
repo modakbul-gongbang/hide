@@ -64,7 +64,7 @@ S2는 그 위에 하루 작업의 나머지 골격을 얹는다: 코어 projecti
 | B17 | `docs/ARCHITECTURE.md` hided 절에 파일시스템 경계와 단축키 레지스트리(호스트별 표, Electron 열 TODO)가 있고, `docs/BUILD.md`/`CONTRIBUTING.md`의 web lane 설명이 S2 측정 명령을 포함한다. | - |
 | B18 | 끝나는 조건: 사용자가 Swift 앱을 닫고 실제 Herdr 세션에서 `hide`만으로 하루 작업(체크아웃 전환, 새 탭, 분할, 줌, 탭 닫기, 워크스페이스 등록, 단축키 시트)을 수행한다. 이 관찰은 사용자가 하고, 구현자는 격리 서버 Playwright와 측정까지 한다. | D-08 |
 | B19 | pane 위에서 휠·트랙패드 스크롤은 `terminal_scroll`(pane_id, direction, lines, column/row, modifiers) 하나로 나가되 픽셀마다가 아니라 휠 배치(애니메이션 프레임)마다 한 번이며, 트랙패드의 픽셀 델타는 행 단위로 누적되고 휠 노치는 최소 1행이다. 화면은 코어가 내려주는 viewport 프레임을 그대로 따르고 xterm 자체 스크롤백은 쓰지 않는다. ⌥+휠은 브라우저에 맡긴다. 줌 상태에서는 줌된 pane이 캔버스 전체를 차지하고 그 fit·`terminal_resize`가 전체 지오메트리를 따른다. | D-05, D-06 |
-| B20 | pane 안에서 드래그하지 않은 단일 클릭(⌥ 없이, 첫 클릭)은 `focus_pane`(포커스가 아니었을 때)과 그 셀의 `terminal_click`(pane_id, column, row, modifiers) 하나로 나가고, 프로그램이 받을 마우스 보고는 코어가 정한다(Swift `TerminalPointerRoutingState`와 같은 규칙: 드래그는 로컬 선택, ⌥+누름과 다중 클릭은 로컬). xterm 자체 마우스 보고는 PTY에 가지 않는다. 드래그 선택을 복사하면 네이티브 터미널처럼 행 끝 공백이 잘리고, 소프트랩으로 이어진 행은 줄바꿈 없이 합쳐지며, 실제 줄 끝만 `\n`으로 남는다(사각 선택은 범위 밖). 셸이 소비한 Escape(시트·찾기·사이클·닫기 확인)는 pane에 ESC 바이트로 가지 않는다. | D-05, D-06 |
+| B20 | pane 안에서 드래그하지 않은 단일 클릭(⌥ 없이, 첫 클릭)은 `focus_pane`(포커스가 아니었을 때)과 그 셀의 `terminal_click`(pane_id, column, row, modifiers) 하나로 나가고, 프로그램이 받을 마우스 보고는 코어가 정한다(Swift `TerminalPointerRoutingState`와 같은 규칙: 드래그는 로컬 선택, ⌥+누름과 다중 클릭은 로컬). xterm 자체 마우스 보고는 PTY에 가지 않는다. 드래그 선택을 복사하면 네이티브 터미널처럼 행 끝 공백이 잘리고, 소프트랩으로 이어진 행은 줄바꿈 없이 합쳐지며, 실제 줄 끝만 `\n`으로 남으며, 복사한 줄들이 공통으로 가진 앞 공백은 프로그램의 여백으로 보고 제거하되 줄 사이의 상대 들여쓰기는 유지한다(한 줄 복사는 앞 공백이 모두 사라진다; 사각 선택은 범위 밖). 클릭 셀은 xterm 화면 요소의 격자로 계산한다. 셸이 소비한 Escape(시트·찾기·사이클·닫기 확인)는 pane에 ESC 바이트로 가지 않는다. | D-05, D-06 |
 
 ## Technical structure
 
