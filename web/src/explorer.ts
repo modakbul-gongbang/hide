@@ -185,7 +185,13 @@ export function disclosureMark(row: ExplorerRow): string {
   return row.expanded ? "▾" : "▸";
 }
 
-/** The row the operator's path names, or null when the tree does not show it. */
+/** The folder a path sits in, as written; a top-level path returns itself. */
+export function parentPath(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash <= 0 ? path : path.slice(0, slash);
+}
+
+/** The row a path names, or null when the tree does not show it. */
 export function rowForPath(rows: ExplorerRow[], path: string | null): ExplorerRow | null {
   if (!path) return null;
   return rows.find((row) => row.path === path) ?? null;
@@ -237,8 +243,9 @@ export function firstChildSelection(rows: ExplorerRow[], path: string | null): s
  */
 export function selectionAfterRemoval(rows: ExplorerRow[], path: string, rootPath: string): string {
   const index = rows.findIndex((row) => row.path === path);
-  if (index === -1) return rootPath;
-  const depth = rows[index].depth;
+  const target = index === -1 ? undefined : rows[index];
+  if (!target) return rootPath;
+  const depth = target.depth;
   for (let i = index + 1; i < rows.length; i += 1) {
     const candidate = rows[i];
     if (!candidate || candidate.depth < depth) break;

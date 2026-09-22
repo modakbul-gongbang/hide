@@ -285,3 +285,90 @@ test("Markdown opens in Live and toggles to source", async ({ page }) => {
     close(fixture);
   }
 });
+
+/** A drag of HTML5 `draggable` rows, which Playwright's mouse drag does not
+ * drive: the source's dragstart carries a DataTransfer to the folder's drop. */
+async function dragRow(page: Page, from: string, to: string): Promise<void> {
+  await page.evaluate(
+    ([fromPath, toPath]) => {
+      const source = document.querySelector(`[data-explorer-row="${fromPath}"]`);
+      const target = document.querySelector(`[data-explorer-row="${toPath}"]`);
+      if (!source || !target) throw new Error(`drag ${fromPath} -> ${toPath}: rows not found`);
+      const data = new DataTransfer();
+      source.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: data }));
+      target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+      target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
+      source.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: data }));
+    },
+    [from, to],
+  );
+}
+
+test("the Explorer creates, renames, moves and trashes entries", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent, lastSent } = fixture;
+  try {
+    // New File in `src`: one file_create, and the core opens the created file.
+    await page.locator(`[data-explorer-row="${repo}/src"]`).click({ button: "right" });
+    await expect(page.locator("[data-explorer-menu]")).toBeVisible();
+    await page.locator('[data-menu-item="new-file"]').click();
+    const create = page.locator('[data-explorer-draft="create"] input');
+    await expect(create).toBeVisible();
+    await create.fill("added.ts");
+    await create.press("Enter");
+    await expect.poll(() => sent.get("file_create")).toBe(1);
+    expect(lastSent.get("file_create")).toMatchObject({ root: repo, parent: `${repo}/src`, name: "added.ts" });
+    await expect(page.locator(`[data-explorer-row="${repo}/src/added.ts"]`)).toBeVisible();
+    // The created file opened as a tab beside the one already open.
+    await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "added.ts" })).toHaveCount(1);
+    await screenshot(page, "s3-explorer-created");
+
+    // A name that already exists fails and says so under the row it started
+    // from; nothing is created.
+    await page.locator(`[data-explorer-row="${repo}/src"]`).click({ button: "right" });
+    await page.locator('[data-menu-item="new-file"]').click();
+    const clash = page.locator('[data-explorer-draft="create"] input');
+    await clash.fill("main.ts");
+    await clash.press("Enter");
+    await expect(page.locator(`[data-explorer-failure="${repo}/src/main.ts"]`)).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(1);
+    await screenshot(page, "s3-explorer-failure");
+
+    // Rename: one path_rename, and the row takes the new name.
+    await page.locator(`[data-explorer-row="${repo}/src/added.ts"]`).click({ button: "right" });
+    await page.locator('[data-menu-item="rename"]').click();
+    const rename = page.locator('[data-explorer-draft="rename"] input');
+    await rename.fill("renamed.ts");
+    await rename.press("Enter");
+    await expect.poll(() => sent.get("path_rename")).toBe(1);
+    expect(lastSent.get("path_rename")).toMatchObject({ root: repo, path: `${repo}/src/added.ts`, name: "renamed.ts" });
+    await expect(page.locator(`[data-explorer-row="${repo}/src/renamed.ts"]`)).toBeVisible();
+
+    // New Folder in the root, then drag the file onto it: one path_move.
+    await page.locator("[data-explorer-tree]").click({ button: "right", position: { x: 20, y: 400 } });
+    await page.locator('[data-menu-item="new-folder"]').click();
+    const folder = page.locator('[data-explorer-draft="create"] input');
+    await folder.fill("dest");
+    await folder.press("Enter");
+    await expect.poll(() => sent.get("dir_create")).toBe(1);
+    await expect(page.locator(`[data-explorer-row="${repo}/dest"]`)).toBeVisible();
+    await dragRow(page, `${repo}/src/renamed.ts`, `${repo}/dest`);
+    await expect.poll(() => sent.get("path_move")).toBe(1);
+    expect(lastSent.get("path_move")).toMatchObject({ root: repo, path: `${repo}/src/renamed.ts`, destination: `${repo}/dest` });
+
+    // Trash behind the confirmation: nothing goes out until it is confirmed.
+    await page.locator(`[data-explorer-row="${repo}/dest"]`).click({ button: "right" });
+    await page.locator('[data-menu-item="trash"]').click();
+    const dialog = page.locator("[data-confirm-trash]");
+    await expect(dialog).toBeVisible();
+    expect(sent.get("path_trash") ?? 0).toBe(0);
+    await screenshot(page, "s3-explorer-trash");
+    await page.locator("[data-trash-confirm]").click();
+    await expect.poll(() => sent.get("path_trash")).toBe(1);
+    // The tree selects the removed folder's next sibling, which is `src`.
+    expect(lastSent.get("path_trash")).toMatchObject({ root: repo, path: `${repo}/dest`, select_after: `${repo}/src` });
+    await expect(page.locator(`[data-explorer-row="${repo}/dest"]`)).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});

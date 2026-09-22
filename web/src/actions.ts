@@ -281,6 +281,61 @@ export function createActions(dispatch: DispatchFn) {
 
     /** ⌘⇧K: the showing preview tab becomes an ordinary tab. */
     keepOpenFile() {
+      const tab = activeEditorTab(useShellStore.getState().editor);
+      if (!tab || !tab.preview) return;
+      dispatch({ schema_version: 2, kind: "file_keep_open", payload: { tab_id: tab.id } });
+    },
+
+    /** A new file or folder in `parent`; the core opens a created file (B9). */
+    createEntry(parent: string, name: string, isDirectory: boolean) {
+      const here = current();
+      if (!here) return diagnostic("explorer create: no focused checkout");
+      dispatch({
+        schema_version: 2,
+        kind: isDirectory ? "dir_create" : "file_create",
+        payload: { root: here.checkout.path, parent, name },
+      });
+    },
+
+    renameEntry(path: string, name: string) {
+      const here = current();
+      if (!here) return diagnostic("path_rename: no focused checkout");
+      dispatch({ schema_version: 2, kind: "path_rename", payload: { root: here.checkout.path, path, name } });
+    },
+
+    /** A drag that landed: one `path_move` into the folder it was dropped on. */
+    moveEntry(path: string, destination: string) {
+      const here = current();
+      if (!here) return diagnostic("path_move: no focused checkout");
+      dispatch({ schema_version: 2, kind: "path_move", payload: { root: here.checkout.path, path, destination } });
+    },
+
+    /** Opens the trash confirmation; nothing is dispatched until it is confirmed. */
+    requestTrash(path: string, name: string, isDirectory: boolean, selectAfter: string) {
+      ui().setPendingTrash({ path, name, isDirectory, selectAfter });
+    },
+
+    confirmTrash() {
+      const pending = ui().pendingTrash;
+      const here = current();
+      ui().setPendingTrash(null);
+      if (!pending) return;
+      if (!here) return diagnostic("path_trash: no focused checkout");
+      dispatch({
+        schema_version: 2,
+        kind: "path_trash",
+        payload: {
+          root: here.checkout.path,
+          path: pending.path,
+          select_after: pending.selectAfter,
+          inode: null,
+        },
+      });
+    },
+
+    cancelTrash() {
+      ui().setPendingTrash(null);
+    },
 
     focusFileTab(tabId: string) {
       dispatch({ schema_version: 2, kind: "file_focus", payload: { tab_id: tabId } });

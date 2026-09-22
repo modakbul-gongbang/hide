@@ -5,10 +5,12 @@ import {
   firstChildSelection,
   gitDecorations,
   moveSelection,
+  parentPath,
   parentSelection,
   relativeTo,
   rowForPath,
   rowTitle,
+  selectionAfterRemoval,
 } from "./explorer";
 import type { ChangedFileStatus, ChangesSnapshot } from "./snapshot";
 import type { DirectoryList } from "./store";
@@ -205,5 +207,29 @@ describe("tree navigation", () => {
     expect(rowForPath(rows, `${ROOT}/src/a.ts`)?.name).toBe("a.ts");
     expect(rowForPath(rows, `${ROOT}/gone`)).toBeNull();
     expect(rowForPath(rows, null)).toBeNull();
+  });
+});
+
+describe("removal selection", () => {
+  const rows = explorerRows({
+    rootPath: ROOT,
+    listings: { [ROOT]: TOP, [`${ROOT}/src`]: SRC },
+    expandedPaths: [`${ROOT}/src`],
+    changes: null,
+  });
+
+  it("names the folder a path sits in", () => {
+    expect(parentPath(`${ROOT}/src/a.ts`)).toBe(`${ROOT}/src`);
+    expect(parentPath(`${ROOT}/README.md`)).toBe(ROOT);
+  });
+
+  it("selects the next sibling, else the previous sibling, else the parent", () => {
+    // `src` is followed by README.md, so removing it selects README.md.
+    expect(selectionAfterRemoval(rows, `${ROOT}/src`, ROOT)).toBe(`${ROOT}/README.md`);
+    // `.gitignore` is last, so removing it selects its previous sibling.
+    expect(selectionAfterRemoval(rows, `${ROOT}/.gitignore`, ROOT)).toBe(`${ROOT}/README.md`);
+    // The folder's first child is followed by its sibling.
+    expect(selectionAfterRemoval(rows, `${ROOT}/src/a.ts`, ROOT)).toBe(`${ROOT}/src/nested`);
+    expect(selectionAfterRemoval(rows, `${ROOT}/missing`, ROOT)).toBe(ROOT);
   });
 });

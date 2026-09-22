@@ -4,7 +4,7 @@ import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard } from "./keyboard";
-import { ConfirmClose, CycleOverlay, FindBar, NoticeBar } from "./Overlays";
+import { ConfirmClose, ConfirmTrash, CycleOverlay, FindBar, NoticeBar } from "./Overlays";
 import { PaneCanvas } from "./PaneGrid";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
@@ -87,6 +87,7 @@ export function App() {
       </div>
       <CycleOverlay />
       <ConfirmClose actions={actions} />
+      <ConfirmTrash actions={actions} />
       <ShortcutSheetGate actions={actions} />
     </div>
   );
