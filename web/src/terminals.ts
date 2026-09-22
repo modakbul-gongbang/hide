@@ -127,6 +127,12 @@ export function terminalFor(paneId: string | null): Terminal | null {
 let followingSnapshot = false;
 
 /** Moves keyboard focus to the pane the snapshot names; not an operator action. */
+/** Whether the pane's terminal asked for bracketed paste, which the core
+ * wraps the attachment token in. */
+export function bracketedPaste(paneId: string): boolean {
+  return terminalFor(paneId)?.modes.bracketedPasteMode ?? false;
+}
+
 export function focusTerminal(paneId: string) {
   const instance = instances.get(paneId);
   if (!instance) return;

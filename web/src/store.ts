@@ -81,6 +81,8 @@ type Store = {
   pathRefusal: PathRefusal | null;
   /** The ⌘P palette's last answer, keyed by the query it answered. */
   fileIndex: FileIndexResult | null;
+  /** The last attachment the daemon refused, drawn as one line over its pane (B15). */
+  attachmentRefusal: { pane_id: string; reason: string } | null;
   /** The newest `DIAGNOSTIC_CAP` entries; older ones are counted in `diagnosticsDropped`. */
   diagnostics: string[];
   diagnosticsDropped: number;
@@ -90,6 +92,7 @@ type Store = {
   setConnection: (connection: ConnectionState, refused?: boolean) => void;
   noteDiagnostic: (message: string) => void;
   clearPathRefusal: () => void;
+  setAttachmentRefusal: (refusal: { pane_id: string; reason: string } | null) => void;
   /** Drops cached listings so the Explorer re-reads those folders. */
   invalidateListings: (paths: string[]) => void;
   applyFrame: (frame: Frame) => TerminalChunk[];
@@ -138,6 +141,7 @@ export const useShellStore = create<Store>((set, get) => ({
   listings: {},
   pathRefusal: null,
   fileIndex: null,
+  attachmentRefusal: null,
   diagnostics: [],
   diagnosticsDropped: 0,
   viewGeneration: 0,
@@ -148,6 +152,7 @@ export const useShellStore = create<Store>((set, get) => ({
   clearPathRefusal: () => {
     if (get().pathRefusal) set({ pathRefusal: null });
   },
+  setAttachmentRefusal: (attachmentRefusal) => set({ attachmentRefusal }),
   invalidateListings: (paths) => {
     const listings = get().listings;
     if (!paths.some((path) => path in listings)) return;

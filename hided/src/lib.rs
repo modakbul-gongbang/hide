@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod boundary;
 pub mod cli;
 pub mod coexist;
@@ -17,6 +18,7 @@ use herdr_core::{CoreOptions, SCHEMA_VERSION};
 use serde_json::Value;
 use tokio::sync::Notify;
 
+use crate::attachments::Attachments;
 use crate::boundary::{Boundary, Root};
 use crate::core::CoreHandle;
 use crate::env::Env;
@@ -127,12 +129,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let core = CoreHandle::spawn(options)?;
     let watch = Arc::new(watch::WatchService::new());
     let index = Arc::new(IndexService::new());
+    let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
     let app = AppState {
         core: Arc::new(core),
         boundary: Arc::new(boundary),
         watch: Arc::clone(&watch),
         index: Arc::clone(&index),
+        attachments: Arc::clone(&attachments),
         token: Arc::new(token.clone()),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),

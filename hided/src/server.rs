@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Notify;
 
+use crate::attachments::Attachments;
 use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
@@ -59,6 +60,8 @@ pub struct AppState {
     pub watch: Arc<WatchService>,
     /// The ⌘P index cache, one lazy index per registered checkout.
     pub index: Arc<IndexService>,
+    /// Staged dropped files on their way to the core's attachment directory.
+    pub attachments: Arc<Attachments>,
     pub token: Arc<String>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -312,7 +315,19 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                                 break;
                             }
                         }
-                    }                    Some(Ok(Message::Close(_))) | None => break,
+                    }                    Some(Ok(Message::Binary(bytes))) => {
+                        if let Some((request_id, reason)) = state.attachments.receive(&bytes)
+                            && socket
+                                .send(Message::Text(
+                                    attachment_refused(&request_id, reason).to_string().into(),
+                                ))
+                                .await
+                                .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(_)) => {}
                     Some(Err(_)) => break,
                 }
@@ -349,11 +364,126 @@ async fn handle_client_text(state: &AppState, text: &str) -> Result<Vec<Message>
     if event.get("kind").and_then(Value::as_str) == Some("file_index") {
         return Ok(handle_file_index(state, &event));
     }
+    match event.get("kind").and_then(Value::as_str) {
+        Some("attachment_stage") => return Ok(handle_attachment_stage(state, &event)),
+        Some("attachment_commit") => return Ok(handle_attachment_commit(state, &event)),
+        Some("attachment_cancel") => {
+            state
+                .attachments
+                .discard(&payload_str(&event, "request_id"));
+            return Ok(Vec::new());
+        }
+        _ => {}
+    }
     if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
         return Ok(vec![Message::Text(reply.to_string().into())]);
     }
     let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
     state.core.dispatch(bytes).map(|()| Vec::new())
+}
+
+/// One line of a refused attachment: the request and why nothing was staged.
+fn attachment_refused(request_id: &str, reason: &str) -> Value {
+    json!({"type": "attachment_refused", "payload": {"request_id": request_id, "reason": reason}})
+}
+
+/// Opens one staged upload the client will send bytes for. The caps are
+/// checked here so a too-large file is refused before its bytes arrive.
+fn handle_attachment_stage(state: &AppState, event: &Value) -> Vec<Message> {
+    let request_id = payload_str(event, "request_id");
+    let name = payload_str(event, "name");
+    let size = event
+        .pointer("/payload/size")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let clipboard = event
+        .pointer("/payload/clipboard")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    match state.attachments.begin(&request_id, &name, size, clipboard) {
+        Ok(()) => Vec::new(),
+        Err(reason) => vec![Message::Text(
+            attachment_refused(&request_id, reason).to_string().into(),
+        )],
+    }
+}
+
+/// Turns staged uploads into the one `terminal_attachment` event the Swift
+/// shell sends for a batch, and reports clipboard readiness, because hided
+/// staged the file the core is waiting for.
+fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
+    let request_id = payload_str(event, "request_id");
+    let pane_id = payload_str(event, "pane_id");
+    if pane_id.is_empty() {
+        return vec![Message::Text(
+            attachment_refused(&request_id, "no_pane")
+                .to_string()
+                .into(),
+        )];
+    }
+    let bracketed = event
+        .pointer("/payload/bracketed_paste")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let clipboard = event
+        .pointer("/payload/clipboard")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let stages: Vec<String> = event
+        .pointer("/payload/stages")
+        .and_then(Value::as_array)
+        .map(|stages| {
+            stages
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let paths = match state.attachments.commit(&stages, clipboard) {
+        Ok(paths) => paths,
+        Err(reason) => {
+            return vec![Message::Text(
+                attachment_refused(&request_id, reason).to_string().into(),
+            )];
+        }
+    };
+    let attachment = json!({
+        "schema_version": 2,
+        "kind": "terminal_attachment",
+        "payload": {
+            "request_id": request_id,
+            "pane_id": pane_id,
+            "bracketed_paste": bracketed,
+            "clipboard": clipboard,
+            "paths": paths,
+        },
+    });
+    if let Err(error) = state
+        .core
+        .dispatch(serde_json::to_vec(&attachment).unwrap_or_default())
+    {
+        log_snapshot_failure("attachment", &error);
+        return vec![Message::Text(
+            attachment_refused(&request_id, "forward_failed")
+                .to_string()
+                .into(),
+        )];
+    }
+    if clipboard {
+        let ready = json!({
+            "schema_version": 2,
+            "kind": "terminal_attachment_ready",
+            "payload": {"request_id": request_id, "pane_id": pane_id, "error": Value::Null},
+        });
+        if let Err(error) = state
+            .core
+            .dispatch(serde_json::to_vec(&ready).unwrap_or_default())
+        {
+            log_snapshot_failure("attachment", &error);
+        }
+    }
+    Vec::new()
 }
 
 /// A `file_index` query: the root is checked against the registered checkouts

@@ -1,3 +1,4 @@
+import { configureAttachments, receiveAttachmentRefusal } from "./attachments";
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
 import { receiveBytes, receiveBytesError } from "./fileBytes";
 import { noteArrival, probeEnabled } from "./probe";
@@ -27,7 +28,7 @@ async function healthOk(): Promise<boolean> {
   }
 }
 
-export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close: () => void; drop: () => void } {
+export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBinary: (bytes: Uint8Array) => void; close: () => void; drop: () => void } {
   let socket: WebSocket | null = null;
   let closed = false;
   let backoff = 500;
@@ -47,6 +48,15 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
       return;
     }
     socket.send(JSON.stringify(event));
+  };
+
+  /** Attachment bytes ride the same socket as binary frames (PRD B14). */
+  const sendBinary = (bytes: Uint8Array) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      useShellStore.getState().noteDiagnostic("attachment bytes dropped while socket not open");
+      return;
+    }
+    socket.send(bytes);
   };
 
   const open = () => {
@@ -86,6 +96,10 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
         receiveBytesError(frame.payload as unknown as { request_id: string; reason: string });
         return;
       }
+      if (frame.type === "attachment_refused") {
+        receiveAttachmentRefusal(frame.payload as unknown as { request_id: string; reason: string });
+        return;
+      }
       const chunks = useShellStore.getState().applyFrame(frame);
       revision = useShellStore.getState().revision;
       terminalSequence = useShellStore.getState().terminalSequence;
@@ -121,8 +135,10 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
   };
 
   open();
+  configureAttachments({ dispatch, sendBinary });
   return {
     dispatch,
+    sendBinary,
     /** Closes the socket as a server drop would, so the reconnect path can be exercised (probe seam). */
     drop: () => socket?.close(),
     close: () => {

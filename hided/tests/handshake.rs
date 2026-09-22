@@ -1044,3 +1044,40 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     assert_eq!(refused["payload"]["reason"], "outside_checkout");
     running.stop();
 }
+
+#[tokio::test]
+async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
+    let (_dir, running) = start().await;
+    let mut socket = live_socket(&running).await;
+
+    let refused = send_event_expecting(
+        &mut socket,
+        "attachment_stage",
+        json!({
+            "request_id": "r1",
+            "name": "big.bin",
+            "size": (20u64 * 1024 * 1024) + 1,
+            "clipboard": false,
+        }),
+        |frame| frame["type"] == "attachment_refused",
+    )
+    .await;
+    assert_eq!(refused["type"], "attachment_refused");
+    assert_eq!(refused["payload"]["reason"], "too_large");
+
+    let refused = send_event_expecting(
+        &mut socket,
+        "attachment_commit",
+        json!({
+            "request_id": "b1",
+            "pane_id": "p1",
+            "bracketed_paste": true,
+            "clipboard": false,
+            "stages": ["never-staged"],
+        }),
+        |frame| frame["type"] == "attachment_refused",
+    )
+    .await;
+    assert_eq!(refused["payload"]["reason"], "unknown_stage");
+    running.stop();
+}

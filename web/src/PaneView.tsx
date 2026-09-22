@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef } from "react";
+import { readInputs, refusalText, submitAttachments } from "./attachments";
 import type { PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
-import { attachTerminal, focusTerminal, requestView, setTextScale } from "./terminals";
+import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale } from "./terminals";
 import type { DispatchFn } from "./ws";
 
 /** Transport states with a live stream; anything else is drawn as a caption in the header. */
@@ -48,7 +49,18 @@ export const PaneView = memo(function PaneView({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewGeneration = useShellStore((s) => s.viewGeneration);
+  const refusal = useShellStore((s) => s.attachmentRefusal);
+  const setRefusal = useShellStore((s) => s.setAttachmentRefusal);
   const paneId = pane.id;
+
+  // A dropped file or a pasted image stages through hided and reaches the
+  // terminal as the core's own `terminal_attachment` (B14).
+  const drop = (event: React.DragEvent) => {
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) return;
+    event.preventDefault();
+    void readInputs(files).then((inputs) => submitAttachments(paneId, inputs, false, bracketedPaste(paneId)));
+  };
 
   // The terminal is shown here and parked on unmount, not disposed: the
   // instance belongs to the pane for as long as the core streams it (D-05).
@@ -76,6 +88,24 @@ export const PaneView = memo(function PaneView({
     if (focused) focusTerminal(paneId);
   }, [paneId, focused]);
 
+  // ⌘V of an image is the shell's; text paste stays xterm's own. The listener
+  // runs in the capture phase, before xterm's textarea sees the event.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return undefined;
+    const onPaste = (event: ClipboardEvent) => {
+      const items = Array.from(event.clipboardData?.items ?? []).filter((item) => item.type.startsWith("image/"));
+      if (items.length === 0) return;
+      const files = items.map((item) => item.getAsFile()).filter((file): file is File => file !== null);
+      if (files.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void readInputs(files).then((inputs) => submitAttachments(paneId, inputs, true, bracketedPaste(paneId)));
+    };
+    host.addEventListener("paste", onPaste, true);
+    return () => host.removeEventListener("paste", onPaste, true);
+  }, [paneId]);
+
   const caption = transportCaption(transport);
   return (
     <section
@@ -83,6 +113,10 @@ export const PaneView = memo(function PaneView({
       data-pane-view={paneId}
       data-focused={focused ? "true" : "false"}
       data-transport={transport?.transport_state ?? ""}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+      }}
+      onDrop={drop}
     >
       <header
         className={`flex h-[var(--size-pane-header)] shrink-0 items-center gap-sm px-sm text-caption ${
@@ -108,6 +142,14 @@ export const PaneView = memo(function PaneView({
       <div className="h-[var(--size-hairline)] shrink-0 bg-divider" />
       <div className="relative min-h-0 flex-1">
         <div ref={hostRef} className="absolute inset-0" />
+        {refusal?.pane_id === paneId ? (
+          <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-panel px-sm py-xxs text-caption text-danger" data-pane-attachment-refusal="true">
+            <span className="min-w-0 flex-1 truncate">{refusalText(refusal.reason)}</span>
+            <button type="button" className="text-muted" aria-label="Dismiss" onClick={() => setRefusal(null)}>
+              ×
+            </button>
+          </div>
+        ) : null}
         {caption?.reconnects ? (
           <button
             type="button"

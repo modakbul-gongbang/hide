@@ -432,3 +432,42 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     close(fixture);
   }
 });
+
+test("a dropped file reaches the terminal as an attachment", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { herdr, sent } = fixture;
+  try {
+    // The fixture checkout's panes run the shim that logs every PTY byte, so
+    // the pasted token is observable there; openCheckout focused the repository.
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const project = page.locator("[data-project]", { hasText: "fixture" });
+    await project.locator("[data-checkout]").first().click();
+    await page.locator('[data-tab-kind="herdr"]').first().click();
+    const pane = page.locator("[data-pane-view]").first();
+    await expect(pane).toBeVisible();
+
+    // A file drop is bytes the browser can read but cannot name; the shell
+    // uploads them, and the core pastes the staged path into the PTY (B14).
+    await page.evaluate(async (base64) => {
+      const binary = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const file = new File([binary], "dropped.png", { type: "image/png" });
+      const data = new DataTransfer();
+      data.items.add(file);
+      const target = document.querySelector("[data-pane-view]") as HTMLElement;
+      target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+      target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
+    }, PNG.toString("base64"));
+
+    await expect.poll(() => sent.get("attachment_stage")).toBe(1);
+    await expect.poll(() => sent.get("attachment_commit")).toBe(1);
+
+    // The shim logs every byte its PTY received, so the pasted token shows up.
+    const logs = herdr.inputLogs.map((file) => file);
+    const read = () => logs.map((file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "")).join("\n");
+    await expect.poll(read, { timeout: 15_000 }).toContain("dropped.png");
+    await expect(page.locator("[data-pane-attachment-refusal]")).toHaveCount(0);
+    await screenshot(page, "s3-attachment-drop");
+  } finally {
+    close(fixture);
+  }
+});
