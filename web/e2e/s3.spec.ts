@@ -471,3 +471,29 @@ test("a dropped file reaches the terminal as an attachment", async ({ page }) =>
     close(fixture);
   }
 });
+
+test("an unsaved edit survives a socket drop and reconnect", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo } = fixture;
+  try {
+    await page.locator(`[data-explorer-row="${repo}/notes.md"]`).click();
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await expect(content).toContainText("# Title");
+    await content.click();
+    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.type("edited across a reconnect\n");
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+
+    // A server-side drop makes the shell reconnect on its own; the core keeps
+    // the draft, and the buffer reconciles against it (B8). A live connection
+    // draws no badge at all.
+    await page.evaluate(() => window.__hideProbe?.dropSocket());
+    await expect(page.locator("[data-connection]")).toHaveText(/reconnecting/, { timeout: 15_000 });
+    await expect(page.locator("[data-connection]")).toHaveCount(0, { timeout: 20_000 });
+    await expect(content).toContainText("edited across a reconnect");
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible({ timeout: 10_000 });
+    await screenshot(page, "s3-buffer-reconnect");
+  } finally {
+    close(fixture);
+  }
+});

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
+import { allBuffers, deleteBuffer, sweepBuffers } from "./buffers";
 import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
 import { configureFileBytes } from "./fileBytes";
@@ -72,6 +73,24 @@ export function App() {
   const connection = useShellStore((s) => s.connection);
   useEffect(() => {
     if (connection !== "live") useUiStore.getState().setCycle(null);
+  }, [connection]);
+
+  // A buffer whose document the core no longer holds is discarded with a
+  // diagnostic; an open document's buffer is restored by its editor (B8).
+  useEffect(() => {
+    if (connection !== "live") return;
+    const editor = useShellStore.getState().editor;
+    const openPaths = new Set(
+      (editor?.tabs ?? []).filter((tab) => tab.kind === "file").map((tab) => tab.path),
+    );
+    void allBuffers().then((buffers) => {
+      for (const buffer of sweepBuffers(buffers, openPaths)) {
+        useShellStore
+          .getState()
+          .noteDiagnostic(`discarded the unsaved buffer for closed document ${buffer.path}`);
+        void deleteBuffer(buffer.path);
+      }
+    });
   }, [connection]);
 
   return (

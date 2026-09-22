@@ -2,6 +2,7 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
+import { deleteBuffer } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
@@ -368,6 +369,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closeFileTab(tabId: string) {
+      const tab = useShellStore.getState().editor?.tabs.find((row) => row.id === tabId);
+      if (tab) void deleteBuffer(tab.path);
       dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: null } });
     },
 

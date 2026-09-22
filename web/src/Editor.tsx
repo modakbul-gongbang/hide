@@ -1,4 +1,6 @@
+import { useEffect, useRef } from "react";
 import type { Actions } from "./actions";
+import { allBuffers, bufferDecision, deleteBuffer, putBuffer } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { clearDraft, noteDraft } from "./editor/draft";
 import { activeEditorTab, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
@@ -134,10 +136,43 @@ function EditorBody({
   findRequest: number;
   actions: Actions;
 }) {
+  const editable = document?.document_kind === "text" || document?.document_kind === "markdown";
+  const latest = useRef(document);
+  latest.current = document;
+  const checked = useRef(false);
+
+  // A reconnect may have left an unsaved buffer in IndexedDB (B8): the buffer
+  // is the newest edit, so it is restored over a clean core document and
+  // dropped when the core already holds the same contents.
+  useEffect(() => {
+    checked.current = false;
+    let live = true;
+    void allBuffers().then((buffers) => {
+      if (!live) return;
+      const buffer = buffers.find((row) => row.path === tab.path);
+      checked.current = true;
+      if (!buffer) return;
+      const current = latest.current;
+      if (!current) return;
+      if (bufferDecision(buffer, current) === "restore") actions.updateDraft(buffer.contents);
+      else void deleteBuffer(tab.path);
+    });
+    return () => {
+      live = false;
+    };
+  }, [tab.id, tab.path, actions]);
+
+  // A document the core reports clean has nothing unsaved, so its buffer goes.
+  useEffect(() => {
+    if (!checked.current || document?.dirty) return;
+    if (document?.document_kind !== "text" && document?.document_kind !== "markdown") return;
+    void deleteBuffer(tab.path);
+  }, [document?.dirty, document?.document_kind, tab.path]);
+
   if (!document) {
     return <Notice text="Loading…" state="loading" />;
   }
-  if (document.document_kind !== "text" && document.document_kind !== "markdown") {
+  if (!editable) {
     return <FileViewer document={document} />;
   }
   return (
@@ -158,6 +193,7 @@ function EditorBody({
         findRequest={findRequest}
         onDraft={(contents) => {
           noteDraft(tab.id, contents);
+          void putBuffer(tab.path, contents);
           actions.updateDraft(contents);
         }}
       />
