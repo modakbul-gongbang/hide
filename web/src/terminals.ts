@@ -190,7 +190,13 @@ function flushWheel(paneId: string, instance: Instance) {
 }
 
 function onWheel(paneId: string, instance: Instance, event: WheelEvent) {
-  // ⌥ + wheel stays with the browser, as in the Swift shell.
+  // The wheel has one owner. Left to xterm, a buffer without scrollback
+  // (ours always, and any alternate-screen program) turns the same event
+  // into cursor-key bytes on the PTY, and a mouse-tracking program gets
+  // xterm's own wheel report; Herdr decides both from terminal_scroll.
+  event.stopImmediatePropagation();
+  // ⌥ + wheel stays with the browser, as in the Swift shell: nothing to
+  // Herdr and nothing to the PTY.
   if (event.altKey) return;
   event.preventDefault();
   const host = instance.host;

@@ -251,6 +251,7 @@ The store keeps the `rest` section structurally shared across frames (`web/src/s
 A divider drag moves a guide line and sends one `resize_pane` on release, computed as the Swift `PaneResizeDragPolicy` does (the first subtree's last pane, the travel over the split's span); a change outside the core's `0.001..=0.5` sends nothing.
 A zoomed tab draws only the zoomed pane, over the whole canvas, so its fit and `terminal_resize` follow the full geometry Herdr gave the PTY; the other panes' terminals stay parked and fed.
 The wheel is Herdr's (PRD S2 B19): the instance has no local scrollback, a wheel event over a pane becomes whole rows by the Swift `PaneScrollPolicy` (`web/src/wheel.ts`: trackpad pixels accumulate with their remainder, a wheel notch moves at least one row), the rows of one animation frame go out as one `terminal_scroll` with the cell under the pointer and the crossterm modifier bitset, and the core answers with the viewport frame; ⌥ + wheel is left to the browser.
+The wheel has one owner: the capture listener stops the event before xterm sees it, because xterm turns a wheel over a buffer without scrollback (ours, and any alternate-screen program) into cursor-key bytes on the PTY and answers a mouse-tracking program with its own wheel report, both of which Herdr already decides from `terminal_scroll`.
 Closing mirrors the Swift flow in `web/src/close.ts`: an unknown activity status asks for `refresh_status` first, a working pane asks once, an idle pane closes with `confirmed: false`.
 
 ### The `$HOME` filesystem boundary

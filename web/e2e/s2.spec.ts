@@ -190,6 +190,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
     await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/100\s+fixture %/);
     const shellBox = (await shellPane.boundingBox())!;
     await page.mouse.move(shellBox.x + shellBox.width / 2, shellBox.y + shellBox.height / 2);
+    const keysBeforeWheel = sent.get("key") ?? 0;
     await page.mouse.wheel(0, -120);
     await expect.poll(() => sent.get("terminal_scroll")).toBe(1);
     expect(lastSent.get("terminal_scroll")).toMatchObject({ direction: "up", modifiers: 0 });
@@ -204,6 +205,23 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page }) => {
     await page.mouse.wheel(0, -120);
     await page.keyboard.up("Alt");
     await expect.poll(() => sent.get("terminal_scroll")).toBe(2);
+    // The wheel never became key bytes: xterm did not get to turn it into
+    // cursor keys (which would walk the shell's history).
+    expect(sent.get("key") ?? 0).toBe(keysBeforeWheel);
+
+    // An alternate-screen program (less) gets the same treatment: the
+    // wheel is one terminal_scroll and no cursor-key bytes reach the PTY.
+    await page.keyboard.type("seq 1 200 | less\n");
+    await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/^1\s/);
+    const keysBeforeLess = sent.get("key") ?? 0;
+    await page.mouse.wheel(0, 240);
+    await expect.poll(() => sent.get("terminal_scroll")).toBe(3);
+    expect(lastSent.get("terminal_scroll")).toMatchObject({ direction: "down" });
+    await page.mouse.wheel(0, -240);
+    await expect.poll(() => sent.get("terminal_scroll")).toBe(4);
+    expect(sent.get("key") ?? 0).toBe(keysBeforeLess);
+    await page.keyboard.press("q");
+    await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/fixture %\s*$/);
 
     await page.keyboard.press("Meta+Alt+Enter");
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-zoomed", "true");
