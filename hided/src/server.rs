@@ -432,11 +432,27 @@ async fn read_delta(state: &AppState, have_revision: u64, have_sequence: u64) ->
     let snapshot = state
         .core
         .snapshot(have_revision, have_sequence)
-        .map_err(|_| ())?;
+        .map_err(|error| log_snapshot_failure("core", &error))?;
     if snapshot.bytes.is_empty() {
+        log_snapshot_failure("empty", "the core returned no bytes");
         return Err(());
     }
-    serde_json::from_slice(&snapshot.bytes).map_err(|_| ())
+    serde_json::from_slice(&snapshot.bytes)
+        .map_err(|error| log_snapshot_failure("decode", &error.to_string()))
+}
+
+/// A frame the daemon could not produce ends the client's loop, so the
+/// client sees a bare close; this record is the only trace of why.
+fn log_snapshot_failure(stage: &str, message: &str) {
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "ws.snapshot_failed",
+            "stage": stage,
+            "message": message,
+        })
+    );
 }
 
 async fn send_snapshot(
