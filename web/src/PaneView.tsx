@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef } from "react";
-import { readInputs, refusalText, submitAttachments } from "./attachments";
+import { refusalText, submitFiles } from "./attachments";
 import type { PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
 import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale } from "./terminals";
@@ -59,7 +59,7 @@ export const PaneView = memo(function PaneView({
     const files = Array.from(event.dataTransfer.files);
     if (files.length === 0) return;
     event.preventDefault();
-    void readInputs(files).then((inputs) => submitAttachments(paneId, inputs, false, bracketedPaste(paneId)));
+    void submitFiles(paneId, files, false, bracketedPaste(paneId));
   };
 
   // The terminal is shown here and parked on unmount, not disposed: the
@@ -100,7 +100,7 @@ export const PaneView = memo(function PaneView({
       if (files.length === 0) return;
       event.preventDefault();
       event.stopPropagation();
-      void readInputs(files).then((inputs) => submitAttachments(paneId, inputs, true, bracketedPaste(paneId)));
+      void submitFiles(paneId, files, true, bracketedPaste(paneId));
     };
     host.addEventListener("paste", onPaste, true);
     return () => host.removeEventListener("paste", onPaste, true);

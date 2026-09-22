@@ -209,12 +209,17 @@ fn spawn_root_refresh(
         // the notify path: a delta that changed only terminal chunks carries no
         // `rest`, and roots and expanded folders both live in it.
         let mut have_revision = 0u64;
+        let mut have_sequence = 0u64;
         loop {
-            if changes.recv().await.is_err() {
-                return;
+            match changes.recv().await {
+                Ok(()) => {}
+                // This reader fell behind; the next read catches it up. Only a
+                // closed channel means the daemon is done.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             }
             while changes.try_recv().is_ok() {}
-            let Ok(reply) = core.snapshot(have_revision, 0) else {
+            let Ok(reply) = core.snapshot(have_revision, have_sequence) else {
                 eprintln!(
                     "{}",
                     serde_json::json!({
@@ -233,6 +238,11 @@ fn spawn_root_refresh(
             };
             if let Some(revision) = value.get("revision").and_then(Value::as_u64) {
                 have_revision = revision;
+            }
+            // Advancing the terminal cursor keeps the retained chunk window out
+            // of every read this reader makes: it uses none of those bytes.
+            if let Some(sequence) = value.get("terminal_sequence").and_then(Value::as_u64) {
+                have_sequence = sequence;
             }
             if !carries_roots(&value) {
                 continue;

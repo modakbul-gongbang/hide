@@ -126,6 +126,33 @@ export function submitAttachments(paneId: string, files: AttachmentInput[], clip
   });
 }
 
+/**
+ * Reads and stages dropped or pasted files, refusing over-cap ones from
+ * `File.size` before any byte is read: a 2 GiB drop must not become an
+ * allocation to learn it is over the cap.
+ */
+export async function submitFiles(paneId: string, files: File[], clipboard: boolean, bracketedPaste: boolean): Promise<void> {
+  // A clipboard paste carries many representations of one image; the first
+  // file is the image itself, and the batch cap allows exactly one.
+  const list = Array.from(files);
+  const selected = clipboard ? list.slice(0, 1) : list;
+  const reason = filesRefusal(selected);
+  if (reason) {
+    useShellStore.getState().setAttachmentRefusal({ pane_id: paneId, reason });
+    return;
+  }
+  submitAttachments(paneId, await readInputs(selected), clipboard, bracketedPaste);
+}
+
+/** The caps a batch of files fails, read from their sizes alone. */
+export function filesRefusal(files: File[]): string | null {
+  if (files.length === 0 || files.length > MAX_FILES) return "too_many_files";
+  if (files.some((file) => file.size > MAX_FILE_BYTES)) return "too_large";
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  if (total > MAX_BATCH_BYTES) return "batch_too_large";
+  return null;
+}
+
 /** The cap a batch fails, or null when it is within every one of them. */
 export function preflightRefusal(files: AttachmentInput[]): string | null {
   if (files.length === 0) return "too_many_files";

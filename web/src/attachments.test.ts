@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   configureAttachments,
+  filesRefusal,
   frameChunk,
   preflightRefusal,
   receiveAttachmentRefusal,
@@ -64,6 +65,18 @@ describe("attachment upload", () => {
     expect(preflightRefusal([bytes(20 * 1024 * 1024 + 1)])).toBe("too_large");
     expect(preflightRefusal(Array.from({ length: 9 }, () => bytes(1)))).toBe("too_many_files");
     expect(preflightRefusal([bytes(20 * 1024 * 1024), bytes(20 * 1024 * 1024), bytes(1)])).toBe("batch_too_large");
+  });
+
+  it("refuses an over-cap drop from the file sizes before reading it", () => {
+    const sized = (size: number) => {
+      const value = new File([new Uint8Array(0)], "x", { type: "application/octet-stream" });
+      Object.defineProperty(value, "size", { value: size });
+      return value;
+    };
+    expect(filesRefusal([sized(1)])).toBeNull();
+    expect(filesRefusal([sized(20 * 1024 * 1024 + 1)])).toBe("too_large");
+    expect(filesRefusal(Array.from({ length: 9 }, () => sized(1)))).toBe("too_many_files");
+    expect(filesRefusal([sized(20 * 1024 * 1024), sized(20 * 1024 * 1024), sized(1)])).toBe("batch_too_large");
   });
 
   it("routes a refusal to the pane the request belonged to", () => {

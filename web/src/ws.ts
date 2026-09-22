@@ -116,7 +116,9 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       healthFails = 0;
     });
     ws.addEventListener("close", (event) => {
-      clearPending("socket_closed");
+      // Only the socket that died fails its own reads; a stale socket's close
+      // must not reject a read in flight on its successor.
+      if (socket === ws) clearPending("socket_closed");
       if (closed) return;
       if (event.code >= 4001 && event.code <= 4004) {
         useShellStore.getState().setConnection("gone", true);

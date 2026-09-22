@@ -283,6 +283,10 @@ export function createActions(dispatch: DispatchFn) {
       ui().closeOverlay();
       const here = current();
       if (!here) return diagnostic("file_open: no focused checkout");
+      revealAncestors(path);
+      // The core's selected_path may already be this file from an earlier
+      // open, so the row is highlighted from the pick itself (B3).
+      ui().setExplorerSelection(path);
       dispatch({
         schema_version: 2,
         kind: "file_open",
@@ -317,17 +321,6 @@ export function createActions(dispatch: DispatchFn) {
         schema_version: 2,
         kind: "file_open",
         payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview },
-      });
-    },
-
-    /** Expands the tree to a path and highlights it; a folder is not opened. */
-    revealPath(path: string, isDirectory: boolean) {
-      const here = current();
-      if (!here) return diagnostic("reveal_path: no focused checkout");
-      dispatch({
-        schema_version: 2,
-        kind: "reveal_path",
-        payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, is_directory: isDirectory },
       });
     },
 

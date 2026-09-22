@@ -401,6 +401,11 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
   const fixture = await openCheckout(page);
   const { repo, sent } = fixture;
   try {
+    // Collapse the folder first: the palette open must reveal the document's
+    // row again through the core's expanded set (B3).
+    await page.locator(`[data-explorer-row="${repo}/src"]`).click();
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
+
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
     // preview tab (B12).
     await page.keyboard.press("Meta+KeyP");
@@ -413,6 +418,7 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);
 
     // ⌘K: the snapshot's projects and checkouts are searched here, and picking

@@ -16,6 +16,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// Bytes one attachment may hold, the same cap the core enforces.
 pub const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
@@ -26,6 +27,14 @@ pub const MAX_FILES: usize = 8;
 /// Staged files kept on disk. A pasted token is the staged path, so the bound
 /// is generous; older files are removed only as newer ones arrive.
 const STAGED_KEEP: usize = 512;
+
+/// Bytes the staged files may hold together. Past it the oldest evictable
+/// file goes, and nothing committed within the grace window is evicted: the
+/// core may still be reading the file a just-pasted token names.
+const MAX_STAGED_BYTES: u64 = 256 * 1024 * 1024;
+
+/// How long a committed file is safe from eviction.
+const COMMIT_GRACE: Duration = Duration::from_secs(60);
 
 /// Stages one connection may have open at once; past it the oldest open stage
 /// is dropped, so an abandoned upload cannot hold file descriptors forever.
@@ -56,21 +65,58 @@ struct Upload {
     written: u64,
 }
 
+/// One staged file on disk, with what eviction needs to judge it.
+struct Staged {
+    request_id: String,
+    path: PathBuf,
+    bytes: u64,
+    /// When the core was told about it; until the grace window passes, the
+    /// core may still be reading it, so eviction leaves it alone.
+    committed_at: Option<Instant>,
+}
+
 #[derive(Default)]
 struct State {
     uploads: HashMap<String, Upload>,
     /// The open stages in arrival order, oldest first, so the cap can drop one.
     open: VecDeque<String>,
-    staged: VecDeque<PathBuf>,
+    staged: VecDeque<Staged>,
+    staged_bytes: u64,
 }
 
-/// Removes one upload and its file, everywhere the state names it.
-fn drop_upload(state: &mut State, request_id: &str) {
-    if let Some(upload) = state.uploads.remove(request_id) {
-        let _ = std::fs::remove_file(&upload.path);
-        state.staged.retain(|path| path != &upload.path);
+/// Removes one stage everywhere the state names it: the file, the staged
+/// entry (with its byte count), the open upload and its queue slot.
+fn drop_stage(state: &mut State, request_id: &str) {
+    let index = state
+        .staged
+        .iter()
+        .position(|entry| entry.request_id == request_id);
+    if let Some(entry) = index.and_then(|index| state.staged.remove(index)) {
+        state.staged_bytes = state.staged_bytes.saturating_sub(entry.bytes);
+        let _ = std::fs::remove_file(&entry.path);
     }
+    state.uploads.remove(request_id);
     state.open.retain(|id| id != request_id);
+}
+
+/// Makes room for one more staged file of `size` bytes: the oldest entry that
+/// is not a freshly committed file goes first, and a fully fresh set is
+/// refused rather than unlinked (the core may still be reading it).
+fn make_room(state: &mut State, size: u64) -> Result<(), &'static str> {
+    while state.staged.len() >= STAGED_KEEP
+        || state.staged_bytes.saturating_add(size) > MAX_STAGED_BYTES
+    {
+        let Some(evictable) = state.staged.iter().find_map(|entry| {
+            entry
+                .committed_at
+                .is_none_or(|at| at.elapsed() >= COMMIT_GRACE)
+                .then(|| entry.request_id.clone())
+        }) else {
+            return Err("staging_full");
+        };
+        drop_stage(state, &evictable);
+    }
+    Ok(())
 }
 
 pub struct Attachments {
@@ -123,7 +169,9 @@ impl Attachments {
         let Some(request_id) = safe_component(request_id) else {
             return Err("invalid_request_id");
         };
-        let name = safe_component(name).unwrap_or_else(|| "attachment.bin".to_owned());
+        let Some(name) = safe_component(name) else {
+            return Err("invalid_request_id");
+        };
         let root = if clipboard {
             &self.clipboard_root
         } else {
@@ -138,39 +186,36 @@ impl Attachments {
         if path.parent() != Some(root.as_path()) {
             return Err("invalid_request_id");
         }
-        let file = File::create(&path).map_err(|_| "stage_failed")?;
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Keep the newest few staged files; the core has already copied the
-        // older ones by the time a new batch arrives.
-        while state.staged.len() >= STAGED_KEEP {
-            if let Some(old) = state.staged.pop_front() {
-                let _ = std::fs::remove_file(old);
-            }
-        }
+        make_room(&mut state, size)?;
+        let file = File::create(&path).map_err(|_| "stage_failed")?;
         // An abandoned stage would otherwise hold its file descriptor for the
         // daemon's life; the oldest open one goes instead.
         while state.open.len() >= MAX_OPEN_UPLOADS {
-            let Some(oldest) = state.open.pop_front() else {
+            let Some(oldest) = state.open.front().cloned() else {
                 break;
             };
-            if let Some(upload) = state.uploads.remove(&oldest) {
-                let _ = std::fs::remove_file(&upload.path);
-                state.staged.retain(|path| path != &upload.path);
-            }
+            drop_stage(&mut state, &oldest);
         }
         state.open.push_back(request_id.clone());
+        state.staged.push_back(Staged {
+            request_id: request_id.clone(),
+            path: path.clone(),
+            bytes: size,
+            committed_at: None,
+        });
+        state.staged_bytes = state.staged_bytes.saturating_add(size);
         state.uploads.insert(
             request_id,
             Upload {
-                path: path.clone(),
+                path,
                 file: Some(file),
                 written: 0,
             },
         );
-        state.staged.push_back(path);
         Ok(())
     }
 
@@ -219,6 +264,13 @@ impl Attachments {
                 }
                 // Committed: the file stays for the core to read, the open
                 // stage entry does not.
+                if let Some(entry) = state
+                    .staged
+                    .iter_mut()
+                    .find(|entry| entry.request_id == *stage)
+                {
+                    entry.committed_at = Some(Instant::now());
+                }
                 state.uploads.remove(stage);
                 state.open.retain(|id| id != stage);
             }
@@ -247,8 +299,16 @@ impl Attachments {
             paths.push(upload.path.display().to_string());
         }
         // Committed: the files stay for the core to read, the open stage
-        // entries do not.
+        // entries do not, and the files are safe from eviction for a window.
+        let committed_at = Instant::now();
         for stage in stages {
+            if let Some(entry) = state
+                .staged
+                .iter_mut()
+                .find(|entry| entry.request_id == *stage)
+            {
+                entry.committed_at = Some(committed_at);
+            }
             state.uploads.remove(stage);
         }
         state.open.retain(|id| !stages.contains(id));
@@ -284,7 +344,7 @@ impl Attachments {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        drop_upload(&mut state, request_id);
+        drop_stage(&mut state, request_id);
     }
 }
 
@@ -372,6 +432,48 @@ mod tests {
         let paths = service.commit(&["r1".to_owned()], false).unwrap();
         assert!(std::path::Path::new(&paths[0]).is_file());
         assert_eq!(service.write("r1", &[1], true), Err("unknown_stage"));
+    }
+
+    #[test]
+    fn staged_bytes_are_bounded_and_a_fresh_commit_is_spared() {
+        let (_dir, service) = attachments();
+        // A committed file inside the grace window survives eviction pressure.
+        service.begin("keep", "keep.png", 1, false).unwrap();
+        service.write("keep", &[1], true).unwrap();
+        let kept = service.commit(&["keep".to_owned()], false).unwrap();
+        let big = 20 * 1024 * 1024;
+        for index in 0..14 {
+            service
+                .begin(&format!("big{index}"), "x", big, false)
+                .unwrap();
+        }
+        assert!(
+            std::path::Path::new(&kept[0]).is_file(),
+            "a fresh commit stays"
+        );
+        // Everything else past the byte budget was evicted.
+        assert_eq!(service.write("big0", &[1], true), Err("unknown_stage"));
+    }
+
+    #[test]
+    fn a_directory_full_of_fresh_commits_refuses_rather_than_unlinks() {
+        let (_dir, service) = attachments();
+        let big = 20 * 1024 * 1024;
+        let mut committed = Vec::new();
+        // Twelve files stay under the 256 MiB budget even though each commit
+        // is fresh, so the budget is what the next stage trips.
+        for index in 0..12 {
+            let id = format!("c{index}");
+            service.begin(&id, "x", big, false).unwrap();
+            service.write(&id, &[1], true).unwrap();
+            // One batch each: the batch cap is 40 MiB, the staged budget 256.
+            committed.extend(service.commit(&[id], false).unwrap());
+        }
+        assert_eq!(committed.len(), 12);
+        // Every staged file is a fresh commit, so the budget is over but
+        // nothing may be evicted; the next stage is refused instead.
+        assert_eq!(service.begin("late", "x", big, false), Err("staging_full"));
+        assert!(std::path::Path::new(&committed[0]).is_file());
     }
 
     #[test]

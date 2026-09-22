@@ -107,6 +107,9 @@ export const DIAGNOSTIC_CAP = 200;
 /** Expanded folders the store keeps a listing for; the PRD's watch cap is the same number. */
 export const LISTING_CAP = 64;
 
+/** Watch-frame counts the store keeps; far above the 64-folder watch set. */
+export const FOLDER_CHANGE_CAP = 512;
+
 function withListing(
   listings: Record<string, DirectoryList>,
   listing: DirectoryList,
@@ -206,7 +209,13 @@ export const useShellStore = create<Store>((set, get) => ({
       const path = payload.path;
       if (path) {
         get().invalidateListings([path]);
-        set({ folderChanges: { ...get().folderChanges, [path]: (get().folderChanges[path] ?? 0) + 1 } });
+        const next = { ...get().folderChanges, [path]: (get().folderChanges[path] ?? 0) + 1 };
+        // A bounded map: the Explorer only needs the counts it has not seen
+        // yet, and a long session must not grow one key per changed folder.
+        const paths = Object.keys(next);
+        const overflow = paths.length - FOLDER_CHANGE_CAP;
+        for (const stale of overflow > 0 ? paths.slice(0, overflow) : []) delete next[stale];
+        set({ folderChanges: next });
       }
       return [];
     }

@@ -1046,6 +1046,35 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
 }
 
 #[tokio::test]
+async fn a_client_cannot_send_the_shell_attachment_events() {
+    let (_dir, running) = start().await;
+    let mut socket = live_socket(&running).await;
+    // The browser stages bytes through attachment_*; a client that sends the
+    // shell's own event would name an arbitrary path for the core to read.
+    for kind in [
+        "terminal_attachment",
+        "terminal_attachment_ready",
+        "terminal_attachment_action",
+    ] {
+        let refused = send_event_expecting(
+            &mut socket,
+            kind,
+            json!({
+                "request_id": "01234567-0123-0123-0123-0123456789ab",
+                "pane_id": "p1",
+                "paths": ["/etc/hosts"],
+                "error": Value::Null,
+                "action": "cancel",
+            }),
+            |frame| frame["type"] == "error",
+        )
+        .await;
+        assert_eq!(refused["type"], "error", "{kind}");
+    }
+    running.stop();
+}
+
+#[tokio::test]
 async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
     let (_dir, running) = start().await;
     let mut socket = live_socket(&running).await;

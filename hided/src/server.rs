@@ -677,6 +677,13 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
         "path_rename" => explorer_rename(boundary, event, &kind),
         "path_move" => explorer_move(boundary, event, &kind),
         "path_trash" => explorer_trash(boundary, event, &kind),
+        // The shell's attachment events name files the operator's machine
+        // shows it; hided is their only producer for a web client (which
+        // stages bytes instead), so a client that sends one is naming an
+        // arbitrary path and never reaches the core.
+        "terminal_attachment" | "terminal_attachment_ready" | "terminal_attachment_action" => {
+            rejected(kind.as_str())
+        }
         _ => None,
     }
 }
@@ -689,6 +696,25 @@ fn payload_str(event: &Value, field: &str) -> String {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned()
+}
+
+/// The frame a client-sent shell-only event is answered with: the event is
+/// never forwarded, so a path it carries cannot reach the core.
+fn rejected(kind: &str) -> Option<Value> {
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "client.rejected",
+            "event": kind,
+            "reason": "daemon_only_event",
+        })
+    );
+    Some(json!({
+        "type": "error",
+        "payload": {},
+        "message": format!("{kind} is sent by the daemon, not by a client"),
+    }))
 }
 
 /// The frame a refused path is answered with, and the one log line it leaves.
