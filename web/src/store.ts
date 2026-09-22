@@ -1,7 +1,13 @@
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
 import { share } from "./share";
-import { type AgentRow, type PaneFind, type SnapshotRest } from "./snapshot";
+import {
+  type AgentRow,
+  type ChangesSnapshot,
+  type EditorSnapshot,
+  type PaneFind,
+  type SnapshotRest,
+} from "./snapshot";
 
 export type { AgentRow, SnapshotRest } from "./snapshot";
 
@@ -28,6 +34,8 @@ export type Frame = {
     revision?: number;
     terminal_sequence?: number;
     rest?: SnapshotRest;
+    editor?: EditorSnapshot | null;
+    changes?: ChangesSnapshot | null;
     find?: PaneFind;
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
@@ -40,6 +48,14 @@ type Store = {
   terminalSequence: number;
   /** The core's rest section, structurally shared across frames (`share.ts`). */
   rest: SnapshotRest | null;
+  /**
+   * The core's editor section, one of the three sections the core revisions on
+   * its own. A delta carries it only when it changed, so a null in a delta
+   * keeps what the store holds; a snapshot always carries every section.
+   */
+  editor: EditorSnapshot | null;
+  /** The core's changes section, read the same way and for the same reason. */
+  changes: ChangesSnapshot | null;
   agents: AgentRow[];
   /** The keyboard-focus pane the core reports (`terminal.pane_id`). */
   focusedPaneId: string | null;
@@ -96,6 +112,8 @@ export const useShellStore = create<Store>((set, get) => ({
   revision: 0,
   terminalSequence: 0,
   rest: null,
+  editor: null,
+  changes: null,
   agents: [],
   focusedPaneId: null,
   herdrState: null,
@@ -115,6 +133,18 @@ export const useShellStore = create<Store>((set, get) => ({
   },
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};
+    // The core revisions `editor` and `changes` on their own, beside `rest`:
+    // a snapshot carries every section, a delta only the ones that changed
+    // since the client's revision. Both land before the routing below, which
+    // answers a listing or a refusal with an early return.
+    if (frame.type === "snapshot") {
+      set({ editor: payload.editor ?? null, changes: payload.changes ?? null });
+    } else if (payload.editor !== undefined || payload.changes !== undefined) {
+      set({
+        editor: payload.editor ?? get().editor,
+        changes: payload.changes ?? get().changes,
+      });
+    }
     if (frame.type === "directory_list") {
       const listing: DirectoryList = {
         kind: payload.kind ?? "",

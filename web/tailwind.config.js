@@ -22,6 +22,13 @@ export default {
         "pr-merged": "var(--color-pr-merged)",
         "pr-closed": "var(--color-pr-closed)",
         "pr-draft": "var(--color-pr-draft)",
+        "file-neutral": "var(--color-file-neutral)",
+        "file-document": "var(--color-file-document)",
+        "file-blue": "var(--color-file-blue)",
+        "file-green": "var(--color-file-green)",
+        "file-orange": "var(--color-file-orange)",
+        "file-yellow": "var(--color-file-yellow)",
+        "file-purple": "var(--color-file-purple)",
       },
       spacing: {
         none: "var(--spacing-none)",
