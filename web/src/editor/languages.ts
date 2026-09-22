@@ -15,7 +15,11 @@ const PACKS: Record<string, Loader> = {
   json: async () => (await import("@codemirror/lang-json")).json(),
   jsonc: async () => (await import("@codemirror/lang-json")).json(),
   jsonl: async () => (await import("@codemirror/lang-json")).json(),
-  markdown: async () => (await import("@codemirror/lang-markdown")).markdown(),
+  markdown: async () => {
+    // GFM adds the task-list and strikethrough nodes the Live plan draws.
+    const [markdown, lezer] = await Promise.all([import("@codemirror/lang-markdown"), import("@lezer/markdown")]);
+    return markdown.markdown({ extensions: [lezer.GFM] });
+  },
   python: async () => (await import("@codemirror/lang-python")).python(),
   html: async () => (await import("@codemirror/lang-html")).html(),
   htm: async () => (await import("@codemirror/lang-html")).html(),

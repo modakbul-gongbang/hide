@@ -80,3 +80,28 @@ export function scaleTheme(scale: number) {
     ".cm-gutters": { fontSize: `calc(var(--text-editor-base) * ${scale})` },
   });
 }
+
+/**
+ * Markdown Live's drawn styles (PRD B6): the block and inline classes the plan
+ * emits. Heading sizes are the editor heading tokens, so Live reads at the same
+ * sizes as the Swift view; a hidden fence line collapses to no height.
+ */
+export const liveTheme = EditorView.theme({
+  ".cm-md-heading-1": { fontSize: "var(--text-editor-heading-1)", fontWeight: "600", lineHeight: "1.3" },
+  ".cm-md-heading-2": { fontSize: "var(--text-editor-heading-2)", fontWeight: "600", lineHeight: "1.3" },
+  ".cm-md-heading-3": { fontSize: "var(--text-editor-heading-3)", fontWeight: "600", lineHeight: "1.3" },
+  ".cm-md-heading-4": { fontSize: "var(--text-editor-heading-4)", fontWeight: "600", lineHeight: "1.4" },
+  ".cm-md-heading-5": { fontSize: "var(--text-editor-heading-5)", fontWeight: "600", lineHeight: "1.4" },
+  ".cm-md-heading-6": { fontSize: "var(--text-editor-heading-6)", fontWeight: "600", lineHeight: "1.4" },
+  ".cm-md-code": { fontFamily: "var(--font-mono)", backgroundColor: "var(--color-panel)" },
+  ".cm-md-hidden-line": { display: "none" },
+  ".cm-md-quote": {
+    borderLeft: "var(--size-editor-quote-rule) solid var(--color-divider)",
+    paddingLeft: "var(--spacing-sm)",
+    color: "var(--color-secondary)",
+  },
+  ".cm-md-link": { color: "var(--color-file-blue)", textDecoration: "underline" },
+  ".cm-md-code-inline": { fontFamily: "var(--font-mono)", backgroundColor: "var(--color-panel)" },
+  ".cm-md-bullet": { color: "var(--color-secondary)" },
+  ".cm-md-checkbox": { verticalAlign: "middle" },
+});

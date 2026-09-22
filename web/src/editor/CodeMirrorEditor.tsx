@@ -21,18 +21,21 @@ import {
 import { useEffect, useRef } from "react";
 import type { EditorDocumentSnapshot } from "../snapshot";
 import { languageLoader } from "./languages";
-import { baseTheme, scaleTheme } from "./theme";
+import { markdownLive } from "./markdownLivePlugin";
+import { baseTheme, liveTheme, scaleTheme } from "./theme";
 
 const languageConf = new Compartment();
 const readonlyConf = new Compartment();
 const wrapConf = new Compartment();
 const scaleConf = new Compartment();
+const liveConf = new Compartment();
 
 export function CodeMirrorEditor({
   tabId,
   document,
   scale,
   wrap,
+  live,
   findRequest,
   onDraft,
 }: {
@@ -40,6 +43,7 @@ export function CodeMirrorEditor({
   document: EditorDocumentSnapshot;
   scale: number;
   wrap: boolean;
+  live: boolean;
   findRequest: number;
   onDraft: (contents: string) => void;
 }) {
@@ -76,6 +80,7 @@ export function CodeMirrorEditor({
         readonlyConf.of(readonly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
         wrapConf.of(wrap ? EditorView.lineWrapping : []),
         scaleConf.of(scaleTheme(scale)),
+        liveConf.of(live ? [markdownLive(), liveTheme] : []),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged) return;
           if (!update.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete") || tr.isUserEvent("move"))) return;
@@ -140,6 +145,10 @@ export function CodeMirrorEditor({
   useEffect(() => {
     view.current?.dispatch({ effects: scaleConf.reconfigure(scaleTheme(scale)) });
   }, [scale]);
+
+  useEffect(() => {
+    view.current?.dispatch({ effects: liveConf.reconfigure(live ? [markdownLive(), liveTheme] : []) });
+  }, [live]);
 
   useEffect(() => {
     if (findRequest > 0 && view.current) openSearchPanel(view.current);

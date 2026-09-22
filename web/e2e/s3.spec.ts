@@ -71,6 +71,10 @@ async function openCheckout(page: Page): Promise<Fixture> {
     fs.mkdirSync(path.join(repoDir, "src"), { recursive: true });
     fs.writeFileSync(path.join(repoDir, "src", "main.ts"), SOURCE);
     fs.writeFileSync(path.join(repoDir, "README.md"), "# repo\n");
+    fs.writeFileSync(
+      path.join(repoDir, "notes.md"),
+      "# Title\n\n- one\n- two\n\n- [ ] open\n\nsee [text](https://example.com) now\n\n```rust\nfn main() {}\n```\n",
+    );
     fs.writeFileSync(path.join(repoDir, ".gitignore"), "node_modules\n");
     fs.writeFileSync(path.join(repoDir, "shot.png"), PNG);
     fs.writeFileSync(path.join(repoDir, "doc.pdf"), minimalPdf());
@@ -235,6 +239,48 @@ test("images, PDFs and videos render from hided file bytes", async ({ page }) =>
     });
     await expect.poll(async () => video.evaluate((node) => (node as HTMLVideoElement).currentTime)).toBeGreaterThan(0.4);
     await screenshot(page, "s3-viewer-video");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("Markdown opens in Live and toggles to source", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    await page.locator(`[data-explorer-row="${repo}/notes.md"]`).click();
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await expect(page.locator('[data-markdown-mode="live"]')).toBeVisible();
+    // The caret opens at the top; move it to the end so the first block is
+    // not the touched one and its markup is hidden (B6).
+    await content.click();
+    await page.keyboard.press("Meta+ArrowDown");
+
+    // Live draws the heading and hides its hashes, draws the list bullets and
+    // the task checkbox, styles the link text and the fenced code (B6).
+    await expect(page.locator(".cm-md-heading-1")).toHaveCount(1, { timeout: 20_000 });
+    await expect(page.locator(".cm-md-heading-1")).toHaveText("Title");
+    await expect(page.locator(".cm-md-bullet")).toHaveCount(3);
+    await expect(page.locator(".cm-md-checkbox")).toHaveCount(1);
+    await expect(page.locator(".cm-md-link")).toHaveText("text");
+    await expect(page.locator(".cm-md-code")).toHaveCount(1);
+    await expect(page.locator(".cm-md-hidden-line")).toHaveCount(2);
+    await screenshot(page, "s3-markdown-live");
+
+    // Live hides markup from the DOM, not from the document: Source mode
+    // shows the source again, unchanged.
+    await page.locator('[data-markdown-mode="live"]').click();
+    await expect.poll(() => sent.get("file_view")).toBe(1);
+    await expect(page.locator('[data-markdown-mode="source"]')).toBeVisible();
+    await expect(page.locator(".cm-md-heading-1")).toHaveCount(0);
+    await expect(page.locator(".cm-md-bullet")).toHaveCount(0);
+    await expect(content).toContainText("# Title");
+    await expect(content).toContainText("[text](https://example.com)");
+
+    // Back to Live is one more file_view.
+    await page.locator('[data-markdown-mode="source"]').click();
+    await expect.poll(() => sent.get("file_view")).toBe(2);
+    await expect(page.locator(".cm-md-heading-1")).toHaveCount(1);
   } finally {
     close(fixture);
   }

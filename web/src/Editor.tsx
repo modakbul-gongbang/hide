@@ -154,6 +154,7 @@ function EditorBody({
         document={document}
         scale={scale}
         wrap={tab.wrap}
+        live={document.document_kind === "markdown" && tab.markdown_live}
         findRequest={findRequest}
         onDraft={(contents) => {
           noteDraft(tab.id, contents);
