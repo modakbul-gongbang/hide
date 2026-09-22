@@ -118,8 +118,24 @@ export function terminalFor(paneId: string | null): Terminal | null {
   return paneId ? (instances.get(paneId)?.term ?? null) : null;
 }
 
+/**
+ * True while `focusTerminal` moves DOM focus to follow the snapshot, so the
+ * textarea's focus listener does not report the core's own move back to it
+ * as an operator action; that echo, met by Herdr's later confirmation of the
+ * previous move, kept two panes trading focus on a slow runner.
+ */
+let followingSnapshot = false;
+
+/** Moves keyboard focus to the pane the snapshot names; not an operator action. */
 export function focusTerminal(paneId: string) {
-  instances.get(paneId)?.term.focus();
+  const instance = instances.get(paneId);
+  if (!instance) return;
+  followingSnapshot = true;
+  try {
+    instance.term.focus();
+  } finally {
+    followingSnapshot = false;
+  }
 }
 
 /** Pane ids that currently hold an instance, shown or parked (measurement and e2e seam). */
@@ -411,7 +427,7 @@ export function attachTerminal(
     // owns the focus pane, so the click is an event and the header follows
     // the snapshot, not the click.
     shown.term.textarea?.addEventListener("focus", () => {
-      if (useShellStore.getState().focusedPaneId === paneId) return;
+      if (followingSnapshot || useShellStore.getState().focusedPaneId === paneId) return;
       shown.dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
     });
   }

@@ -273,6 +273,9 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await shellView.locator(".xterm-helper-textarea").focus();
     await expect(shellView).toHaveAttribute("data-focused", "true");
     await expect.poll(herdrFocused, { timeout: 10_000 }).toBe(shellPaneId);
+    // Two operator focus changes are two focus_pane events; the focus the
+    // shell moves to follow the snapshot is never reported back.
+    expect(sent.get("focus_pane")).toBe(focusBefore + 2);
     const shellGrid = (await page.evaluate((id) => window.__hideProbe?.paneGrid(id) ?? null, shellPaneId))!;
     const wrapped = "w".repeat(shellGrid.cols + 7);
     await page.keyboard.type(`clear; echo ${wrapped}; echo short; echo; echo end\n`);
