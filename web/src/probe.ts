@@ -20,6 +20,18 @@ export type Probe = {
   waitArmed: () => Promise<EchoSample>;
   /** WebSocket frames received since the page loaded. */
   arrivals: () => number;
+  /** Closes the live socket the way a server drop would; the shell reconnects on its own. */
+  dropSocket: () => void;
+  /** Pane ids whose terminal session the core reports as not released (the attach window). */
+  attachedPanes: () => string[];
+  /** Pane ids that hold an xterm instance right now, shown or parked (D-05). */
+  liveTerminals: () => string[];
+  /** The parsed buffer of any pane's instance, empty when it has none. */
+  paneText: (paneId: string) => string;
+  /** The grid an instance currently has, or null when the pane has none. */
+  paneGrid: (paneId: string) => { cols: number; rows: number } | null;
+  /** The text a copy of the pane's drag selection puts on the clipboard, null without one. */
+  paneSelection: (paneId: string) => string | null;
 };
 
 declare global {
@@ -68,9 +80,29 @@ export function noteWriteComplete(term: Terminal): void {
   armed = null;
 }
 
-export function installProbe(term: () => Terminal | null, paneId: () => string | null): void {
+export function installProbe(
+  term: () => Terminal | null,
+  paneId: () => string | null,
+  dropSocket: () => void = () => {},
+  attachedPanes: () => string[] = () => [],
+  liveTerminals: () => string[] = () => [],
+  terminalOf: (paneId: string) => Terminal | null = () => null,
+  selectionOf: (paneId: string) => string | null = () => null,
+): void {
   window.__hideProbe = {
     paneId,
+    dropSocket,
+    attachedPanes,
+    liveTerminals,
+    paneText: (id) => {
+      const current = terminalOf(id);
+      return current ? screenText(current) : "";
+    },
+    paneGrid: (id) => {
+      const current = terminalOf(id);
+      return current ? { cols: current.cols, rows: current.rows } : null;
+    },
+    paneSelection: selectionOf,
     screenText: () => {
       const current = term();
       return current ? screenText(current) : "";

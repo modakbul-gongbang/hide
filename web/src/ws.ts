@@ -26,7 +26,7 @@ async function healthOk(): Promise<boolean> {
   }
 }
 
-export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close: () => void } {
+export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close: () => void; drop: () => void } {
   let socket: WebSocket | null = null;
   let closed = false;
   let backoff = 500;
@@ -111,6 +111,8 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
   open();
   return {
     dispatch,
+    /** Closes the socket as a server drop would, so the reconnect path can be exercised (probe seam). */
+    drop: () => socket?.close(),
     close: () => {
       closed = true;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);

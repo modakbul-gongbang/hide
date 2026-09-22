@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
+use crate::boundary::{Boundary, Refusal};
 use crate::core::CoreHandle;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 
@@ -50,6 +51,7 @@ pub fn embedded_file(path: &str) -> Option<(&'static str, &'static [u8])> {
 #[derive(Clone)]
 pub struct AppState {
     pub core: Arc<CoreHandle>,
+    pub boundary: Arc<Boundary>,
     pub token: Arc<String>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -276,11 +278,15 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        if let Err(error) = handle_client_text(&state, &text) {
-                            let payload = json!({"type":"error","message": error});
-                            if socket.send(Message::Text(payload.to_string().into())).await.is_err() {
-                                break;
-                            }
+                        let reply = match handle_client_text(&state, &text) {
+                            Ok(Some(frame)) => Some(frame),
+                            Ok(None) => None,
+                            Err(error) => Some(json!({"type":"error","payload":{},"message": error})),
+                        };
+                        if let Some(frame) = reply
+                            && socket.send(Message::Text(frame.to_string().into())).await.is_err()
+                        {
+                            break;
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -300,16 +306,96 @@ fn token_matches(offered: &str, expected: &str) -> bool {
     offered.len() == expected.len() && offered.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
-fn handle_client_text(state: &AppState, text: &str) -> Result<(), String> {
+/// Forwards a client event to the core, or answers it here.
+///
+/// `Ok(Some(frame))` is a frame for this client alone: a directory listing or
+/// a path refusal. Everything the core answers arrives through the snapshot
+/// stream instead, so a forwarded event returns `Ok(None)`.
+fn handle_client_text(state: &AppState, text: &str) -> Result<Option<Value>, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
-    let event = if value.get("schema_version").is_some() && value.get("kind").is_some() {
+    let mut event = if value.get("schema_version").is_some() && value.get("kind").is_some() {
         value
     } else {
         return Err("expected a core event {schema_version, kind, payload}".to_owned());
     };
+    if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
+        return Ok(Some(reply));
+    }
     let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
-    state.core.dispatch(bytes)
+    state.core.dispatch(bytes).map(|()| None)
+}
+
+/// The one place the `$HOME` boundary is enforced (PRD S2 B10): a
+/// `remote_file_list` for the `local` target or a `create_workspace` whose
+/// path does not resolve under home is answered with a `path_refused` frame
+/// and never reaches the core. The local listing is the web shell's directory
+/// autocomplete, which the core has no event for, so hided answers it as a
+/// `directory_list` frame; a `remote_file_list` for any other target names a
+/// path on that remote machine, which this boundary knows nothing about, and
+/// is forwarded as it came. An accepted workspace path is rewritten to the
+/// canonical path that was checked. Every other event kind passes untouched.
+fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
+    let kind = event.get("kind").and_then(Value::as_str)?.to_owned();
+    let field = match kind.as_str() {
+        "remote_file_list" => {
+            let local = event
+                .pointer("/payload/target_id")
+                .and_then(Value::as_str)
+                .is_some_and(|target| target == "local");
+            if !local {
+                return None;
+            }
+            "root_path"
+        }
+        "create_workspace" => "path",
+        _ => return None,
+    };
+    let raw = event
+        .pointer(&format!("/payload/{field}"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let outcome = if kind == "remote_file_list" {
+        boundary
+            .list(&raw)
+            .map(|listing| json!({"type": "directory_list", "payload": listing}))
+    } else {
+        boundary.resolve_workspace(&raw).map(|real| {
+            event["payload"][field] = Value::String(real.display().to_string());
+            Value::Null
+        })
+    };
+    match outcome {
+        Ok(Value::Null) => None,
+        Ok(frame) => Some(frame),
+        Err(refusal) => {
+            log_path_refusal(&kind, &raw, refusal);
+            Some(json!({
+                "type": "path_refused",
+                "payload": {"kind": kind, "path": raw, "reason": refusal.code()},
+            }))
+        }
+    }
+}
+
+/// Characters of a refused path the log keeps; the path is client input, so
+/// the log line is capped rather than grown with it.
+const LOGGED_PATH_CAP: usize = 256;
+
+fn log_path_refusal(kind: &str, path: &str, refusal: Refusal) {
+    let logged: String = path.chars().take(LOGGED_PATH_CAP).collect();
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "path.refused",
+            "event": kind,
+            "reason": refusal.code(),
+            "path": logged,
+            "path_truncated": logged.len() < path.len(),
+        })
+    );
 }
 
 /// Which frame a delta read turned into, decided by the cursors alone.
@@ -346,11 +432,27 @@ async fn read_delta(state: &AppState, have_revision: u64, have_sequence: u64) ->
     let snapshot = state
         .core
         .snapshot(have_revision, have_sequence)
-        .map_err(|_| ())?;
+        .map_err(|error| log_snapshot_failure("core", &error))?;
     if snapshot.bytes.is_empty() {
+        log_snapshot_failure("empty", "the core returned no bytes");
         return Err(());
     }
-    serde_json::from_slice(&snapshot.bytes).map_err(|_| ())
+    serde_json::from_slice(&snapshot.bytes)
+        .map_err(|error| log_snapshot_failure("decode", &error.to_string()))
+}
+
+/// A frame the daemon could not produce ends the client's loop, so the
+/// client sees a bare close; this record is the only trace of why.
+fn log_snapshot_failure(stage: &str, message: &str) {
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "ws.snapshot_failed",
+            "stage": stage,
+            "message": message,
+        })
+    );
 }
 
 async fn send_snapshot(

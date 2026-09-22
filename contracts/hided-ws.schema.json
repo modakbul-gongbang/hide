@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hide.dev/contracts/hided-ws.schema.json",
   "title": "hided WebSocket contract",
-  "description": "Handshake, server frames, close reason codes, and client dispatch events for hided.",
+  "description": "Handshake, server frames, close reason codes, path refusal reason codes, and client dispatch events for hided.",
   "oneOf": [
     { "$ref": "#/$defs/handshake" },
     { "$ref": "#/$defs/serverFrame" },
@@ -21,11 +21,12 @@
       }
     },
     "serverFrame": {
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target and path_refused answers a `remote_file_list` or `create_workspace` whose path failed the $HOME boundary (see directoryList and pathRefused).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["snapshot", "delta", "error"] },
+        "type": { "type": "string", "enum": ["snapshot", "delta", "error", "directory_list", "path_refused"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
       }
@@ -46,6 +47,44 @@
     "closeCode": {
       "type": "integer",
       "enum": [4001, 4002, 4003, 4004]
+    },
+    "pathRefusalReason": {
+      "description": "outside_home: the real path is not under $HOME (a symlink target counts). home_root: $HOME itself cannot be a workspace. not_found: nothing exists there. not_a_directory: a file. invalid_path: empty, relative, contains `..` or NUL.",
+      "type": "string",
+      "enum": ["outside_home", "home_root", "not_found", "not_a_directory", "invalid_path"]
+    },
+    "directoryList": {
+      "description": "Payload of a directory_list frame: the visible subdirectories of root_path under $HOME. root_path is the real path that was listed (a request of `~` lists home and answers with its path). Files, hidden names, and symlinks that resolve outside home are absent; truncated is true past the listing cap.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_path", "entries", "truncated"],
+      "properties": {
+        "root_path": { "type": "string" },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "path"],
+            "properties": {
+              "name": { "type": "string" },
+              "path": { "type": "string" }
+            }
+          }
+        },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "pathRefused": {
+      "description": "Payload of a path_refused frame: the event kind that carried the path, the path as sent, and why hided did not forward it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "reason"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["remote_file_list", "create_workspace"] },
+        "path": { "type": "string" },
+        "reason": { "$ref": "#/$defs/pathRefusalReason" }
+      }
     },
     "health": {
       "type": "object",

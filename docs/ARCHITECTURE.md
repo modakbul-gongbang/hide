@@ -227,6 +227,7 @@ A mismatched token, Origin, or schema version, or a ninth concurrent client, is 
 After a valid handshake the daemon reads from the cursors the client sent, using the same `have_revision` / `have_terminal_sequence` as `herdr_core_snapshot`, and then one delta frame per core notification burst.
 A client with cursor 0 gets a self-contained `snapshot`; a reconnecting client resumes with a `delta` that carries only what changed while it was away.
 When the core cannot serve the cursor, because it dropped terminal chunks the client never saw or the client's revision is ahead of the core's after a daemon restart, the daemon re-reads from zero and sends a `snapshot` (`server::classify_frame` owns that rule).
+A frame the daemon cannot produce at all (the core owner thread gone, an empty read, bytes that do not decode) ends that client's loop, which the browser sees as a bare close and answers by reconnecting; the daemon logs it as `ws.snapshot_failed` with the stage, the only trace of why.
 The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
 The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
 Client frames are core events (`schema_version`, `kind`, `payload`).
@@ -240,3 +241,58 @@ Swift coexistence (PRD B5) is decided per socket, not per process: `hided/src/co
 An isolated socket never prompts, because the shell on the operator's socket next to a daemon on a private one is the ordinary e2e and measurement arrangement.
 The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.
 With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
+
+### Panes, tabs and the attach window in the web shell
+
+The center draws the visible tab's `pane_layouts` entry as nested CSS grids (`web/src/PaneGrid.tsx`): a split is a two-track grid sized by Herdr's ratio and every leaf is a pane with its own xterm instance (`web/src/terminals.ts`, keyed by pane id).
+An instance lives as long as the core streams its pane (PRD S2 D-05, amendment 1): leaving a tab parks its terminals in a hidden lot in the document, still fed by the chunks the core keeps sending for every attached pane, and coming back re-parents them into the pane hosts and fits them, so the last frame is on screen in the same tick and only a size change goes out (`terminal_viewport` with `new_view: false`, `terminal_resize`).
+A chunk for a pane that has never been shown is dropped; its first show requests a full frame with `new_view`, as does a parked pane's next show after a self-contained snapshot.
+`retainTerminals` disposes an instance only when the core reports the pane `released` or stops listing it; the attach rule itself is unchanged: the core attaches the visible tab's panes on its own tick, keeps the last five shown tabs attached, and reports `released` for the rest, which the pane header draws as a caption whose click sends `reconnect_pane`.
+The store keeps the `rest` section structurally shared across frames (`web/src/share.ts`): the core resends the whole section whenever any part changes, so an untouched workspace, tab or pane row keeps its object reference and its memoized row does not re-render.
+A divider drag moves a guide line and sends one `resize_pane` on release, computed as the Swift `PaneResizeDragPolicy` does (the first subtree's last pane, the travel over the split's span); a change outside the core's `0.001..=0.5` sends nothing.
+A zoomed tab draws only the zoomed pane, over the whole canvas, so its fit and `terminal_resize` follow the full geometry Herdr gave the PTY; the other panes' terminals stay parked and fed.
+The wheel is Herdr's (PRD S2 B19): the instance has no local scrollback, a wheel event over a pane becomes whole rows by the Swift `PaneScrollPolicy` (`web/src/wheel.ts`: trackpad pixels accumulate with their remainder, a wheel notch moves at least one row), the rows of one animation frame go out as one `terminal_scroll` with the cell under the pointer and the crossterm modifier bitset, and the core answers with the viewport frame; ⌥ + wheel is left to the browser.
+The wheel has one owner: the capture listener stops the event before xterm sees it, because xterm turns a wheel over a buffer without scrollback (ours, and any alternate-screen program) into cursor-key bytes on the PTY and answers a mouse-tracking program with its own wheel report, both of which Herdr already decides from `terminal_scroll`.
+Keyboard focus has one reporter: a pane's textarea gaining focus under the pointer is the operator moving focus and goes out as `focus_pane`, while the focus the shell itself moves to follow the snapshot's focused pane (`focusTerminal`) is never reported back, because that echo, arriving at the core while Herdr's confirmation of the previous move was still in flight, kept two panes trading focus on a slow runner.
+A pointer gesture follows the Swift `TerminalPointerRoutingState` (PRD S2 B20): a drag selects locally in xterm, and a single primary click that never left its cell is replayed on release as one `terminal_click` with the pressed cell and the crossterm modifiers, after the `focus_pane` the press already sent; ⌥ + press and a multi-click stay local and send nothing.
+The cell is read against xterm's own screen element, which is exactly `cols` by `rows` cells; the pane host around it is larger by the fit's remainder, and a cell derived from the host drifts by up to one row and one column toward the far edge, which is where a full-screen program's one-row hint sits (the first real-session clicks on Claude Code's "Jump to bottom" missed for that reason).
+The core decides what the program hears (`events.rs`: the detected Claude agent gets an SGR press and release, anything else nothing), and xterm's own mouse reports never fire because Herdr's frames carry no mouse mode: a `terminal.frame` is a `CSI row;1H` redraw of every row with only synchronized-output and cursor-visibility modes, so xterm's mouse tracking is never switched on.
+The same frames pad every row to the full width with written spaces and never soft-wrap, so a copy of the selection is assembled in `web/src/selection.ts` rather than by xterm: trailing whitespace is trimmed from every row, a row whose last cell is non-blank continues onto the next row with no break, and a real line end stays `\n`, and the leading whitespace every non-blank line shares is removed as the program's margin while the indentation between lines is kept (a single line loses its leading spaces entirely, and a drag that starts past column 0 leaves its cut first line out of the margin); a hard line that exactly fills the width is joined too, which a continuation flag in the frame record would close.
+An Escape the shell answers (a cycle, a close confirmation, the sheet, the find bar) is stopped at the window capture listener, because the pane's textarea keeps keyboard focus under the sheet and xterm would send the same press to the program as an ESC byte.
+Closing mirrors the Swift flow in `web/src/close.ts`: an unknown activity status asks for `refresh_status` first, a working pane asks once, an idle pane closes with `confirmed: false`.
+
+### The `$HOME` filesystem boundary
+
+`hided/src/boundary.rs` is the one place the boundary is enforced, in the dispatch path before an event reaches the core (`server::apply_boundary`).
+A `create_workspace`, or a `remote_file_list` for the `local` target, whose path does not resolve under `$HOME` (a `..` segment, a symlink whose target leaves home, a file, a missing directory, a relative path) is answered to that client as a `path_refused` frame with a reason code (`outside_home`, `home_root`, `not_found`, `not_a_directory`, `invalid_path`), logged as `path.refused` with the path capped at `LOGGED_PATH_CAP`, and never forwarded.
+The filesystem is only ever asked about paths under home: a path written outside home gets `outside_home` before anything is read, and a path under home is resolved one component at a time from home, where a symlink's target is tested as written the same way before it is followed (`SYMLINK_HOPS` bounds the chain).
+So the reason a client reads never says whether a path outside home exists, not even through a symlink it planted under home: an escaping symlink answers `outside_home` whether its target exists, is a file, or is missing, and `not_found`, `not_a_directory` and `invalid_path` only ever describe a path under home.
+An accepted workspace path is forwarded as the canonical path that was checked.
+A `remote_file_list` for any other target names a path on that remote machine, which the boundary knows nothing about, and is forwarded untouched; the core's own checks on it are unchanged.
+A `remote_file_list` for the `local` target is answered by hided itself as a `directory_list` frame, because the core's event lists a registered remote target's checkout and has no local listing; the listing carries subdirectories only, hides dotted names and symlinks that leave home, and is capped at `LIST_CAP` with `truncated` set.
+A request of `~` lists the home directory and answers with its real path, which is how the web shell learns `$HOME` for the checks it can make before sending anything (outside home by prefix, already registered, not in the listing it holds).
+The boundary root is read from `HOME` at boot and is not configurable; an allowed-roots setting is an S5 candidate.
+Both frames and the reason codes are in `contracts/hided-ws.schema.json`.
+
+### The shortcut registry
+
+`web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
+The `⌘/` sheet is generated from the table.
+The Electron column is empty until that host exists (TODO: fill it from `ShellMenuCommand.swift` and `PaneShortcutSettings.swift` when the Electron host lands).
+
+| Command | Swift | Browser | Electron |
+| --- | --- | --- | --- |
+| New tab | ⌘T | ⌥T (moved: Chrome reserves ⌘T) | TODO |
+| Close tab | ⌘W | ⌥W (moved) | TODO |
+| Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | TODO |
+| New workspace | ⌘⇧N | ⌥⇧N (moved) | TODO |
+| Next / previous recent tab | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | TODO |
+| Next / previous recent project | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | TODO |
+| Search, Open file, Project home, Toggle right panel | ⌘K, ⌘P, ⌘⇧H, ⌘⇧B | same chords, intercepted; answered "준비 중" until S3 | TODO |
+| Toggle left sidebar, Toggle sidebar view, Find in pane, Keep open | ⌘B, ⌘E, ⌘F, ⌘⇧K | same chords | TODO |
+| Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | TODO |
+| Zoom pane | ⌘⌥↩ | ⌘⌥↩ | TODO |
+| Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | TODO |
+| Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords | TODO |
+| Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | TODO |
+| Keyboard shortcuts | - | ⌘/ | TODO |

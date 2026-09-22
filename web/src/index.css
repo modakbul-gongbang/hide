@@ -4,6 +4,11 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Font stacks are not numeric tokens; the terminal reads this one at mount. */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+
 html,
 body,
 #root {

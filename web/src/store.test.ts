@@ -11,6 +11,9 @@ describe("snapshot merge", () => {
       agents: [],
       focusedPaneId: null,
       herdrState: null,
+      find: null,
+      directoryList: null,
+      pathRefusal: null,
       diagnostics: [],
       diagnosticsDropped: 0,
       viewGeneration: 0,
@@ -109,5 +112,73 @@ describe("snapshot merge", () => {
     });
     expect(chunks).toHaveLength(1);
     expect(useShellStore.getState().agents).toEqual([]);
+  });
+
+  it("keeps untouched workspace rows by reference across a delta", () => {
+    const workspace = {
+      id: "w1",
+      label: "hide",
+      path: "/h/hide",
+      device_id: "local",
+      registered: true,
+      temporary: false,
+      pinned: false,
+      checkouts: [],
+      inactive_checkouts: { expanded: false, checkout_ids: [] },
+    };
+    const store = useShellStore.getState();
+    store.applyFrame({
+      type: "snapshot",
+      payload: { revision: 1, rest: { navigator: { workspaces: [workspace], agents: [] } } },
+    });
+    const before = useShellStore.getState().rest?.navigator?.workspaces?.[0];
+    store.applyFrame({
+      type: "delta",
+      payload: {
+        revision: 2,
+        rest: {
+          navigator: {
+            workspaces: [{ ...workspace }],
+            agents: [
+              {
+                id: "a",
+                pane_id: "p1",
+                identity_label: "codex",
+                agent_kind: "codex",
+                symbol: "?",
+                group: "working",
+                status_label: "Working",
+                elapsed: "2m",
+                emphasized: false,
+                unread: false,
+              },
+            ],
+          },
+        },
+      },
+    });
+    const after = useShellStore.getState().rest?.navigator?.workspaces?.[0];
+    expect(after).toBe(before);
+    expect(useShellStore.getState().agents).toHaveLength(1);
+  });
+
+  it("stores hided's directory listing and path refusal frames", () => {
+    const store = useShellStore.getState();
+    expect(
+      store.applyFrame({
+        type: "directory_list",
+        payload: { root_path: "/h", entries: [{ name: "a", path: "/h/a" }], truncated: false },
+      }),
+    ).toEqual([]);
+    expect(useShellStore.getState().directoryList?.entries[0]?.path).toBe("/h/a");
+    store.applyFrame({
+      type: "path_refused",
+      payload: { kind: "create_workspace", path: "/etc", reason: "outside_home" },
+    });
+    expect(useShellStore.getState().pathRefusal?.reason).toBe("outside_home");
+    store.clearPathRefusal();
+    expect(useShellStore.getState().pathRefusal).toBeNull();
+    store.applyFrame({ type: "error", message: "client json: boom" });
+    expect(useShellStore.getState().diagnostics.at(-1)).toContain("boom");
   });
 });

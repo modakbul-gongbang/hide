@@ -1,3 +1,4 @@
+pub mod boundary;
 pub mod cli;
 pub mod coexist;
 pub mod core;
@@ -117,10 +118,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .map(|path| path.display().to_string()),
         app_state_path: env.state_dir.join("core-state.json").display().to_string(),
     };
+    let boundary = boundary::Boundary::new(&env.home)?;
     let core = CoreHandle::spawn(options)?;
     let shutdown = Arc::new(Notify::new());
     let app = AppState {
         core: Arc::new(core),
+        boundary: Arc::new(boundary),
         token: Arc::new(token.clone()),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
