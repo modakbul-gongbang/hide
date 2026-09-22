@@ -154,6 +154,15 @@ export async function startHerdr(): Promise<HerdrFixture> {
     for (const file of [socket, socket.replace(/\.sock$/, "-client.sock")]) {
       fs.rmSync(file, { force: true });
     }
+    // Run evidence for a reviewer, next to the screenshots: the server's log
+    // and what each agent pane's PTY received.
+    const keep = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (keep) {
+      for (const name of ["herdr-server.log", "input-one.log", "input-two.log"]) {
+        const file = path.join(root, name);
+        if (fs.existsSync(file)) fs.copyFileSync(file, path.join(keep, `${path.basename(root)}-${name}`));
+      }
+    }
     fs.rmSync(root, { recursive: true, force: true });
   };
   try {
