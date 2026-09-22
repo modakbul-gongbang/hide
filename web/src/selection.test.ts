@@ -55,6 +55,11 @@ describe("selectionToText", () => {
     expect(selectionToText(rows, 1, 20)).toBe("fn main() {\n    body();\n}");
   });
 
+  it("treats a cut first row that continues onto the next as one cut line", () => {
+    const rows = [row("  abcdefghij", 12), row("kl", 12), row("  end", 12)];
+    expect(selectionToText(rows, 4, 12)).toBe("cdefghijkl\nend");
+  });
+
   it("strips a lone cut line's leading spaces entirely", () => {
     expect(selectionToText([row("    indented", 16)], 2, 16)).toBe("indented");
   });
