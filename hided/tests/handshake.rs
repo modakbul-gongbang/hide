@@ -412,6 +412,11 @@ async fn local_listing_and_refusals_are_answered_by_hided() {
         vec!["alpha"],
         "no file, no hidden dir, no escaping symlink"
     );
+    assert_eq!(listing["payload"]["kind"], "remote_file_list");
+    assert_eq!(
+        listing["payload"]["entries"][0]["is_directory"], true,
+        "the registration listing carries directories only"
+    );
 
     let cases = [
         (
@@ -710,5 +715,106 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
         .map(|entry| entry["name"].as_str().unwrap())
         .collect();
     assert_eq!(names, vec!["plans"], "no file, only the directory");
+    running.stop();
+}
+
+#[tokio::test]
+async fn the_explorer_listing_shows_a_checkout_folder_in_the_swift_order() {
+    let (dir, env) = test_env(true);
+    let home = dir.path().canonicalize().unwrap();
+    let checkout = home.join("projects/alpha");
+    std::fs::create_dir_all(checkout.join("src")).unwrap();
+    std::fs::create_dir_all(checkout.join(".github")).unwrap();
+    std::fs::create_dir_all(checkout.join(".git/objects")).unwrap();
+    std::fs::write(checkout.join("README.md"), "# alpha\n").unwrap();
+    std::fs::write(checkout.join("file2.txt"), "x").unwrap();
+    std::fs::write(checkout.join("file10.txt"), "x").unwrap();
+    std::fs::write(checkout.join(".env"), "x").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), checkout.join("escape")).unwrap();
+    std::os::unix::fs::symlink(checkout.join("src"), checkout.join("alias")).unwrap();
+    // A folder under home that no registration covers: the registration line
+    // reads it, the Explorer line must not.
+    let notes = home.join("projects/notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+    let mut socket = live_socket(&running).await;
+    let checkout_path = checkout.display().to_string();
+    let notes_path = notes.display().to_string();
+
+    let listing = send_event_expecting(
+        &mut socket,
+        "file_list",
+        json!({"root": checkout_path, "path": checkout_path}),
+        |frame| frame["type"] == "directory_list",
+    )
+    .await;
+    assert_eq!(listing["type"], "directory_list");
+    assert_eq!(listing["payload"]["kind"], "file_list");
+    assert_eq!(listing["payload"]["root_path"], json!(checkout_path));
+    assert_eq!(listing["payload"]["truncated"], false);
+    let rows: Vec<(&str, bool)> = listing["payload"]["entries"]
+        .as_array()
+        .expect("a listing carries entries")
+        .iter()
+        .map(|entry| {
+            (
+                entry["name"].as_str().unwrap(),
+                entry["is_directory"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            (".github", true),
+            ("alias", true),
+            ("src", true),
+            (".env", false),
+            ("file2.txt", false),
+            ("file10.txt", false),
+            ("README.md", false),
+        ],
+        "directories first and then the natural order; .git and the symlink that \
+         leaves the root are not rows"
+    );
+
+    // A folder inside the root is the Explorer's at any depth.
+    let nested = send_event_expecting(
+        &mut socket,
+        "file_list",
+        json!({"root": checkout_path, "path": checkout.join("src").display().to_string()}),
+        |frame| frame["type"] == "directory_list",
+    )
+    .await;
+    assert_eq!(
+        nested["payload"]["root_path"],
+        json!(checkout.join("src").display().to_string())
+    );
+    assert!(nested["payload"]["entries"].as_array().unwrap().is_empty());
+
+    // The root the listing names has to be a registered one, and the folder has
+    // to be under it: a folder under home that no checkout covers, and a
+    // symlink out of the checkout, are both refused as outside_checkout.
+    for (root, path) in [
+        (checkout_path.clone(), notes_path.clone()),
+        (notes_path.clone(), notes_path.clone()),
+        (
+            checkout_path.clone(),
+            checkout.join("escape").display().to_string(),
+        ),
+    ] {
+        let refused = send_event_expecting(
+            &mut socket,
+            "file_list",
+            json!({"root": root, "path": path}),
+            never,
+        )
+        .await;
+        assert_eq!(refused["type"], "path_refused", "{root} {path}");
+        assert_eq!(refused["payload"]["kind"], "file_list");
+        assert_eq!(refused["payload"]["reason"], "outside_checkout");
+    }
     running.stop();
 }

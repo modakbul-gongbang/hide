@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { DIAGNOSTIC_CAP, useShellStore } from "./store";
+import { DIAGNOSTIC_CAP, LISTING_CAP, useShellStore } from "./store";
 
 describe("snapshot merge", () => {
   beforeEach(() => {
@@ -13,6 +13,7 @@ describe("snapshot merge", () => {
       herdrState: null,
       find: null,
       directoryList: null,
+      listings: {},
       pathRefusal: null,
       diagnostics: [],
       diagnosticsDropped: 0,
@@ -167,7 +168,12 @@ describe("snapshot merge", () => {
     expect(
       store.applyFrame({
         type: "directory_list",
-        payload: { root_path: "/h", entries: [{ name: "a", path: "/h/a" }], truncated: false },
+        payload: {
+          kind: "remote_file_list",
+          root_path: "/h",
+          entries: [{ name: "a", path: "/h/a", is_directory: true }],
+          truncated: false,
+        },
       }),
     ).toEqual([]);
     expect(useShellStore.getState().directoryList?.entries[0]?.path).toBe("/h/a");
@@ -180,5 +186,57 @@ describe("snapshot merge", () => {
     expect(useShellStore.getState().pathRefusal).toBeNull();
     store.applyFrame({ type: "error", message: "client json: boom" });
     expect(useShellStore.getState().diagnostics.at(-1)).toContain("boom");
+  });
+
+  it("keeps the Explorer's listing apart from the registration input", () => {
+    const store = useShellStore.getState();
+    store.applyFrame({
+      type: "directory_list",
+      payload: {
+        kind: "file_list",
+        root_path: "/repo/src",
+        entries: [{ name: "main.rs", path: "/repo/src/main.rs", is_directory: false }],
+        truncated: false,
+      },
+    });
+    expect(useShellStore.getState().listings["/repo/src"]?.entries[0]?.name).toBe("main.rs");
+    expect(useShellStore.getState().directoryList).toBeNull();
+    store.applyFrame({
+      type: "directory_list",
+      payload: {
+        kind: "remote_file_list",
+        root_path: "/h",
+        entries: [{ name: "a", path: "/h/a", is_directory: true }],
+        truncated: false,
+      },
+    });
+    expect(useShellStore.getState().directoryList?.root_path).toBe("/h");
+    expect(Object.keys(useShellStore.getState().listings)).toEqual(["/repo/src"]);
+  });
+
+  it("keeps the newest LISTING_CAP folders and drops the oldest", () => {
+    const store = useShellStore.getState();
+    for (let i = 0; i < LISTING_CAP + 2; i += 1) {
+      store.applyFrame({
+        type: "directory_list",
+        payload: { kind: "file_list", root_path: `/repo/f${i}`, entries: [], truncated: false },
+      });
+    }
+    const paths = Object.keys(useShellStore.getState().listings);
+    expect(paths).toHaveLength(LISTING_CAP);
+    expect(paths[0]).toBe("/repo/f2");
+    expect(paths.at(-1)).toBe(`/repo/f${LISTING_CAP + 1}`);
+  });
+
+  it("records a listing whose kind it does not know instead of guessing a flow", () => {
+    const store = useShellStore.getState();
+    store.applyFrame({
+      type: "directory_list",
+      payload: { root_path: "/h", entries: [], truncated: false },
+    });
+    const state = useShellStore.getState();
+    expect(state.directoryList).toBeNull();
+    expect(state.listings).toEqual({});
+    expect(state.diagnostics.at(-1)).toContain("directory_list without a known kind=none");
   });
 });

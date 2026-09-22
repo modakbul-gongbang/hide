@@ -11,8 +11,14 @@ export type TerminalChunk = {
   bytes_base64: string;
 };
 
-export type DirectoryEntry = { name: string; path: string };
-export type DirectoryList = { root_path: string; entries: DirectoryEntry[]; truncated: boolean };
+export type DirectoryEntry = { name: string; path: string; is_directory: boolean };
+export type DirectoryList = {
+  /** The event that asked: `remote_file_list` for the registration input, `file_list` for the Explorer. */
+  kind: string;
+  root_path: string;
+  entries: DirectoryEntry[];
+  truncated: boolean;
+};
 export type PathRefusal = { kind: string; path: string; reason: string };
 
 export type Frame = {
@@ -39,8 +45,10 @@ type Store = {
   focusedPaneId: string | null;
   herdrState: string | null;
   find: PaneFind | null;
-  /** The last directory listing hided answered; the registration input reads it. */
+  /** The last registration listing hided answered; the registration input reads it. */
   directoryList: DirectoryList | null;
+  /** The Explorer's listings, one per expanded folder, oldest evicted past `LISTING_CAP`. */
+  listings: Record<string, DirectoryList>;
   /** The last path hided refused; cleared when the input changes. */
   pathRefusal: PathRefusal | null;
   /** The newest `DIAGNOSTIC_CAP` entries; older ones are counted in `diagnosticsDropped`. */
@@ -57,6 +65,20 @@ type Store = {
 
 const KNOWN_GROUPS = new Set(["needs_you", "done", "working", "seen"]);
 export const DIAGNOSTIC_CAP = 200;
+
+/** Expanded folders the store keeps a listing for; the PRD's watch cap is the same number. */
+export const LISTING_CAP = 64;
+
+function withListing(
+  listings: Record<string, DirectoryList>,
+  listing: DirectoryList,
+): Record<string, DirectoryList> {
+  const next: Record<string, DirectoryList> = { ...listings, [listing.root_path]: listing };
+  const paths = Object.keys(next);
+  const overflow = Math.max(0, paths.length - LISTING_CAP);
+  for (const path of paths.slice(0, overflow)) delete next[path];
+  return next;
+}
 
 function withDiagnostics(
   diagnostics: string[],
@@ -79,6 +101,7 @@ export const useShellStore = create<Store>((set, get) => ({
   herdrState: null,
   find: null,
   directoryList: null,
+  listings: {},
   pathRefusal: null,
   diagnostics: [],
   diagnosticsDropped: 0,
@@ -93,13 +116,19 @@ export const useShellStore = create<Store>((set, get) => ({
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};
     if (frame.type === "directory_list") {
-      set({
-        directoryList: {
-          root_path: payload.root_path ?? "",
-          entries: payload.entries ?? [],
-          truncated: payload.truncated ?? false,
-        },
-      });
+      const listing: DirectoryList = {
+        kind: payload.kind ?? "",
+        root_path: payload.root_path ?? "",
+        entries: payload.entries ?? [],
+        truncated: payload.truncated ?? false,
+      };
+      if (listing.kind === "file_list") {
+        set({ listings: withListing(get().listings, listing) });
+      } else if (listing.kind === "remote_file_list") {
+        set({ directoryList: listing });
+      } else {
+        get().noteDiagnostic(`directory_list without a known kind=${listing.kind || "none"}`);
+      }
       return [];
     }
     if (frame.type === "path_refused") {

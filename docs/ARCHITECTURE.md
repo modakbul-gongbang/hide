@@ -270,6 +270,9 @@ So the reason a client reads never says whether a path outside home exists, not 
 An accepted workspace path is forwarded as the canonical path that was checked.
 A `remote_file_list` for any other target names a path on that remote machine, which the boundary knows nothing about, and is forwarded untouched; the core's own checks on it are unchanged.
 A `remote_file_list` for the `local` target is answered by hided itself as a `directory_list` frame, because the core's event lists a registered remote target's checkout and has no local listing; the listing carries subdirectories only, hides dotted names and symlinks that leave home, and is capped at `LIST_CAP` with `truncated` set.
+A `file_list` is the Explorer's line for one folder inside a checkout the user already registered: the path has to resolve under that root (a folder that leaves it, or a root that is not registered, is answered `outside_checkout`) and the listing carries files as well as directories, keeps dotted names, and drops `.git` alone.
+Those rows follow the Swift order - directories first, then a case-insensitive name comparison in which a run of digits compares by value - and are capped at `LIST_CAP` with `truncated` set.
+The two lines stay separate because their policies differ, and the `directory_list` frame names the event that asked in `kind`, so a client routes one answer to the registration flow and the other to the folder it is showing.
 A request of `~` lists the home directory and answers with its real path, which is how the web shell learns `$HOME` for the checks it can make before sending anything (outside home by prefix, already registered, not in the listing it holds).
 The boundary root is read from `HOME` at boot and is not configurable; an allowed-roots setting is an S5 candidate.
 Both frames and the reason codes are in `contracts/hided-ws.schema.json`.

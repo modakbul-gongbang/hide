@@ -21,7 +21,7 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` and `path_trash` (see directoryList and pathRefused).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` and `path_trash` (see directoryList and pathRefused).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
@@ -54,21 +54,23 @@
       "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "invalid_path"]
     },
     "directoryList": {
-      "description": "Payload of a directory_list frame: the visible subdirectories of root_path under $HOME. root_path is the real path that was listed (a request of `~` lists home and answers with its path). Files, hidden names, and symlinks that resolve outside home are absent; truncated is true past the listing cap.",
+      "description": "Payload of a directory_list frame. kind names the event that asked: a `remote_file_list` for the `local` target lists the visible subdirectories of root_path under $HOME, and a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed (a request of `~` lists home and answers with its path). is_directory is what the Explorer draws and opens by; a `remote_file_list` answer carries directories only, so every entry in it is one. truncated is true past the listing cap.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["root_path", "entries", "truncated"],
+      "required": ["kind", "root_path", "entries", "truncated"],
       "properties": {
+        "kind": { "type": "string", "enum": ["remote_file_list", "file_list"] },
         "root_path": { "type": "string" },
         "entries": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "path"],
+            "required": ["name", "path", "is_directory"],
             "properties": {
               "name": { "type": "string" },
-              "path": { "type": "string" }
+              "path": { "type": "string" },
+              "is_directory": { "type": "boolean" }
             }
           }
         },
@@ -86,6 +88,7 @@
           "enum": [
             "remote_file_list",
             "create_workspace",
+            "file_list",
             "file_open",
             "reveal_path",
             "file_save",

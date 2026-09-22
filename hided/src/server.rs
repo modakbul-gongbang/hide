@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
-use crate::boundary::{self, Boundary, Refusal};
+use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 
@@ -345,6 +345,11 @@ fn handle_client_text(state: &AppState, text: &str) -> Result<Option<Value>, Str
 /// exception and is checked without being rewritten, because the core compares
 /// the path it stored with the one it is handed.
 ///
+/// `file_list` is the Explorer's listing: it names the root and the folder under
+/// it, and the children are answered here as a `directory_list` frame, because
+/// the core has no event for reading a directory and the Explorer shows files
+/// the core's own listing never carries.
+///
 /// An attachment event carries paths the shell staged itself, so only their
 /// shape is checked; a path that fails is dropped from the batch rather than
 /// losing the whole event. Every other kind passes untouched.
@@ -353,6 +358,7 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
     match kind.as_str() {
         "remote_file_list" => registration_listing(boundary, event, &kind),
         "create_workspace" => rewrite(event, &kind, "path", |raw| boundary.resolve_workspace(raw)),
+        "file_list" => explorer_listing(boundary, event, &kind),
         "file_open" | "reveal_path" => explorer_open(boundary, event, &kind),
         "file_save" => explorer_save(boundary, event, &kind),
         "file_create" | "dir_create" => explorer_create(boundary, event, &kind),
@@ -412,9 +418,34 @@ fn registration_listing(boundary: &Boundary, event: &mut Value, kind: &str) -> O
     }
     let raw = payload_str(event, "root_path");
     match boundary.list(&raw) {
-        Ok(listing) => Some(json!({"type": "directory_list", "payload": listing})),
+        Ok(listing) => Some(listing_frame(kind, listing)),
         Err(refusal) => Some(refused(kind, &raw, refusal)),
     }
+}
+
+/// A `file_list` names the checkout root and the folder under it, and is
+/// answered here: the Explorer reads folders lazily, so the frame carries one
+/// folder's children and the client asks again as the operator expands.
+fn explorer_listing(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    let root = payload_str(event, "root");
+    let Some(known) = boundary.known_root(&root) else {
+        return Some(refused(kind, &root, Refusal::OutsideCheckout));
+    };
+    let raw = payload_str(event, "path");
+    match boundary.list_children(&known, &raw) {
+        Ok(listing) => Some(listing_frame(kind, listing)),
+        Err(refusal) => Some(refused(kind, &raw, refusal)),
+    }
+}
+
+/// The frame a listing is answered with. `kind` is the event that asked, so a
+/// client routes the answer to the flow that requested it: the registration
+/// autocomplete reads the last `remote_file_list` answer and the Explorer keeps
+/// one listing per folder it has expanded.
+fn listing_frame(kind: &str, listing: Listing) -> Value {
+    let mut frame = json!({"type": "directory_list", "payload": listing});
+    frame["payload"]["kind"] = Value::String(kind.to_owned());
+    frame
 }
 
 /// An open or a reveal names the checkout the path belongs to, so the path is

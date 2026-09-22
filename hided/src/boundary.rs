@@ -28,10 +28,18 @@
 //! specific first, so a checkout nested inside another owns the paths under
 //! it.
 //!
+//! The Explorer's listing (`file_list`) is that same line: the children of a
+//! folder under a root, files and hidden names included and `.git` dropped,
+//! ordered as the Swift Explorer orders them, with a symlink that leaves the
+//! root left out rather than followed. The registration listing above keeps
+//! its own policy - directories only, hidden names dropped - because the
+//! directory autocomplete asks a different question of the same tree.
+//!
 //! Nothing here reaches the core: a refused path is answered to the client and
 //! logged, and an accepted path is forwarded as the canonical path that was
 //! checked, so the core acts on exactly what the boundary saw.
 
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
@@ -70,11 +78,13 @@ impl Refusal {
     }
 }
 
-/// One directory the listing shows: its name and the path a client sends back.
+/// One child a listing shows: its name, the path a client sends back, and
+/// whether it is a directory, which the Explorer draws and opens differently.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct Entry {
     pub name: String,
     pub path: String,
+    pub is_directory: bool,
 }
 
 /// A listing answer: the directory that was listed and its visible children.
@@ -489,6 +499,7 @@ impl Boundary {
             entries.push(Entry {
                 name: name.to_owned(),
                 path: root.join(name).display().to_string(),
+                is_directory: true,
             });
         }
         entries.sort_by_key(|entry| entry.name.to_lowercase());
@@ -498,6 +509,144 @@ impl Boundary {
             truncated,
         })
     }
+
+    /// The children of a folder inside a registered checkout: files and
+    /// directories, hidden names included, `.git` left out.
+    ///
+    /// This is the Explorer's line, so the policy is the Swift Explorer's
+    /// (`WorkspaceOutlineView`): `.git` is the name it hides that the approved
+    /// line hides too - the other names it skips are its own build directories,
+    /// which the approved line does not name - and the order is its order,
+    /// directories first and then the natural one `localizedStandardCompare`
+    /// gives, so `file2` sorts before `file10`. The Explorer renders the order
+    /// it is handed; nothing sorts these rows again on the client.
+    ///
+    /// A child that is neither a file nor a directory, and a symlink whose
+    /// target leaves `root`, is not a row: the boundary does not describe a
+    /// path outside the checkout, not even as a name in a listing.
+    pub fn list_children(&self, root: &Path, raw: &str) -> Result<Listing, Refusal> {
+        let dir = self.resolve_below(root, raw)?;
+        let metadata = fs::metadata(&dir).map_err(|_| Refusal::NotFound)?;
+        if !metadata.is_dir() {
+            return Err(Refusal::NotADirectory);
+        }
+        // The root as the snapshot spells it may sit behind a symlink (`/var`
+        // for `/private/var`) while a child's canonical path does not, so the
+        // containment test uses the real spelling of both.
+        let real_root = root.canonicalize().map_err(|_| Refusal::OutsideCheckout)?;
+        let read = fs::read_dir(&dir).map_err(|_| Refusal::NotFound)?;
+        let mut entries = Vec::new();
+        let mut truncated = false;
+        for item in read {
+            let Ok(item) = item else { continue };
+            let name = item.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name == GIT_DIR_NAME {
+                continue;
+            }
+            let Some(is_directory) = child_kind(&real_root, &item.path()) else {
+                continue;
+            };
+            if entries.len() == LIST_CAP {
+                truncated = true;
+                break;
+            }
+            entries.push(Entry {
+                name: name.to_owned(),
+                path: dir.join(name).display().to_string(),
+                is_directory,
+            });
+        }
+        entries.sort_by(|left, right| {
+            right
+                .is_directory
+                .cmp(&left.is_directory)
+                .then_with(|| natural_cmp(&left.name, &right.name))
+        });
+        Ok(Listing {
+            root_path: dir.display().to_string(),
+            entries,
+            truncated,
+        })
+    }
+}
+
+/// The one name the Explorer hides: the repository's own directory. Every
+/// other hidden name is a row the approved line shows.
+const GIT_DIR_NAME: &str = ".git";
+
+/// Whether a child of `root` is a directory (`true`) or a file (`false`), or
+/// `None` when it is not a row the Explorer shows: a symlink whose target
+/// leaves the root, one that resolves to nothing, and anything that is neither
+/// a file nor a directory (a socket, a fifo, a device).
+fn child_kind(root: &Path, path: &Path) -> Option<bool> {
+    let real = path.canonicalize().ok()?;
+    if !real.starts_with(root) {
+        return None;
+    }
+    let metadata = fs::metadata(&real).ok()?;
+    if metadata.is_dir() {
+        Some(true)
+    } else if metadata.is_file() {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// The order the Swift Explorer shows names in, as far as this daemon needs it:
+/// case-insensitive, with a run of digits compared as a number, so `file2`
+/// sorts before `file10`. `localizedStandardCompare` is the rule the approved
+/// line names and this is that rule's comparable part; a tie keeps the order the
+/// directory was read in.
+fn natural_cmp(left: &str, right: &str) -> Ordering {
+    let mut left = left.chars().flat_map(char::to_lowercase).peekable();
+    let mut right = right.chars().flat_map(char::to_lowercase).peekable();
+    loop {
+        match (left.peek().copied(), right.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(l), Some(r)) if l.is_ascii_digit() && r.is_ascii_digit() => {
+                let left_run = take_digits(&mut left);
+                let right_run = take_digits(&mut right);
+                let order = number_order(&left_run, &right_run);
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+            (Some(l), Some(r)) => {
+                left.next();
+                right.next();
+                let order = l.cmp(&r);
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+        }
+    }
+}
+
+/// The digits at the front of an iterator, consumed.
+fn take_digits(iter: &mut std::iter::Peekable<impl Iterator<Item = char>>) -> String {
+    let mut run = String::new();
+    while let Some(digit) = iter.peek().copied() {
+        if !digit.is_ascii_digit() {
+            break;
+        }
+        run.push(digit);
+        iter.next();
+    }
+    run
+}
+
+/// Two digit runs by their value: the run with fewer significant digits is the
+/// smaller number, and equal lengths compare as text. Leading zeros do not
+/// count, so `007` and `7` are the same number.
+fn number_order(left: &str, right: &str) -> Ordering {
+    let left = left.trim_start_matches('0');
+    let right = right.trim_start_matches('0');
+    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
 }
 
 #[cfg(test)]
@@ -549,6 +698,105 @@ mod tests {
         assert_eq!(names, vec!["alias", "alpha", "Beta"]);
         assert!(!listing.truncated);
         assert_eq!(listing.root_path, s(&f.home.join("projects")));
+    }
+
+    #[test]
+    fn a_checkout_listing_shows_files_and_hidden_names_but_never_git() {
+        let f = fixture();
+        let root = f.home.join("projects/alpha");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join(".config")).unwrap();
+        fs::create_dir_all(root.join(".git/objects")).unwrap();
+        fs::write(root.join("file2.txt"), "x").unwrap();
+        fs::write(root.join("File10.txt"), "x").unwrap();
+        fs::write(root.join(".env"), "x").unwrap();
+        symlink(root.join("src"), root.join("alias")).unwrap();
+        symlink(f.outside.join("secret"), root.join("escape")).unwrap();
+        symlink(root.join("nope"), root.join("dangling")).unwrap();
+        let listing = f.boundary.list_children(&root, &s(&root)).unwrap();
+        let rows: Vec<(&str, bool)> = listing
+            .entries
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.is_directory))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (".config", true),
+                ("alias", true),
+                ("src", true),
+                (".env", false),
+                ("file2.txt", false),
+                ("File10.txt", false),
+            ],
+            "directories first and then the natural order; .git, the escaping \
+             symlink and the dangling one are not rows"
+        );
+        assert!(!listing.truncated);
+        assert_eq!(listing.root_path, s(&root));
+        // A row's path keeps the root's own spelling, which is the spelling the
+        // core compares the focused checkout against.
+        assert_eq!(listing.entries[0].path, s(&root.join(".config")));
+        // A folder under the root lists the same way one level down.
+        let nested = f
+            .boundary
+            .list_children(&root, &s(&root.join("src")))
+            .unwrap();
+        assert!(nested.entries.is_empty());
+        assert_eq!(nested.root_path, s(&root.join("src")));
+    }
+
+    #[test]
+    fn a_checkout_listing_refuses_what_is_not_under_its_root() {
+        let f = fixture();
+        let root = f.home.join("projects/alpha");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("notes.txt"), "x").unwrap();
+        // A sibling checkout is not under this root, and neither is home.
+        for outside in [f.home.join("projects/Beta"), f.home.clone()] {
+            assert_eq!(
+                f.boundary.list_children(&root, &s(&outside)),
+                Err(Refusal::OutsideCheckout),
+                "{outside:?}"
+            );
+        }
+        // A symlink inside the root to a directory outside it is refused
+        // rather than read through.
+        symlink(&f.outside, root.join("escape")).unwrap();
+        assert_eq!(
+            f.boundary.list_children(&root, &s(&root.join("escape"))),
+            Err(Refusal::OutsideCheckout)
+        );
+        assert_eq!(
+            f.boundary.list_children(&root, &s(&root.join("missing"))),
+            Err(Refusal::NotFound)
+        );
+        assert_eq!(
+            f.boundary.list_children(&root, &s(&root.join("notes.txt"))),
+            Err(Refusal::NotADirectory)
+        );
+        assert_eq!(
+            f.boundary
+                .list_children(&root, &format!("{}/../Beta", s(&root))),
+            Err(Refusal::InvalidPath)
+        );
+        assert!(
+            f.boundary
+                .list_children(&root, &s(&root.join("src")))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn names_sort_case_insensitively_and_by_the_value_of_a_digit_run() {
+        let mut names = vec!["File10.txt", "file2.txt", "beta", "Beta2", "alpha"];
+        names.sort_by(|left, right| natural_cmp(left, right));
+        assert_eq!(
+            names,
+            vec!["alpha", "beta", "Beta2", "file2.txt", "File10.txt"]
+        );
+        assert_eq!(natural_cmp("007", "7"), Ordering::Equal);
+        assert_eq!(natural_cmp("a", "a "), Ordering::Less);
     }
 
     #[test]

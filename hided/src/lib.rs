@@ -9,7 +9,7 @@ pub mod state_file;
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use herdr_core::{CoreOptions, SCHEMA_VERSION};
 use serde_json::Value;
@@ -22,13 +22,6 @@ use crate::server::AppState;
 use crate::state_file::{DaemonState, acquire_lock, new_token, remove_state, write_state};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// How long a burst of core changes is left to settle before the boundary's
-/// checkout roots are read again. The roots only change when a registration
-/// does, but the notifier fires for every change the core makes, and reading
-/// one snapshot is a full serialization on the owner thread, so the reads are
-/// bounded rather than taken once per change.
-const ROOT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 fn find_ui_dir() -> Option<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
@@ -175,13 +168,19 @@ pub async fn wait_shutdown(running: &RunningDaemon) {
 }
 
 /// Keeps the boundary's checkout roots in step with the core: one snapshot read
-/// after each burst of changes, and the checkouts in it replace the root set
+/// per change notification, and the checkouts in it replace the root set
 /// wholesale.
 ///
 /// The read runs here rather than in a client's event, so no client waits on it
 /// and nothing runs under the runtime mutex. The first read seeds the roots
-/// in `start_daemon` before the server serves, and a burst collapses into one
-/// read, because the snapshot taken last already carries every change in it.
+/// in `start_daemon` before the server serves.
+///
+/// The notification the snapshot stream already consumes is the only trigger,
+/// so the roots change exactly when a snapshot can change and nothing here runs
+/// on a clock (`docs/PERFORMANCE_TESTING.md`). The reads a single burst asks for
+/// beyond the first are drained before it, and the ones that do run take a
+/// snapshot that already carries every change the burst announced, so a repeat
+/// read converges on the same root set instead of piling up work.
 fn spawn_root_refresh(core: Arc<CoreHandle>, boundary: Arc<Boundary>) {
     let mut changes = core.notify.subscribe();
     tokio::spawn(async move {
@@ -189,8 +188,6 @@ fn spawn_root_refresh(core: Arc<CoreHandle>, boundary: Arc<Boundary>) {
             if changes.recv().await.is_err() {
                 return;
             }
-            while changes.try_recv().is_ok() {}
-            tokio::time::sleep(ROOT_REFRESH_INTERVAL).await;
             while changes.try_recv().is_ok() {}
             refresh_roots(&core, &boundary);
         }
