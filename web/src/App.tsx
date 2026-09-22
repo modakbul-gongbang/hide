@@ -6,6 +6,7 @@ import { configureFileBytes } from "./fileBytes";
 import { installKeyboard } from "./keyboard";
 import { ConfirmClose, ConfirmTrash, CycleOverlay, FindBar, NoticeBar } from "./Overlays";
 import { PaneCanvas } from "./PaneGrid";
+import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
 import { ShortcutSheet } from "./ShortcutSheet";
@@ -88,6 +89,7 @@ export function App() {
       <CycleOverlay />
       <ConfirmClose actions={actions} />
       <ConfirmTrash actions={actions} />
+      <Palette actions={actions} />
       <ShortcutSheetGate actions={actions} />
     </div>
   );

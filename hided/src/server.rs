@@ -19,6 +19,7 @@ use tokio::sync::Notify;
 
 use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
+use crate::index::{IndexAnswer, IndexService};
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::watch::WatchService;
 
@@ -56,6 +57,8 @@ pub struct AppState {
     pub boundary: Arc<Boundary>,
     /// The daemon's one watch service; every client subscribes to its frames.
     pub watch: Arc<WatchService>,
+    /// The ⌘P index cache, one lazy index per registered checkout.
+    pub index: Arc<IndexService>,
     pub token: Arc<String>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -343,11 +346,62 @@ async fn handle_client_text(state: &AppState, text: &str) -> Result<Vec<Message>
     if event.get("kind").and_then(Value::as_str) == Some("file_bytes") {
         return Ok(handle_file_bytes(&state.boundary, &event).await);
     }
+    if event.get("kind").and_then(Value::as_str) == Some("file_index") {
+        return Ok(handle_file_index(state, &event));
+    }
     if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
         return Ok(vec![Message::Text(reply.to_string().into())]);
     }
     let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
     state.core.dispatch(bytes).map(|()| Vec::new())
+}
+
+/// A `file_index` query: the root is checked against the registered checkouts
+/// and the daemon answers from its per-root index. The first query for a root
+/// starts the walk and answers `indexing: true`; the next one has the list.
+fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
+    let root = payload_str(event, "root");
+    let query = payload_str(event, "query");
+    let Some(known) = state.boundary.known_root(&root) else {
+        return vec![Message::Text(
+            refused("file_index", &root, Refusal::OutsideCheckout)
+                .to_string()
+                .into(),
+        )];
+    };
+    let root_path = known.display().to_string();
+    let payload = match state.index.query(&known, &query) {
+        IndexAnswer::Indexing => json!({
+            "root_path": root_path,
+            "query": query,
+            "files": [],
+            "truncated": false,
+            "indexing": true,
+        }),
+        IndexAnswer::Ready { entries, truncated } => {
+            let listed: Vec<Value> = entries
+                .iter()
+                .map(|relative| {
+                    json!({
+                        "path": known.join(relative).display().to_string(),
+                        "relative_path": relative,
+                    })
+                })
+                .collect();
+            json!({
+                "root_path": root_path,
+                "query": query,
+                "files": listed,
+                "truncated": truncated,
+                "indexing": false,
+            })
+        }
+    };
+    vec![Message::Text(
+        json!({"type": "file_index_result", "payload": payload})
+            .to_string()
+            .into(),
+    )]
 }
 
 /// Bytes one binary frame carries; a read streams in frames this size so a

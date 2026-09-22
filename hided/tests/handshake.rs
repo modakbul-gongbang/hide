@@ -973,3 +973,74 @@ async fn a_change_in_a_watched_checkout_is_announced() {
     );
     running.stop();
 }
+
+#[tokio::test]
+async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
+    let (dir, env) = test_env(true);
+    let home = dir.path().canonicalize().unwrap();
+    let checkout = home.join("projects/alpha");
+    std::fs::create_dir_all(checkout.join("src")).unwrap();
+    std::fs::create_dir_all(checkout.join("docs")).unwrap();
+    std::fs::write(checkout.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(checkout.join("docs/readme.md"), "# a\n").unwrap();
+    std::fs::write(checkout.join("debug.log"), "x").unwrap();
+    std::fs::write(checkout.join(".gitignore"), "*.log\n").unwrap();
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+    let mut socket = live_socket(&running).await;
+    let root = checkout.display().to_string();
+
+    // The first query starts the walk; the daemon answers `indexing`, and the
+    // next query has the list.
+    let mut result = send_event_expecting(
+        &mut socket,
+        "file_index",
+        json!({"root": root, "query": "main"}),
+        |frame| frame["type"] == "file_index_result",
+    )
+    .await;
+    for _ in 0..40 {
+        if result["payload"]["indexing"] == json!(false) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        result = send_event_expecting(
+            &mut socket,
+            "file_index",
+            json!({"root": root, "query": "main"}),
+            |frame| frame["type"] == "file_index_result",
+        )
+        .await;
+    }
+    assert_eq!(result["payload"]["indexing"], json!(false));
+    assert_eq!(result["payload"]["truncated"], json!(false));
+    let entries: Vec<&str> = result["payload"]["files"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|entry| entry["relative_path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        entries,
+        vec!["src/main.rs"],
+        "only the match, and not the ignored file"
+    );
+    assert_eq!(
+        result["payload"]["files"][0]["path"],
+        json!(checkout.join("src/main.rs").display().to_string()),
+        "a palette entry carries the absolute path to open"
+    );
+
+    // A root that is not a registered checkout is refused.
+    let refused = send_event_expecting(
+        &mut socket,
+        "file_index",
+        json!({"root": home.join("projects").display().to_string(), "query": "x"}),
+        never,
+    )
+    .await;
+    assert_eq!(refused["type"], "path_refused");
+    assert_eq!(refused["payload"]["kind"], "file_index");
+    assert_eq!(refused["payload"]["reason"], "outside_checkout");
+    running.stop();
+}

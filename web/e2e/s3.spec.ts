@@ -48,7 +48,7 @@ function gitFixture(dir: string): void {
   execFileSync("git", ["init", "-q"], { cwd: dir });
   fs.writeFileSync(path.join(dir, "tracked.txt"), "one\n");
   execFileSync("git", ["add", "-A"], { cwd: dir });
-  execFileSync("git", ["-c", "user.email=e2e@example.com", "-c", "user.name=e2e", "commit", "-qm", "init"], { cwd: dir });
+  execFileSync("git", ["-c", "user.email=e2e@example.com", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], { cwd: dir });
   fs.writeFileSync(path.join(dir, "tracked.txt"), "two\n");
 }
 
@@ -378,14 +378,56 @@ test("a change in an expanded folder refreshes the tree without a reload", async
   const { repo } = fixture;
   try {
     // `src` is expanded and watched; a file written into it appears on its own.
+    // The watcher arms a moment after the ui state reaches the daemon, so a
+    // missed first write is retried with a fresh name rather than assumed.
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible();
-    fs.writeFileSync(path.join(repo, "src", "watched.ts"), "export const watched = true;\n");
-    await expect(page.locator(`[data-explorer-row="${repo}/src/watched.ts"]`)).toBeVisible({ timeout: 15_000 });
+    let created = "";
+    await expect(async () => {
+      created = `watched-${Date.now()}.ts`;
+      fs.writeFileSync(path.join(repo, "src", created), "export const watched = true;\n");
+      await expect(page.locator(`[data-explorer-row="${repo}/src/${created}"]`)).toBeVisible({ timeout: 1_500 });
+    }).toPass({ timeout: 30_000 });
     await screenshot(page, "s3-watch-refresh");
 
     // Deleting it disappears the same way.
-    fs.rmSync(path.join(repo, "src", "watched.ts"));
-    await expect(page.locator(`[data-explorer-row="${repo}/src/watched.ts"]`)).toHaveCount(0, { timeout: 15_000 });
+    fs.rmSync(path.join(repo, "src", created));
+    await expect(page.locator(`[data-explorer-row="${repo}/src/${created}"]`)).toHaveCount(0, { timeout: 15_000 });
+  } finally {
+    close(fixture);
+  }
+});
+
+test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
+    // preview tab (B12).
+    await page.keyboard.press("Meta+KeyP");
+    const input = page.locator('[data-palette="Open file"] [data-palette-input]');
+    await expect(input).toBeVisible();
+    await input.fill("main");
+    const row = page.locator(`[data-palette-row="${repo}/src/main.ts"]`);
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await screenshot(page, "s3-palette-files");
+    await row.click();
+    await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+    await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
+    expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);
+
+    // ⌘K: the snapshot's projects and checkouts are searched here, and picking
+    // one focuses it (B13).
+    const focusBefore = sent.get("focus_checkout") ?? 0;
+    await page.keyboard.press("Meta+KeyK");
+    const search = page.locator('[data-palette="Search"] [data-palette-input]');
+    await expect(search).toBeVisible();
+    await search.fill("fixture");
+    const projectRow = page.locator("[data-palette-list] button").filter({ hasText: "fixture" }).first();
+    await expect(projectRow).toBeVisible();
+    await screenshot(page, "s3-palette-search");
+    await projectRow.click();
+    await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+    await expect.poll(() => sent.get("focus_checkout")).toBeGreaterThan(focusBefore);
   } finally {
     close(fixture);
   }

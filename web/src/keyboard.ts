@@ -69,9 +69,9 @@ export function installKeyboard(actions: Actions): () => void {
         return;
       }
       case "search":
-        return actions.notReady("Search (⌘K)");
+        return actions.openSearch();
       case "open_file":
-        return actions.notReady("Open file (⌘P)");
+        return actions.openFilePalette();
       case "project_home":
         return actions.notReady("Project home (⌘⇧H)");
       case "toggle_right_panel":

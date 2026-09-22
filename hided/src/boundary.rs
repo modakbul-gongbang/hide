@@ -620,7 +620,7 @@ fn child_kind(root: &Path, path: &Path) -> Option<bool> {
 /// sorts before `file10`. `localizedStandardCompare` is the rule the approved
 /// line names and this is that rule's comparable part; a tie keeps the order the
 /// directory was read in.
-fn natural_cmp(left: &str, right: &str) -> Ordering {
+pub(crate) fn natural_cmp(left: &str, right: &str) -> Ordering {
     let mut left = left.chars().flat_map(char::to_lowercase).peekable();
     let mut right = right.chars().flat_map(char::to_lowercase).peekable();
     loop {

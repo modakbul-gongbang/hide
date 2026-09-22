@@ -239,6 +239,32 @@ export function createActions(dispatch: DispatchFn) {
       ui().setNotice({ text: `${label}: 준비 중 (S3)`, refreshable: false });
     },
 
+    /** ⌘P: the file palette over hided's index of the focused checkout. */
+    openFilePalette() {
+      ui().openOverlay(ui().overlay === "file_palette" ? "none" : "file_palette");
+    },
+
+    /** ⌘K: the palette that searches the snapshot's agents, projects and checkouts. */
+    openSearch() {
+      ui().openOverlay(ui().overlay === "search" ? "none" : "search");
+    },
+
+    requestFileIndex(root: string, query: string) {
+      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query } });
+    },
+
+    /** A palette pick opens in the checkout's preview tab (B12) and closes the palette. */
+    openIndexEntry(path: string) {
+      ui().closeOverlay();
+      const here = current();
+      if (!here) return diagnostic("file_open: no focused checkout");
+      dispatch({
+        schema_version: 2,
+        kind: "file_open",
+        payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview: true },
+      });
+    },
+
     createWorkspace(path: string, label: string) {
       dispatch({ schema_version: 2, kind: "create_workspace", payload: { path, label, initialize_git: false } });
     },

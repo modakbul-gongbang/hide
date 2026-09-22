@@ -27,6 +27,15 @@ export type DirectoryList = {
 };
 export type PathRefusal = { kind: string; path: string; reason: string };
 export type DirectoryChanged = { path: string };
+export type FileIndexEntry = { path: string; relative_path: string };
+export type FileIndexResult = {
+  root_path: string;
+  query: string;
+  /** Named `files`, not `entries`: the directory_list frame owns `entries`. */
+  files: FileIndexEntry[];
+  truncated: boolean;
+  indexing: boolean;
+};
 
 export type Frame = {
   type: string;
@@ -41,7 +50,8 @@ export type Frame = {
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
     Partial<PathRefusal> &
-    Partial<DirectoryChanged>;
+    Partial<DirectoryChanged> &
+    Partial<FileIndexResult>;
 };
 
 type Store = {
@@ -69,6 +79,8 @@ type Store = {
   listings: Record<string, DirectoryList>;
   /** The last path hided refused; cleared when the input changes. */
   pathRefusal: PathRefusal | null;
+  /** The ⌘P palette's last answer, keyed by the query it answered. */
+  fileIndex: FileIndexResult | null;
   /** The newest `DIAGNOSTIC_CAP` entries; older ones are counted in `diagnosticsDropped`. */
   diagnostics: string[];
   diagnosticsDropped: number;
@@ -125,6 +137,7 @@ export const useShellStore = create<Store>((set, get) => ({
   directoryList: null,
   listings: {},
   pathRefusal: null,
+  fileIndex: null,
   diagnostics: [],
   diagnosticsDropped: 0,
   viewGeneration: 0,
@@ -183,6 +196,18 @@ export const useShellStore = create<Store>((set, get) => ({
       // re-reads it, without a reload of the whole tree (B2).
       const path = payload.path;
       if (path) get().invalidateListings([path]);
+      return [];
+    }
+    if (frame.type === "file_index_result") {
+      set({
+        fileIndex: {
+          root_path: payload.root_path ?? "",
+          query: payload.query ?? "",
+          files: payload.files ?? [],
+          truncated: payload.truncated ?? false,
+          indexing: payload.indexing ?? false,
+        },
+      });
       return [];
     }
     if (frame.type === "error") {

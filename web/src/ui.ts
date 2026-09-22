@@ -17,7 +17,7 @@ export type PendingClose = {
   affected: string[];
 };
 
-export type Overlay = "none" | "shortcuts" | "find" | "new_workspace";
+export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "search";
 
 /** A held-modifier cycle over recent tabs or projects; committed when ⌥ is released. */
 export type Cycle = {

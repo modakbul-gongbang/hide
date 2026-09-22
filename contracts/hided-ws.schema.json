@@ -21,12 +21,12 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error", "directory_changed"] },
+        "type": { "type": "string", "enum": ["snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error", "directory_changed", "file_index_result"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
       }
@@ -111,6 +111,39 @@
         },
         "path": { "type": "string" },
         "reason": { "$ref": "#/$defs/pathRefusalReason" }
+      }
+    },
+    "fileIndex": {
+      "description": "A client `file_index` event asks for the files of a registered checkout that match a query: {root, query}. The daemon walks the checkout once, honoring .gitignore (and .git/info/exclude and the global ignore file) without a git process, caps the index at 50,000 files, and answers with a file_index_result frame: {root_path, query, files: [{path, relative_path}], truncated, indexing}. `files` is ranked by the Swift fuzzy score, best first, at most 80; `path` is absolute so the client can open it, `relative_path` is what the palette shows. The first query for a root answers `indexing: true` while the walk runs; `truncated` marks a checkout whose index hit the cap. A root that is not a registered checkout is the usual path_refused frame with kind file_index.",
+      "type": "object",
+      "required": ["root", "query"],
+      "properties": {
+        "root": { "type": "string" },
+        "query": { "type": "string" }
+      }
+    },
+    "fileIndexResult": {
+      "description": "Payload of a file_index_result frame: the root that was searched, the query, the ranked files, whether the index is truncated, and whether the walk is still running.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_path", "query", "files", "truncated", "indexing"],
+      "properties": {
+        "root_path": { "type": "string" },
+        "query": { "type": "string" },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "relative_path"],
+            "properties": {
+              "path": { "type": "string" },
+              "relative_path": { "type": "string" }
+            }
+          }
+        },
+        "truncated": { "type": "boolean" },
+        "indexing": { "type": "boolean" }
       }
     },
     "fileBytes": {

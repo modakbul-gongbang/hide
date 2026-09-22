@@ -3,6 +3,7 @@ pub mod cli;
 pub mod coexist;
 pub mod core;
 pub mod env;
+pub mod index;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
@@ -19,6 +20,7 @@ use tokio::sync::Notify;
 use crate::boundary::{Boundary, Root};
 use crate::core::CoreHandle;
 use crate::env::Env;
+use crate::index::IndexService;
 use crate::server::AppState;
 use crate::state_file::{DaemonState, acquire_lock, new_token, remove_state, write_state};
 
@@ -124,11 +126,13 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let boundary = boundary::Boundary::new(&env.home)?;
     let core = CoreHandle::spawn(options)?;
     let watch = Arc::new(watch::WatchService::new());
+    let index = Arc::new(IndexService::new());
     let shutdown = Arc::new(Notify::new());
     let app = AppState {
         core: Arc::new(core),
         boundary: Arc::new(boundary),
         watch: Arc::clone(&watch),
+        index: Arc::clone(&index),
         token: Arc::new(token.clone()),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
@@ -147,11 +151,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     // Seeded before the server accepts a client, so an Explorer event can
     // never arrive at a boundary that holds no root yet; the core has already
     // loaded its registrations by the time `CoreHandle::spawn` returns.
-    refresh_roots(&app.core, &app.boundary, &app.watch);
+    refresh_roots(&app.core, &app.boundary, &app.watch, &app.index);
     spawn_root_refresh(
         Arc::clone(&app.core),
         Arc::clone(&app.boundary),
         Arc::clone(&app.watch),
+        Arc::clone(&app.index),
     );
     tokio::spawn(async move {
         if let Err(error) = server::serve(listener, app).await {
@@ -192,6 +197,7 @@ fn spawn_root_refresh(
     core: Arc<CoreHandle>,
     boundary: Arc<Boundary>,
     watch: Arc<watch::WatchService>,
+    index: Arc<IndexService>,
 ) {
     let mut changes = core.notify.subscribe();
     tokio::spawn(async move {
@@ -200,15 +206,27 @@ fn spawn_root_refresh(
                 return;
             }
             while changes.try_recv().is_ok() {}
-            refresh_roots(&core, &boundary, &watch);
+            refresh_roots(&core, &boundary, &watch, &index);
         }
     });
 }
 
-fn refresh_roots(core: &CoreHandle, boundary: &Boundary, watch: &watch::WatchService) {
+fn refresh_roots(
+    core: &CoreHandle,
+    boundary: &Boundary,
+    watch: &watch::WatchService,
+    index: &IndexService,
+) {
     match core.snapshot(0, 0) {
         Ok(reply) => {
-            boundary.set_roots(roots_from_snapshot(&reply.bytes));
+            let roots = roots_from_snapshot(&reply.bytes);
+            index.set_roots(
+                &roots
+                    .iter()
+                    .map(|root| root.path.clone())
+                    .collect::<Vec<_>>(),
+            );
+            boundary.set_roots(roots);
             let (root, expanded) = watch_state_from_snapshot(&reply.bytes);
             watch.reconcile(root, expanded);
         }
