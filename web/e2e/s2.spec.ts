@@ -101,6 +101,24 @@ function screenshot(page: Page, name: string): Promise<unknown> {
   return dir ? page.screenshot({ path: path.join(dir, `${name}.png`) }) : Promise.resolve();
 }
 
+/**
+ * Waits until the shell has drawn `paneId` as the focused pane and kept it
+ * for a second. Herdr confirms a focus later than the core moves it, and
+ * on a slow runner the confirmation of one request can reach the core after
+ * the next request went out, naming the earlier pane for a moment; keys
+ * typed in that moment follow it.
+ */
+async function settledFocus(page: Page, paneId: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  let held = 0;
+  while (held < 5) {
+    if (Date.now() > deadline) throw new Error(`focus did not settle on ${paneId}`);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const focused = await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view");
+    held = focused === paneId ? held + 1 : 0;
+  }
+}
+
 async function screen(page: Page): Promise<string> {
   return page.evaluate(() => window.__hideProbe?.screenText() ?? "");
 }
@@ -241,15 +259,25 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     // the shim logs every byte it reads, and no key event went out, so
     // xterm wrote no mouse report of its own.
     const agentPane = herdr.panes[1];
-    const agentBox = (await page.locator(`[data-pane-view="${agentPane}"] [data-terminal]`).boundingBox())!;
+    // The cell comes from xterm's screen element, exactly cols by rows; the
+    // host around it is larger by the fit's remainder, and a cell read from
+    // the host drifts toward the far edge (the delta is printed so a run
+    // shows it: the last row of a 41-row pane lands a row off).
+    const agentHost = (await page.locator(`[data-pane-view="${agentPane}"] [data-terminal]`).boundingBox())!;
+    const agentScreen = (await page.locator(`[data-pane-view="${agentPane}"] .xterm-screen`).boundingBox())!;
     const agentGrid = (await page.evaluate((id) => window.__hideProbe?.paneGrid(id) ?? null, agentPane))!;
+    const lastRowFromHost = Math.floor((agentScreen.y + (agentGrid.rows - 0.5) * (agentScreen.height / agentGrid.rows) - agentHost.y) / (agentHost.height / agentGrid.rows));
+    console.log(
+      `cell grid: host ${agentHost.width}x${agentHost.height}, screen ${agentScreen.width}x${agentScreen.height}, ${agentGrid.cols}x${agentGrid.rows}; ` +
+        `the last row's centre read from the host is row ${lastRowFromHost}`,
+    );
     const cell = { column: 4, row: 2 };
     const focusBefore = sent.get("focus_pane") ?? 0;
     const keysBeforeClick = sent.get("key") ?? 0;
     const inputBefore = fs.existsSync(herdr.inputLogs[1]) ? fs.statSync(herdr.inputLogs[1]).size : 0;
     await page.mouse.click(
-      agentBox.x + (cell.column + 0.5) * (agentBox.width / agentGrid.cols),
-      agentBox.y + (cell.row + 0.5) * (agentBox.height / agentGrid.rows),
+      agentScreen.x + (cell.column + 0.5) * (agentScreen.width / agentGrid.cols),
+      agentScreen.y + (cell.row + 0.5) * (agentScreen.height / agentGrid.rows),
     );
     await expect.poll(() => sent.get("terminal_click")).toBe(1);
     expect(lastSent.get("terminal_click")).toEqual({ pane_id: agentPane, column: cell.column, row: cell.row, modifiers: 0 });
@@ -260,6 +288,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     // back mid-typing on a slow runner; each focus waits for Herdr's word.
     const herdrFocused = () => (herdr.run(["pane", "current"]) as { result: { pane: { pane_id: string } } }).result.pane.pane_id;
     await expect.poll(herdrFocused, { timeout: 10_000 }).toBe(agentPane);
+    await settledFocus(page, agentPane);
     const report = `\x1b[<0;${cell.column + 1};${cell.row + 1}M\x1b[<0;${cell.column + 1};${cell.row + 1}m`;
     await expect
       .poll(() => (fs.existsSync(herdr.inputLogs[1]) ? fs.readFileSync(herdr.inputLogs[1], "latin1").slice(inputBefore) : ""), { timeout: 10_000 })
@@ -273,17 +302,18 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await shellView.locator(".xterm-helper-textarea").focus();
     await expect(shellView).toHaveAttribute("data-focused", "true");
     await expect.poll(herdrFocused, { timeout: 10_000 }).toBe(shellPaneId);
+    await settledFocus(page, shellPaneId);
     // Two operator focus changes are two focus_pane events; the focus the
     // shell moves to follow the snapshot is never reported back.
     expect(sent.get("focus_pane")).toBe(focusBefore + 2);
     const shellGrid = (await page.evaluate((id) => window.__hideProbe?.paneGrid(id) ?? null, shellPaneId))!;
     const wrapped = "w".repeat(shellGrid.cols + 7);
-    await page.keyboard.type(`clear; echo ${wrapped}; echo short; echo; echo end\n`);
-    await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/^w+\s*\n\s*w+\s*\n\s*short\s*\n\s*\n\s*end/);
-    const shellHost = (await shellView.locator("[data-terminal]").boundingBox())!;
+    await page.keyboard.type(`clear; echo ${wrapped}; echo short; echo; echo '  in'; echo '    deeper'; echo end\n`);
+    await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/^w+\s*\n\s*w+\s*\n\s*short\s*\n\s*\n\s+in\s*\n\s+deeper\s*\n\s*end/);
+    const shellScreen = (await shellView.locator(".xterm-screen").boundingBox())!;
     const shellCell = (column: number, row: number) => ({
-      x: shellHost.x + (column + 0.5) * (shellHost.width / shellGrid.cols),
-      y: shellHost.y + (row + 0.5) * (shellHost.height / shellGrid.rows),
+      x: shellScreen.x + (column + 0.5) * (shellScreen.width / shellGrid.cols),
+      y: shellScreen.y + (row + 0.5) * (shellScreen.height / shellGrid.rows),
     });
     const clicksBeforeDrag = sent.get("terminal_click") ?? 0;
     // Dragged from the empty row back to the first cell: the split's divider
@@ -292,13 +322,23 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     const dragTo = shellCell(0, 0);
     await page.mouse.move(pressAt.x, pressAt.y);
     await page.mouse.down();
-    await page.mouse.move(dragTo.x - shellHost.width / shellGrid.cols, dragTo.y, { steps: 8 });
+    await page.mouse.move(dragTo.x - shellScreen.width / shellGrid.cols, dragTo.y, { steps: 8 });
     await page.mouse.up();
     await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, shellPaneId)).toBe(`${wrapped}\nshort\n`);
     expect(sent.get("terminal_click") ?? 0).toBe(clicksBeforeDrag);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.keyboard.press("Meta+KeyC");
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${wrapped}\nshort\n`);
+    // Lines that share a margin lose it and keep their relative indentation.
+    const indentFrom = shellCell(shellGrid.cols - 2, 5);
+    const indentTo = shellCell(0, 4);
+    await page.mouse.move(indentFrom.x, indentFrom.y);
+    await page.mouse.down();
+    await page.mouse.move(indentTo.x - shellScreen.width / shellGrid.cols, indentTo.y, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, shellPaneId)).toBe("in\n  deeper");
+    await page.keyboard.press("Meta+KeyC");
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("in\n  deeper");
 
     await page.keyboard.press("Meta+Alt+Enter");
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-zoomed", "true");
