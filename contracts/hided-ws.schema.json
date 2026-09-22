@@ -21,12 +21,12 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` and `path_trash` (see directoryList and pathRefused).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["snapshot", "delta", "error", "directory_list", "path_refused"] },
+        "type": { "type": "string", "enum": ["snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
       }
@@ -49,9 +49,9 @@
       "enum": [4001, 4002, 4003, 4004]
     },
     "pathRefusalReason": {
-      "description": "outside_home: the real path is not under $HOME (a symlink target counts). home_root: $HOME itself cannot be a workspace. outside_checkout: the path is not under any registered checkout root, which is the reason an explorer event gets for a path under $HOME that no checkout covers. not_found: nothing exists there. not_a_directory: a file. invalid_path: empty, relative, contains `..` or NUL, or an item name that is empty, `.`, `..`, or holds a `/`.",
+      "description": "outside_home: the real path is not under $HOME (a symlink target counts). home_root: $HOME itself cannot be a workspace. outside_checkout: the path is not under any registered checkout root, which is the reason an explorer event gets for a path under $HOME that no checkout covers. not_found: nothing exists there. not_a_directory: a file where a directory was needed. not_a_file: a directory where a file's bytes were needed. invalid_path: empty, relative, contains `..` or NUL, or an item name that is empty, `.`, `..`, or holds a `/`.",
       "type": "string",
-      "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "invalid_path"]
+      "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "not_a_file", "invalid_path"]
     },
     "directoryList": {
       "description": "Payload of a directory_list frame. kind names the event that asked: a `remote_file_list` for the `local` target lists the visible subdirectories of root_path under $HOME, and a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed (a request of `~` lists home and answers with its path). is_directory is what the Explorer draws and opens by; a `remote_file_list` answer carries directories only, so every entry in it is one. truncated is true past the listing cap.",
@@ -96,11 +96,34 @@
             "dir_create",
             "path_rename",
             "path_move",
-            "path_trash"
+            "path_trash",
+            "file_bytes"
           ]
         },
         "path": { "type": "string" },
         "reason": { "$ref": "#/$defs/pathRefusalReason" }
+      }
+    },
+    "fileBytes": {
+      "description": "A client `file_bytes` event asks for a regular file's bytes under a registered checkout root: {request_id, path, offset, length}. `length` null or absent reads to the end of the file; `offset` defaults to 0. The daemon answers with one or more binary frames, each framed as a 4-byte big-endian header length, the header JSON as UTF-8, then that chunk's bytes. The header is {type: \"file_bytes\", request_id, path, offset, total, eof}: offset is where this chunk starts in the file, total is the file's whole size, and eof marks the last frame. A read past MAX_FILE_BYTES (256 MiB) or a disk failure is answered with a file_bytes_error text frame instead: {request_id, path, reason} where reason is too_large or read_failed. A path that fails the boundary is the usual path_refused frame with kind file_bytes.",
+      "type": "object",
+      "required": ["request_id", "path"],
+      "properties": {
+        "request_id": { "type": "string" },
+        "path": { "type": "string" },
+        "offset": { "type": "integer", "minimum": 0 },
+        "length": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "fileBytesError": {
+      "description": "Payload of a file_bytes_error frame: the read that failed and why.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "path", "reason"],
+      "properties": {
+        "request_id": { "type": "string" },
+        "path": { "type": "string" },
+        "reason": { "type": "string", "enum": ["too_large", "read_failed"] }
       }
     },
     "health": {

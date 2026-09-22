@@ -60,6 +60,8 @@ pub enum Refusal {
     NotFound,
     /// The path exists but is not a directory.
     NotADirectory,
+    /// The path exists but is not a regular file.
+    NotAFile,
     /// Empty, relative, or otherwise not a path this daemon reads.
     InvalidPath,
 }
@@ -73,6 +75,7 @@ impl Refusal {
             Self::HomeRoot => "home_root",
             Self::NotFound => "not_found",
             Self::NotADirectory => "not_a_directory",
+            Self::NotAFile => "not_a_file",
             Self::InvalidPath => "invalid_path",
         }
     }
@@ -110,6 +113,11 @@ pub const MAX_ATTACHMENT_FILES: usize = 8;
 
 /// Bytes one attachment path may hold, the same cap the core enforces.
 pub const MAX_PATH_BYTES: usize = 4096;
+
+/// Bytes one `file_bytes` request may name, for the whole file or one range.
+/// A viewer reads a document into memory, so the daemon refuses a read past
+/// this rather than growing an unbounded allocation (engineering 15).
+pub const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// A name a create or a rename may carry: one component, and not one of the
 /// shapes that would name a different path. The core refuses the same names
@@ -270,6 +278,19 @@ impl Boundary {
             return Err(Refusal::OutsideCheckout);
         };
         self.walk(&root, rest, Refusal::OutsideCheckout)
+    }
+
+    /// A regular file under a registered checkout root, with its size. The
+    /// file-bytes read is the only caller: a viewer asks for bytes, so a
+    /// directory, a symlink to one, and anything else that is not a file is
+    /// refused as `not_a_file` rather than read.
+    pub fn resolve_file(&self, raw: &str) -> Result<(PathBuf, u64), Refusal> {
+        let path = self.resolve_target(raw)?;
+        let metadata = fs::metadata(&path).map_err(|_| Refusal::NotFound)?;
+        if !metadata.is_file() {
+            return Err(Refusal::NotAFile);
+        }
+        Ok((path, metadata.len()))
     }
 
     /// The path of `raw` when it is written under `root`, the root the event
@@ -1098,6 +1119,32 @@ mod tests {
             "the spelling that was checked is the one forwarded"
         );
         assert!(f.boundary.is_under_root(&s(&repo.join("src/main.rs"))));
+    }
+
+    #[test]
+    fn a_file_under_a_root_resolves_with_its_size_and_a_directory_does_not() {
+        let f = rooted();
+        let repo = f.home.join("projects/alpha");
+        let (path, size) = f
+            .boundary
+            .resolve_file(&s(&repo.join("src/main.rs")))
+            .unwrap();
+        assert_eq!(path, repo.join("src/main.rs"));
+        assert_eq!(size, "fn main() {}".len() as u64);
+        assert_eq!(
+            f.boundary.resolve_file(&s(&repo.join("src"))),
+            Err(Refusal::NotAFile),
+            "a directory is not a byte source"
+        );
+        assert_eq!(
+            f.boundary.resolve_file(&s(&repo.join("src/nope"))),
+            Err(Refusal::NotFound)
+        );
+        assert_eq!(
+            f.boundary.resolve_file(&s(&f.outside.join("secret"))),
+            Err(Refusal::OutsideCheckout),
+            "the file line is the checkout line, not the home one"
+        );
     }
 
     #[test]

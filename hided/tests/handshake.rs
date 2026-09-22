@@ -818,3 +818,128 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_swift_order() {
     }
     running.stop();
 }
+
+/// Reads the next binary frame and splits it into its header and bytes, the
+/// way a viewer does: a 4-byte big-endian header length, the header JSON, then
+/// the payload. Text frames (snapshot deltas) are skipped.
+async fn recv_binary(socket: &mut Socket) -> (Value, Vec<u8>) {
+    loop {
+        let message = socket.next().await.unwrap().unwrap();
+        let Message::Binary(bytes) = message else {
+            continue;
+        };
+        let header_len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let header: Value = serde_json::from_slice(&bytes[4..4 + header_len]).unwrap();
+        return (header, bytes[4 + header_len..].to_vec());
+    }
+}
+
+#[tokio::test]
+async fn file_bytes_streams_a_checkout_file_and_refuses_a_path_outside_it() {
+    let (dir, env) = test_env(true);
+    let home = dir.path().canonicalize().unwrap();
+    let checkout = home.join("projects/alpha");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let contents: Vec<u8> = (0u8..64).collect();
+    std::fs::write(checkout.join("blob.bin"), &contents).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.bin"), b"x").unwrap();
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+    let mut socket = live_socket(&running).await;
+    let path = checkout.join("blob.bin").display().to_string();
+
+    // A whole-file read: one binary frame carrying the header and every byte.
+    socket
+        .send(Message::Text(
+            json!({
+                "schema_version": 2,
+                "kind": "file_bytes",
+                "payload": {"request_id": "r1", "path": path, "offset": 0, "length": Value::Null},
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let (header, payload) = recv_binary(&mut socket).await;
+    assert_eq!(header["type"], "file_bytes");
+    assert_eq!(header["request_id"], "r1");
+    assert_eq!(header["path"], json!(path));
+    assert_eq!(header["offset"], 0);
+    assert_eq!(header["total"], 64);
+    assert_eq!(header["eof"], true);
+    assert_eq!(payload, contents);
+
+    // A range read names its own offset and returns only those bytes; the
+    // total still reports the whole file, which is what a seek needs.
+    socket
+        .send(Message::Text(
+            json!({
+                "schema_version": 2,
+                "kind": "file_bytes",
+                "payload": {"request_id": "r2", "path": path, "offset": 16, "length": 16},
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let (header, payload) = recv_binary(&mut socket).await;
+    assert_eq!(header["request_id"], "r2");
+    assert_eq!(header["offset"], 16);
+    assert_eq!(header["total"], 64);
+    assert_eq!(header["eof"], true);
+    assert_eq!(payload, contents[16..32]);
+
+    // A file outside every registered root is the same path_refused frame the
+    // rest of the boundary answers with.
+    let refused = send_event_expecting(
+        &mut socket,
+        "file_bytes",
+        json!({
+            "request_id": "r3",
+            "path": outside.path().join("secret.bin").display().to_string(),
+            "offset": 0,
+            "length": Value::Null,
+        }),
+        never,
+    )
+    .await;
+    assert_eq!(refused["type"], "path_refused");
+    assert_eq!(refused["payload"]["kind"], "file_bytes");
+    assert_eq!(refused["payload"]["reason"], "outside_checkout");
+
+    // A directory under the root is not a byte source.
+    let refused = send_event_expecting(
+        &mut socket,
+        "file_bytes",
+        json!({
+            "request_id": "r4",
+            "path": checkout.display().to_string(),
+            "offset": 0,
+            "length": Value::Null,
+        }),
+        never,
+    )
+    .await;
+    assert_eq!(refused["type"], "path_refused");
+    assert_eq!(refused["payload"]["reason"], "not_a_file");
+
+    // A read past the cap is answered as a one-line failure, not streamed.
+    let refused = send_event_expecting(
+        &mut socket,
+        "file_bytes",
+        json!({
+            "request_id": "r5",
+            "path": path,
+            "offset": 0,
+            "length": hided::boundary::MAX_FILE_BYTES + 1,
+        }),
+        |frame| frame["type"] == "file_bytes_error",
+    )
+    .await;
+    assert_eq!(refused["type"], "file_bytes_error");
+    assert_eq!(refused["payload"]["reason"], "too_large");
+    running.stop();
+}

@@ -15,6 +15,34 @@ import { countSent, screenshot } from "./wire";
 
 const SOURCE = "export const answer = 41;\n";
 
+/** A 1x1 PNG, so an image viewer has real bytes to decode. */
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** A minimal one-page PDF with a correct cross-reference table. */
+function minimalPdf(): Buffer {
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+    "4 0 obj\n<< /Length 44 >>\nstream\nBT /F1 24 Tf 40 100 Td (Hello PDF) Tj ET\nendstream\nendobj\n",
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  for (const object of objects) {
+    offsets.push(pdf.length);
+    pdf += object;
+  }
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, "latin1");
+}
+
 /** A committed file the working tree then changes, so the core reports it. */
 function gitFixture(dir: string): void {
   execFileSync("git", ["init", "-q"], { cwd: dir });
@@ -44,6 +72,9 @@ async function openCheckout(page: Page): Promise<Fixture> {
     fs.writeFileSync(path.join(repoDir, "src", "main.ts"), SOURCE);
     fs.writeFileSync(path.join(repoDir, "README.md"), "# repo\n");
     fs.writeFileSync(path.join(repoDir, ".gitignore"), "node_modules\n");
+    fs.writeFileSync(path.join(repoDir, "shot.png"), PNG);
+    fs.writeFileSync(path.join(repoDir, "doc.pdf"), minimalPdf());
+    fs.copyFileSync(path.resolve("e2e/fixtures/tiny.mp4"), path.join(repoDir, "clip.mp4"));
     gitFixture(repoDir);
     const repo = fs.realpathSync(repoDir);
     herdr.run([
@@ -171,6 +202,39 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     await expect(content).toContainText("export const answer = 0;");
     await expect.poll(() => sent.get("file_conflict")).toBe(1);
     expect(lastSent.get("file_conflict")).toMatchObject({ action: "reload" });
+  } finally {
+    close(fixture);
+  }
+});
+
+test("images, PDFs and videos render from hided file bytes", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    // An image decodes from the bytes hided streamed.
+    await page.locator(`[data-explorer-row="${repo}/shot.png"]`).click();
+    const image = page.locator('[data-viewer="image"] img');
+    await expect(image).toBeVisible();
+    await expect.poll(async () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await expect.poll(() => sent.get("file_bytes")).toBe(1);
+    await screenshot(page, "s3-viewer-image");
+
+    // A PDF renders one canvas page through pdf.js.
+    await page.locator(`[data-explorer-row="${repo}/doc.pdf"]`).click();
+    await expect(page.locator('[data-viewer="pdf"]')).toBeVisible();
+    await expect(page.locator('[data-pdf-page="1"]')).toBeVisible({ timeout: 20_000 });
+    await screenshot(page, "s3-viewer-pdf");
+
+    // A video plays from its bytes, and seeking moves the playhead (B7).
+    await page.locator(`[data-explorer-row="${repo}/clip.mp4"]`).click();
+    const video = page.locator('[data-viewer="video"] video');
+    await expect(video).toBeVisible();
+    await expect.poll(async () => video.evaluate((node) => (node as HTMLVideoElement).duration), { timeout: 20_000 }).toBeGreaterThan(0);
+    await video.evaluate((node) => {
+      (node as HTMLVideoElement).currentTime = 0.5;
+    });
+    await expect.poll(async () => video.evaluate((node) => (node as HTMLVideoElement).currentTime)).toBeGreaterThan(0.4);
+    await screenshot(page, "s3-viewer-video");
   } finally {
     close(fixture);
   }

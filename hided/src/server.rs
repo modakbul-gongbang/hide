@@ -14,6 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Notify;
 
 use crate::boundary::{self, Boundary, Listing, Refusal};
@@ -278,18 +279,18 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        let reply = match handle_client_text(&state, &text) {
-                            Ok(Some(frame)) => Some(frame),
-                            Ok(None) => None,
-                            Err(error) => Some(json!({"type":"error","payload":{},"message": error})),
+                        let replies = match handle_client_text(&state, &text).await {
+                            Ok(frames) => frames,
+                            Err(error) => vec![Message::Text(
+                                json!({"type":"error","payload":{},"message": error}).to_string().into(),
+                            )],
                         };
-                        if let Some(frame) = reply
-                            && socket.send(Message::Text(frame.to_string().into())).await.is_err()
-                        {
-                            break;
+                        for frame in replies {
+                            if socket.send(frame).await.is_err() {
+                                break;
+                            }
                         }
-                    }
-                    Some(Ok(Message::Close(_))) | None => break,
+                    }                    Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(_)) => {}
                     Some(Err(_)) => break,
                 }
@@ -308,10 +309,11 @@ fn token_matches(offered: &str, expected: &str) -> bool {
 
 /// Forwards a client event to the core, or answers it here.
 ///
-/// `Ok(Some(frame))` is a frame for this client alone: a directory listing or
-/// a path refusal. Everything the core answers arrives through the snapshot
-/// stream instead, so a forwarded event returns `Ok(None)`.
-fn handle_client_text(state: &AppState, text: &str) -> Result<Option<Value>, String> {
+/// An empty answer means the event went to the core, which answers through
+/// the snapshot stream. Anything the daemon answers itself is one or more
+/// frames for this client alone: a directory listing, a path refusal, or the
+/// binary frames of a `file_bytes` read.
+async fn handle_client_text(state: &AppState, text: &str) -> Result<Vec<Message>, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
     let mut event = if value.get("schema_version").is_some() && value.get("kind").is_some() {
@@ -319,11 +321,116 @@ fn handle_client_text(state: &AppState, text: &str) -> Result<Option<Value>, Str
     } else {
         return Err("expected a core event {schema_version, kind, payload}".to_owned());
     };
+    if event.get("kind").and_then(Value::as_str) == Some("file_bytes") {
+        return Ok(handle_file_bytes(&state.boundary, &event).await);
+    }
     if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
-        return Ok(Some(reply));
+        return Ok(vec![Message::Text(reply.to_string().into())]);
     }
     let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
-    state.core.dispatch(bytes).map(|()| None)
+    state.core.dispatch(bytes).map(|()| Vec::new())
+}
+
+/// Bytes one binary frame carries; a read streams in frames this size so a
+/// large file never becomes one unbounded message on the shared socket.
+const BYTES_CHUNK: u64 = 4 * 1024 * 1024;
+
+/// The header of a binary frame: a 4-byte big-endian length, the header JSON,
+/// then the bytes. The header carries the request it answers, the offset the
+/// bytes start at, the file's total size, and whether this frame ends the
+/// read, so a client can assemble a range without a second round trip.
+fn bytes_frame(header: &Value, bytes: &[u8]) -> Vec<u8> {
+    let json = header.to_string();
+    let mut out = Vec::with_capacity(4 + json.len() + bytes.len());
+    out.extend_from_slice(&(json.len() as u32).to_be_bytes());
+    out.extend_from_slice(json.as_bytes());
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// A read the daemon could not serve as bytes: the file is past the read cap,
+/// or the disk refused it. The client shows one line and offers no retry.
+fn file_bytes_error(request_id: &str, path: &str, reason: &str) -> Message {
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "file_bytes.failed",
+            "reason": reason,
+            "path": path.chars().take(LOGGED_PATH_CAP).collect::<String>(),
+        })
+    );
+    Message::Text(
+        json!({
+            "type": "file_bytes_error",
+            "payload": {"request_id": request_id, "path": path, "reason": reason},
+        })
+        .to_string()
+        .into(),
+    )
+}
+
+/// A `file_bytes` read: the path is checked against the checkout roots, the
+/// cap is applied, and the requested range is streamed as binary frames. A
+/// boundary refusal is the same `path_refused` frame every other path gets.
+async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
+    let request_id = payload_str(event, "request_id");
+    let path = payload_str(event, "path");
+    let offset = event
+        .pointer("/payload/offset")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let length = event.pointer("/payload/length").and_then(Value::as_u64);
+    let (real, total) = match boundary.resolve_file(&path) {
+        Ok(pair) => pair,
+        Err(refusal) => {
+            return vec![Message::Text(
+                refused("file_bytes", &path, refusal).to_string().into(),
+            )];
+        }
+    };
+    let wanted = length.unwrap_or_else(|| total.saturating_sub(offset.min(total)));
+    if wanted > boundary::MAX_FILE_BYTES {
+        return vec![file_bytes_error(&request_id, &path, "too_large")];
+    }
+    let mut file = match tokio::fs::File::open(&real).await {
+        Ok(file) => file,
+        Err(_) => return vec![file_bytes_error(&request_id, &path, "read_failed")],
+    };
+    let start = offset.min(total);
+    if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+        return vec![file_bytes_error(&request_id, &path, "read_failed")];
+    }
+    let end = start.saturating_add(wanted).min(total);
+    let displayed = real.display().to_string();
+    let mut frames = Vec::new();
+    let mut cursor = start;
+    loop {
+        let take = (end - cursor).min(BYTES_CHUNK) as usize;
+        let mut buffer = vec![0u8; take];
+        let read = match file.read(&mut buffer).await {
+            Ok(read) => read,
+            Err(_) => {
+                frames.push(file_bytes_error(&request_id, &path, "read_failed"));
+                return frames;
+            }
+        };
+        buffer.truncate(read);
+        let eof = cursor + read as u64 >= end;
+        let header = json!({
+            "type": "file_bytes",
+            "request_id": request_id,
+            "path": displayed,
+            "offset": cursor,
+            "total": total,
+            "eof": eof,
+        });
+        frames.push(Message::Binary(bytes_frame(&header, &buffer).into()));
+        cursor += read as u64;
+        if eof {
+            return frames;
+        }
+    }
 }
 
 /// The one place a client's path is checked before the core sees it (PRD S2
@@ -759,6 +866,9 @@ fn mime_for(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("html") => "text/html; charset=utf-8",
         Some("js") => "text/javascript; charset=utf-8",
+        // Vite emits a lazy-loaded ES module (the pdf.js worker among them) as
+        // `.mjs`; a module script is refused unless its type is JavaScript.
+        Some("mjs") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("json") => "application/json",
         Some("svg") => "image/svg+xml",

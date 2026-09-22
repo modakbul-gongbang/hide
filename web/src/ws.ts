@@ -1,4 +1,5 @@
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
+import { receiveBytes, receiveBytesError } from "./fileBytes";
 import { noteArrival, probeEnabled } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
 
@@ -57,6 +58,9 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
     }
     useShellStore.getState().setConnection(socket ? "reconnecting" : "connecting");
     const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+    // File bytes arrive as binary frames on this same socket; the header and
+    // payload are split by the file-bytes reader, not by the snapshot store.
+    ws.binaryType = "arraybuffer";
     socket = ws;
     ws.addEventListener("open", () => {
       ws.send(
@@ -70,10 +74,18 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; close:
     });
     ws.addEventListener("message", (event) => {
       if (probing) noteArrival();
+      if (event.data instanceof ArrayBuffer) {
+        receiveBytes(event.data);
+        return;
+      }
       const frame = JSON.parse(String(event.data)) as {
         type: string;
         payload?: { revision?: number; terminal_sequence?: number };
       };
+      if (frame.type === "file_bytes_error") {
+        receiveBytesError(frame.payload as unknown as { request_id: string; reason: string });
+        return;
+      }
       const chunks = useShellStore.getState().applyFrame(frame);
       revision = useShellStore.getState().revision;
       terminalSequence = useShellStore.getState().terminalSequence;

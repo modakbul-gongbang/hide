@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
 import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
+import { configureFileBytes } from "./fileBytes";
 import { installKeyboard } from "./keyboard";
 import { ConfirmClose, CycleOverlay, FindBar, NoticeBar } from "./Overlays";
 import { PaneCanvas } from "./PaneGrid";
@@ -30,6 +31,7 @@ export function App() {
       },
     });
     dispatchRef.current = session.dispatch;
+    configureFileBytes(session.dispatch);
     const keyboard = installKeyboard(actions);
     if (probeEnabled()) {
       installProbe(

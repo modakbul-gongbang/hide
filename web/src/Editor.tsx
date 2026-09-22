@@ -4,6 +4,7 @@ import { clearDraft, noteDraft } from "./editor/draft";
 import { activeEditorTab, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { FileViewer } from "./viewers/FileViewer";
 
 // The document surface (PRD B3-B7). The core owns the open tabs and the
 // document; this draws the one that is showing and dispatches the events that
@@ -136,14 +137,8 @@ function EditorBody({
   if (!document) {
     return <Notice text="Loading…" state="loading" />;
   }
-  if (document.document_kind === "binary") {
-    return <Notice text="This file is binary and cannot be edited here." state="binary" />;
-  }
-  if (document.document_kind === "image") {
-    return <Notice text="Image viewer arrives with the file bytes frame." state="image" />;
-  }
-  if (document.document_kind === "pdf") {
-    return <Notice text="PDF viewer arrives with the file bytes frame." state="pdf" />;
+  if (document.document_kind !== "text" && document.document_kind !== "markdown") {
+    return <FileViewer document={document} />;
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
