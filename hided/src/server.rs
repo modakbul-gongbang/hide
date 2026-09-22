@@ -16,7 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
-use crate::boundary::{Boundary, Refusal};
+use crate::boundary::{self, Boundary, Refusal};
 use crate::core::CoreHandle;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 
@@ -326,57 +326,210 @@ fn handle_client_text(state: &AppState, text: &str) -> Result<Option<Value>, Str
     state.core.dispatch(bytes).map(|()| None)
 }
 
-/// The one place the `$HOME` boundary is enforced (PRD S2 B10): a
-/// `remote_file_list` for the `local` target or a `create_workspace` whose
-/// path does not resolve under home is answered with a `path_refused` frame
-/// and never reaches the core. The local listing is the web shell's directory
-/// autocomplete, which the core has no event for, so hided answers it as a
-/// `directory_list` frame; a `remote_file_list` for any other target names a
-/// path on that remote machine, which this boundary knows nothing about, and
-/// is forwarded as it came. An accepted workspace path is rewritten to the
-/// canonical path that was checked. Every other event kind passes untouched.
+/// The one place a client's path is checked before the core sees it (PRD S2
+/// B10, S3 D-01 and B11). Two lines run here, one per flow, and every path
+/// that passes is rewritten to the spelling that was checked.
+///
+/// The registration line reads `$HOME`: a `remote_file_list` for the `local`
+/// target or a `create_workspace` whose path does not resolve under home is
+/// answered with a `path_refused` frame and never reaches the core. The local
+/// listing is the web shell's directory autocomplete, which the core has no
+/// event for, so hided answers it as a `directory_list` frame; a
+/// `remote_file_list` for any other target names a path on that remote
+/// machine, which this boundary knows nothing about, and is forwarded as it
+/// came.
+///
+/// The Explorer line reads the registered checkout roots: every path an
+/// explorer event carries is checked against the root the event named, and a
+/// path outside it is refused as `outside_checkout`. `file_save` is the one
+/// exception and is checked without being rewritten, because the core compares
+/// the path it stored with the one it is handed.
+///
+/// An attachment event carries paths the shell staged itself, so only their
+/// shape is checked; a path that fails is dropped from the batch rather than
+/// losing the whole event. Every other kind passes untouched.
 fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
     let kind = event.get("kind").and_then(Value::as_str)?.to_owned();
-    let field = match kind.as_str() {
-        "remote_file_list" => {
-            let local = event
-                .pointer("/payload/target_id")
-                .and_then(Value::as_str)
-                .is_some_and(|target| target == "local");
-            if !local {
-                return None;
-            }
-            "root_path"
-        }
-        "create_workspace" => "path",
-        _ => return None,
-    };
-    let raw = event
+    match kind.as_str() {
+        "remote_file_list" => registration_listing(boundary, event, &kind),
+        "create_workspace" => rewrite(event, &kind, "path", |raw| boundary.resolve_workspace(raw)),
+        "file_open" | "reveal_path" => explorer_open(boundary, event, &kind),
+        "file_save" => explorer_save(boundary, event, &kind),
+        "file_create" | "dir_create" => explorer_create(boundary, event, &kind),
+        "path_rename" => explorer_rename(boundary, event, &kind),
+        "path_move" => explorer_move(boundary, event, &kind),
+        "path_trash" => explorer_trash(boundary, event, &kind),
+        "terminal_attachment" => attachments(event),
+        _ => None,
+    }
+}
+
+/// The path a client sent, as written; a field the event omits reads as empty
+/// and fails the shape check like any other empty path.
+fn payload_str(event: &Value, field: &str) -> String {
+    event
         .pointer(&format!("/payload/{field}"))
         .and_then(Value::as_str)
         .unwrap_or("")
-        .to_owned();
-    let outcome = if kind == "remote_file_list" {
-        boundary
-            .list(&raw)
-            .map(|listing| json!({"type": "directory_list", "payload": listing}))
-    } else {
-        boundary.resolve_workspace(&raw).map(|real| {
+        .to_owned()
+}
+
+/// The frame a refused path is answered with, and the one log line it leaves.
+fn refused(kind: &str, path: &str, refusal: Refusal) -> Value {
+    log_path_refusal(kind, path, refusal);
+    json!({
+        "type": "path_refused",
+        "payload": {"kind": kind, "path": path, "reason": refusal.code()},
+    })
+}
+
+/// Checks one path field and rewrites it to the spelling that was checked.
+fn rewrite(
+    event: &mut Value,
+    kind: &str,
+    field: &str,
+    resolve: impl Fn(&str) -> Result<PathBuf, Refusal>,
+) -> Option<Value> {
+    let raw = payload_str(event, field);
+    match resolve(&raw) {
+        Ok(real) => {
             event["payload"][field] = Value::String(real.display().to_string());
-            Value::Null
-        })
-    };
-    match outcome {
-        Ok(Value::Null) => None,
-        Ok(frame) => Some(frame),
-        Err(refusal) => {
-            log_path_refusal(&kind, &raw, refusal);
-            Some(json!({
-                "type": "path_refused",
-                "payload": {"kind": kind, "path": raw, "reason": refusal.code()},
-            }))
+            None
         }
+        Err(refusal) => Some(refused(kind, &raw, refusal)),
     }
+}
+
+/// A local `remote_file_list` is answered here; a remote one is not this
+/// boundary's to judge and is forwarded as it came.
+fn registration_listing(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    let local = event
+        .pointer("/payload/target_id")
+        .and_then(Value::as_str)
+        .is_some_and(|target| target == "local");
+    if !local {
+        return None;
+    }
+    let raw = payload_str(event, "root_path");
+    match boundary.list(&raw) {
+        Ok(listing) => Some(json!({"type": "directory_list", "payload": listing})),
+        Err(refusal) => Some(refused(kind, &raw, refusal)),
+    }
+}
+
+/// An open or a reveal names the checkout the path belongs to, so the path is
+/// checked against that checkout's root. A pair this daemon holds no root for
+/// falls back to any root; the core answers the unknown checkout itself.
+fn explorer_open(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    let workspace_id = payload_str(event, "workspace_id");
+    let checkout_id = payload_str(event, "checkout_id");
+    rewrite(event, kind, "path", |raw| {
+        boundary.resolve_checkout(&workspace_id, &checkout_id, raw)
+    })
+}
+
+/// A save carries a path the client already opened, and the core compares it
+/// with the path it stored, so it is checked and left as it came.
+fn explorer_save(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    let raw = payload_str(event, "path");
+    if boundary.is_under_root(&raw) {
+        return None;
+    }
+    Some(refused(kind, &raw, Refusal::OutsideCheckout))
+}
+
+/// The root an explorer change names and one path under it: the root has to be
+/// one of the registered ones, and both are rewritten to the spelling that was
+/// checked.
+fn explorer_rooted_path(
+    boundary: &Boundary,
+    event: &mut Value,
+    kind: &str,
+    field: &str,
+) -> Option<Value> {
+    let root = payload_str(event, "root");
+    let Some(known) = boundary.known_root(&root) else {
+        return Some(refused(kind, &root, Refusal::OutsideCheckout));
+    };
+    let raw = payload_str(event, field);
+    let real = match boundary.resolve_below(&known, &raw) {
+        Ok(real) => real,
+        Err(refusal) => return Some(refused(kind, &raw, refusal)),
+    };
+    event["payload"]["root"] = Value::String(known.display().to_string());
+    event["payload"][field] = Value::String(real.display().to_string());
+    None
+}
+
+/// A creation names the folder it lands in and the name it takes.
+fn explorer_create(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    let name = payload_str(event, "name");
+    if !boundary::valid_name(&name) {
+        return Some(refused(kind, &name, Refusal::InvalidPath));
+    }
+    explorer_rooted_path(boundary, event, kind, "parent")
+}
+
+/// A rename names the item and the name it takes.
+fn explorer_rename(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    let name = payload_str(event, "name");
+    if !boundary::valid_name(&name) {
+        return Some(refused(kind, &name, Refusal::InvalidPath));
+    }
+    explorer_rooted_path(boundary, event, kind, "path")
+}
+
+/// A move names the item and the folder it lands in; both are under the root.
+fn explorer_move(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    if let Some(frame) = explorer_rooted_path(boundary, event, kind, "path") {
+        return Some(frame);
+    }
+    let root = payload_str(event, "root");
+    rewrite(event, kind, "destination", |raw| {
+        boundary.resolve_in_root(&root, raw)
+    })
+}
+
+/// A trash names the item and the row the tree selects once it is gone; both
+/// are under the root, and the core still refuses a selection inside the item.
+fn explorer_trash(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    if let Some(frame) = explorer_rooted_path(boundary, event, kind, "path") {
+        return Some(frame);
+    }
+    let root = payload_str(event, "root");
+    rewrite(event, kind, "select_after", |raw| {
+        boundary.resolve_in_root(&root, raw)
+    })
+}
+
+/// An attachment carries paths the shell staged itself - a screenshot it wrote
+/// for the clipboard, a file the operator dragged in - so the boundary checks
+/// the shape of each rather than a root. A path that fails the shape, and any
+/// path past the batch cap, is dropped here and the drop is logged; the core
+/// refuses the whole batch, which would lose the ones that were fine.
+fn attachments(event: &mut Value) -> Option<Value> {
+    let paths = event.pointer("/payload/paths").and_then(Value::as_array)?;
+    let sent = paths.len();
+    let kept: Vec<Value> = paths
+        .iter()
+        .filter(|path| path.as_str().is_some_and(boundary::valid_attachment_path))
+        .take(boundary::MAX_ATTACHMENT_FILES)
+        .cloned()
+        .collect();
+    if kept.len() == sent {
+        return None;
+    }
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "attachment.dropped",
+            "sent": sent,
+            "kept": kept.len(),
+        })
+    );
+    event["payload"]["paths"] = Value::Array(kept);
+    None
 }
 
 /// Characters of a refused path the log keeps; the path is client input, so

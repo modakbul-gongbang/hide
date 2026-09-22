@@ -509,3 +509,206 @@ async fn a_remote_listing_for_another_target_is_forwarded_untouched() {
     ));
     running.stop();
 }
+
+// --- checkout-root boundary over the socket (PRD S3 B7) ------------------
+
+/// A client socket, as `connect` builds it.
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Sends an event and returns the first frame that answers it: a refusal from
+/// hided, or the core's own reaction to a forwarded event. `answered` names
+/// the reaction, so a delta the core emitted for something else does not count
+/// as the answer.
+async fn send_event_expecting(
+    socket: &mut Socket,
+    kind: &str,
+    payload: Value,
+    answered: impl Fn(&Value) -> bool,
+) -> Value {
+    socket
+        .send(Message::Text(
+            json!({"schema_version": 2, "kind": kind, "payload": payload})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let frame = first_frame(socket).await;
+            if frame["type"] == "path_refused" || answered(&frame) {
+                return frame;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("an answer to the {kind} event"))
+}
+
+/// The reaction predicate of a step whose only expected answer is the refusal
+/// itself, which the loop returns before it asks.
+fn never(_: &Value) -> bool {
+    false
+}
+
+/// Writes the core's own state file with one registration, which is what makes
+/// a directory a checkout and so what gives hided a root to check against. The
+/// file is the shape herdr-core persists: flat, schema 1, no nesting.
+fn seed_registration(state_dir: &std::path::Path, id: &str, path: &std::path::Path) {
+    std::fs::write(
+        state_dir.join("core-state.json"),
+        json!({
+            "schema_version": 1,
+            "expanded_paths": [],
+            "selected_path": Value::Null,
+            "selected_pane_id": Value::Null,
+            "workspace_registrations": [{
+                "id": id,
+                "label": "alpha",
+                "path": path.display().to_string(),
+            }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn explorer_paths_are_checked_against_the_registered_checkout() {
+    let (dir, env) = test_env(true);
+    let home = dir.path().canonicalize().unwrap();
+    let checkout = home.join("projects/alpha");
+    std::fs::create_dir_all(checkout.join("src")).unwrap();
+    std::fs::write(checkout.join("src/main.rs"), "fn main() {}\n").unwrap();
+    // A directory under home that no registration covers: the registration
+    // line reads it, the Explorer line must not.
+    let notes = home.join("projects/notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    std::fs::create_dir_all(notes.join("plans")).unwrap();
+    std::fs::write(notes.join("todo.md"), "- [ ] x\n").unwrap();
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+
+    let mut socket = connect(running.port, None).await;
+    socket.send(handshake(&running.token, 2)).await.unwrap();
+    let snapshot = first_frame(&mut socket).await;
+    assert_eq!(snapshot["type"], "snapshot");
+    let workspace = snapshot["payload"]["rest"]["navigator"]["workspaces"]
+        .as_array()
+        .expect("the snapshot carries the navigator")
+        .iter()
+        .find(|workspace| workspace["path"] == json!(checkout.display().to_string()))
+        .cloned()
+        .expect("the seeded registration is a workspace");
+    let workspace_id = workspace["id"].as_str().unwrap().to_owned();
+    let checkout_id = workspace["checkouts"][0]["id"].as_str().unwrap().to_owned();
+    let checkout_path = checkout.display().to_string();
+    let notes_path = notes.join("todo.md").display().to_string();
+    let file_path = checkout.join("src/main.rs").display().to_string();
+
+    // A path under home that no checkout covers is refused as such, for an
+    // open and for a change alike.
+    let refused = send_event_expecting(
+        &mut socket,
+        "file_open",
+        json!({
+            "path": notes_path,
+            "workspace_id": workspace_id,
+            "checkout_id": checkout_id,
+            "preview": false,
+        }),
+        never,
+    )
+    .await;
+    assert_eq!(refused["type"], "path_refused");
+    assert_eq!(refused["payload"]["kind"], "file_open");
+    assert_eq!(refused["payload"]["reason"], "outside_checkout");
+    assert_eq!(refused["payload"]["path"], notes_path);
+
+    let refused = send_event_expecting(
+        &mut socket,
+        "path_trash",
+        json!({
+            "root": checkout_path,
+            "path": notes_path,
+            "select_after": checkout_path,
+            "inode": Value::Null,
+        }),
+        never,
+    )
+    .await;
+    assert_eq!(refused["payload"]["kind"], "path_trash");
+    assert_eq!(refused["payload"]["reason"], "outside_checkout");
+
+    // The root a change names has to be one of the registered ones.
+    let unregistered_root = home.join("projects").display().to_string();
+    let refused = send_event_expecting(
+        &mut socket,
+        "path_trash",
+        json!({
+            "root": unregistered_root,
+            "path": checkout.join("src").display().to_string(),
+            "select_after": checkout_path,
+            "inode": Value::Null,
+        }),
+        never,
+    )
+    .await;
+    assert_eq!(refused["payload"]["kind"], "path_trash");
+    assert_eq!(refused["payload"]["reason"], "outside_checkout");
+    assert_eq!(refused["payload"]["path"], unregistered_root);
+
+    // A name that is not one component never reaches the core.
+    let refused = send_event_expecting(
+        &mut socket,
+        "path_rename",
+        json!({"root": checkout_path, "path": file_path, "name": "../escape.rs"}),
+        never,
+    )
+    .await;
+    assert_eq!(refused["payload"]["kind"], "path_rename");
+    assert_eq!(refused["payload"]["reason"], "invalid_path");
+    assert_eq!(refused["payload"]["path"], "../escape.rs");
+
+    // A path inside the registered checkout is the Explorer's: the core opens
+    // it, and the tab it makes carries the file's own name.
+    let opened = send_event_expecting(
+        &mut socket,
+        "file_open",
+        json!({
+            "path": file_path,
+            "workspace_id": workspace_id,
+            "checkout_id": checkout_id,
+            "preview": false,
+        }),
+        |frame| frame["payload"]["editor"]["tabs"][0]["label"] == "main.rs",
+    )
+    .await;
+    assert_eq!(opened["type"], "delta", "the open has to reach the core");
+    assert_eq!(
+        opened["payload"]["editor"]["tabs"][0]["label"], "main.rs",
+        "the tab the core makes carries the file's own name"
+    );
+
+    // The two lines stay separate. The registration line answers for the home
+    // tree on its own, so a directory under home that no checkout covers is
+    // listed rather than refused: the checkout line would have called this
+    // path `outside_checkout`.
+    let listing = send_event_expecting(
+        &mut socket,
+        "remote_file_list",
+        json!({"target_id": "local", "root_path": notes.display().to_string()}),
+        |frame| frame["type"] == "directory_list",
+    )
+    .await;
+    assert_eq!(listing["type"], "directory_list");
+    let names: Vec<&str> = listing["payload"]["entries"]
+        .as_array()
+        .expect("a listing carries entries")
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["plans"], "no file, only the directory");
+    running.stop();
+}

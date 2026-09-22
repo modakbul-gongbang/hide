@@ -9,17 +9,26 @@ pub mod state_file;
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use herdr_core::{CoreOptions, SCHEMA_VERSION};
+use serde_json::Value;
 use tokio::sync::Notify;
 
+use crate::boundary::{Boundary, Root};
 use crate::core::CoreHandle;
 use crate::env::Env;
 use crate::server::AppState;
 use crate::state_file::{DaemonState, acquire_lock, new_token, remove_state, write_state};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// How long a burst of core changes is left to settle before the boundary's
+/// checkout roots are read again. The roots only change when a registration
+/// does, but the notifier fires for every change the core makes, and reading
+/// one snapshot is a full serialization on the owner thread, so the reads are
+/// bounded rather than taken once per change.
+const ROOT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 fn find_ui_dir() -> Option<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
@@ -139,6 +148,11 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         version: VERSION,
     };
     let env_state_dir = env.state_dir.clone();
+    // Seeded before the server accepts a client, so an Explorer event can
+    // never arrive at a boundary that holds no root yet; the core has already
+    // loaded its registrations by the time `CoreHandle::spawn` returns.
+    refresh_roots(&app.core, &app.boundary);
+    spawn_root_refresh(Arc::clone(&app.core), Arc::clone(&app.boundary));
     tokio::spawn(async move {
         if let Err(error) = server::serve(listener, app).await {
             eprintln!(
@@ -160,12 +174,150 @@ pub async fn wait_shutdown(running: &RunningDaemon) {
     running.shutdown.notified().await;
 }
 
+/// Keeps the boundary's checkout roots in step with the core: one snapshot read
+/// after each burst of changes, and the checkouts in it replace the root set
+/// wholesale.
+///
+/// The read runs here rather than in a client's event, so no client waits on it
+/// and nothing runs under the runtime mutex. The first read seeds the roots
+/// in `start_daemon` before the server serves, and a burst collapses into one
+/// read, because the snapshot taken last already carries every change in it.
+fn spawn_root_refresh(core: Arc<CoreHandle>, boundary: Arc<Boundary>) {
+    let mut changes = core.notify.subscribe();
+    tokio::spawn(async move {
+        loop {
+            if changes.recv().await.is_err() {
+                return;
+            }
+            while changes.try_recv().is_ok() {}
+            tokio::time::sleep(ROOT_REFRESH_INTERVAL).await;
+            while changes.try_recv().is_ok() {}
+            refresh_roots(&core, &boundary);
+        }
+    });
+}
+
+fn refresh_roots(core: &CoreHandle, boundary: &Boundary) {
+    match core.snapshot(0, 0) {
+        Ok(reply) => boundary.set_roots(roots_from_snapshot(&reply.bytes)),
+        Err(error) => eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "hided",
+                "kind": "boundary.roots_failed",
+                "message": error,
+            })
+        ),
+    }
+}
+
+/// The checkouts a snapshot carries that the Explorer may work in: every local
+/// workspace, and the checkouts in it that exist on disk. A remote workspace's
+/// paths name another machine and are not this boundary's to read.
+fn roots_from_snapshot(bytes: &[u8]) -> Vec<Root> {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return Vec::new();
+    };
+    let Some(workspaces) = value
+        .pointer("/rest/navigator/workspaces")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut roots = Vec::new();
+    for workspace in workspaces {
+        if workspace
+            .get("remote_target_id")
+            .is_some_and(|target| !target.is_null())
+        {
+            continue;
+        }
+        let Some(workspace_id) = workspace.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(checkouts) = workspace.get("checkouts").and_then(Value::as_array) else {
+            continue;
+        };
+        for checkout in checkouts {
+            let Some(id) = checkout.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(path) = checkout.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            if !checkout
+                .get("exists")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            roots.push(Root {
+                workspace_id: workspace_id.to_owned(),
+                checkout_id: id.to_owned(),
+                path: std::path::PathBuf::from(path),
+            });
+        }
+    }
+    roots
+}
+
 #[cfg(test)]
 mod tests {
     use super::env::{HOME, REGISTRY};
+    use super::*;
 
     #[test]
     fn env_registry_lists_home_as_required() {
         assert!(REGISTRY.iter().any(|key| key.key == HOME && key.required));
+    }
+
+    #[test]
+    fn roots_come_from_the_local_checkouts_a_snapshot_carries() {
+        let snapshot = serde_json::json!({
+            "schema_version": 2,
+            "revision": 4,
+            "rest": {
+                "navigator": {
+                    "workspaces": [
+                        {
+                            "id": "w1",
+                            "remote_target_id": null,
+                            "checkouts": [
+                                {"id": "c1", "path": "/tmp/repo", "exists": true},
+                                {"id": "c2", "path": "/tmp/gone", "exists": false},
+                            ],
+                        },
+                        {
+                            "id": "w2",
+                            "remote_target_id": "device-1",
+                            "checkouts": [{"id": "c3", "path": "/srv/repo", "exists": true}],
+                        },
+                    ],
+                },
+            },
+        });
+        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        assert_eq!(
+            roots_from_snapshot(&bytes),
+            vec![Root {
+                workspace_id: "w1".to_owned(),
+                checkout_id: "c1".to_owned(),
+                path: std::path::PathBuf::from("/tmp/repo"),
+            }],
+            "a remote workspace and a checkout that is gone are not roots"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_without_rest_or_checkouts_yields_no_roots() {
+        for snapshot in [
+            serde_json::json!({"schema_version": 2, "revision": 1}),
+            serde_json::json!({"revision": 1, "rest": {"navigator": {"workspaces": []}}}),
+        ] {
+            let bytes = serde_json::to_vec(&snapshot).unwrap();
+            assert!(roots_from_snapshot(&bytes).is_empty());
+        }
+        assert!(roots_from_snapshot(b"not json").is_empty());
     }
 }

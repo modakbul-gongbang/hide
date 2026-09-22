@@ -21,7 +21,7 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target and path_refused answers a `remote_file_list` or `create_workspace` whose path failed the $HOME boundary (see directoryList and pathRefused).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` and `path_trash` (see directoryList and pathRefused).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
@@ -49,9 +49,9 @@
       "enum": [4001, 4002, 4003, 4004]
     },
     "pathRefusalReason": {
-      "description": "outside_home: the real path is not under $HOME (a symlink target counts). home_root: $HOME itself cannot be a workspace. not_found: nothing exists there. not_a_directory: a file. invalid_path: empty, relative, contains `..` or NUL.",
+      "description": "outside_home: the real path is not under $HOME (a symlink target counts). home_root: $HOME itself cannot be a workspace. outside_checkout: the path is not under any registered checkout root, which is the reason an explorer event gets for a path under $HOME that no checkout covers. not_found: nothing exists there. not_a_directory: a file. invalid_path: empty, relative, contains `..` or NUL, or an item name that is empty, `.`, `..`, or holds a `/`.",
       "type": "string",
-      "enum": ["outside_home", "home_root", "not_found", "not_a_directory", "invalid_path"]
+      "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "invalid_path"]
     },
     "directoryList": {
       "description": "Payload of a directory_list frame: the visible subdirectories of root_path under $HOME. root_path is the real path that was listed (a request of `~` lists home and answers with its path). Files, hidden names, and symlinks that resolve outside home are absent; truncated is true past the listing cap.",
@@ -76,12 +76,26 @@
       }
     },
     "pathRefused": {
-      "description": "Payload of a path_refused frame: the event kind that carried the path, the path as sent, and why hided did not forward it.",
+      "description": "Payload of a path_refused frame: the event kind that carried the path, the path as sent, and why hided did not forward it. A `file_create` or `dir_create` whose name failed the shape check, and a `path_rename` whose new name did, carry that name as the path.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "path", "reason"],
       "properties": {
-        "kind": { "type": "string", "enum": ["remote_file_list", "create_workspace"] },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "remote_file_list",
+            "create_workspace",
+            "file_open",
+            "reveal_path",
+            "file_save",
+            "file_create",
+            "dir_create",
+            "path_rename",
+            "path_move",
+            "path_trash"
+          ]
+        },
         "path": { "type": "string" },
         "reason": { "$ref": "#/$defs/pathRefusalReason" }
       }
