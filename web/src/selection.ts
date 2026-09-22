@@ -13,7 +13,10 @@
 // leading whitespace every non-blank line shares is a margin the program
 // drew, not text, while the indentation lines have relative to one another
 // is kept (user: "그 줄 앞에 공백있으면 앞에서 trim까지 해줘"). A single line
-// therefore loses its leading spaces entirely.
+// therefore loses its leading spaces entirely. A drag that starts past
+// column 0 cuts its first line short, so that line's leading whitespace is
+// not a margin and does not decide one: the other lines do, and the first
+// line gives up whatever part of the margin it still has.
 
 /**
  * One row as xterm reports its cells: the chars of each column, `""` for a
@@ -56,26 +59,41 @@ export function selectionToText(rows: CellRow[], startColumn: number, endColumn:
     if (index > 0 && !rowContinues(rows[index - 1] ?? [])) text += "\n";
     text += rowText(cells, from, to);
   });
-  return dedent(text);
+  return dedent(text, startColumn > 0);
 }
 
-/** Removes the leading whitespace every non-blank line shares; blank lines stay blank. */
-export function dedent(text: string): string {
+function leading(line: string): string {
+  return line.slice(0, line.length - line.trimStart().length);
+}
+
+function sharedPrefix(a: string, b: string): string {
+  let shared = 0;
+  while (shared < a.length && shared < b.length && a[shared] === b[shared]) shared += 1;
+  return a.slice(0, shared);
+}
+
+/**
+ * Removes the leading whitespace every non-blank line shares; blank lines
+ * stay blank. With `firstLinePartial` the first line was cut at the
+ * selection start, so it has no say in the margin unless it is the only
+ * line, and it loses only as much of the margin as it still carries.
+ */
+export function dedent(text: string, firstLinePartial = false): string {
   const lines = text.split("\n");
+  const partial = (index: number) => firstLinePartial && index === 0;
   let margin: string | null = null;
-  for (const line of lines) {
-    if (line.trim() === "") continue;
-    const lead = line.slice(0, line.length - line.trimStart().length);
-    if (margin === null) {
-      margin = lead;
-      continue;
-    }
-    let shared = 0;
-    while (shared < margin.length && shared < lead.length && margin[shared] === lead[shared]) shared += 1;
-    margin = margin.slice(0, shared);
+  for (const [index, line] of lines.entries()) {
+    if (line.trim() === "" || partial(index)) continue;
+    margin = margin === null ? leading(line) : sharedPrefix(margin, leading(line));
     if (margin === "") break;
   }
+  if (margin === null && firstLinePartial && lines[0]?.trim() !== "") margin = leading(lines[0] ?? "");
   if (!margin) return text;
   const width = margin.length;
-  return lines.map((line) => (line.trim() === "" ? line : line.slice(width))).join("\n");
+  return lines
+    .map((line, index) => {
+      if (line.trim() === "") return line;
+      return line.slice(partial(index) ? Math.min(width, leading(line).length) : width);
+    })
+    .join("\n");
 }

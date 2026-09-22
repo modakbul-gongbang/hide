@@ -44,6 +44,21 @@ describe("selectionToText", () => {
     expect(selectionToText([row("    indented", 16)], 0, 16)).toBe("indented");
   });
 
+  it("dedents by the other lines when the drag starts past the first line's margin", () => {
+    const rows = [row("  fn main() {", 20), row("      body();", 20), row("  }", 20)];
+    expect(selectionToText(rows, 2, 20)).toBe("fn main() {\n    body();\n}");
+    expect(selectionToText(rows, 5, 20)).toBe("main() {\n    body();\n}");
+  });
+
+  it("takes only what the cut first line still has of the margin", () => {
+    const rows = [row("  fn main() {", 20), row("      body();", 20), row("  }", 20)];
+    expect(selectionToText(rows, 1, 20)).toBe("fn main() {\n    body();\n}");
+  });
+
+  it("strips a lone cut line's leading spaces entirely", () => {
+    expect(selectionToText([row("    indented", 16)], 2, 16)).toBe("indented");
+  });
+
   it("keeps a selection whose lines share no margin as it is", () => {
     expect(dedent("a\n  b")).toBe("a\n  b");
     expect(dedent("")).toBe("");

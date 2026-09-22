@@ -186,8 +186,9 @@ jobs:
           pnpm --dir web exec playwright test
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow,
-        # with Playwright's own traces; a screen assertion alone cannot say
-        # which side moved.
+        # with what Playwright wrote under test-results (the failure
+        # screenshots; the wire trace is on stdout); a screen assertion alone
+        # cannot say which side moved.
         if: failure()
         uses: actions/upload-artifact@v4
         with:
