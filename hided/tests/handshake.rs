@@ -943,3 +943,33 @@ async fn file_bytes_streams_a_checkout_file_and_refuses_a_path_outside_it() {
     assert_eq!(refused["payload"]["reason"], "too_large");
     running.stop();
 }
+
+#[tokio::test]
+async fn a_change_in_a_watched_checkout_is_announced() {
+    let (dir, env) = test_env(true);
+    let home = dir.path().canonicalize().unwrap();
+    let checkout = home.join("projects/alpha");
+    std::fs::create_dir_all(checkout.join("src")).unwrap();
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+    let mut socket = live_socket(&running).await;
+    // The watcher arms after the daemon's first snapshot read; let it settle
+    // so the change below is not missed by a watcher that was not up yet.
+    tokio::time::sleep(Duration::from_millis(750)).await;
+    std::fs::write(checkout.join("appeared.txt"), "x").unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let frame = first_frame(&mut socket).await;
+            if frame["type"] == "directory_changed" {
+                return frame;
+            }
+        }
+    })
+    .await
+    .expect("a directory_changed frame for the changed checkout");
+    assert_eq!(
+        frame["payload"]["path"],
+        json!(checkout.display().to_string())
+    );
+    running.stop();
+}

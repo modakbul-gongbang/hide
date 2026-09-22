@@ -372,3 +372,21 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     close(fixture);
   }
 });
+
+test("a change in an expanded folder refreshes the tree without a reload", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo } = fixture;
+  try {
+    // `src` is expanded and watched; a file written into it appears on its own.
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible();
+    fs.writeFileSync(path.join(repo, "src", "watched.ts"), "export const watched = true;\n");
+    await expect(page.locator(`[data-explorer-row="${repo}/src/watched.ts"]`)).toBeVisible({ timeout: 15_000 });
+    await screenshot(page, "s3-watch-refresh");
+
+    // Deleting it disappears the same way.
+    fs.rmSync(path.join(repo, "src", "watched.ts"));
+    await expect(page.locator(`[data-explorer-row="${repo}/src/watched.ts"]`)).toHaveCount(0, { timeout: 15_000 });
+  } finally {
+    close(fixture);
+  }
+});

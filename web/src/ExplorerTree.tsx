@@ -18,6 +18,7 @@ import {
 import { focusedCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type ExplorerDraft } from "./ui";
+import { expandedUnderRoot, watchedFolders } from "./watch";
 
 // The Explorer tree (PRD B1, B3, B9, B10): a lazy tree over the focused
 // checkout. The core owns which folders are expanded (`ui_state.expanded_paths`)
@@ -95,14 +96,24 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     [rootPath, listings, expandedKey, changes],
   );
   const shown = useMemo(() => displayRows(rows, draft), [rows, draft]);
+  const watchedNow = useMemo(
+    () => new Set(rootPath ? watchedFolders(rootPath, expandedPaths) : []),
+    // `expandedPaths` identity changes per section; the joined key is the one
+    // that matters, exactly as the row memo above reads it.
+    [rootPath, expandedKey],
+  );
 
-  // One listing per expanded folder plus the root, asked once per folder. A
-  // folder whose listing was evicted past the store cap is asked again only
-  // after a refresh, which is the badge's job (B2).
+  // Only the watched folders are listed and kept live: the root and the most
+  // recently expanded ones. A folder past the cap loses its listing and draws
+  // the refresh badge instead (B2); pressing it makes that folder most recent.
   useEffect(() => {
     if (!rootPath) return;
-    const needed = [rootPath, ...expandedPaths];
-    for (const folder of needed) {
+    const watched = watchedFolders(rootPath, expandedPaths);
+    const watchedNow = new Set(watched);
+    invalidateListings(
+      expandedUnderRoot(rootPath, expandedPaths).filter((path) => path !== rootPath && !watchedNow.has(path)),
+    );
+    for (const folder of watched) {
       if (listings[folder] || pending.current.has(folder)) continue;
       pending.current.add(folder);
       actions.listChildren(rootPath, folder);
@@ -110,7 +121,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     for (const folder of [...pending.current]) {
       if (listings[folder]) pending.current.delete(folder);
     }
-  }, [rootPath, expandedPaths, listings, refreshTick, actions]);
+  }, [rootPath, expandedPaths, listings, refreshTick, actions, invalidateListings]);
 
   // A reveal (or an open from anywhere) sets the core's selected_path; the
   // local cursor follows it so the tree highlights what was revealed.
@@ -309,6 +320,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                 );
               }
               const row = entry.row;
+              const needsRefresh = row.isDirectory && row.expanded && !watchedNow.has(row.path);
               return (
                 <ExplorerRowView
                   key={row.path}
@@ -316,7 +328,12 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                   rootPath={rootPath}
                   selected={row.path === selection}
                   top={virtualRow.start}
+                  needsRefresh={needsRefresh}
                   onOpen={openRow}
+                  onRefresh={() => {
+                    pending.current.delete(row.path);
+                    actions.setExpandedPaths([...expandedPaths.filter((path) => path !== row.path), row.path]);
+                  }}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
@@ -466,7 +483,9 @@ function ExplorerRowView({
   rootPath,
   selected,
   top,
+  needsRefresh,
   onOpen,
+  onRefresh,
   onContextMenu,
   onDragStart,
   onDrop,
@@ -475,7 +494,9 @@ function ExplorerRowView({
   rootPath: string;
   selected: boolean;
   top: number;
+  needsRefresh: boolean;
   onOpen: (row: ExplorerRow, preview: boolean) => void;
+  onRefresh: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
   onDragStart: () => void;
   onDrop: (from: string | null) => void;
@@ -542,6 +563,22 @@ function ExplorerRowView({
         {row.icon.glyph}
       </span>
       <span className="min-w-0 flex-1 truncate">{row.name}</span>
+      {needsRefresh ? (
+        <button
+          type="button"
+          className="shrink-0 rounded-xs px-xxs text-caption text-warning hover:text-primary"
+          data-explorer-refresh={row.path}
+          aria-label={`Refresh ${row.name}`}
+          title="This folder is no longer watched; refresh to read it"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRefresh();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          ↻
+        </button>
+      ) : null}
       {row.decoration ? (
         <span className={`shrink-0 text-caption ${gitBadgeColor(row.decoration.status)}`} title={row.decoration.title}>
           {row.decoration.badge}

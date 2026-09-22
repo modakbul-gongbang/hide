@@ -20,6 +20,7 @@ use tokio::sync::Notify;
 use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
+use crate::watch::WatchService;
 
 const FALLBACK_INDEX: &str = include_str!("../fallback-ui/index.html");
 
@@ -53,6 +54,8 @@ pub fn embedded_file(path: &str) -> Option<(&'static str, &'static [u8])> {
 pub struct AppState {
     pub core: Arc<CoreHandle>,
     pub boundary: Arc<Boundary>,
+    /// The daemon's one watch service; every client subscribes to its frames.
+    pub watch: Arc<WatchService>,
     pub token: Arc<String>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -254,6 +257,9 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     let mut have_revision = handshake.have_revision.unwrap_or(0);
     let mut have_sequence = handshake.have_terminal_sequence.unwrap_or(0);
     let mut notify = state.core.notify.subscribe();
+    // A change in a watched folder is announced on this socket beside the
+    // snapshot stream; the client re-reads the one folder it names (B2).
+    let mut directory_changes = state.watch.subscribe();
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
@@ -274,6 +280,19 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                     .is_err()
                 {
                     break;
+                }
+            }
+            changed = directory_changes.recv() => {
+                match changed {
+                    Ok(frame) => {
+                        if socket.send(Message::Text(frame.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    // A client that fell behind on folder changes keeps its
+                    // snapshot stream; the tree re-reads on the next change.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
                 }
             }
             incoming = socket.recv() => {

@@ -6,6 +6,7 @@ pub mod env;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
+pub mod watch;
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
@@ -122,10 +123,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     };
     let boundary = boundary::Boundary::new(&env.home)?;
     let core = CoreHandle::spawn(options)?;
+    let watch = Arc::new(watch::WatchService::new());
     let shutdown = Arc::new(Notify::new());
     let app = AppState {
         core: Arc::new(core),
         boundary: Arc::new(boundary),
+        watch: Arc::clone(&watch),
         token: Arc::new(token.clone()),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
@@ -144,8 +147,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     // Seeded before the server accepts a client, so an Explorer event can
     // never arrive at a boundary that holds no root yet; the core has already
     // loaded its registrations by the time `CoreHandle::spawn` returns.
-    refresh_roots(&app.core, &app.boundary);
-    spawn_root_refresh(Arc::clone(&app.core), Arc::clone(&app.boundary));
+    refresh_roots(&app.core, &app.boundary, &app.watch);
+    spawn_root_refresh(
+        Arc::clone(&app.core),
+        Arc::clone(&app.boundary),
+        Arc::clone(&app.watch),
+    );
     tokio::spawn(async move {
         if let Err(error) = server::serve(listener, app).await {
             eprintln!(
@@ -181,7 +188,11 @@ pub async fn wait_shutdown(running: &RunningDaemon) {
 /// beyond the first are drained before it, and the ones that do run take a
 /// snapshot that already carries every change the burst announced, so a repeat
 /// read converges on the same root set instead of piling up work.
-fn spawn_root_refresh(core: Arc<CoreHandle>, boundary: Arc<Boundary>) {
+fn spawn_root_refresh(
+    core: Arc<CoreHandle>,
+    boundary: Arc<Boundary>,
+    watch: Arc<watch::WatchService>,
+) {
     let mut changes = core.notify.subscribe();
     tokio::spawn(async move {
         loop {
@@ -189,14 +200,18 @@ fn spawn_root_refresh(core: Arc<CoreHandle>, boundary: Arc<Boundary>) {
                 return;
             }
             while changes.try_recv().is_ok() {}
-            refresh_roots(&core, &boundary);
+            refresh_roots(&core, &boundary, &watch);
         }
     });
 }
 
-fn refresh_roots(core: &CoreHandle, boundary: &Boundary) {
+fn refresh_roots(core: &CoreHandle, boundary: &Boundary, watch: &watch::WatchService) {
     match core.snapshot(0, 0) {
-        Ok(reply) => boundary.set_roots(roots_from_snapshot(&reply.bytes)),
+        Ok(reply) => {
+            boundary.set_roots(roots_from_snapshot(&reply.bytes));
+            let (root, expanded) = watch_state_from_snapshot(&reply.bytes);
+            watch.reconcile(root, expanded);
+        }
         Err(error) => eprintln!(
             "{}",
             serde_json::json!({
@@ -206,6 +221,32 @@ fn refresh_roots(core: &CoreHandle, boundary: &Boundary) {
             })
         ),
     }
+}
+
+/// The folders whose changes the Explorer wants announced: the focused
+/// checkout's root and the folders the core reports as expanded. The watch
+/// cap is applied by `watch::watched_folders`, not here, so the two sides of
+/// the protocol read the same rule from one place.
+fn watch_state_from_snapshot(bytes: &[u8]) -> (Option<String>, Vec<String>) {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return (None, Vec::new());
+    };
+    let root = value
+        .pointer("/rest/navigator/root_path")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let expanded = value
+        .pointer("/rest/ui_state/expanded_paths")
+        .and_then(Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    (root, expanded)
 }
 
 /// The checkouts a snapshot carries that the Explorer may work in: every local

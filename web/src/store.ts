@@ -26,6 +26,7 @@ export type DirectoryList = {
   truncated: boolean;
 };
 export type PathRefusal = { kind: string; path: string; reason: string };
+export type DirectoryChanged = { path: string };
 
 export type Frame = {
   type: string;
@@ -39,7 +40,8 @@ export type Frame = {
     find?: PaneFind;
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
-    Partial<PathRefusal>;
+    Partial<PathRefusal> &
+    Partial<DirectoryChanged>;
 };
 
 type Store = {
@@ -174,6 +176,13 @@ export const useShellStore = create<Store>((set, get) => ({
       set({
         pathRefusal: { kind: payload.kind ?? "", path: payload.path ?? "", reason: payload.reason ?? "" },
       });
+      return [];
+    }
+    if (frame.type === "directory_changed") {
+      // A watched folder moved; its cached listing is dropped so the Explorer
+      // re-reads it, without a reload of the whole tree (B2).
+      const path = payload.path;
+      if (path) get().invalidateListings([path]);
       return [];
     }
     if (frame.type === "error") {
