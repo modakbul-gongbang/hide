@@ -229,3 +229,26 @@ export function firstChildSelection(rows: ExplorerRow[], path: string | null): s
   return child && child.depth === parent.depth + 1 ? child.path : null;
 }
 
+/**
+ * The row the tree selects once `path` is gone: its next sibling, else its
+ * previous sibling, else its parent, else the root. This is the order the core
+ * documents for `path_trash`'s `select_after`, and the tree decides it because
+ * only the tree knows its own row order.
+ */
+export function selectionAfterRemoval(rows: ExplorerRow[], path: string, rootPath: string): string {
+  const index = rows.findIndex((row) => row.path === path);
+  if (index === -1) return rootPath;
+  const depth = rows[index].depth;
+  for (let i = index + 1; i < rows.length; i += 1) {
+    const candidate = rows[i];
+    if (!candidate || candidate.depth < depth) break;
+    if (candidate.depth === depth) return candidate.path;
+  }
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const candidate = rows[i];
+    if (!candidate || candidate.depth < depth) break;
+    if (candidate.depth === depth) return candidate.path;
+  }
+  return parentSelection(rows, path) ?? rootPath;
+}
+

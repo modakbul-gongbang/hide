@@ -281,10 +281,6 @@ export function createActions(dispatch: DispatchFn) {
 
     /** ⌘⇧K: the showing preview tab becomes an ordinary tab. */
     keepOpenFile() {
-      const tab = activeEditorTab(useShellStore.getState().editor);
-      if (!tab || !tab.preview) return;
-      dispatch({ schema_version: 2, kind: "file_keep_open", payload: { tab_id: tab.id } });
-    },
 
     focusFileTab(tabId: string) {
       dispatch({ schema_version: 2, kind: "file_focus", payload: { tab_id: tabId } });

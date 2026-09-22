@@ -76,6 +76,8 @@ type Store = {
   setConnection: (connection: ConnectionState, refused?: boolean) => void;
   noteDiagnostic: (message: string) => void;
   clearPathRefusal: () => void;
+  /** Drops cached listings so the Explorer re-reads those folders. */
+  invalidateListings: (paths: string[]) => void;
   applyFrame: (frame: Frame) => TerminalChunk[];
 };
 
@@ -130,6 +132,13 @@ export const useShellStore = create<Store>((set, get) => ({
     set(withDiagnostics(get().diagnostics, get().diagnosticsDropped, [message])),
   clearPathRefusal: () => {
     if (get().pathRefusal) set({ pathRefusal: null });
+  },
+  invalidateListings: (paths) => {
+    const listings = get().listings;
+    if (!paths.some((path) => path in listings)) return;
+    const next = { ...listings };
+    for (const path of paths) delete next[path];
+    set({ listings: next });
   },
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};

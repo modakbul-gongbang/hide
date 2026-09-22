@@ -144,6 +144,16 @@ export type RecentClosed = {
   reopen_blocked_reason: string | null;
 };
 
+/** The explorer's most recent filesystem change and how far it got. */
+export type ExplorerOperation = {
+  id: number;
+  kind: string;
+  phase: string;
+  path: string;
+  destination: string;
+  message: string | null;
+};
+
 export type WorkspaceRegistration = {
   id: string;
   label: string;
@@ -267,6 +277,7 @@ export type SnapshotRest = {
     async_operations?: AsyncOperation[];
   };
   recent_closed?: RecentClosed;
+  explorer_operation?: ExplorerOperation | null;
 };
 
 export function focusedCheckout(rest: SnapshotRest | null): Checkout | null {
