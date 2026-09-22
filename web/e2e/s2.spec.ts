@@ -323,7 +323,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     const keysBeforeSheet = sent.get("key") ?? 0;
     await page.keyboard.press("Meta+Slash");
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
-    await expect(page.locator("[data-shortcut]")).toHaveCount(25);
+    await expect(page.locator("[data-shortcut]")).toHaveCount(26);
     await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(7);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");

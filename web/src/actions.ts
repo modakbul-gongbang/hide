@@ -3,8 +3,9 @@
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
 import { closeDecision, statusUnknownNotice } from "./close";
+import { latestDraft } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
-import { activeEditorTab, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
+import { activeEditorTab, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -174,7 +175,13 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "toggle_zoom", payload: { pane_id: paneId } });
     },
 
+    /** ⌘= / ⌘- / ⌘0 scale whichever surface is showing: the document when an
+     * editor tab owns the canvas, else the focused terminal pane. */
     textScale(direction: "in" | "out" | "reset") {
+      if (editorFor(useShellStore.getState().editor)) {
+        dispatch({ schema_version: 2, kind: "editor_text_scale", payload: { direction } });
+        return;
+      }
       const paneId = useShellStore.getState().focusedPaneId;
       if (!paneId) return diagnostic("pane_text_scale: no focused pane");
       dispatch({ schema_version: 2, kind: "pane_text_scale", payload: { pane_id: paneId, direction } });
@@ -285,6 +292,51 @@ export function createActions(dispatch: DispatchFn) {
 
     closeFileTab(tabId: string) {
       dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: null } });
+    },
+
+    /** One keystroke's contents; the core keeps the draft and the dirty flag. */
+    updateDraft(contents: string) {
+      dispatch({ schema_version: 2, kind: "file_draft", payload: { contents_utf8: contents } });
+    },
+
+    /**
+     * A save of the showing document. The expected modification time is the
+     * one the core read when it opened the file, so a disk change since then
+     * makes the save a conflict rather than a silent overwrite (B5).
+     */
+    saveFile() {
+      const state = useShellStore.getState();
+      const tab = activeEditorTab(state.editor);
+      const document = state.editor?.document;
+      if (!tab || !document || tab.kind !== "file") return diagnostic("file_save: no showing document");
+      const contents = latestDraft(tab.id) ?? document.contents_utf8 ?? "";
+      dispatch({
+        schema_version: 2,
+        kind: "file_save",
+        payload: {
+          tab_id: tab.id,
+          path: tab.path,
+          contents_utf8: contents,
+          expected_modified_at_unix_ms: document.opened_modified_at_unix_ms,
+        },
+      });
+    },
+
+    /** The tab's Markdown mode and wrap choice; the core persists both. */
+    setFileView(live: boolean, wrap: boolean) {
+      const tab = activeEditorTab(useShellStore.getState().editor);
+      if (!tab) return;
+      dispatch({ schema_version: 2, kind: "file_view", payload: { tab_id: tab.id, markdown_live: live, wrap } });
+    },
+
+    /** "reload" reads the disk contents; "keep_editing" accepts the disk
+     * timestamp so the next save overwrites. */
+    resolveConflict(action: "reload" | "keep_editing") {
+      dispatch({ schema_version: 2, kind: "file_conflict", payload: { action } });
+    },
+
+    requestEditorFind() {
+      ui().requestEditorFind();
     },
 
     /** `step` 0 searches and keeps the current match; +1 and -1 move (core `PaneFindPayload`). */

@@ -1,19 +1,19 @@
-// S3 slice-3 flow on an isolated pinned Herdr (PRD web-shell-pivot-s3 B1, B3):
-// a real checkout with a git repository, listed lazily in the Explorer, its
-// folders expanded through the core's ui state, a file opened into the
-// checkout's preview tab, and a Git decoration taken from the core's
-// changed-file set. Every command runs against a private server; the
+// S3 Explorer and editor flows on an isolated pinned Herdr (PRD
+// web-shell-pivot-s3 B1, B3, B4, B5): a real git checkout listed lazily in the
+// Explorer, a folder expanded through the core's ui state, a file opened into
+// the checkout's preview tab, then edited, saved, and saved again after the
+// disk changed underneath it. Every command runs against a private server; the
 // operator's Herdr is never touched.
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
-import { startHided } from "./hided-fixture";
+import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
-type Daemon = { origin: string; token: string; home: string; stop: () => void };
+const SOURCE = "export const answer = 41;\n";
 
 /** A committed file the working tree then changes, so the core reports it. */
 function gitFixture(dir: string): void {
@@ -24,24 +24,24 @@ function gitFixture(dir: string): void {
   fs.writeFileSync(path.join(dir, "tracked.txt"), "two\n");
 }
 
-async function focusRepo(page: Page, repoDir: string): Promise<void> {
-  await page.locator('[data-sidebar-mode="projects"]').click();
-  const project = page.locator("[data-project]", { hasText: path.basename(repoDir) });
-  const row = project.locator("[data-checkout]").first();
-  await row.click();
-  await expect(row).toHaveAttribute("aria-current", "true");
-}
+type Fixture = {
+  herdr: HerdrFixture;
+  daemon: Daemon;
+  /** The checkout root as the core spells it (a resolved path). */
+  repo: string;
+  file: string;
+  sent: Map<string, number>;
+  lastSent: Map<string, Record<string, unknown>>;
+};
 
-test.describe.configure({ timeout: 90_000 });
-
-test("the Explorer lists a checkout, expands a folder and opens a preview tab", async ({ page }) => {
+/** Starts the isolated stack and leaves the Explorer showing `src/main.ts`. */
+async function openCheckout(page: Page): Promise<Fixture> {
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
-    // A second checkout, this one a git repository with one modified file.
     const repoDir = path.join(herdr.root, "repo");
     fs.mkdirSync(path.join(repoDir, "src"), { recursive: true });
-    fs.writeFileSync(path.join(repoDir, "src", "main.ts"), "export const answer = 41;\n");
+    fs.writeFileSync(path.join(repoDir, "src", "main.ts"), SOURCE);
     fs.writeFileSync(path.join(repoDir, "README.md"), "# repo\n");
     fs.writeFileSync(path.join(repoDir, ".gitignore"), "node_modules\n");
     gitFixture(repoDir);
@@ -56,13 +56,41 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     const sent = countSent(page, lastSent);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
-    await focusRepo(page, repoDir);
+    // Focus the repository checkout, then the Explorer mode.
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
+    await row.click();
+    await expect(row).toHaveAttribute("aria-current", "true");
     await page.locator('[data-sidebar-mode="explorer"]').click();
+    await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
 
+    // Expand src and open the file into the preview tab.
+    await page.locator(`[data-explorer-row="${repo}/src"]`).click();
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible();
+    await page.locator(`[data-explorer-row="${repo}/src/main.ts"]`).click();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("export const answer = 41;");
+    return { herdr, daemon, repo, file: path.join(repo, "src/main.ts"), sent, lastSent };
+  } catch (error) {
+    daemon?.stop();
+    herdr.stop();
+    throw error;
+  }
+}
+
+function close(fixture: Fixture): void {
+  fixture.daemon.stop();
+  fixture.herdr.stop();
+}
+
+test.describe.configure({ timeout: 90_000 });
+
+test("the Explorer lists a checkout, expands a folder and opens a preview tab", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent, lastSent } = fixture;
+  try {
     // The tree lists the root: directories first, hidden names shown, `.git`
     // and the escaping names left out (B1).
     await expect(page.locator("[data-explorer]")).toHaveAttribute("data-explorer", repo);
-    await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/.gitignore"]`)).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/README.md"]`)).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/tracked.txt"]`)).toBeVisible();
@@ -74,21 +102,15 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
 
     // Expanding a folder is one ui_state_update and one file_list; its
     // children appear without a reload (B1, B3).
-    await page.locator(`[data-explorer-row="${repo}/src"]`).click();
-    await expect.poll(() => sent.get("file_list")).toBeGreaterThanOrEqual(2);
     expect(lastSent.get("file_list")).toMatchObject({ root: repo, path: `${repo}/src` });
     await expect.poll(() => sent.get("ui_state_update")).toBeGreaterThanOrEqual(2);
-    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible();
     await screenshot(page, "s3-explorer-expanded");
 
-    // A single click opens the checkout's preview tab and the editor surface.
-    await page.locator(`[data-explorer-row="${repo}/src/main.ts"]`).click();
-    await expect.poll(() => sent.get("file_open")).toBe(1);
-    expect(lastSent.get("file_open")).toMatchObject({ path: `${repo}/src/main.ts`, preview: true });
+    // A single click opened the checkout's preview tab (B3).
     const fileTab = page.locator('[data-tab-kind="file"]');
     await expect(fileTab).toHaveCount(1);
     await expect(fileTab).toHaveAttribute("data-preview", "true");
-    await expect(page.locator("[data-editor-text]")).toContainText("export const answer = 41;");
+    expect(lastSent.get("file_open")).toMatchObject({ path: `${repo}/src/main.ts`, preview: true });
     await screenshot(page, "s3-preview-tab");
 
     // ⌘⇧K promotes the preview to an ordinary tab (B3).
@@ -103,7 +125,53 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toBeVisible();
   } finally {
-    daemon?.stop();
-    herdr.stop();
+    close(fixture);
+  }
+});
+
+test("editing a document marks it dirty, saves it, and a disk change asks how to resolve", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, sent, lastSent } = fixture;
+  try {
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 42;\n");
+
+    // The edit is one file_draft and the tab shows the core's dirty badge (B4).
+    await expect.poll(() => sent.get("file_draft")).toBeGreaterThanOrEqual(1);
+    expect(lastSent.get("file_draft")).toMatchObject({ contents_utf8: "export const answer = 42;\n" });
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+
+    // ⌘S is one file_save with the open document's timestamp, and the disk
+    // now holds the draft (B4).
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => sent.get("file_save")).toBe(1);
+    expect(lastSent.get("file_save")).toMatchObject({ path: file, contents_utf8: "export const answer = 42;\n" });
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
+    await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
+    await screenshot(page, "s3-editor-saved");
+
+    // A change on disk after the open makes the next save a conflict, and the
+    // tab offers the two choices (B5).
+    fs.writeFileSync(file, "export const answer = 0;\n");
+    const ahead = new Date(Date.now() + 5_000);
+    fs.utimesSync(file, ahead, ahead);
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 43;\n");
+    await page.keyboard.press("Meta+KeyS");
+    await expect(page.locator("[data-editor-conflict]")).toBeVisible();
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
+    await screenshot(page, "s3-editor-conflict");
+
+    // Reload takes the disk contents into the editor.
+    await page.locator('[data-conflict-action="reload"]').click();
+    await expect(page.locator("[data-editor-conflict]")).toHaveCount(0);
+    await expect(content).toContainText("export const answer = 0;");
+    await expect.poll(() => sent.get("file_conflict")).toBe(1);
+    expect(lastSent.get("file_conflict")).toMatchObject({ action: "reload" });
+  } finally {
+    close(fixture);
   }
 });

@@ -36,6 +36,7 @@ export type CommandId =
   | "project_home"
   | "keep_open"
   | "find_in_pane"
+  | "save_file"
   | "move_to_trash"
   | "split_right"
   | "split_down"
@@ -77,6 +78,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "toggle_sidebar_view", title: "Toggle sidebar view", group: "Panels", browser: { code: "KeyE", meta: true }, electron: null, moved: false },
   { id: "toggle_right_panel", title: "Toggle right panel", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: null, moved: false },
   { id: "find_in_pane", title: "Find in pane", group: "Panes", browser: { code: "KeyF", meta: true }, electron: null, moved: false },
+  { id: "save_file", title: "Save file", group: "Panes", browser: { code: "KeyS", meta: true }, electron: null, moved: false },
   { id: "keep_open", title: "Keep open", group: "Panes", browser: { code: "KeyK", meta: true, shift: true }, electron: null, moved: false },
   { id: "split_right", title: "Split right", group: "Panes", browser: { code: "KeyD", meta: true }, electron: null, moved: false },
   { id: "split_down", title: "Split down", group: "Panes", browser: { code: "KeyD", meta: true, shift: true }, electron: null, moved: false },

@@ -31,6 +31,8 @@ type UiStore = {
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
   explorerSelection: string | null;
+  /** Bumped by ⌘F while a document shows; the editor opens its find panel. */
+  editorFindRequest: number;
   overlay: Overlay;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
@@ -39,6 +41,7 @@ type UiStore = {
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
+  requestEditorFind: () => void;
   openOverlay: (overlay: Overlay) => void;
   closeOverlay: (overlay?: Overlay) => void;
   setPendingClose: (pending: PendingClose | null) => void;
@@ -49,6 +52,7 @@ type UiStore = {
 export const useUiStore = create<UiStore>((set, get) => ({
   sidebarMode: "agents",
   explorerSelection: null,
+  editorFindRequest: 0,
   overlay: "none",
   pendingClose: null,
   cycle: null,
@@ -59,6 +63,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
     set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });
   },
   setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
+  requestEditorFind: () => set({ editorFindRequest: get().editorFindRequest + 1 }),
   openOverlay: (overlay) => set({ overlay }),
   closeOverlay: (overlay) => {
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });

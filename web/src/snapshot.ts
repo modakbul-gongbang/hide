@@ -256,6 +256,7 @@ export type SnapshotRest = {
     right_panel_section?: string;
     workspace_registrations?: WorkspaceRegistration[];
     pane_text_scales?: Record<string, number>;
+    editor_text_scale?: number;
     expanded_paths?: string[];
     selected_path?: string | null;
     selected_pane_id?: string | null;
