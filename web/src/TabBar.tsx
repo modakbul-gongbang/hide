@@ -1,19 +1,21 @@
 import { memo, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { focusedCheckout, type AsyncOperation, type Checkout, type StripTab } from "./snapshot";
+import { editorFor, focusedCheckout, type AsyncOperation, type Checkout, type EditorSnapshot, type StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 
-// The tab bar draws the focused checkout's strip (PRD S2 B3). Only Herdr
-// tabs are drawn: the web shell has no editor surface yet, so a file, diff
-// or session entry has nothing to show. A drag that lands sends one
-// `reorder_tab` with the strip index of the tab it landed on, and the bar
-// redraws in the core's order; nothing moves until the snapshot says so.
+// The tab bar draws the focused checkout's strip (PRD S2 B3, S3 B3/B4). Every
+// entry the core put in the strip is drawn, Herdr tabs and editor tabs alike,
+// in the order it gave: the web joins no lists of its own. A preview editor
+// entry is titled in italic and a dirty one carries a dot. A drag that lands
+// sends one `reorder_tab` with the strip index of the tab it landed on, and the
+// bar redraws in the core's order; nothing moves until the snapshot says so.
 
 export function TabBar({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => focusedCheckout(s.rest));
+  const editor = useShellStore((s) => s.editor);
   const operations = useShellStore((s) => s.rest?.status?.async_operations);
   if (!checkout) return <div className="h-[var(--size-tab-strip)] shrink-0 bg-panel" data-tab-bar="empty" />;
-  return <Strip checkout={checkout} operations={operations ?? NONE} actions={actions} />;
+  return <Strip checkout={checkout} editor={editor} operations={operations ?? NONE} actions={actions} />;
 }
 
 const NONE: AsyncOperation[] = [];
@@ -26,18 +28,30 @@ export function closingSuffix(targetId: string, kind: "tab.close" | "pane.close"
   return operations.some((op) => op.kind === kind && op.target_id === targetId && IN_FLIGHT.has(op.phase));
 }
 
+/**
+ * The tab the strip marks active: the editor's when it owns the surface, else
+ * the Herdr tab the core reports. The core keeps the editor's tabs while a
+ * terminal tab shows, so the tabs alone do not say what is drawn.
+ */
+export function activeStripId(checkout: Checkout, editor: EditorSnapshot | null): string | null {
+  const showing = editorFor(editor);
+  return showing ? showing.active_tab_id : checkout.active_tab_id;
+}
+
 const Strip = memo(function Strip({
   checkout,
+  editor,
   operations,
   actions,
 }: {
   checkout: Checkout;
+  editor: EditorSnapshot | null;
   operations: AsyncOperation[];
   actions: Actions;
 }) {
-  const herdrTabs = checkout.strip
-    .map((entry, index) => ({ entry, index }))
-    .filter(({ entry }) => entry.kind === "herdr");
+  const activeId = activeStripId(checkout, editor);
+  const showingEditor = editorFor(editor) !== null;
+  const dirty = new Set((editor?.tabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
   // The drag itself lives in a ref: pointer events arrive faster than a
   // continuous-priority render lands, so the release reads the ref and the
   // state only drives the highlight.
@@ -51,42 +65,49 @@ const Strip = memo(function Strip({
       role="tablist"
       data-tab-bar={checkout.id}
     >
-      {herdrTabs.map(({ entry, index }) => (
-        <TabButton
-          key={entry.id}
-          entry={entry}
-          active={entry.source_id === checkout.active_tab_id}
-          closing={closingSuffix(entry.source_id, "tab.close", operations)}
-          dragging={dragging === entry.id}
-          over={over === entry.id && dragging !== entry.id}
-          onSelect={() => actions.focusTab(entry.source_id)}
-          onClose={() => actions.closeTab(entry.source_id)}
-          onPointerDown={(x) => {
-            drag.current = { id: entry.id, x, active: false };
-          }}
-          onPointerMove={(x) => {
-            const start = drag.current;
-            if (!start || start.active) return;
-            const threshold = Number.parseFloat(
-              getComputedStyle(document.documentElement).getPropertyValue("--size-tab-drag-activation"),
-            );
-            if (Math.abs(x - start.x) >= threshold) {
-              start.active = true;
-              setDragging(start.id);
-            }
-          }}
-          onPointerEnter={() => {
-            if (drag.current?.active) setOver(entry.id);
-          }}
-          onPointerUp={() => {
-            const start = drag.current;
-            drag.current = null;
-            setDragging(null);
-            setOver(null);
-            if (start?.active && start.id !== entry.id) actions.reorderTab(start.id, index);
-          }}
-        />
-      ))}
+      {checkout.strip.map((entry, index) => {
+        // Session and Memory viewers are deferred (PRD Non-goals), so their
+        // entries are not drawn; the core does not create them in S3.
+        if (entry.kind === "session" || entry.kind === "memory") return null;
+        const isEditor = entry.kind === "file" || entry.kind === "diff";
+        return (
+          <TabButton
+            key={entry.id}
+            entry={entry}
+            active={showingEditor === isEditor && entry.source_id === activeId}
+            dirty={dirty.has(entry.source_id)}
+            closing={!isEditor && closingSuffix(entry.source_id, "tab.close", operations)}
+            dragging={dragging === entry.id}
+            over={over === entry.id && dragging !== entry.id}
+            onSelect={() => (isEditor ? actions.focusFileTab(entry.source_id) : actions.focusTab(entry.source_id))}
+            onClose={() => (isEditor ? actions.closeFileTab(entry.source_id) : actions.closeTab(entry.source_id))}
+            onPointerDown={(x) => {
+              drag.current = { id: entry.id, x, active: false };
+            }}
+            onPointerMove={(x) => {
+              const start = drag.current;
+              if (!start || start.active) return;
+              const threshold = Number.parseFloat(
+                getComputedStyle(document.documentElement).getPropertyValue("--size-tab-drag-activation"),
+              );
+              if (Math.abs(x - start.x) >= threshold) {
+                start.active = true;
+                setDragging(start.id);
+              }
+            }}
+            onPointerEnter={() => {
+              if (drag.current?.active) setOver(entry.id);
+            }}
+            onPointerUp={() => {
+              const start = drag.current;
+              drag.current = null;
+              setDragging(null);
+              setOver(null);
+              if (start?.active && start.id !== entry.id) actions.reorderTab(start.id, index);
+            }}
+          />
+        );
+      })}
       <button
         type="button"
         className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-secondary hover:bg-elevated hover:text-primary"
@@ -103,6 +124,7 @@ const Strip = memo(function Strip({
 const TabButton = memo(function TabButton({
   entry,
   active,
+  dirty,
   closing,
   dragging,
   over,
@@ -115,6 +137,7 @@ const TabButton = memo(function TabButton({
 }: {
   entry: StripTab;
   active: boolean;
+  dirty: boolean;
   closing: boolean;
   dragging: boolean;
   over: boolean;
@@ -130,6 +153,8 @@ const TabButton = memo(function TabButton({
       role="tab"
       aria-selected={active}
       data-tab={entry.source_id}
+      data-tab-kind={entry.kind}
+      data-preview={entry.preview ? "true" : "false"}
       data-closing={closing ? "true" : "false"}
       className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default items-center gap-xs px-sm text-caption ${
         active ? "bg-background text-primary" : "text-secondary hover:bg-elevated"
@@ -144,8 +169,9 @@ const TabButton = memo(function TabButton({
       onClick={onSelect}
     >
       {over ? <span className="absolute inset-y-0 left-0 w-[var(--size-tab-indicator)] bg-accent" /> : null}
-      <span className="min-w-0 flex-1 truncate">
+      <span className={`min-w-0 flex-1 truncate ${entry.preview ? "italic" : ""}`}>
         {entry.label}
+        {dirty ? <span className="text-warning"> ●</span> : null}
         {closing ? <span className="text-muted"> closing…</span> : null}
       </span>
       <button

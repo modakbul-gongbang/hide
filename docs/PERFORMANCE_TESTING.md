@@ -14,7 +14,7 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 | --- | --- | --- |
 | Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | Rust and Swift suites plus repository checks run on every PR and main push in `.github/workflows/pr.yml`; the native design workflow adds static design checks |
 | Native interaction QA | Actual focus, input, drag, scroll, resize, compositor-visible flicker, and bundle mistakes | Local, isolated, logged-in macOS session; not wired into CI |
-| Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, and sustained RSS | Local matched baseline/candidate measurements; no checked-in scheduled or required native performance job |
+| Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements; no checked-in scheduled or required native performance job |
 
 Swift renderer tests can instantiate AppKit views and compare pixels without launching and driving the complete app.
 That is useful automated rendering coverage, but it does not exercise the physical display, live Herdr transport, foreground focus, or actual agent TUI interaction end to end.
@@ -294,6 +294,33 @@ Keep pane count, occlusion, warm-up, and workload comparable; memory pressure ca
 An isolated renderer replay can identify repeated row preparation, retained generations, and eviction spikes, but cannot establish native input latency.
 Replay the same captured frames on both revisions, use optimized builds, and report cold draw, warm distribution, retained-entry peak, and bulk-release events separately.
 A cache that stays bounded may remove periodic destruction spikes while leaving median/p95 unchanged or slightly higher; report that result as it is.
+
+### Accumulated state and long-uptime degradation
+
+A build that is fast at launch can still become slow after hours, because cost that grows with process age is invisible in any short window taken on a fresh process.
+Whenever the report is "it got slow", record the app's uptime first and treat a fresh-launch measurement as the baseline, not the answer.
+
+```sh
+ps -p <app-pid> -o pid,etime,%cpu,rss,command
+ps -M <app-pid>
+vmmap --summary <app-pid> | grep -E "Physical footprint"
+heap <app-pid> | head -60
+```
+
+`ps -M` lists cumulative user and system time per thread since the thread started; a thread whose system time keeps growing while the workload is steady is polling, and the main thread's user time against `etime` is its average busy fraction over the whole run.
+Compare the peak physical footprint with the current one; a peak far above the current value means the process held a large transient working set at some point.
+Compare `heap` object counts against a fresh launch under the same pane count; a class whose count grows with uptime is retained or interned somewhere.
+Then take the short `sample` windows above on the long-running process and on a freshly launched one with the same workspace, panes, and workload, and compare the hottest frames rather than the totals.
+
+Process-wide tables that outlive the objects that fed them are the case to look for explicitly.
+`NSAttributedString(string:attributes:)` interns each attribute dictionary into a UIFoundation weak hash table; churn from continuously redrawn rows fills it with dead entries, and after hours every insert pays `rehashAround` on a long chain.
+That cost appears in a sample as `+[NSAttributeDictionary newWithDictionary:]` above `-[NSConcreteHashTable rehashAround:]`, and it is confirmed rather than assumed by the restart test below.
+The same shape can hide behind any process-global cache, weak table, autorelease-heavy loop, or unbounded log or event buffer; the sample frame differs, the method does not.
+
+The restart test separates accumulated state from workload: quit the app, relaunch it against the same private server so the panes and their processes are unchanged, and repeat the same sample window within a minute.
+A hot path that disappears on relaunch and returns only after hours is accumulated state and needs an ownership or bounding fix under section 6, not a faster implementation of the same path.
+A hot path that is equally hot on the fresh process is workload, and belongs to the boundaries above.
+Record uptime, the restart time, and both sample windows in the run directory, and state which of the two conclusions the evidence supports.
 
 ## 6. Preserve the architecture while fixing the cause
 

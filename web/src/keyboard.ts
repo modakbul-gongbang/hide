@@ -8,7 +8,7 @@
 import type { Actions } from "./actions";
 import { recentCheckoutOrder, recentTabOrder } from "./recent";
 import { matchBrowser, type CommandId } from "./shortcuts";
-import { focusedCheckout, type SnapshotRest } from "./snapshot";
+import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 
@@ -69,9 +69,9 @@ export function installKeyboard(actions: Actions): () => void {
         return;
       }
       case "search":
-        return actions.notReady("Search (⌘K)");
+        return actions.openSearch();
       case "open_file":
-        return actions.notReady("Open file (⌘P)");
+        return actions.openFilePalette();
       case "project_home":
         return actions.notReady("Project home (⌘⇧H)");
       case "toggle_right_panel":
@@ -81,9 +81,17 @@ export function installKeyboard(actions: Actions): () => void {
       case "toggle_sidebar_view":
         return actions.toggleSidebarView();
       case "find_in_pane":
+        // One chord, two surfaces: a showing document finds in itself, else
+        // the focused terminal pane's find bar opens.
+        if (editorFor(useShellStore.getState().editor)) return actions.requestEditorFind();
         return actions.openFind();
+      case "save_file":
+        return actions.saveFile();
       case "keep_open":
-        return actions.keepOpen();
+        // The same chord answers a pending close and a preview editor tab:
+        // the confirmation is showing first, so it wins when it is.
+        if (ui().pendingClose) return actions.keepOpen();
+        return actions.keepOpenFile();
       case "split_right":
         return actions.split("right");
       case "split_down":

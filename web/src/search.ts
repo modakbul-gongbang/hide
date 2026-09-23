@@ -1,0 +1,85 @@
+// The two palettes' data (PRD B12, B13, D-05): ⌘K searches the snapshot the
+// shell already holds, and ⌘P shows what hided's index ranked. The search
+// entries and the fuzzy score are pure functions, so the palette's behavior is
+// testable without a browser; ⌘P's ranking happens in hided, beside the walk.
+
+import type { SnapshotRest } from "./snapshot";
+
+export type SearchEntry = {
+  id: string;
+  title: string;
+  subtitle: string;
+  kind: "agent" | "project" | "checkout";
+  /** The ids the entry activates: a pane, or a workspace/checkout pair. */
+  paneId?: string;
+  workspaceId?: string;
+  checkoutId?: string;
+};
+
+/** The fuzzy score of `query` against `candidate`, mirroring the Swift scorer
+ * (`WorkspaceFileSearchIndex.fuzzyScore`): characters in order, early and
+ * adjacent matches higher, shorter candidates first on a tie. */
+export function fuzzyScore(candidate: string, query: string): number | null {
+  if (query.length === 0) return 0;
+  const haystack = candidate;
+  let cursor = 0;
+  let score = 0;
+  let previous = -1;
+  for (const wanted of query) {
+    const found = haystack.indexOf(wanted, cursor);
+    if (found === -1) return null;
+    score += 100 - Math.min(found, 90);
+    if (previous !== -1 && previous + 1 === found) score += 35;
+    if (found === 0 || "/_- .".includes(haystack[found - 1] ?? "")) score += 25;
+    previous = found;
+    cursor = found + 1;
+  }
+  score -= haystack.length;
+  return score;
+}
+
+/** The snapshot rows ⌘K searches: agents, projects and checkouts. */
+export function searchEntries(rest: SnapshotRest | null): SearchEntry[] {
+  if (!rest) return [];
+  const entries: SearchEntry[] = [];
+  for (const agent of rest.navigator?.agents ?? []) {
+    entries.push({
+      id: `agent:${agent.pane_id}`,
+      title: agent.identity_label,
+      subtitle: agent.detail || agent.status_label,
+      kind: "agent",
+      paneId: agent.pane_id,
+    });
+  }
+  for (const workspace of rest.navigator?.workspaces ?? []) {
+    entries.push({
+      id: `project:${workspace.id}`,
+      title: workspace.label,
+      subtitle: workspace.path,
+      kind: "project",
+      workspaceId: workspace.id,
+    });
+    for (const checkout of workspace.checkouts) {
+      entries.push({
+        id: `checkout:${checkout.id}`,
+        title: `${workspace.label} / ${checkout.label}`,
+        subtitle: checkout.path,
+        kind: "checkout",
+        workspaceId: workspace.id,
+        checkoutId: checkout.id,
+      });
+    }
+  }
+  return entries;
+}
+
+/** The entries matching `query`, best first. An empty query lists them all. */
+export function filterEntries(entries: SearchEntry[], query: string, limit = 80): SearchEntry[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return entries.slice(0, limit);
+  const scored = entries
+    .map((entry) => ({ entry, score: fuzzyScore(`${entry.title} ${entry.subtitle}`.toLowerCase(), needle) }))
+    .filter((row): row is { entry: SearchEntry; score: number } => row.score !== null);
+  scored.sort((left, right) => right.score - left.score || left.entry.title.localeCompare(right.entry.title));
+  return scored.slice(0, limit).map((row) => row.entry);
+}

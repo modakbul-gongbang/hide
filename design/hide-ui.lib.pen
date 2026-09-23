@@ -13865,6 +13865,26 @@
     "--size-editor-memory-min": {
       "type": "number",
       "value": 160
+    },
+    "--color-file-blue": {
+      "type": "color",
+      "value": "#519ABA"
+    },
+    "--color-file-green": {
+      "type": "color",
+      "value": "#8DC149"
+    },
+    "--color-file-orange": {
+      "type": "color",
+      "value": "#E37933"
+    },
+    "--color-file-purple": {
+      "type": "color",
+      "value": "#A074C4"
+    },
+    "--color-file-yellow": {
+      "type": "color",
+      "value": "#CBCB41"
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

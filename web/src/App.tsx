@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
+import { allBuffers, deleteBuffer, sweepBuffers } from "./buffers";
 import { ConnectionBadge } from "./badge";
+import { EditorSurface } from "./Editor";
+import { configureFileBytes } from "./fileBytes";
 import { installKeyboard } from "./keyboard";
-import { ConfirmClose, CycleOverlay, FindBar, NoticeBar } from "./Overlays";
+import { ConfirmClose, ConfirmTrash, CycleOverlay, FindBar, NoticeBar } from "./Overlays";
 import { PaneCanvas } from "./PaneGrid";
+import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { focusedCheckout } from "./snapshot";
+import { editorFor, focusedCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { TabBar } from "./TabBar";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
@@ -29,6 +33,7 @@ export function App() {
       },
     });
     dispatchRef.current = session.dispatch;
+    configureFileBytes(session.dispatch);
     const keyboard = installKeyboard(actions);
     if (probeEnabled()) {
       installProbe(
@@ -70,6 +75,24 @@ export function App() {
     if (connection !== "live") useUiStore.getState().setCycle(null);
   }, [connection]);
 
+  // A buffer whose document the core no longer holds is discarded with a
+  // diagnostic; an open document's buffer is restored by its editor (B8).
+  useEffect(() => {
+    if (connection !== "live") return;
+    const editor = useShellStore.getState().editor;
+    const openPaths = new Set(
+      (editor?.tabs ?? []).filter((tab) => tab.kind === "file").map((tab) => tab.path),
+    );
+    void allBuffers().then((buffers) => {
+      for (const buffer of sweepBuffers(buffers, openPaths)) {
+        useShellStore
+          .getState()
+          .noteDiagnostic(`discarded the unsaved buffer for closed document ${buffer.path}`);
+        void deleteBuffer(buffer.path);
+      }
+    });
+  }, [connection]);
+
   return (
     <div className="relative flex h-full flex-col bg-background text-primary">
       <ConnectionBadge />
@@ -79,11 +102,13 @@ export function App() {
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TabBar actions={actions} />
           <FindBar actions={actions} />
-          <PaneCanvas dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
+          <Canvas actions={actions} />
         </main>
       </div>
       <CycleOverlay />
       <ConfirmClose actions={actions} />
+      <ConfirmTrash actions={actions} />
+      <Palette actions={actions} />
       <ShortcutSheetGate actions={actions} />
     </div>
   );
@@ -92,4 +117,18 @@ export function App() {
 function ShortcutSheetGate({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overlay === "shortcuts");
   return open ? <ShortcutSheet actions={actions} /> : null;
+}
+
+/**
+ * The center surface. The core keeps the editor's tabs while a terminal tab
+ * shows, so the editor's own `active_tab_id` is what says which one is drawn;
+ * with none, the focused checkout's visible tab is the terminal canvas.
+ */
+function Canvas({ actions }: { actions: Actions }) {
+  const editorShowing = useShellStore((s) => editorFor(s.editor) !== null);
+  return editorShowing ? (
+    <EditorSurface actions={actions} />
+  ) : (
+    <PaneCanvas dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
+  );
 }

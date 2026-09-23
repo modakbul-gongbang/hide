@@ -4,7 +4,10 @@
 
 import { create } from "zustand";
 
-export type SidebarMode = "agents" | "projects";
+export type SidebarMode = "agents" | "projects" | "explorer";
+
+/** The order ⌘E walks; the Explorer is the third mode, not a right panel. */
+export const SIDEBAR_MODES: readonly SidebarMode[] = ["agents", "projects", "explorer"];
 
 export type PendingClose = {
   kind: "pane" | "tab";
@@ -14,7 +17,7 @@ export type PendingClose = {
   affected: string[];
 };
 
-export type Overlay = "none" | "shortcuts" | "find" | "new_workspace";
+export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "search";
 
 /** A held-modifier cycle over recent tabs or projects; committed when ⌥ is released. */
 export type Cycle = {
@@ -23,8 +26,35 @@ export type Cycle = {
   index: number;
 };
 
+/** The Explorer's inline name field: a new entry in `parent`, or a rename of
+ * `path`. `parent` is where a create lands; a rename ignores it. */
+export type ExplorerDraft = {
+  kind: "file" | "folder" | "rename";
+  parent: string;
+  path: string;
+  initial: string;
+};
+
+/** The trash confirmation: what is about to move, and the row the tree selects
+ * once it is gone. */
+export type PendingTrash = {
+  path: string;
+  name: string;
+  isDirectory: boolean;
+  selectAfter: string;
+};
+
 type UiStore = {
   sidebarMode: SidebarMode;
+  /** The Explorer row the operator last touched; the core owns the opened
+   * document's `selected_path`, and a reveal syncs that into here. */
+  explorerSelection: string | null;
+  /** Bumped by ⌘F while a document shows; the editor opens its find panel. */
+  editorFindRequest: number;
+  /** The Explorer's inline name field, or null. */
+  explorerDraft: ExplorerDraft | null;
+  /** The trash confirmation the Explorer is showing, or null. */
+  pendingTrash: PendingTrash | null;
   overlay: Overlay;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
@@ -32,6 +62,10 @@ type UiStore = {
   notice: { text: string; refreshable: boolean } | null;
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
+  setExplorerSelection: (path: string | null) => void;
+  requestEditorFind: () => void;
+  setExplorerDraft: (draft: ExplorerDraft | null) => void;
+  setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
   closeOverlay: (overlay?: Overlay) => void;
   setPendingClose: (pending: PendingClose | null) => void;
@@ -41,12 +75,23 @@ type UiStore = {
 
 export const useUiStore = create<UiStore>((set, get) => ({
   sidebarMode: "agents",
+  explorerSelection: null,
+  editorFindRequest: 0,
+  explorerDraft: null,
+  pendingTrash: null,
   overlay: "none",
   pendingClose: null,
   cycle: null,
   notice: null,
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
-  toggleSidebarMode: () => set({ sidebarMode: get().sidebarMode === "agents" ? "projects" : "agents" }),
+  toggleSidebarMode: () => {
+    const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
+    set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });
+  },
+  setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
+  requestEditorFind: () => set({ editorFindRequest: get().editorFindRequest + 1 }),
+  setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
+  setPendingTrash: (pendingTrash) => set({ pendingTrash }),
   openOverlay: (overlay) => set({ overlay }),
   closeOverlay: (overlay) => {
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });

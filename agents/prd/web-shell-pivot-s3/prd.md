@@ -1,0 +1,82 @@
+---
+topic: "S3: Explorer + 에디터 + 뷰어"
+status: "ready"
+human_approval: "approved"  # user 2026-09-22 verbatim: 오 ㅇㅇ 비디오까지 넣어주라! 그렇게 하고 /implement로 해서 codex 켜누느데 model을 bai/deepseek-v4.1-flash xhigh 로 해서 띄워서 진행시켜줘
+review_profile: "high-risk"
+review_rationale: "브라우저가 처음으로 체크아웃 안의 파일을 나열·읽기·쓰기·이동·휴지통 이동하고 드롭한 바이트를 디스크에 저장하게 되어, hided의 파일시스템 경계가 \$HOME 디렉터리 나열에서 등록된 체크아웃 전체의 읽기·쓰기로 넓어진다."
+source_intake: "agents/interview/web-shell-pivot-s3/qa-log.md"
+created_at: "2026-09-22"
+updated_at: "2026-09-22"
+---
+
+# PRD: S3 Explorer + 에디터 + 뷰어
+
+## Goal
+
+S2(PR #132)까지 웹 셸은 탭·분할·줌·체크아웃 전환·단축키를 갖췄다.
+S3는 파일 작업을 웹으로 옮긴다: 체크아웃 트리를 보고 조작하는 Explorer, CodeMirror 6 에디터와 Markdown Live·PDF·이미지 뷰어, ⌘P 빠른 열기와 ⌘K 검색, 그리고 터미널 pane에 이미지·파일을 드롭하거나 붙여 넣는 첨부.
+끝나는 조건은 우산 PRD B11 그대로다: 사용자가 실제 Herdr 세션에서 Swift 앱 없이 Explorer에서 파일을 열어 값 하나를 고쳐 저장한다.
+
+## Non-goals
+
+- Changes/diff 탭(S4), Settings·진단·사이드바 편집 동작(S5), Swift 삭제(S6): 각자 PRD. `EditorTabKind::Diff` 탭은 S3에서 열리지 않는다.
+- 대화 뷰어(`Session`/`Memory` 탭): 우산 PRD 미룸 표면. 사용자는 Swift 또는 파일로 본다. 재검토: Electron PRD.
+- 등록되지 않은 경로: Explorer·⌘P·첨부 저장은 등록된 체크아웃 루트 밖을 나열하거나 쓰지 않는다(D-01). 홈 밖 프로젝트는 등록되어 있으면 보이고, 등록은 S2 입력창(`$HOME` 아래) 또는 후속 `hide open <path>` CLI.
+- 새 코어 이벤트·스냅샷 형태 변경: 문서·탭·dirty·충돌·펼침 집합은 코어가 이미 소유하고(`EditorSnapshot`, `EditorDocumentSnapshot`, `ui_state.expanded_paths`), 필요한 이벤트(`file_open/file_focus/file_keep_open/file_close/file_draft/file_view/file_save/file_conflict/file_create/dir_create/path_rename/path_move/path_trash/reveal_path/editor_text_scale/terminal_attachment`)는 모두 있다. 웹이 문서 상태의 권위를 갖지 않는다.
+- 저장 충돌 UX의 재설계: 현 Swift 방식(덮어쓰기 / 디스크 내용으로 다시 읽기)을 그대로 승계한다. 재검토: 사용자가 실사용 후 요청할 때 (D-03).
+- 원격 기기의 파일 트리(`remote_files.rs` 표면): 미룸 목록 그대로.
+- Swift 셸 변경: `macos/`는 토큰 생성기 출력 외에 바뀌지 않는다.
+
+## Decisions
+
+| D-n | 결정 | 근거 |
+| --- | --- | --- |
+| D-01 | 파일시스템 경계: Explorer 나열, ⌘P 인덱스, 파일 생성·리네임·이동·휴지통, 첨부 저장은 모두 등록된 체크아웃 루트 아래만(홈 밖이어도 등록됐으면 허용). 코어의 "등록된 체크아웃 밖 경로는 코어에 닿지 않는다" 규칙과 같은 선을 hided가 실경로 기준으로 강제하고, 심볼릭 링크로 루트 밖으로 나가는 항목은 제외, 숨김 항목은 보이되 `.git`은 숨긴다. `$HOME`만(b)과 제한 없음(c)은 기각. | Q1 "음 그렇게 하자 우선 ㅇㅇㅇ" |
+| D-02 | 첨부를 S3에 포함: 터미널 pane에 드롭한 파일·이미지와 ⌘V 클립보드 이미지의 바이트를 hided가 코어의 첨부 디렉터리에 저장하고 Swift와 같은 `terminal_attachment` 흐름(`[Image #N]`/경로 토큰)을 탄다. 우산 PRD 미룸 목록의 "파일 드래그 드롭"을 앞당기며 Electron 미룸(b)은 기각. | Q1 "우선 Electron에 안미뤄도 될듯!" |
+| D-03 | 에디터는 Swift 범위 전부 승계: 미리보기 탭(단일 클릭 preview, 더블클릭/⌘⇧K 고정), ⌘F 파일 내 찾기, wrap 토글, Markdown Live 토글, 글자 크기(`editor_text_scale`), 저장 충돌 처리(현 Swift 방식), readonly/binary 표시. `Session`/`Memory` 탭은 미룸, diff 탭은 S4. 최소 범위(b)는 기각. | Q1 "전부 승계 ㅇㅇㅇㅇ 근데 이제 저장 충돌 처리는 그렇게 하는데 우선 ㄱㄱ" |
+| D-04 | 가정: 트리는 펼친 폴더만 hided가 lazy 나열(파일·디렉터리·숨김 포함, `.git` 제외, 정렬은 Swift `WorkspaceOutlineView`와 동일)하고 펼친 폴더를 fs watch한다. 펼침 집합·선택은 코어(`ui_state_update` `expanded_paths`)가 소유. 재검토: 대형 저장소에서 펼침 지연. | 가정: 우산 PRD 결정 16(웹은 상태를 갖지 않음); engineering 15 |
+| D-05 | 가정: ⌘P 빠른 열기는 hided가 체크아웃 루트를 gitignore 존중해 인덱스하고 퍼지 매칭한다. ⌘K는 스냅샷의 에이전트·프로젝트·체크아웃 검색(Swift `HideSearchSheet` 승계). 재검토: 상한에 걸리는 저장소. | 가정: `WorkspaceFileSearch.swift`, `HideSearchView.swift` |
+| D-06 | 가정: 리네임·생성(파일/폴더)·이동(드래그)·삭제는 Swift와 같은 코어 이벤트(`path_rename`, `file_create`, `dir_create`, `path_move`, `path_trash`). 삭제는 확인 모달 뒤 휴지통 이동(우산 B13), 실패는 행 아래 한 줄. Git 데코레이션은 코어 changed-file 집합에서만, 행·스크롤·hover·paint에서 git 프로세스 없음. 재검토: 사용자 거부. | 가정: 우산 PRD B13; AGENTS.md "no per-tab git forks" |
+| D-07 | 가정: `document_kind`별 뷰어: Text/Markdown은 CodeMirror 6(언어팩 lazy import), Markdown Live는 `@codemirror/lang-markdown` + 데코레이션으로 PR #110 동작 목록 승계, Pdf는 pdf.js, Image는 맞춤 표시, Binary는 readonly 안내(비디오 확장자는 D-09 뷰어). 이미지·PDF·비디오 바이트는 문서 스냅샷이 아니라 hided의 파일 바이트 프레임으로 받는다. 미저장 버퍼는 IndexedDB에 보관해 재연결 시 코어 dirty 문서와 대조 복원. 재검토: 없음. | 가정: 우산 PRD 결정 15; `model.rs:1322` |
+| D-08 | 상한: 첨부는 코어 규칙 그대로 파일당 20 MiB·한 번에 40 MiB(`terminal_attachments.rs`가 강제, 웹은 거절 사유만 표시). fs watch는 펼친 폴더 64개까지, 넘으면 오래 안 본 폴더부터 감시 해제하고 그 폴더에 새로고침 배지. ⌘P 인덱스는 체크아웃당 50,000 파일(gitignore 제외 후), 넘으면 잘림 표시, 결과 표시는 Swift와 같은 80개. 재검토: 실사용에서 배지·잘림이 자주 보일 때. | Q3 "ㅇㅇㅇ" (Q2에서 상한의 이유를 설명한 뒤 제시한 숫자 수용) |
+| D-09 | 비디오 뷰어를 S3에 포함: mp4/webm/mov는 이미지·PDF와 같은 hided 파일 바이트 스트림(체크아웃 경계 안, 토큰 게이트 WS)으로 받아 `<video>`로 재생·일시정지·탐색·소리를 지원하고 편집은 없다. 코어의 `document_kind`는 바꾸지 않고 Binary + 확장자를 웹이 비디오로 판별한다. "나중에"(b)는 기각. 재검토: 코어에 Video 종류가 생길 때. | Q4 이후 "오 ㅇㅇ 비디오까지 넣어주라!" |
+
+## Behaviors
+
+| # | 사용자가 관찰하는 행동 | 결정 |
+| --- | --- | --- |
+| B1 | 사이드바 Explorer 모드에 현재 체크아웃의 트리가 보인다: 폴더를 펼치면 그 폴더만 나열되어 파일·폴더·숨김 항목(`.git` 제외)이 Swift와 같은 순서로 보이고, 펼침 상태는 재접속·재기동 뒤에도 코어 상태대로 남는다. 아이콘은 Seti 세트, Git 상태는 코어 changed-file 집합에서 색으로만. | D-01, D-04, D-06 |
+| B2 | 펼쳐 둔 폴더에서 파일이 생기거나 사라지면(에이전트·터미널·git 무엇이든) 트리가 새로고침 없이 따라간다. 펼친 폴더가 64개를 넘으면 오래 안 본 폴더는 감시가 풀리고 그 폴더 행에 새로고침 배지가 보이며, 누르면 다시 읽는다. | D-04, D-08 |
+| B3 | 파일을 한 번 클릭하면 미리보기 탭(이탤릭 라벨)으로 열려 다른 미리보기를 대체하고, 더블클릭 또는 ⌘⇧K로 고정 탭이 된다. 열린 문서의 위치는 `reveal_path`로 트리에서 펼쳐져 강조된다. 키보드 ↑↓로 이동, ←→로 접기/펼치기, Enter로 열기. | D-03, D-04 |
+| B4 | 텍스트 문서는 CodeMirror 6에 뜨고 언어 하이라이트는 파일 종류별로 lazy 로드된다. 편집하면 탭에 dirty 배지가 붙고(코어 `document.dirty`), ⌘S로 저장하면 배지가 사라진다. wrap 토글, 글자 크기(⌘=/⌘-/⌘0 → `editor_text_scale`), ⌘F 파일 내 찾기(다음/이전/대소문자)가 동작한다. | D-03, D-07 |
+| B5 | 저장 시 디스크 파일이 열 때보다 바뀌어 있으면 저장되지 않고 탭 자리에 현 Swift와 같은 선택(내 내용으로 덮어쓰기 / 디스크 내용으로 다시 읽기)이 보인다. 저장 실패는 탭 배지, 상세는 진단 로그. readonly 문서는 상단 한 줄로 이유가 보이고 편집이 막힌다. | D-03 |
+| B6 | Markdown은 기본 Live 모드로 열려 PR #110의 동작 목록(헤딩·리스트·체크박스·코드 블록·링크, 리스트 키 처리)대로 편집되며 토글로 원문 모드로 바뀐다. PDF는 pdf.js 페이지 뷰, 이미지는 맞춤 표시, Binary는 편집 불가 안내. 이미지·PDF 바이트는 hided 파일 바이트 프레임으로 받으며 뷰어 로드 실패(경계 밖·읽기 실패)는 문서 자리에 한 줄 이유. | D-03, D-07, D-09 |
+| B7 | mp4/webm/mov 파일을 열면 탭 자리에 `<video>` 플레이어가 뜨고 재생·일시정지·탐색·소리가 동작한다(편집·저장 없음, readonly 안내 없음). 바이트는 hided 파일 바이트 프레임으로 받고, 브라우저가 열 수 없는 코덱이나 경계 밖·읽기 실패는 문서 자리에 한 줄 이유로 보인다. | D-07, D-09 |
+| B8 | WS가 끊긴 동안 편집한 내용은 IndexedDB에 남고, 재연결 시 코어의 dirty 문서와 대조해 복원된다(코어가 같은 문서를 dirty로 알면 웹 버퍼가 이기고, 코어가 문서를 닫았으면 버퍼는 폐기되고 진단 로그에 남는다). | D-07 |
+| B9 | 우클릭 메뉴(새 파일·새 폴더·이름 바꾸기·휴지통으로 이동)와 행 드래그 이동이 있다. 생성·리네임은 인라인 입력, 이동은 드롭 대상 폴더로 `path_move` 1개. 성공하면 트리가 코어·hided 상태대로 다시 그려지고 새 파일은 열린다. | D-06 |
+| B10 | 휴지통 이동은 확인 모달 뒤 `path_trash`로 나가며 실패하면 파일이 그대로 남고 이유가 행 아래 한 줄로 보인다. 이미 있는 이름·권한 거부 같은 조작 실패도 같은 자리에서 보이고 입력을 고쳐 다시 시도할 수 있다. | D-06 |
+| B11 | hided는 나열·인덱스·생성·리네임·이동·휴지통·첨부 저장의 경로가 등록된 체크아웃 루트 아래가 아니면(실경로 기준; 링크로 나가는 경로 포함) 코어에 넘기지 않고 이유 코드로 거부하며 진단 로그에 남긴다. 나열 응답에서 루트 밖으로 나가는 링크 항목은 빠진다. S2의 `$HOME` 등록 경계는 그대로다. | D-01 |
+| B12 | ⌘P를 누르면 현재 체크아웃의 파일을 이름으로 퍼지 검색하는 팔레트가 열리고 Enter로 미리보기 탭에 연다. 인덱스가 50,000 파일에서 잘리면 목록 하단에 잘림 표시, 인덱싱 중이면 진행 중 표시. 결과는 80개까지. | D-05, D-08 |
+| B13 | ⌘K를 누르면 에이전트·프로젝트·체크아웃을 검색하는 팔레트가 열리고 Enter로 그 pane 또는 체크아웃으로 전환한다(S2에서 "준비 중"이던 자리). | D-05 |
+| B14 | 터미널 pane에 Finder 파일이나 이미지를 드롭하거나 클립보드 이미지를 ⌘V로 붙이면 hided가 바이트를 코어 첨부 디렉터리에 저장하고 `terminal_attachment`로 Swift와 같은 토큰이 pane에 삽입된다. 텍스트 ⌘V는 지금처럼 그대로 입력된다. | D-02 |
+| B15 | 첨부가 파일당 20 MiB 또는 합계 40 MiB를 넘거나, 저장에 실패하거나, 경계 밖이면 pane 위 한 줄로 거절 이유가 보이고 아무것도 삽입되지 않는다. | D-02, D-08, D-01 |
+| B16 | 트리 행 렌더·스크롤·hover·아이콘 결정에서 git 프로세스나 동기 파일 I/O가 일어나지 않고, 10,000 항목 폴더도 `@tanstack/react-virtual`로 스크롤이 매끄럽다. 문서를 열고 닫는 동안 터미널 echo p95·프레임 게이트(S0 방법)가 유지된다. | D-04, D-06 |
+| B17 | `web/src` 어디에도 색·간격·radius 리터럴이 없고 `node scripts/check-design-contract.mjs`가 통과한다. `pr.yml` web job이 통과하며 Playwright는 격리 Herdr + 임시 체크아웃에서 열기·편집·저장·충돌·생성·리네임·이동·휴지통·경계 밖 거부·⌘P·이미지 드롭·상한 거절·md/pdf/png/mp4 뷰어를 수행한다. | - |
+| B18 | `docs/ARCHITECTURE.md` hided 절에 체크아웃 경계·나열/인덱스/watch/첨부/파일 바이트 프레임이, `docs/BUILD.md`/`CONTRIBUTING.md`에 web lane 변경이 있고, `contracts/hided-ws.schema.json`에 새 프레임과 이유 코드가 있다. | - |
+| B19 | 끝나는 조건: 사용자가 Swift 앱을 닫고 실제 Herdr 세션에서 `hide`만으로 Explorer에서 파일을 열어 값 하나를 고쳐 저장하고, 이미지를 드롭해 에이전트에 보낸다. 이 관찰은 사용자가 하고, 구현자는 격리 서버 Playwright와 측정까지 한다. | D-02, D-03 |
+
+## Technical structure
+
+- 전달: `delivery.mode: pr`(agents/config.json). 하나의 PR, 커밋은 단위별(hided 경계·나열·watch / 인덱스 / 첨부 / Explorer / 에디터 / 뷰어 / 팔레트 / 측정·docs). 검증 lane은 S2와 같다.
+- `hided/`: 경계 필터를 `$HOME` 디렉터리 나열에서 "등록된 체크아웃 루트 아래" 파일 경로 검사로 확장(S2 `boundary.rs` 확장, 스냅샷의 체크아웃 목록이 루트의 출처). 새 서버 프레임: 디렉터리 나열(파일 포함), 변경 통지(watch), ⌘P 인덱스 결과, 첨부 저장 결과, 파일 바이트 읽기(이미지·PDF·비디오를 같은 경계 검사 뒤 WS 바이너리 프레임으로 스트림; 비디오는 탐색을 위해 범위 읽기). 첨부 바이트는 기존 토큰 게이트 WS의 바이너리 프레임으로 받는다(새 HTTP 엔드포인트 없음, S1 D-03 유지). 감시·인덱스는 상한을 가진 hided 소유 자원이며 클라이언트가 떠나면 해제된다.
+- `web/`: Explorer(react-virtual 트리, 컨텍스트 메뉴, 인라인 입력, 드래그 이동), 에디터(CodeMirror 6 + 언어팩 lazy, 찾기, wrap, 글자 크기), Markdown Live, pdf.js, 이미지 뷰어, ⌘P/⌘K 팔레트, 첨부 드롭/붙여넣기, IndexedDB 버퍼. 상태는 zustand 스토어 셀렉터로만; 문서 권위는 코어.
+- `herdr-core`: 변경 없음. `contracts/hided-ws.schema.json`에 프레임·이유 코드 추가.
+- 프로세스 경계는 S1 그대로(브라우저 ↔ hided 루프백 WS ↔ Herdr 소켓 / 코어).
+
+## Risks
+
+- 경계가 "등록된 체크아웃 루트"로 넓어지므로 루트 목록의 출처(스냅샷 체크아웃)가 바뀌는 순간(등록 해제, 워크트리 제거) 진행 중 나열·watch가 남지 않아야 한다. hided가 루트 변경마다 자원을 재검토하고, Security 리뷰가 링크·`..`·인코딩·레이스 우회를 S2와 같은 목록으로 공격한다.
+- 첨부 바이트가 WS를 타므로 20 MiB 프레임이 스냅샷 델타와 같은 소켓을 지난다. 프레임 분할 또는 별도 WS 연결로 델타 지연이 S0 게이트를 넘지 않는지 B16으로 측정한다.
+- watch·인덱스는 hided 자원이라 여러 브라우저 탭이 붙으면 중복될 수 있다. 체크아웃별로 하나만 만들고 클라이언트 수를 참조로 센다(engineering 14·15).
+- Markdown Live의 PR #110 동작 목록은 Swift 구현에 있으므로 옮길 때 누락이 생길 수 있다. 목록을 e2e 케이스로 옮기고 빠진 것은 Follow-up으로 기록한다.
+- 라이브 검증 경계: 구현자는 격리 Herdr + 임시 체크아웃만. 실사용 관찰(B19)은 사용자가 한다. 사용자가 할 일은 B18 외에 없다.

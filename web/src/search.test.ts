@@ -1,0 +1,54 @@
+import { describe, expect, it } from "vitest";
+import { filterEntries, fuzzyScore, searchEntries, type SearchEntry } from "./search";
+import type { SnapshotRest } from "./snapshot";
+
+describe("fuzzy score", () => {
+  it("needs the query's characters in order", () => {
+    expect(fuzzyScore("src/main.rs", "nope")).toBeNull();
+    expect(fuzzyScore("src/main.rs", "smr")).not.toBeNull();
+  });
+
+  it("scores a tight and word-boundary match above a scattered one", () => {
+    expect(fuzzyScore("src/main.rs", "main")!).toBeGreaterThan(fuzzyScore("server/migrations/init.rs", "main")!);
+    expect(fuzzyScore("readme.md", "r")!).toBeGreaterThan(fuzzyScore("docs/readme.md", "r")!);
+  });
+});
+
+const REST = {
+  navigator: {
+    agents: [
+      { id: "a1", pane_id: "p1", identity_label: "Agent one", agent_kind: "claude", symbol: "●", group: "working", status_label: "Working", elapsed: "1m", emphasized: false, unread: false },
+    ],
+    workspaces: [
+      {
+        id: "w1",
+        label: "fixture",
+        path: "/tmp/fixture",
+        device_id: "local",
+        registered: true,
+        temporary: false,
+        pinned: false,
+        checkouts: [{ id: "c1", workspace_id: "w1", label: "main", path: "/tmp/fixture", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [], active_tab_id: null, strip: [], next_tab_label: "Tab 2" }],
+        inactive_checkouts: { expanded: false, checkout_ids: [] },
+      },
+    ],
+  },
+} as unknown as SnapshotRest;
+
+describe("search entries", () => {
+  it("lists agents, projects and checkouts with the ids that activate them", () => {
+    const entries = searchEntries(REST);
+    expect(entries.map((entry) => entry.kind)).toEqual(["agent", "project", "checkout"]);
+    expect(entries[0]).toMatchObject({ kind: "agent", paneId: "p1" });
+    expect(entries[2]).toMatchObject({ kind: "checkout", workspaceId: "w1", checkoutId: "c1" });
+  });
+
+  it("filters by the fuzzy score and keeps the best first", () => {
+    const entries: SearchEntry[] = [
+      { id: "1", title: "Alpha", subtitle: "/a", kind: "project" },
+      { id: "2", title: "Beta", subtitle: "/b", kind: "project" },
+    ];
+    expect(filterEntries(entries, "beta").map((entry) => entry.id)).toEqual(["2"]);
+    expect(filterEntries(entries, "").map((entry) => entry.id)).toEqual(["1", "2"]);
+  });
+});
