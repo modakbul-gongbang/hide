@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, bufferDecision, deleteBuffer, putBuffer } from "./buffers";
+import { allBuffers, bufferDecision, bufferFor, deleteBuffer, identity, putBuffer } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { clearDraft, noteDraft } from "./editor/draft";
-import { activeEditorTab, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
+import { activeEditorTab, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
 import { downloadFile, isLocalHost } from "./fileBytes";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -22,14 +22,18 @@ export const AUTOSAVE_IDLE_MS = 600;
 
 export function EditorSurface({ actions }: { actions: Actions }) {
   const editor = useShellStore((s) => s.editor);
+  const rest = useShellStore((s) => s.rest);
   const scale = useShellStore((s) => s.rest?.ui_state?.editor_text_scale);
   const findRequest = useUiStore((s) => s.editorFindRequest);
   const showing = editorFor(editor);
   const tab = activeEditorTab(editor);
   if (!showing || !tab) return null;
+  // A buffer's identity is its checkout root plus the real path (D-14).
+  const root = checkoutById(rest, tab.checkout_id)?.path ?? "";
   return (
     <EditorTabView
       tab={tab}
+      root={root}
       document={showing.document}
       scale={typeof scale === "number" ? scale : DEFAULT_SCALE}
       findRequest={findRequest}
@@ -40,12 +44,14 @@ export function EditorSurface({ actions }: { actions: Actions }) {
 
 function EditorTabView({
   tab,
+  root,
   document,
   scale,
   findRequest,
   actions,
 }: {
   tab: EditorTabSnapshot;
+  root: string;
   document: EditorDocumentSnapshot | null;
   scale: number;
   findRequest: number;
@@ -54,7 +60,7 @@ function EditorTabView({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-editor={tab.id} data-editor-kind={tab.kind}>
       <EditorHeader tab={tab} document={document} actions={actions} />
-      <EditorBody tab={tab} document={document} scale={scale} findRequest={findRequest} actions={actions} />
+      <EditorBody tab={tab} root={root} document={document} scale={scale} findRequest={findRequest} actions={actions} />
     </div>
   );
 }
@@ -129,12 +135,14 @@ function EditorHeader({
 
 function EditorBody({
   tab,
+  root,
   document,
   scale,
   findRequest,
   actions,
 }: {
   tab: EditorTabSnapshot;
+  root: string;
   document: EditorDocumentSnapshot | null;
   scale: number;
   findRequest: number;
@@ -195,25 +203,43 @@ function EditorBody({
     let live = true;
     void allBuffers().then((buffers) => {
       if (!live) return;
-      const buffer = buffers.find((row) => row.path === tab.path);
+      const buffer = bufferFor(buffers, root, tab.path);
       checked.current = true;
       if (!buffer) return;
       const current = latest.current;
       if (!current) return;
       if (bufferDecision(buffer, current) === "restore") actions.updateDraft(buffer.contents);
-      else void deleteBuffer(tab.path);
+      else void deleteBuffer(root, tab.path);
     });
     return () => {
       live = false;
     };
-  }, [tab.id, tab.path, actions]);
+  }, [tab.id, root, tab.path, actions]);
+
+  // A rename or a move retargets the open tab; its buffer follows the new
+  // identity so an unsaved draft is not orphaned (D-14).
+  const previous = useRef<string | null>(null);
+  useEffect(() => {
+    const current = identity(root, tab.path);
+    const before = previous.current;
+    previous.current = current;
+    if (!before || before === current) return;
+    const [oldRoot, oldPath] = before.split("\u0000");
+    if (!oldRoot || !oldPath) return;
+    void allBuffers().then((buffers) => {
+      const buffer = bufferFor(buffers, oldRoot, oldPath);
+      if (!buffer) return;
+      void putBuffer(root, tab.path, buffer.contents);
+      void deleteBuffer(oldRoot, oldPath);
+    });
+  }, [tab.id, root, tab.path]);
 
   // A document the core reports clean has nothing unsaved, so its buffer goes.
   useEffect(() => {
     if (!checked.current || document?.dirty) return;
     if (document?.document_kind !== "text" && document?.document_kind !== "markdown") return;
-    void deleteBuffer(tab.path);
-  }, [document?.dirty, document?.document_kind, tab.path]);
+    void deleteBuffer(root, tab.path);
+  }, [document?.dirty, document?.document_kind, root, tab.path]);
 
   if (!document) {
     return <Notice text="Loading…" state="loading" />;
@@ -233,7 +259,7 @@ function EditorBody({
           {document.readonly_reason}
         </div>
       ) : null}
-      {document.conflict ? <ConflictBar tabId={tab.id} actions={actions} /> : null}
+      {document.conflict ? <ConflictBar tabId={tab.id} root={root} path={tab.path} actions={actions} /> : null}
       <CodeMirrorEditor
         key={tab.id}
         tabId={tab.id}
@@ -244,7 +270,11 @@ function EditorBody({
         findRequest={findRequest}
         onDraft={(contents) => {
           noteDraft(tab.id, contents);
-          void putBuffer(tab.path, contents);
+          // A buffer that cannot be stored keeps the edit alive and says so on
+          // the tab; the session continues either way (D-14).
+          void putBuffer(root, tab.path, contents).then((stored) =>
+            useShellStore.getState().noteBufferWarning(tab.id, !stored),
+          );
           actions.updateDraft(contents);
           scheduleAutosave();
         }}
@@ -280,7 +310,7 @@ function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; 
   );
 }
 
-function ConflictBar({ tabId, actions }: { tabId: string; actions: Actions }) {
+function ConflictBar({ tabId, root, path, actions }: { tabId: string; root: string; path: string; actions: Actions }) {
   return (
     <div className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-conflict="true">
       <span className="flex-1">This file changed on disk. Your draft is preserved.</span>
@@ -290,6 +320,7 @@ function ConflictBar({ tabId, actions }: { tabId: string; actions: Actions }) {
         data-conflict-action="reload"
         onClick={() => {
           clearDraft(tabId);
+          void deleteBuffer(root, path);
           actions.resolveConflict("reload");
         }}
       >

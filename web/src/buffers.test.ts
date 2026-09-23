@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { bufferDecision, sweepBuffers, type StoredBuffer } from "./buffers";
+import { bufferDecision, bufferFor, identity, staleBuffers, sweepBuffers, type StoredBuffer } from "./buffers";
 
-function buffer(path: string, contents: string): StoredBuffer {
-  return { path, contents, updated_at: 0 };
+const ROOT = "/repo";
+
+function buffer(path: string, contents: string, updatedAt = 0): StoredBuffer {
+  return { id: identity(ROOT, path), root: ROOT, path, contents, updated_at: updatedAt };
 }
 
 describe("buffer reconciliation", () => {
@@ -22,13 +24,27 @@ describe("buffer reconciliation", () => {
 
   it("sweeps only the buffers whose document is gone", () => {
     const buffers = [buffer("/a.ts", "1"), buffer("/b.ts", "2")];
-    expect(sweepBuffers(buffers, new Set(["/a.ts"])).map((row) => row.path)).toEqual(["/b.ts"]);
+    const open = new Set([identity(ROOT, "/a.ts")]);
+    expect(sweepBuffers(buffers, open).map((row) => row.path)).toEqual(["/b.ts"]);
+  });
+
+  it("keys a buffer by its checkout root and real path", () => {
+    const buffers = [buffer("/a.ts", "1")];
+    expect(bufferFor(buffers, ROOT, "/a.ts")?.contents).toBe("1");
+    expect(bufferFor(buffers, "/other", "/a.ts")).toBeNull();
+  });
+
+  it("discards a buffer nobody claimed for two weeks", () => {
+    const now = Date.now();
+    const fresh = buffer("/a.ts", "1", now - 1000);
+    const stale = buffer("/b.ts", "2", now - 15 * 24 * 60 * 60 * 1000);
+    expect(staleBuffers([fresh, stale], now).map((row) => row.path)).toEqual(["/b.ts"]);
   });
 
   it("is a no-op without IndexedDB", async () => {
     const { allBuffers, deleteBuffer, putBuffer } = await import("./buffers");
-    await putBuffer("/a", "x");
-    await deleteBuffer("/a");
+    await putBuffer("/repo", "/a", "x");
+    await deleteBuffer("/repo", "/a");
     await expect(allBuffers()).resolves.toEqual([]);
   });
 });

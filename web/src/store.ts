@@ -93,6 +93,8 @@ type Store = {
   externalOpen: OpenExternalResult | null;
   /** Tabs whose save is in flight; the strip shows only these (D-10). */
   savingTabs: Set<string>;
+  /** Tabs whose buffer could not be stored; they say "kept in this tab only" (D-14). */
+  bufferWarnings: Set<string>;
   /** Watch frames per folder, counted so the Explorer re-reads even a folder
    * whose listing was in flight when the change landed. */
   folderChanges: Record<string, number>;
@@ -107,6 +109,7 @@ type Store = {
   clearPathRefusal: () => void;
   setAttachmentRefusal: (refusal: { pane_id: string; reason: string } | null) => void;
   noteSaving: (tabId: string, saving: boolean) => void;
+  noteBufferWarning: (tabId: string, warned: boolean) => void;
   /** Drops cached listings so the Explorer re-reads those folders. */
   invalidateListings: (paths: string[]) => void;
   applyFrame: (frame: Frame) => TerminalChunk[];
@@ -161,6 +164,7 @@ export const useShellStore = create<Store>((set, get) => ({
   attachmentRefusal: null,
   externalOpen: null,
   savingTabs: new Set<string>(),
+  bufferWarnings: new Set<string>(),
   folderChanges: {},
   diagnostics: [],
   diagnosticsDropped: 0,
@@ -173,6 +177,14 @@ export const useShellStore = create<Store>((set, get) => ({
     if (get().pathRefusal) set({ pathRefusal: null });
   },
   setAttachmentRefusal: (attachmentRefusal) => set({ attachmentRefusal }),
+  noteBufferWarning: (tabId, warned) => {
+    const current = get().bufferWarnings;
+    if (warned === current.has(tabId)) return;
+    const next = new Set(current);
+    if (warned) next.add(tabId);
+    else next.delete(tabId);
+    set({ bufferWarnings: next });
+  },
   noteSaving: (tabId, saving) => {
     const current = get().savingTabs;
     if (saving === current.has(tabId)) return;

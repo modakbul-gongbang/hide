@@ -6,7 +6,7 @@ import { deleteBuffer } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
-import { activeEditorTab, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
+import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -392,8 +392,9 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closeFileTab(tabId: string) {
-      const tab = useShellStore.getState().editor?.tabs.find((row) => row.id === tabId);
-      if (tab) void deleteBuffer(tab.path);
+      const state = useShellStore.getState();
+      const tab = state.editor?.tabs.find((row) => row.id === tabId);
+      if (tab) void deleteBuffer(checkoutById(state.rest, tab.checkout_id)?.path ?? "", tab.path);
       dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: null } });
     },
 

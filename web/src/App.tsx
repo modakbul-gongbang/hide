@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
-import { allBuffers, deleteBuffer, sweepBuffers } from "./buffers";
+import { allBuffers, deleteBuffer, identity, staleBuffers, sweepBuffers } from "./buffers";
 import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
 import { configureFileBytes } from "./fileBytes";
@@ -12,7 +12,7 @@ import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { editorFor, focusedCheckout } from "./snapshot";
+import { checkoutById, editorFor, focusedCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { TabBar } from "./TabBar";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
@@ -79,16 +79,21 @@ export function App() {
   // diagnostic; an open document's buffer is restored by its editor (B8).
   useEffect(() => {
     if (connection !== "live") return;
-    const editor = useShellStore.getState().editor;
-    const openPaths = new Set(
-      (editor?.tabs ?? []).filter((tab) => tab.kind === "file").map((tab) => tab.path),
+    const rest = useShellStore.getState().rest;
+    const open = new Set(
+      (useShellStore.getState().editor?.tabs ?? [])
+        .filter((tab) => tab.kind === "file")
+        .map((tab) => identity(checkoutById(rest, tab.checkout_id)?.path ?? "", tab.path)),
     );
     void allBuffers().then((buffers) => {
-      for (const buffer of sweepBuffers(buffers, openPaths)) {
+      // A buffer the core no longer holds is discarded, and one that has gone
+      // unclaimed for two weeks goes with it (D-14).
+      const discarded = [...sweepBuffers(buffers, open), ...staleBuffers(buffers, Date.now())];
+      for (const buffer of discarded) {
         useShellStore
           .getState()
           .noteDiagnostic(`discarded the unsaved buffer for closed document ${buffer.path}`);
-        void deleteBuffer(buffer.path);
+        void deleteBuffer(buffer.root, buffer.path);
       }
     });
   }, [connection]);
