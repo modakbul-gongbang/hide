@@ -541,36 +541,70 @@ fn openable(path: &Path) -> Result<(), &'static str> {
             return Err("not_openable");
         }
     }
-    if let Ok(mut file) = fs::File::open(path) {
-        use std::io::Read;
-        let mut magic = [0u8; 4];
-        if file.read_exact(&mut magic).is_ok() && is_executable_magic(&magic) {
-            return Err("not_openable");
-        }
+    let mut file = fs::File::open(path).map_err(|_| "not_found")?;
+    if is_executable_header(&mut file)? {
+        return Err("not_openable");
     }
     Ok(())
 }
 
-/// A Mach-O (thin or fat), ELF or PE header: the file is a program whatever
-/// its name says, and the launcher would read the same header.
-fn is_executable_magic(magic: &[u8; 4]) -> bool {
-    match magic {
+/// Whether the file's own header says it is a program: Mach-O (thin or fat,
+/// either byte order), ELF, or the DOS/PE MZ family. A real MZ executable
+/// either carries the zero fields its header format requires or the loader
+/// signature its header points at, while a document that merely begins with
+/// those letters has neither.
+fn is_executable_header(file: &mut fs::File) -> Result<bool, &'static str> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut head = [0u8; 512];
+    let read = file.read(&mut head).map_err(|_| "not_found")?;
+    let head = &head[..read];
+    if head.len() < 4 {
+        return Ok(false);
+    }
+    let magic4 = [head[0], head[1], head[2], head[3]];
+    if matches!(
+        magic4,
         // Mach-O 32/64 and their byte-swapped forms, 32 and 64-bit fat
         [0xFE, 0xED, 0xFA, 0xCE]
-        | [0xFE, 0xED, 0xFA, 0xCF]
-        | [0xCE, 0xFA, 0xED, 0xFE]
-        | [0xCF, 0xFA, 0xED, 0xFE]
-        | [0xCA, 0xFE, 0xBA, 0xBE]
-        | [0xBE, 0xBA, 0xFE, 0xCA]
-        | [0xCA, 0xFE, 0xBA, 0xBF]
-        | [0xBF, 0xBA, 0xFE, 0xCA] => true,
-        // ELF
-        [0x7F, b'E', b'L', b'F'] => true,
-        // PE/COFF, whose DOS stub starts with MZ and two non-text bytes; a
-        // document that merely begins with those letters stays openable.
-        [b'M', b'Z', low, high] => !(0x20..0x7F).contains(low) && !(0x20..0x7F).contains(high),
-        _ => false,
+            | [0xFE, 0xED, 0xFA, 0xCF]
+            | [0xCE, 0xFA, 0xED, 0xFE]
+            | [0xCF, 0xFA, 0xED, 0xFE]
+            | [0xCA, 0xFE, 0xBA, 0xBE]
+            | [0xBE, 0xBA, 0xFE, 0xCA]
+            | [0xCA, 0xFE, 0xBA, 0xBF]
+            | [0xBF, 0xBA, 0xFE, 0xCA]
+            // ELF
+            | [0x7F, b'E', b'L', b'F']
+    ) {
+        return Ok(true);
     }
+    if head[0] != b'M' || head[1] != b'Z' {
+        return Ok(false);
+    }
+    // Every real MZ family executable has zero fields in its header; a text
+    // document that begins with those two letters has none.
+    if head.contains(&0) {
+        return Ok(true);
+    }
+    // `e_lfanew` says where the loader signature is. A header that points at
+    // PE/NE/LE/LX is a program whatever its extension claims.
+    if head.len() < 0x40 {
+        return Ok(false);
+    }
+    let at = u64::from(u32::from_le_bytes([
+        head[0x3C], head[0x3D], head[0x3E], head[0x3F],
+    ]));
+    if at < 0x40 || file.seek(SeekFrom::Start(at)).is_err() {
+        return Ok(false);
+    }
+    let mut signature = [0u8; 4];
+    if file.read_exact(&mut signature).is_err() {
+        return Ok(false);
+    }
+    Ok(matches!(
+        &signature,
+        b"PE\0\0" | b"NE\0\0" | b"LE\0\0" | b"LX\0\0" | b"W4\0\0" | b"DL\0\0"
+    ))
 }
 
 /// The program that opens one file: the configured one, else the host's.
@@ -1447,16 +1481,52 @@ mod tests {
         let elf = dir.path().join("notes.png");
         std::fs::write(&elf, [0x7F, b'E', b'L', b'F', 0, 0, 0, 0]).unwrap();
         assert_eq!(openable(&elf), Err("not_openable"), "ELF header");
-        let pe = dir.path().join("notes.txt");
-        std::fs::write(&pe, b"MZ\x90\x00\x00").unwrap();
-        assert_eq!(openable(&pe), Err("not_openable"), "PE header");
         let fat64 = dir.path().join("notes.md");
         std::fs::write(&fat64, [0xCA, 0xFE, 0xBA, 0xBF, 0, 0, 0, 0]).unwrap();
         assert_eq!(openable(&fat64), Err("not_openable"), "64-bit fat Mach-O");
+        // A DOS/PE executable is refused whether its size field reads as text
+        // or not: a real one carries the zero fields its header requires.
+        let mut pe = b"MZ".to_vec();
+        pe.extend_from_slice(b"A\0\x03\x00\x00\x00\x00\x00");
+        pe.resize(0x40, b' ');
+        pe.extend_from_slice(&0x80u32.to_le_bytes());
+        pe.resize(0x80, b' ');
+        pe.extend_from_slice(b"PE\0\0");
+        let pe_path = dir.path().join("notes.dat");
+        std::fs::write(&pe_path, &pe).unwrap();
+        assert_eq!(openable(&pe_path), Err("not_openable"), "PE header");
+        let stub = dir.path().join("notes.txt");
+        std::fs::write(&stub, b"MZ\x90\x00\x00").unwrap();
+        assert_eq!(openable(&stub), Err("not_openable"), "MZ stub");
         // A document that merely starts with the same two letters opens.
         let text = dir.path().join("notes.md");
         std::fs::write(&text, b"MZ is a codec\n").unwrap();
         assert_eq!(openable(&text), Ok(()), "MZ letters in text");
+        // And a PE whose header has no zero field at all is still caught by
+        // the loader signature its `e_lfanew` points at.
+        let at = 0x0101_0101u32;
+        let mut crafted = b"MZ".to_vec();
+        crafted.extend_from_slice(&[b'A'; 0x3A]);
+        crafted.extend_from_slice(&at.to_le_bytes());
+        crafted.resize(512, b'A');
+        assert!(
+            !crafted.contains(&0),
+            "the crafted header carries no zero byte"
+        );
+        let crafted_path = dir.path().join("huge.md");
+        {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&crafted_path).unwrap();
+            file.write_all(&crafted).unwrap();
+            file.write_all(&vec![b'A'; at as usize - crafted.len()])
+                .unwrap();
+            file.write_all(b"PE\0\0").unwrap();
+        }
+        assert_eq!(
+            openable(&crafted_path),
+            Err("not_openable"),
+            "PE by e_lfanew"
+        );
     }
 
     #[test]

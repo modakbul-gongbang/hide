@@ -664,8 +664,40 @@ test("a preview-only document closes without a save", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, sent } = fixture;
   try {
-    await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
-    await expect(page.locator("[data-editor-preview-only]")).toBeVisible();
+    // A stale recovery buffer is exactly the trap: a preview-only document has
+    // no draft the core would accept, so the restore must decline it rather
+    // than hand it back as a close-save the core refuses (D-14).
+    const stale = `${repo}\u0000${repo}/huge.txt`;
+    await page.evaluate(
+      async ({ root, path, id }) => {
+        await new Promise<void>((resolve, reject) => {
+          const request = indexedDB.open("hide-shell", 2);
+          request.onupgradeneeded = () => {
+            const database = request.result;
+            if (database.objectStoreNames.contains("buffers")) database.deleteObjectStore("buffers");
+            database.createObjectStore("buffers", { keyPath: "id" });
+          };
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const database = request.result;
+            const transaction = database.transaction("buffers", "readwrite");
+            transaction.objectStore("buffers").put({
+              id,
+              root,
+              path,
+              contents: "stale draft\n",
+              updated_at: Date.now(),
+            });
+            transaction.oncomplete = () => {
+              database.close();
+              resolve();
+            };
+            transaction.onerror = () => reject(transaction.error);
+          };
+        });
+      },
+      { root: repo, path: `${repo}/huge.txt`, id: stale },
+    );
     // No draft the core would accept exists here, so the close is one step.
     await page.locator('[data-tab-kind="file"]').hover();
     await page.locator('[data-tab-kind="file"] button[aria-label^="Close tab"]').click();

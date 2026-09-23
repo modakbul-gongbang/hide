@@ -57,11 +57,10 @@ describe("draft buffers", () => {
   it("keeps a newer buffer when an older save's echo lands after it", () => {
     noteDraft("a", "first");
     noteSent("a", "first");
-    // The operator types again before that save's echo arrives, and a second
-    // save is dispatched with the newer text.
+    // The operator types again before that save's echo arrives; the echo must
+    // not settle the text it never carried.
     noteDraft("a", "second");
-    noteSent("a", "second");
     settleDraft("a");
-    expect(latestDraft("a")).toBeNull();
+    expect(latestDraft("a")).toBe("second");
   });
 });
