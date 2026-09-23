@@ -63,8 +63,10 @@ struct Upload {
     path: PathBuf,
     file: Option<File>,
     written: u64,
-    /// What the client said it would send; the byte budget counts it.
+    /// What the client said it would send, checked against the bytes at eof.
     declared: u64,
+    /// Whether this stage writes the clipboard image the core reads by id.
+    clipboard: bool,
 }
 
 /// One staged file on disk, with what eviction needs to judge it.
@@ -104,15 +106,19 @@ fn drop_stage(state: &mut State, request_id: &str) {
 /// Makes room for one more staged file of `size` bytes: the oldest entry that
 /// is not a freshly committed file goes first, and a fully fresh set is
 /// refused rather than unlinked (the core may still be reading it).
-fn make_room(state: &mut State, size: u64) -> Result<(), &'static str> {
+///
+/// `keep` is the stage the caller is writing: it is never the victim, so a
+/// byte-budget refusal leaves the stage it refused intact.
+fn make_room(state: &mut State, size: u64, keep: Option<&str>) -> Result<(), &'static str> {
     while state.staged.len() >= STAGED_KEEP
         || state.staged_bytes.saturating_add(size) > MAX_STAGED_BYTES
     {
         let Some(evictable) = state.staged.iter().find_map(|entry| {
-            entry
-                .committed_at
-                .is_none_or(|at| at.elapsed() >= COMMIT_GRACE)
-                .then(|| entry.request_id.clone())
+            (Some(entry.request_id.as_str()) != keep
+                && entry
+                    .committed_at
+                    .is_none_or(|at| at.elapsed() >= COMMIT_GRACE))
+            .then(|| entry.request_id.clone())
         }) else {
             return Err("staging_full");
         };
@@ -226,7 +232,7 @@ impl Attachments {
             return Err("invalid_request_id");
         }
         // The count cap only; the byte budget is charged as bytes arrive.
-        make_room(&mut state, 0)?;
+        make_room(&mut state, 0, None)?;
         // `create_new` means an existing file (a case-insensitive collision,
         // or a path staged by another run) is never truncated.
         let file = std::fs::OpenOptions::new()
@@ -256,6 +262,7 @@ impl Attachments {
                 file: Some(file),
                 written: 0,
                 declared: size,
+                clipboard,
             },
         );
         Ok(())
@@ -264,8 +271,8 @@ impl Attachments {
     /// Appends one chunk; `eof` closes the stage. Returns whether it closed.
     ///
     /// A stage that closes with fewer or more bytes than it declared is
-    /// dropped: the declared size is the reservation the byte budget counts,
-    /// so a stage whose bytes do not match it would make that budget a lie.
+    /// dropped: the declaration is what the client promised, and the arriving
+    /// bytes are what the budget charges.
     pub fn write(&self, request_id: &str, bytes: &[u8], eof: bool) -> Result<bool, &'static str> {
         let mut state = self
             .state
@@ -283,7 +290,7 @@ impl Attachments {
         // Every arriving byte is charged before it lands, so the staged byte
         // budget bounds the disk at all times, not only at eof.
         let arriving = bytes.len() as u64;
-        make_room(&mut state, arriving)?;
+        make_room(&mut state, arriving, Some(request_id))?;
         let declared = {
             let Some(upload) = state.uploads.get_mut(request_id) else {
                 return Err("unknown_stage");
@@ -339,7 +346,9 @@ impl Attachments {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 match state.uploads.get(stage) {
-                    Some(upload) if upload.file.is_none() => {}
+                    // The core reads the image at the path this stage's id
+                    // derives, so only a clipboard stage may satisfy it.
+                    Some(upload) if upload.file.is_none() && upload.clipboard => {}
                     _ => return Err("unknown_stage"),
                 }
                 // Committed: the file stays for the core to read, the open
@@ -371,6 +380,9 @@ impl Attachments {
             };
             if upload.file.is_some() {
                 return Err("stage_incomplete");
+            }
+            if upload.clipboard {
+                return Err("unknown_stage");
             }
             total += upload.written;
             if total > MAX_BATCH_BYTES {
@@ -540,7 +552,7 @@ mod tests {
             committed_at: None,
         });
         state.staged_bytes = MAX_STAGED_BYTES + 1;
-        make_room(&mut state, 1).unwrap();
+        make_room(&mut state, 1, None).unwrap();
         assert!(
             state.staged.iter().any(|entry| entry.request_id == "keep"),
             "a fresh commit stays"
@@ -560,7 +572,7 @@ mod tests {
             });
         }
         state.staged_bytes = MAX_STAGED_BYTES * 2;
-        assert_eq!(make_room(&mut state, 1), Err("staging_full"));
+        assert_eq!(make_room(&mut state, 1, None), Err("staging_full"));
         assert_eq!(state.staged.len(), 2, "nothing may be unlinked");
     }
 
@@ -642,6 +654,56 @@ mod tests {
             !Path::new(&staged[0]).is_file(),
             "a previous run's staging must not survive as garbage"
         );
+    }
+
+    #[test]
+    fn a_refused_chunk_leaves_the_writing_stage_intact() {
+        let (_dir, service) = attachments();
+        {
+            let mut state = service
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.staged.push_back(Staged {
+                request_id: "fresh".to_owned(),
+                path: PathBuf::from("/nonexistent/fresh"),
+                bytes: MAX_STAGED_BYTES,
+                committed_at: Some(Instant::now()),
+            });
+            state.staged_bytes = MAX_STAGED_BYTES;
+        }
+        service.begin("mine", "x", 4, false).unwrap();
+        // The budget is full of a fresh commit, so the arriving bytes are
+        // refused rather than evicting the very stage being written.
+        assert_eq!(service.write("mine", &[1, 2], false), Err("staging_full"));
+        assert_eq!(service.write("mine", &[1, 2], true), Err("staging_full"));
+        assert_eq!(
+            service.commit(&["mine".to_owned()], false),
+            Err("stage_incomplete")
+        );
+    }
+
+    #[test]
+    fn a_commit_binds_a_stage_to_the_mode_it_was_opened_with() {
+        let (_dir, service) = attachments();
+        // A file stage cannot satisfy a clipboard commit: the core would read
+        // a clipboard path this stage never wrote.
+        service.begin("file", "x", 1, false).unwrap();
+        service.write("file", &[1], true).unwrap();
+        assert_eq!(
+            service.commit(&["file".to_owned()], true),
+            Err("unknown_stage")
+        );
+        // A clipboard stage cannot satisfy a file batch either.
+        service.begin("clip", "shot.png", 1, true).unwrap();
+        service.write("clip", &[1], true).unwrap();
+        assert_eq!(
+            service.commit(&["clip".to_owned()], false),
+            Err("unknown_stage")
+        );
+        // Each mode commits to its own root.
+        assert!(service.commit(&["file".to_owned()], false).is_ok());
+        assert!(service.commit(&["clip".to_owned()], true).is_ok());
     }
 
     #[test]
