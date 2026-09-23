@@ -5,7 +5,9 @@ use std::time::UNIX_EPOCH;
 
 use crate::model::{DocumentKind, EditorConflictSnapshot, EditorDocumentSnapshot};
 
-const MAX_EDITABLE_BYTES: u64 = 2 * 1024 * 1024;
+/// The largest file the editor reads into a document. Past it the shell
+/// offers the OS default handler instead (PRD S3 D-12).
+const MAX_EDITABLE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// The first bytes of every PDF, whatever the file is called.
 const PDF_SIGNATURE: &[u8] = b"%PDF-";
@@ -46,7 +48,7 @@ pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
         return Ok(document(
             DocumentKind::Text,
             None,
-            Some("Files larger than 2 MB are preview-only".to_owned()),
+            Some("Files larger than 16 MB are preview-only".to_owned()),
         ));
     }
     let bytes =
@@ -695,6 +697,29 @@ pub(crate) mod tests {
             Some("json")
         );
         assert_eq!(language_for(Path::new("LICENSE")), None);
+    }
+
+    #[test]
+    fn a_document_past_the_editable_cap_opens_as_a_preview() {
+        let root = explorer_fixture();
+        let big = root.join("big.txt");
+        // Sparse: the file reports the size without holding the bytes.
+        File::create(&big).unwrap().set_len(MAX_EDITABLE_BYTES + 1).unwrap();
+        let document = open(&big).unwrap();
+        assert_eq!(document.document_kind, DocumentKind::Text);
+        assert_eq!(document.contents_utf8, None);
+        assert_eq!(
+            document.readonly_reason.as_deref(),
+            Some("Files larger than 16 MB are preview-only")
+        );
+        let at_cap = root.join("at-cap.txt");
+        File::create(&at_cap)
+            .unwrap()
+            .set_len(MAX_EDITABLE_BYTES)
+            .unwrap();
+        let document = open(&at_cap).unwrap();
+        assert!(document.contents_utf8.is_some(), "the cap itself is editable");
+        fs::remove_dir_all(&root).ok();
     }
 
     fn explorer_fixture() -> PathBuf {
