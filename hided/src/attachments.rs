@@ -145,6 +145,28 @@ impl Attachments {
                 );
             }
         }
+        // A previous run's staged files must not survive as garbage: the
+        // attachments directory is hided's own, so it starts empty. The
+        // clipboard directory is shared with a possible Swift shell, so only
+        // its own retention window (24 h) is applied there.
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(&clipboard_root) {
+            for entry in entries.flatten() {
+                let stale = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| age > Duration::from_secs(24 * 60 * 60));
+                if stale {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
         Self {
             dir,
             clipboard_root,
@@ -174,22 +196,6 @@ impl Attachments {
         let Some(name) = safe_component(name) else {
             return Err("invalid_request_id");
         };
-        {
-            let state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            // One id, one stage: a second begin for the same id would leave two
-            // entries for one file, and one of them could be evicted while the
-            // other is committed.
-            if state
-                .staged
-                .iter()
-                .any(|entry| entry.request_id == request_id)
-            {
-                return Err("invalid_request_id");
-            }
-        }
         let root = if clipboard {
             &self.clipboard_root
         } else {
@@ -208,10 +214,26 @@ impl Attachments {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        make_room(&mut state, size)?;
-        // The declared size is a reservation: the bytes on disk are charged
-        // against it, and `write` refuses a stage whose bytes do not match it.
-        let file = File::create(&path).map_err(|_| "stage_failed")?;
+        // One id and one path per stage, checked and inserted under the same
+        // lock: two connections could otherwise both pass a check made in a
+        // separate critical section, and a joined name can collide across
+        // different ids (`a-b` + `c` and `a` + `b-c`).
+        if state
+            .staged
+            .iter()
+            .any(|entry| entry.request_id == request_id || entry.path == path)
+        {
+            return Err("invalid_request_id");
+        }
+        // The count cap only; the byte budget is charged as bytes arrive.
+        make_room(&mut state, 0)?;
+        // `create_new` means an existing file (a case-insensitive collision,
+        // or a path staged by another run) is never truncated.
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|_| "stage_failed")?;
         // An abandoned stage would otherwise hold its file descriptor for the
         // daemon's life; the oldest open one goes instead.
         while state.open.len() >= MAX_OPEN_UPLOADS {
@@ -224,10 +246,9 @@ impl Attachments {
         state.staged.push_back(Staged {
             request_id: request_id.clone(),
             path: path.clone(),
-            bytes: size,
+            bytes: 0,
             committed_at: None,
         });
-        state.staged_bytes = state.staged_bytes.saturating_add(size);
         state.uploads.insert(
             request_id,
             Upload {
@@ -250,24 +271,42 @@ impl Attachments {
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let declared = match state.uploads.get_mut(request_id) {
-            Some(upload) => {
+        match state.uploads.get(request_id) {
+            Some(upload) if upload.file.is_some() => {
                 if upload.written + bytes.len() as u64 > MAX_FILE_BYTES {
                     return Err("too_large");
                 }
-                if let Some(file) = upload.file.as_mut() {
-                    file.write_all(bytes).map_err(|_| "stage_failed")?;
-                }
-                upload.written += bytes.len() as u64;
-                upload.declared
             }
-            None => return Err("unknown_stage"),
+            // A frame after eof, or an id that never began, is not this stage.
+            _ => return Err("unknown_stage"),
+        }
+        // Every arriving byte is charged before it lands, so the staged byte
+        // budget bounds the disk at all times, not only at eof.
+        let arriving = bytes.len() as u64;
+        make_room(&mut state, arriving)?;
+        let declared = {
+            let Some(upload) = state.uploads.get_mut(request_id) else {
+                return Err("unknown_stage");
+            };
+            if let Some(file) = upload.file.as_mut() {
+                file.write_all(bytes).map_err(|_| "stage_failed")?;
+            }
+            upload.written += arriving;
+            upload.declared
         };
         let written = state
             .uploads
             .get(request_id)
             .map(|upload| upload.written)
             .unwrap_or_default();
+        if let Some(entry) = state
+            .staged
+            .iter_mut()
+            .find(|entry| entry.request_id == request_id)
+        {
+            entry.bytes = entry.bytes.saturating_add(arriving);
+        }
+        state.staged_bytes = state.staged_bytes.saturating_add(arriving);
         if eof {
             if written != declared {
                 drop_stage(&mut state, request_id);
@@ -552,6 +591,56 @@ mod tests {
         assert_eq!(
             service.begin("r2", &"a".repeat(97), 1, false),
             Err("invalid_request_id")
+        );
+    }
+
+    #[test]
+    fn a_path_staged_under_another_id_is_refused() {
+        let (_dir, service) = attachments();
+        service.begin("a-b", "c", 1, false).unwrap();
+        // The joined name of a different, valid id would be the same file.
+        assert_eq!(
+            service.begin("a", "b-c", 1, false),
+            Err("invalid_request_id")
+        );
+    }
+
+    #[test]
+    fn arriving_bytes_are_charged_and_a_frame_after_eof_is_not_this_stage() {
+        let (_dir, service) = attachments();
+        service.begin("r1", "x", 20 * 1024 * 1024, false).unwrap();
+        service.write("r1", &[0u8; 1024], false).unwrap();
+        let charged = service
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .staged_bytes;
+        assert_eq!(charged, 1024, "the budget sees the bytes on disk");
+        assert_eq!(service.write("r1", &[1], true), Err("size_mismatch"));
+        assert_eq!(service.write("r1", &[2], false), Err("unknown_stage"));
+        assert_eq!(
+            service
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .staged_bytes,
+            0,
+            "a dropped stage gives its bytes back"
+        );
+    }
+
+    #[test]
+    fn a_new_run_starts_with_an_empty_attachments_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Attachments::new(dir.path());
+        first.begin("r1", "x", 1, false).unwrap();
+        first.write("r1", &[1], true).unwrap();
+        let staged = first.commit(&["r1".to_owned()], false).unwrap();
+        assert!(Path::new(&staged[0]).is_file());
+        let _second = Attachments::new(dir.path());
+        assert!(
+            !Path::new(&staged[0]).is_file(),
+            "a previous run's staging must not survive as garbage"
         );
     }
 

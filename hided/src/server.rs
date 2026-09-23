@@ -440,6 +440,16 @@ fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
                 .collect()
         })
         .unwrap_or_default();
+    // A clipboard paste names no paths: the core reads the image at the path
+    // its own request id derives, so the commit must be the stage that wrote
+    // it and nothing else.
+    if clipboard && (stages.len() != 1 || stages.first().is_none_or(|stage| *stage != request_id)) {
+        return vec![Message::Text(
+            attachment_refused(&request_id, "invalid_request_id")
+                .to_string()
+                .into(),
+        )];
+    }
     let paths = match state.attachments.commit(&stages, clipboard) {
         Ok(paths) => paths,
         Err(reason) => {

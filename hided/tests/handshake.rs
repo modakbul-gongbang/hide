@@ -1123,5 +1123,22 @@ async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
     )
     .await;
     assert_eq!(refused["payload"]["reason"], "unknown_stage");
+
+    // A clipboard commit must name the one stage that wrote its image, because
+    // the core reads the file its own request id derives.
+    let refused = send_event_expecting(
+        &mut socket,
+        "attachment_commit",
+        json!({
+            "request_id": "01234567-0123-0123-0123-0123456789ab",
+            "pane_id": "p1",
+            "bracketed_paste": true,
+            "clipboard": true,
+            "stages": [],
+        }),
+        |frame| frame["type"] == "attachment_refused",
+    )
+    .await;
+    assert_eq!(refused["payload"]["reason"], "invalid_request_id");
     running.stop();
 }

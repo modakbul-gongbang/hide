@@ -95,6 +95,7 @@ describe("attachment upload", () => {
     expect(safeName("a/b")).toBe("attachment.bin");
     expect(safeName("a\\b")).toBe("attachment.bin");
     expect(safeName("a".repeat(97))).toBe("attachment.bin");
+    expect(safeName("a\u0085b")).toBe("attachment.bin");
   });
 
   it("turns a reason into one line", () => {

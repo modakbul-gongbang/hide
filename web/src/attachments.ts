@@ -183,8 +183,9 @@ export function safeName(name: string): string {
   const byteLength = new TextEncoder().encode(name).length;
   if (name === "" || byteLength > 96) return "attachment.bin";
   if (name === "." || name === ".." || name.includes("/") || name.includes("\\")) return "attachment.bin";
+  // `char::is_control` covers both C0 and the C1 range.
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(name)) return "attachment.bin";
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) return "attachment.bin";
   return name;
 }
 

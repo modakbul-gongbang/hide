@@ -146,21 +146,30 @@ impl IndexService {
             if !entry.building.swap(true, Ordering::SeqCst) {
                 let root = root.to_path_buf();
                 let target = Arc::clone(&entry);
+                // The guard clears the flag on every exit, including a panic
+                // in the walk: otherwise the index would answer `indexing`
+                // forever and the palette would poll with nothing to show.
+                struct Building(Arc<Entry>);
+                impl Drop for Building {
+                    fn drop(&mut self) {
+                        self.0.building.store(false, Ordering::SeqCst);
+                    }
+                }
+                let guard = Building(Arc::clone(&entry));
                 if std::thread::Builder::new()
                     .name("hided-index".to_owned())
                     .spawn(move || {
+                        let _guard = guard;
                         let data = Arc::new(build(&root));
                         *target
                             .data
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(data);
-                        target.building.store(false, Ordering::SeqCst);
                     })
                     .is_err()
                 {
-                    // A thread that never started must not leave the index
-                    // answering `indexing` forever.
-                    entry.building.store(false, Ordering::SeqCst);
+                    // The guard is dropped here, so a thread that never
+                    // started also clears the flag.
                 }
             }
             return IndexAnswer::Indexing;
