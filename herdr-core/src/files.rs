@@ -704,7 +704,10 @@ pub(crate) mod tests {
         let root = explorer_fixture();
         let big = root.join("big.txt");
         // Sparse: the file reports the size without holding the bytes.
-        File::create(&big).unwrap().set_len(MAX_EDITABLE_BYTES + 1).unwrap();
+        File::create(&big)
+            .unwrap()
+            .set_len(MAX_EDITABLE_BYTES + 1)
+            .unwrap();
         let document = open(&big).unwrap();
         assert_eq!(document.document_kind, DocumentKind::Text);
         assert_eq!(document.contents_utf8, None);
@@ -718,7 +721,10 @@ pub(crate) mod tests {
             .set_len(MAX_EDITABLE_BYTES)
             .unwrap();
         let document = open(&at_cap).unwrap();
-        assert!(document.contents_utf8.is_some(), "the cap itself is editable");
+        assert!(
+            document.contents_utf8.is_some(),
+            "the cap itself is editable"
+        );
         fs::remove_dir_all(&root).ok();
     }
 
