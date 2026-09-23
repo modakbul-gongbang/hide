@@ -4,6 +4,7 @@ import { allBuffers, bufferDecision, deleteBuffer, putBuffer } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { clearDraft, noteDraft } from "./editor/draft";
 import { activeEditorTab, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
+import { downloadFile, isLocalHost } from "./fileBytes";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
@@ -175,6 +176,11 @@ function EditorBody({
   if (!editable) {
     return <FileViewer document={document} />;
   }
+  // A text document the core would not read (past the editable cap) offers the
+  // host OS handler instead of an editor (D-12); a remote daemon downloads.
+  if (document.contents_utf8 === null) {
+    return <PreviewOnly document={document} actions={actions} />;
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {document.readonly_reason ? (
@@ -197,6 +203,33 @@ function EditorBody({
           actions.updateDraft(contents);
         }}
       />
+    </div>
+  );
+}
+
+function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; actions: Actions }) {
+  const external = useShellStore((s) => s.externalOpen);
+  const local = isLocalHost();
+  const failed = external?.ok === false && external.path === document.path;
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-sm px-md text-center text-caption text-muted" data-editor-preview-only="true">
+      <span>{document.readonly_reason ?? "This file is too large to edit here."}</span>
+      <button
+        type="button"
+        className="rounded-sm bg-elevated px-md py-xs text-primary hover:bg-divider"
+        data-editor-open-external="true"
+        onClick={() => {
+          if (local) actions.openExternal(document.path);
+          else void downloadFile(document.path);
+        }}
+      >
+        {local ? "Open in default app" : "Download"}
+      </button>
+      {failed ? (
+        <span className="text-danger" data-editor-open-failed="true">
+          {`The default app could not open it: ${external.reason ?? "failed"}`}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -1046,6 +1046,43 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
 }
 
 #[tokio::test]
+async fn open_external_checks_the_checkout_boundary_first() {
+    let (dir, env) = test_env(true);
+    let home = dir.path().canonicalize().unwrap();
+    let checkout = home.join("projects/alpha");
+    std::fs::create_dir_all(&checkout).unwrap();
+    std::fs::write(checkout.join("notes.txt"), "x").unwrap();
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+    let mut socket = live_socket(&running).await;
+
+    // A path outside every registered root never reaches the host handler.
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "x").unwrap();
+    let refused = send_event_expecting(
+        &mut socket,
+        "open_external",
+        json!({"path": outside.path().join("secret.txt").display().to_string()}),
+        never,
+    )
+    .await;
+    assert_eq!(refused["type"], "path_refused");
+    assert_eq!(refused["payload"]["kind"], "open_external");
+    assert_eq!(refused["payload"]["reason"], "outside_checkout");
+
+    // A directory is not a file to hand to the handler.
+    let refused = send_event_expecting(
+        &mut socket,
+        "open_external",
+        json!({"path": checkout.display().to_string()}),
+        never,
+    )
+    .await;
+    assert_eq!(refused["payload"]["reason"], "not_a_file");
+    running.stop();
+}
+
+#[tokio::test]
 async fn a_client_cannot_send_the_shell_attachment_events() {
     let (_dir, running) = start().await;
     let mut socket = live_socket(&running).await;

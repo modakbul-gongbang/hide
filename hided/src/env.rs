@@ -21,6 +21,7 @@ pub const HIDE_VITE_ORIGIN: &str = "HIDE_VITE_ORIGIN";
 pub const HIDE_PORT: &str = "HIDE_PORT";
 pub const HIDE_IDLE_SECS: &str = "HIDE_IDLE_SECS";
 pub const HOME: &str = "HOME";
+pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -76,6 +77,12 @@ pub const REGISTRY: &[EnvKey] = &[
         required: false,
         format: "positive integer seconds",
         absent_behavior: "Idle timeout is 600 seconds",
+    },
+    EnvKey {
+        key: HIDE_OPEN_COMMAND,
+        required: false,
+        format: "absolute path of a program whose first argument is the file to open",
+        absent_behavior: "The host OS handler opens it (macOS `open`, Windows `start`, Linux `xdg-open`)",
     },
     EnvKey {
         key: HOME,

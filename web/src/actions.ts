@@ -278,6 +278,11 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "file_index", payload: { root, query } });
     },
 
+    /** Hands a checkout file to the daemon's host OS handler (D-12). */
+    openExternal(path: string) {
+      dispatch({ schema_version: 2, kind: "open_external", payload: { path } });
+    },
+
     /** A palette pick opens in the checkout's preview tab (B12) and closes the palette. */
     openIndexEntry(path: string) {
       ui().closeOverlay();

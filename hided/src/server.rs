@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::path::Path;
+use std::process::{Command, Stdio};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -380,6 +382,7 @@ async fn handle_client_text(
                 .discard(&payload_str(&event, "request_id"));
             return Ok(Vec::new());
         }
+        Some("open_external") => return Ok(handle_open_external(state, &event)),
         _ => {}
     }
     if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
@@ -387,6 +390,85 @@ async fn handle_client_text(
     }
     let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
     state.core.dispatch(bytes).map(|()| Vec::new())
+}
+
+/// Opens a checkout file with the host OS handler, or with the program
+/// `HIDE_OPEN_COMMAND` names (PRD S3 D-12). The path passes the same
+/// checkout-root boundary as every other Explorer path, so the handler can
+/// only ever be pointed at a regular file inside a registered root.
+fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
+    let path = payload_str(event, "path");
+    let real = match state.boundary.resolve_file(&path) {
+        Ok((real, _)) => real,
+        Err(refusal) => {
+            return vec![Message::Text(
+                refused("open_external", &path, refusal).to_string().into(),
+            )];
+        }
+    };
+    let (ok, reason) = match open_with_handler(&real) {
+        Ok(()) => (true, Value::Null),
+        Err(reason) => (false, Value::String(reason.to_owned())),
+    };
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "open.external",
+            "ok": ok,
+            "path": real.display().to_string(),
+        })
+    );
+    vec![Message::Text(
+        json!({
+            "type": "open_external_result",
+            "payload": {"path": real.display().to_string(), "ok": ok, "reason": reason},
+        })
+        .to_string()
+        .into(),
+    )]
+}
+
+/// The program that opens one file: the configured one, else the host's.
+fn opener(path: &Path) -> Command {
+    let configured = std::env::var(crate::env::HIDE_OPEN_COMMAND)
+        .ok()
+        .filter(|value| !value.is_empty());
+    let mut command = match configured {
+        Some(program) => Command::new(program),
+        None => platform_opener(),
+    };
+    command.arg(path);
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn platform_opener() -> Command {
+    Command::new("open")
+}
+
+#[cfg(target_os = "windows")]
+fn platform_opener() -> Command {
+    let mut command = Command::new("cmd");
+    command.args(["/C", "start", ""]);
+    command
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_opener() -> Command {
+    Command::new("xdg-open")
+}
+
+/// Spawns the handler detached: the daemon never waits for an application to
+/// exit, and the handler's own output is not the shell's.
+fn open_with_handler(path: &Path) -> Result<(), &'static str> {
+    opener(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| "spawn_failed")
 }
 
 /// One line of a refused attachment: the request and why nothing was staged.
@@ -1139,6 +1221,16 @@ mod tests {
             None,
             "revision from the future"
         );
+    }
+
+    #[test]
+    fn the_platform_opener_is_the_hosts_own() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(platform_opener().get_program(), "open");
+        #[cfg(target_os = "windows")]
+        assert_eq!(platform_opener().get_program(), "cmd");
+        #[cfg(all(unix, not(target_os = "macos")))]
+        assert_eq!(platform_opener().get_program(), "xdg-open");
     }
 
     #[test]

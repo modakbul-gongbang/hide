@@ -24,7 +24,8 @@ export interface ServerFrame {
     | "file_bytes_error"
     | "directory_changed"
     | "file_index_result"
-    | "attachment_refused";
+    | "attachment_refused"
+    | "open_external_result";
   payload: {
     [k: string]: unknown;
   };

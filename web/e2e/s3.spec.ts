@@ -80,6 +80,10 @@ async function openCheckout(page: Page): Promise<Fixture> {
     fs.writeFileSync(path.join(repoDir, "doc.pdf"), minimalPdf());
     fs.copyFileSync(path.resolve("e2e/fixtures/tiny.mp4"), path.join(repoDir, "clip.mp4"));
     gitFixture(repoDir);
+    // Sparse and untracked: past the editable cap, so the editor offers the
+    // host OS handler instead of a buffer (D-12).
+    fs.writeFileSync(path.join(repoDir, "huge.txt"), "");
+    fs.truncateSync(path.join(repoDir, "huge.txt"), 17 * 1024 * 1024);
     const repo = fs.realpathSync(repoDir);
     herdr.run([
       "workspace", "create", "--cwd", repoDir, "--label", "repo",
@@ -368,6 +372,24 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     // The tree selects the removed folder's next sibling, which is `src`.
     expect(lastSent.get("path_trash")).toMatchObject({ root: repo, path: `${repo}/dest`, select_after: `${repo}/src` });
     await expect(page.locator(`[data-explorer-row="${repo}/dest"]`)).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a file past the editing cap offers the default app instead of an editor", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
+    const body = page.locator("[data-editor-preview-only]");
+    await expect(body).toBeVisible();
+    await expect(body).toContainText("preview-only");
+    await screenshot(page, "s3-preview-only");
+
+    await page.locator("[data-editor-open-external]").click();
+    await expect.poll(() => sent.get("open_external")).toBe(1);
+    await expect(page.locator("[data-editor-open-failed]")).toHaveCount(0);
   } finally {
     close(fixture);
   }

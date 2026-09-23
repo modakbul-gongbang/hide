@@ -122,6 +122,29 @@ export function requestFileBytes(path: string, range?: { offset?: number; length
   });
 }
 
+/**
+ * Saves a file's bytes through the browser's download path. The remote half
+ * of the oversized-file fallback (PRD S3 D-12): the daemon is not on this
+ * machine, so the bytes come down the same `file_bytes` stream the viewers use.
+ */
+export async function downloadFile(path: string): Promise<void> {
+  const bytes = await requestFileBytes(path);
+  const url = blobUrl(bytes, "application/octet-stream");
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = path.split("/").pop() || "download";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // The download reads the blob asynchronously; revoking at once cancels it.
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+/** Whether the daemon serving this page runs on this machine (PRD S3 D-12). */
+export function isLocalHost(): boolean {
+  return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(window.location.hostname);
+}
+
 /** A blob URL for bytes, and the one place a viewer revokes it. */
 export function blobUrl(bytes: Uint8Array, type: string): string {
   return URL.createObjectURL(new Blob([bytes as BlobPart], { type }));

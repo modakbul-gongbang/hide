@@ -28,6 +28,8 @@ export async function startHided(herdr: HerdrFixture, label = "s2"): Promise<Dae
       HIDED_UI_DIR: path.resolve("dist"),
       HERDR_SOCKET_PATH: herdr.socket,
       HERDR_BIN_PATH: herdr.bin,
+      // `open_external` must not launch a GUI application on the runner.
+      HIDE_OPEN_COMMAND: "/usr/bin/true",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
