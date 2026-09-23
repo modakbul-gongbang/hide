@@ -5,6 +5,7 @@ pub mod coexist;
 pub mod core;
 pub mod env;
 pub mod index;
+pub mod opener;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
@@ -131,12 +132,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
+    let opener = opener::OpenHandler::new(env.open_command.clone(), Arc::clone(&shutdown));
     let app = AppState {
         core: Arc::new(core),
         boundary: Arc::new(boundary),
         watch: Arc::clone(&watch),
         index: Arc::clone(&index),
         attachments: Arc::clone(&attachments),
+        opener,
         token: Arc::new(token.clone()),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),

@@ -3,7 +3,6 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -24,6 +23,7 @@ use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
+use crate::opener::OpenHandler;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::watch::WatchService;
 
@@ -65,6 +65,8 @@ pub struct AppState {
     pub index: Arc<IndexService>,
     /// Staged dropped files on their way to the core's attachment directory.
     pub attachments: Arc<Attachments>,
+    /// One bounded, daemon-owned path for OS file associations.
+    pub opener: OpenHandler,
     pub token: Arc<String>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -141,6 +143,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         "version": state.version,
         "schema_version": SCHEMA_VERSION,
         "clients": state.clients.load(Ordering::SeqCst),
+        "open_handlers_in_flight": state.opener.in_flight(),
         "idle_remaining_secs": idle_remaining_secs(&state),
     }))
 }
@@ -310,18 +313,27 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        let replies = match handle_client_text(&state, &text, connection).await {
-                            Ok(frames) => frames,
-                            Err(error) => vec![Message::Text(
-                                json!({"type":"error","payload":{},"message": error}).to_string().into(),
-                            )],
-                        };
-                        for frame in replies {
-                            if socket.send(frame).await.is_err() {
-                                break;
+                        match handle_client_text(&state, &text, connection) {
+                            Ok(ClientAction::FileBytes(event)) => {
+                                if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() { break; }
+                            }
+                            outcome => {
+                                let replies = match outcome {
+                                    Ok(ClientAction::Replies(frames)) => frames,
+                                    Err(error) => vec![Message::Text(
+                                        json!({"type":"error","payload":{},"message": error}).to_string().into(),
+                                    )],
+                                    _ => unreachable!(),
+                                };
+                                let mut failed = false;
+                                for frame in replies {
+                                    if socket.send(frame).await.is_err() { failed = true; break; }
+                                }
+                                if failed { break; }
                             }
                         }
-                    }                    Some(Ok(Message::Binary(bytes))) => {
+                    }
+                    Some(Ok(Message::Binary(bytes))) => {
                         if let Some((request_id, reason)) = state.attachments.receive(connection, &bytes)
                             && socket
                                 .send(Message::Text(
@@ -356,11 +368,16 @@ fn token_matches(offered: &str, expected: &str) -> bool {
 /// the snapshot stream. Anything the daemon answers itself is one or more
 /// frames for this client alone: a directory listing, a path refusal, or the
 /// binary frames of a `file_bytes` read.
-async fn handle_client_text(
+enum ClientAction {
+    FileBytes(Value),
+    Replies(Vec<Message>),
+}
+
+fn handle_client_text(
     state: &AppState,
     text: &str,
     connection: u64,
-) -> Result<Vec<Message>, String> {
+) -> Result<ClientAction, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
     let mut event = if value.get("schema_version").is_some() && value.get("kind").is_some() {
@@ -369,28 +386,43 @@ async fn handle_client_text(
         return Err("expected a core event {schema_version, kind, payload}".to_owned());
     };
     if event.get("kind").and_then(Value::as_str) == Some("file_bytes") {
-        return Ok(handle_file_bytes(&state.boundary, &event).await);
+        return Ok(ClientAction::FileBytes(event));
     }
     if event.get("kind").and_then(Value::as_str) == Some("file_index") {
-        return Ok(handle_file_index(state, &event));
+        return Ok(ClientAction::Replies(handle_file_index(state, &event)));
     }
     match event.get("kind").and_then(Value::as_str) {
-        Some("attachment_stage") => return Ok(handle_attachment_stage(state, &event, connection)),
-        Some("attachment_commit") => return Ok(handle_attachment_commit(state, &event)),
+        Some("attachment_stage") => {
+            return Ok(ClientAction::Replies(handle_attachment_stage(
+                state, &event, connection,
+            )));
+        }
+        Some("attachment_commit") => {
+            return Ok(ClientAction::Replies(handle_attachment_commit(
+                state, &event,
+            )));
+        }
         Some("attachment_cancel") => {
             state
                 .attachments
                 .discard(&payload_str(&event, "request_id"));
-            return Ok(Vec::new());
+            return Ok(ClientAction::Replies(Vec::new()));
         }
-        Some("open_external") => return Ok(handle_open_external(state, &event)),
+        Some("open_external") => {
+            return Ok(ClientAction::Replies(handle_open_external(state, &event)));
+        }
         _ => {}
     }
     if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
-        return Ok(vec![Message::Text(reply.to_string().into())]);
+        return Ok(ClientAction::Replies(vec![Message::Text(
+            reply.to_string().into(),
+        )]));
     }
     let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
-    state.core.dispatch(bytes).map(|()| Vec::new())
+    state
+        .core
+        .dispatch(bytes)
+        .map(|()| ClientAction::Replies(Vec::new()))
 }
 
 /// Opens a checkout file with the host OS handler, or with the program
@@ -417,7 +449,6 @@ fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
                 "component": "hided",
                 "kind": "open.external.refused",
                 "reason": reason,
-                "path": real.display().to_string(),
             })
         );
         return vec![Message::Text(
@@ -429,7 +460,7 @@ fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
             .into(),
         )];
     }
-    let (ok, reason) = match open_with_handler(&real) {
+    let (ok, reason) = match state.opener.launch(&real) {
         Ok(()) => (true, Value::Null),
         Err(reason) => (false, Value::String(reason.to_owned())),
     };
@@ -439,7 +470,7 @@ fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
             "component": "hided",
             "kind": "open.external",
             "ok": ok,
-            "path": real.display().to_string(),
+            "open_handlers_in_flight": state.opener.in_flight(),
         })
     );
     vec![Message::Text(
@@ -614,52 +645,6 @@ fn is_executable_header(file: &mut fs::File) -> Result<bool, &'static str> {
         &signature,
         b"PE\0\0" | b"NE\0\0" | b"LE\0\0" | b"LX\0\0" | b"W4\0\0" | b"DL\0\0"
     ))
-}
-
-/// The program that opens one file: the configured one, else the host's.
-fn opener(path: &Path) -> Command {
-    let configured = std::env::var(crate::env::HIDE_OPEN_COMMAND)
-        .ok()
-        .filter(|value| !value.is_empty());
-    let mut command = match configured {
-        Some(program) => Command::new(program),
-        None => platform_opener(),
-    };
-    command.arg(path);
-    command
-}
-
-#[cfg(target_os = "macos")]
-fn platform_opener() -> Command {
-    Command::new("open")
-}
-
-#[cfg(target_os = "windows")]
-fn platform_opener() -> Command {
-    let mut command = Command::new("cmd");
-    command.args(["/C", "start", ""]);
-    command
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn platform_opener() -> Command {
-    Command::new("xdg-open")
-}
-
-/// Spawns the handler detached: the daemon never waits for an application to
-/// exit, and the handler's own output is not the shell's. A dropped child
-/// would stay a zombie for the daemon's life, so one thread reaps it.
-fn open_with_handler(path: &Path) -> Result<(), &'static str> {
-    let mut child = opener(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| "spawn_failed")?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
 }
 
 /// One line of a refused attachment: the request and why nothing was staged.
@@ -873,10 +858,14 @@ fn file_bytes_error(request_id: &str, path: &str, reason: &str) -> Message {
     )
 }
 
-/// A `file_bytes` read: the path is checked against the checkout roots, the
-/// cap is applied, and the requested range is streamed as binary frames. A
-/// boundary refusal is the same `path_refused` frame every other path gets.
-async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
+/// A `file_bytes` read keeps only one bounded chunk in memory. Sending each
+/// frame before reading the next gives the socket backpressure even when all
+/// eight authenticated clients ask for the maximum range together.
+async fn send_file_bytes(
+    socket: &mut WebSocket,
+    boundary: &Boundary,
+    event: &Value,
+) -> Result<(), ()> {
     let request_id = payload_str(event, "request_id");
     let path = payload_str(event, "path");
     let offset = event
@@ -887,26 +876,39 @@ async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
     let (real, total) = match boundary.resolve_file(&path) {
         Ok(pair) => pair,
         Err(refusal) => {
-            return vec![Message::Text(
-                refused("file_bytes", &path, refusal).to_string().into(),
-            )];
+            return socket
+                .send(Message::Text(
+                    refused("file_bytes", &path, refusal).to_string().into(),
+                ))
+                .await
+                .map_err(|_| ());
         }
     };
     let wanted = length.unwrap_or_else(|| total.saturating_sub(offset.min(total)));
     if wanted > boundary::MAX_FILE_BYTES {
-        return vec![file_bytes_error(&request_id, &path, "too_large")];
+        return socket
+            .send(file_bytes_error(&request_id, &path, "too_large"))
+            .await
+            .map_err(|_| ());
     }
     let mut file = match tokio::fs::File::open(&real).await {
         Ok(file) => file,
-        Err(_) => return vec![file_bytes_error(&request_id, &path, "read_failed")],
+        Err(_) => {
+            return socket
+                .send(file_bytes_error(&request_id, &path, "read_failed"))
+                .await
+                .map_err(|_| ());
+        }
     };
     let start = offset.min(total);
     if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
-        return vec![file_bytes_error(&request_id, &path, "read_failed")];
+        return socket
+            .send(file_bytes_error(&request_id, &path, "read_failed"))
+            .await
+            .map_err(|_| ());
     }
     let end = start.saturating_add(wanted).min(total);
     let displayed = real.display().to_string();
-    let mut frames = Vec::new();
     let mut cursor = start;
     loop {
         let take = (end - cursor).min(BYTES_CHUNK) as usize;
@@ -914,8 +916,10 @@ async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
         let read = match file.read(&mut buffer).await {
             Ok(read) => read,
             Err(_) => {
-                frames.push(file_bytes_error(&request_id, &path, "read_failed"));
-                return frames;
+                return socket
+                    .send(file_bytes_error(&request_id, &path, "read_failed"))
+                    .await
+                    .map_err(|_| ());
             }
         };
         buffer.truncate(read);
@@ -930,10 +934,13 @@ async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
             "total": total,
             "eof": eof,
         });
-        frames.push(Message::Binary(bytes_frame(&header, &buffer).into()));
+        socket
+            .send(Message::Binary(bytes_frame(&header, &buffer).into()))
+            .await
+            .map_err(|_| ())?;
         cursor += read as u64;
         if eof {
-            return frames;
+            return Ok(());
         }
     }
 }
@@ -1412,16 +1419,6 @@ mod tests {
             None,
             "revision from the future"
         );
-    }
-
-    #[test]
-    fn the_platform_opener_is_the_hosts_own() {
-        #[cfg(target_os = "macos")]
-        assert_eq!(platform_opener().get_program(), "open");
-        #[cfg(target_os = "windows")]
-        assert_eq!(platform_opener().get_program(), "cmd");
-        #[cfg(all(unix, not(target_os = "macos")))]
-        assert_eq!(platform_opener().get_program(), "xdg-open");
     }
 
     #[test]
