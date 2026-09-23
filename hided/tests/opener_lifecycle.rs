@@ -23,6 +23,17 @@ fn fake_opener(dir: &Path) -> PathBuf {
     script
 }
 
+fn fake_default_app(dir: &Path) -> PathBuf {
+    let script = dir.join("fake-default-app");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$1.pid\"\nexec sleep 60\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    script
+}
+
 fn wait_for_pid(path: &Path) -> i32 {
     let until = Instant::now() + Duration::from_secs(5);
     loop {
@@ -57,15 +68,61 @@ fn owner_process() {
     };
     let marker = PathBuf::from(marker);
     let script = marker.parent().unwrap().join("fake-opener");
-    let _opener = hided::spawn::spawn_opener(
+    let launched = hided::spawn::spawn_opener(
         Path::new(env!("CARGO_BIN_EXE_hided")),
         script.as_os_str(),
         &marker,
         true,
-    )
-    .unwrap();
+    );
+    if std::env::var_os("HIDED_EXPECT_OPENER_TIMEOUT").is_some() {
+        assert!(launched.is_err());
+        return;
+    }
+    let _opener = launched.unwrap();
     wait_for_pid(&sidecar(&marker, "pid"));
     std::thread::sleep(Duration::from_secs(30));
+}
+
+#[test]
+fn default_app_handoff_survives_supervisor_close() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = fake_default_app(dir.path());
+    let marker = dir.path().join("handoff");
+    let mut opener = hided::spawn::spawn_opener(
+        Path::new(env!("CARGO_BIN_EXE_hided")),
+        script.as_os_str(),
+        &marker,
+        false,
+    )
+    .unwrap();
+    let pid = wait_for_pid(&sidecar(&marker, "pid"));
+    opener.stop();
+    assert!(alive(pid), "successful default app handoff was closed");
+    let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
+    assert_gone(pid);
+}
+
+#[test]
+fn acceptance_timeout_ends_cli_spawned_before_watcher() {
+    let dir = tempfile::tempdir().unwrap();
+    fake_opener(dir.path());
+    let marker = dir.path().join("acceptance-timeout");
+    let owner = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "owner_process", "--nocapture"])
+        .env("HIDED_OWNED_OPENER_TEST_MARKER", &marker)
+        .env("HIDED_EXPECT_OPENER_TIMEOUT", "1")
+        .env("HIDE_OPEN_HELPER_TEST_PAUSE_MS", "3000")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut owner = TestOwner(owner);
+    let pid = wait_for_pid(&sidecar(&marker, "pid"));
+    let child = wait_for_pid(&sidecar(&marker, "child"));
+    assert!(owner.0.wait().unwrap().success());
+    assert_gone(pid);
+    assert_gone(child);
 }
 
 #[test]
@@ -139,7 +196,16 @@ fn seed_registration(dir: &Path, checkout: &Path) {
 }
 
 fn start_private_daemon(dir: &Path, script: &Path) -> (TestOwner, hided::state_file::DaemonState) {
-    let child = Command::new(env!("CARGO_BIN_EXE_hided"))
+    start_private_daemon_with_pause(dir, script, None)
+}
+
+fn start_private_daemon_with_pause(
+    dir: &Path,
+    script: &Path,
+    pause_ms: Option<u64>,
+) -> (TestOwner, hided::state_file::DaemonState) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hided"));
+    command
         .env("HOME", dir)
         .env("HIDE_STATE_DIR", dir)
         .env("HERDR_SOCKET_PATH", dir.join("no-herdr.sock"))
@@ -147,9 +213,11 @@ fn start_private_daemon(dir: &Path, script: &Path) -> (TestOwner, hided::state_f
         .env("HIDE_KEEP_ALIVE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::null());
+    if let Some(milliseconds) = pause_ms {
+        command.env("HIDE_OPEN_HELPER_TEST_PAUSE_MS", milliseconds.to_string());
+    }
+    let child = command.spawn().unwrap();
     let owner = TestOwner(child);
     let until = Instant::now() + Duration::from_secs(5);
     loop {
@@ -162,6 +230,56 @@ fn start_private_daemon(dir: &Path, script: &Path) -> (TestOwner, hided::state_f
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[tokio::test]
+async fn websocket_keeps_serving_during_opener_acceptance() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let checkout = root.join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    seed_registration(&root, &checkout);
+    let script = fake_opener(&root);
+    let (_daemon, state) = start_private_daemon_with_pause(&root, &script, Some(1_500));
+    let mut socket = connect(&state).await;
+    let file = checkout.join("responsive.txt");
+    std::fs::write(&file, "safe data").unwrap();
+    socket
+        .send(Message::Text(
+            json!({"schema_version":2,"kind":"open_external","payload":{"path":file.display().to_string()}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    wait_for_pid(&sidecar(&file, "pid"));
+    socket
+        .send(Message::Text(
+            json!({"schema_version":2,"kind":"file_index","payload":{"root":checkout.display().to_string(),"query":"responsive"}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let answer = tokio::time::timeout(Duration::from_millis(1_200), async {
+        loop {
+            let frame = next_json(&mut socket).await;
+            if frame["type"] == "file_index_result" {
+                break frame;
+            }
+        }
+    })
+    .await
+    .expect("file index stalled behind opener acceptance");
+    assert_eq!(answer["type"], "file_index_result");
+    let opened = loop {
+        let frame = next_json(&mut socket).await;
+        if frame["type"] == "open_external_result" {
+            break frame;
+        }
+    };
+    assert_eq!(opened["type"], "open_external_result");
+    assert_eq!(opened["payload"]["ok"], true);
 }
 
 type Socket =

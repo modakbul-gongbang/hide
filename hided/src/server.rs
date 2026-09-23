@@ -18,6 +18,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Notify;
+use tokio::task::JoinSet;
 
 use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
@@ -275,6 +276,9 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
     let mut directory_changes = state.watch.subscribe();
+    // A slow OS opener must not stall terminal input or snapshots on this
+    // socket. Each client has a small bounded set of pending launch replies.
+    let mut pending_openers: JoinSet<Vec<Message>> = JoinSet::new();
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
@@ -284,6 +288,20 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     }
     loop {
         tokio::select! {
+            finished = pending_openers.join_next(), if !pending_openers.is_empty() => {
+                let replies = match finished {
+                    Some(Ok(frames)) => frames,
+                    Some(Err(error)) => vec![Message::Text(
+                        json!({"type":"error","payload":{},"message":format!("opener worker: {error}")}).to_string().into(),
+                    )],
+                    None => continue,
+                };
+                let mut failed = false;
+                for frame in replies {
+                    if socket.send(frame).await.is_err() { failed = true; break; }
+                }
+                if failed { break; }
+            }
             changed = notify.recv() => {
                 match changed {
                     Ok(()) => {}
@@ -316,6 +334,18 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() { break; }
+                            }
+                            Ok(ClientAction::OpenExternal(event)) => {
+                                if pending_openers.len() >= 4 {
+                                    let frame = json!({
+                                        "type":"open_external_result",
+                                        "payload":{"path":payload_str(&event, "path"),"ok":false,"reason":"over_budget"}
+                                    });
+                                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() { break; }
+                                } else {
+                                    let worker_state = state.clone();
+                                    pending_openers.spawn_blocking(move || handle_open_external(&worker_state, &event));
+                                }
                             }
                             outcome => {
                                 let replies = match outcome {
@@ -370,6 +400,7 @@ fn token_matches(offered: &str, expected: &str) -> bool {
 /// binary frames of a `file_bytes` read.
 enum ClientAction {
     FileBytes(Value),
+    OpenExternal(Value),
     Replies(Vec<Message>),
 }
 
@@ -409,7 +440,7 @@ fn handle_client_text(
             return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("open_external") => {
-            return Ok(ClientAction::Replies(handle_open_external(state, &event)));
+            return Ok(ClientAction::OpenExternal(event));
         }
         _ => {}
     }

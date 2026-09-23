@@ -37,6 +37,7 @@ pub fn spawn_owned(command: &mut Command) -> io::Result<Child> {
 pub struct OwnedOpener {
     supervisor: Child,
     owner: Option<UnixStream>,
+    owned_group: Option<i32>,
 }
 
 #[cfg(unix)]
@@ -56,6 +57,12 @@ impl OwnedOpener {
                 Err(_) => break,
                 Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             }
+        }
+        // The supervisor might have been paused between spawning the CLI and
+        // starting its watcher. Its own process group lets the owner close
+        // that gap even when no acceptance byte was ever sent.
+        if let Some(group) = self.owned_group {
+            let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
         }
         let _ = self.supervisor.kill();
         let _ = self.supervisor.wait();
@@ -94,6 +101,9 @@ pub fn spawn_opener(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if override_program {
+        command.process_group(0);
+    }
     // UnixStream::pair uses close-on-exec. Only the supervisor receives its
     // end; the parent end stays close-on-exec and the launched app receives no
     // liveness descriptor.
@@ -108,6 +118,7 @@ pub fn spawn_opener(
     let supervisor = command.spawn()?;
     drop(supervisor_socket);
     let mut opener = OwnedOpener {
+        owned_group: override_program.then_some(supervisor.id() as i32),
         supervisor,
         owner: Some(owner),
     };
@@ -152,8 +163,7 @@ pub fn run_opener_helper(args: &[OsString]) -> Result<(), String> {
         .arg(&args[4])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0);
+        .stderr(Stdio::null());
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -161,19 +171,37 @@ pub fn run_opener_helper(args: &[OsString]) -> Result<(), String> {
             return Err(error.to_string());
         }
     };
-    let group = child.id() as i32;
-    if owner.write_all(&[1]).is_err() {
-        let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
-        let _ = child.wait();
-        return Err("opener owner disappeared before acceptance".into());
+    #[cfg(debug_assertions)]
+    if let Some(milliseconds) = std::env::var("HIDE_OPEN_HELPER_TEST_PAUSE_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value <= 3_000)
+    {
+        std::thread::sleep(Duration::from_millis(milliseconds));
     }
+    if !override_program {
+        // A default association may keep xdg-open attached to the selected
+        // application for its lifetime. Starting it is the OS handoff; it is
+        // never safe for our timeout to signal that process or its children.
+        let _ = owner.write_all(&[1]);
+        return Ok(());
+    }
+    let group = std::process::id() as i32;
+    let mut watcher_owner = match owner.try_clone() {
+        Ok(socket) => socket,
+        Err(error) => {
+            let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
+            let _ = child.wait();
+            return Err(error.to_string());
+        }
+    };
     let watcher = std::thread::Builder::new()
         .name("hide-open-owner".into())
         .spawn(move || {
             let mut byte = [0];
-            // Any read or EOF means the owner stopped. The supervisor is the only
-            // process with this socket end, so a closed daemon cannot be missed.
-            let _ = owner.read(&mut byte);
+            // Any read or EOF means the daemon stopped. The CLI cannot inherit
+            // this close-on-exec descriptor.
+            let _ = watcher_owner.read(&mut byte);
             let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
         });
     if let Err(error) = watcher {
@@ -181,11 +209,16 @@ pub fn run_opener_helper(args: &[OsString]) -> Result<(), String> {
         let _ = child.wait();
         return Err(error.to_string());
     }
+    // Acceptance follows watcher creation. The parent's process-group fallback
+    // covers the scheduling gap before the new thread gets CPU time.
+    if owner.write_all(&[1]).is_err() {
+        let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
+        let _ = child.wait();
+        return Err("opener owner disappeared before acceptance".into());
+    }
     let result = child.wait().map_err(|error| error.to_string());
     // An explicit override is a CLI helper, not a registered default app.
     // It may have forked and returned, so close its process group on exit too.
-    if override_program || result.is_err() {
-        let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
-    }
+    let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
     result.map(|_| ())
 }

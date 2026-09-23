@@ -366,11 +366,23 @@ mod tests {
         .unwrap_err();
         assert_eq!(err[0].key, HIDE_OPEN_COMMAND);
         let executable = std::env::current_exe().unwrap();
-        let env = from_map(&[
-            ("HOME", "/Users/example"),
-            (HIDE_OPEN_COMMAND, executable.to_str().unwrap()),
-        ])
-        .unwrap();
-        assert_eq!(env.open_command.as_deref(), Some(executable.as_path()));
+        #[cfg(unix)]
+        {
+            let env = from_map(&[
+                ("HOME", "/Users/example"),
+                (HIDE_OPEN_COMMAND, executable.to_str().unwrap()),
+            ])
+            .unwrap();
+            assert_eq!(env.open_command.as_deref(), Some(executable.as_path()));
+        }
+        #[cfg(windows)]
+        {
+            let err = from_map(&[
+                ("HOME", "/Users/example"),
+                (HIDE_OPEN_COMMAND, executable.to_str().unwrap()),
+            ])
+            .unwrap_err();
+            assert_eq!(err[0].key, HIDE_OPEN_COMMAND);
+        }
     }
 }
