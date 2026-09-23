@@ -2,7 +2,7 @@
 // lanes. It reads the daemon's state file for the loopback origin and token,
 // so nothing here touches the operator's running daemon.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

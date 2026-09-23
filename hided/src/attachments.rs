@@ -14,6 +14,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -39,6 +40,19 @@ const COMMIT_GRACE: Duration = Duration::from_secs(60);
 /// Stages one connection may have open at once; past it the oldest open stage
 /// is dropped, so an abandoned upload cannot hold file descriptors forever.
 const MAX_OPEN_UPLOADS: usize = 64;
+
+/// Whether an id has the 36-character UUID shape the core requires for an
+/// attachment request (`herdr-core/src/terminal_attachments.rs`).
+fn is_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
 
 /// One client-supplied name, flattened to a single relative component: a
 /// separator, a control character, or a parent segment would let the client
@@ -140,7 +154,13 @@ impl Attachments {
         // stages it exactly there (`herdr-core/src/terminal_attachments.rs`).
         let clipboard_root = state_dir.join("TerminalClipboard");
         for folder in [&dir, &clipboard_root] {
-            if let Err(error) = std::fs::create_dir_all(folder) {
+            // The staged bytes are the operator's own files and screenshots;
+            // the directories stay private like the state file itself.
+            if let Err(error) = std::fs::DirBuilder::new()
+                .mode(0o700)
+                .recursive(true)
+                .create(folder)
+            {
                 eprintln!(
                     "{}",
                     serde_json::json!({
@@ -202,6 +222,12 @@ impl Attachments {
         let Some(name) = safe_component(name) else {
             return Err("invalid_request_id");
         };
+        // The core derives a clipboard file from a 36-character UUID, so a
+        // clipboard stage must carry that shape or the core would never read
+        // what hided wrote.
+        if clipboard && !is_uuid(&request_id) {
+            return Err("invalid_request_id");
+        }
         let root = if clipboard {
             &self.clipboard_root
         } else {
@@ -238,6 +264,7 @@ impl Attachments {
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
+            .mode(0o600)
             .open(&path)
             .map_err(|_| "stage_failed")?;
         // An abandoned stage would otherwise hold its file descriptor for the
@@ -291,20 +318,32 @@ impl Attachments {
         // budget bounds the disk at all times, not only at eof.
         let arriving = bytes.len() as u64;
         make_room(&mut state, arriving, Some(request_id))?;
-        let declared = {
+        // A short write leaves bytes on disk that `written` never counted, so
+        // the stage is dropped rather than resumed: its declared size can no
+        // longer describe the file.
+        let written_now = {
             let Some(upload) = state.uploads.get_mut(request_id) else {
                 return Err("unknown_stage");
             };
-            if let Some(file) = upload.file.as_mut() {
-                file.write_all(bytes).map_err(|_| "stage_failed")?;
+            let Some(file) = upload.file.as_mut() else {
+                return Err("unknown_stage");
+            };
+            match file.write_all(bytes) {
+                Ok(()) => {
+                    upload.written += arriving;
+                    Some(upload.written)
+                }
+                Err(_) => None,
             }
-            upload.written += arriving;
-            upload.declared
         };
-        let written = state
+        let Some(written) = written_now else {
+            drop_stage(&mut state, request_id);
+            return Err("stage_failed");
+        };
+        let declared = state
             .uploads
             .get(request_id)
-            .map(|upload| upload.written)
+            .map(|upload| upload.declared)
             .unwrap_or_default();
         if let Some(entry) = state
             .staged
@@ -374,10 +413,14 @@ impl Attachments {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut total = 0u64;
         let mut paths = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for stage in stages {
             let Some(upload) = state.uploads.get(stage) else {
                 return Err("unknown_stage");
             };
+            if !seen.insert(stage) {
+                return Err("unknown_stage");
+            }
             if upload.file.is_some() {
                 return Err("stage_incomplete");
             }
@@ -453,6 +496,7 @@ impl Attachments {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn attachments() -> (tempfile::TempDir, Attachments) {
         let dir = tempfile::tempdir().unwrap();
@@ -607,6 +651,42 @@ mod tests {
     }
 
     #[test]
+    fn staged_bytes_and_dirs_are_private() {
+        let (dir, service) = attachments();
+        service.begin("r1", "shot.png", 1, false).unwrap();
+        service.write("r1", &[1], true).unwrap();
+        let staged = service.commit(&["r1".to_owned()], false).unwrap();
+        let file_mode = std::fs::metadata(&staged[0]).unwrap().permissions().mode() & 0o777;
+        assert_eq!(file_mode, 0o600, "a staged file is the operator's own");
+        let dir_mode = std::fs::metadata(dir.path().join("attachments"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+    }
+
+    #[test]
+    fn a_batch_names_each_stage_once_and_a_clipboard_id_is_a_uuid() {
+        let (_dir, service) = attachments();
+        service.begin("r1", "x", 1, false).unwrap();
+        service.write("r1", &[1], true).unwrap();
+        assert_eq!(
+            service.commit(&["r1".to_owned(), "r1".to_owned()], false),
+            Err("unknown_stage")
+        );
+        assert_eq!(
+            service.begin("not-a-uuid", "x", 1, true),
+            Err("invalid_request_id")
+        );
+        assert!(
+            service
+                .begin("01234567-0123-0123-0123-0123456789ab", "x", 1, true)
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn a_path_staged_under_another_id_is_refused() {
         let (_dir, service) = attachments();
         service.begin("a-b", "c", 1, false).unwrap();
@@ -695,15 +775,16 @@ mod tests {
             Err("unknown_stage")
         );
         // A clipboard stage cannot satisfy a file batch either.
-        service.begin("clip", "shot.png", 1, true).unwrap();
-        service.write("clip", &[1], true).unwrap();
+        let clip = "01234567-0123-0123-0123-0123456789ab";
+        service.begin(clip, "shot.png", 1, true).unwrap();
+        service.write(clip, &[1], true).unwrap();
         assert_eq!(
-            service.commit(&["clip".to_owned()], false),
+            service.commit(&[clip.to_owned()], false),
             Err("unknown_stage")
         );
         // Each mode commits to its own root.
         assert!(service.commit(&["file".to_owned()], false).is_ok());
-        assert!(service.commit(&["clip".to_owned()], true).is_ok());
+        assert!(service.commit(&[clip.to_owned()], true).is_ok());
     }
 
     #[test]
