@@ -290,7 +290,10 @@ The bare browser cannot establish that the daemon is on the viewer's own machine
 The download asks for 4 MiB ranges and writes each into a browser-selected file when a streaming file writer is available; it does not accumulate an unbounded download in the page.
 This S3 stage assumes a browser with a file-save picker for downloads above 256 MiB.
 Without that browser API, the existing Blob download remains available for one protocol read of at most 256 MiB and reports a larger read's refusal beside the button; there is no separate unbounded fallback.
-`open_external` remains available to a trusted local client that can establish machine locality: the path passes the same boundary check and must be a regular file, and the daemon runs the host's opener (macOS `open`, Windows `ShellExecuteW` default-file association, Linux `xdg-open`, or a validated absolute Unix `HIDE_OPEN_COMMAND` CLI helper) and answers `open_external_result`.
+The browser WebSocket explicitly refuses `open_external` with `untrusted_client`, even when the page URL is loopback and the socket has its normal token, so an SSH-forwarded browser cannot start a program on the daemon host.
+The bounded host opener remains implemented for a future transport that can establish local ownership: macOS `open`, Windows `ShellExecuteW` default-file association, Linux `xdg-open`, or a validated absolute Unix `HIDE_OPEN_COMMAND` CLI helper.
+No such trusted transport is present in S3.
+For `file_bytes`, hided verifies the path of the opened file handle against the registered checkout root and streams from that same handle, so a symlink swap between path validation and open cannot redirect the read outside the checkout.
 The Windows association preserves the default-app action without passing a checkout filename through `cmd`.
 At most four opener requests may run at once and at most twelve launches are accepted per minute; crossing a cap answers `over_budget`.
 On Unix, a private `hided` supervisor owns an explicit `HIDE_OPEN_COMMAND` CLI helper and all processes that remain in its process group; normal stop, timeout, or daemon death including `SIGKILL` ends that group.
@@ -298,10 +301,9 @@ The override must not detach into another session or process group, which this o
 The normal `open` or `xdg-open` utility is started directly as an OS default-application handoff, since `xdg-open` can stay attached to the application for its lifetime; the daemon does not signal that process or its descendants after acceptance.
 Tokio's process driver attempts to reap a short-lived default utility after the handle is dropped; it does not own the registered application's lifetime.
 An opener request is accepted when its utility starts, not when the application confirms it opened the file.
-The WebSocket handles the bounded launch handshake on a blocking worker, so terminal input and snapshots can continue on the same connection.
-Only the latest opener attempt on a connection emits its result; an older asynchronous completion cannot replace the newest result in the web shell's one-result state.
 Windows `ShellExecuteW` returns after handing the document to its registered application without a CLI child; `HIDE_OPEN_COMMAND` is rejected at boot on Windows because that override has no equivalent owner-death supervision.
-The frame is a page's request rather than the operator's own click, so the shell's rule holds here too and a file the handler would run or install - an application bundle, an installer, a terminal session or script, a shell or interpreter script, a locator that hands its target to another program, anything with an execute bit, anything whose own header is a program - is refused with `not_openable` instead of launched; a viewer whose daemon is on another machine downloads the bytes through `file_bytes` instead.
+The retained host opener refuses files the handler would run or install - application bundles, installers, terminal sessions, scripts, locators, executable files, and files whose header identifies a program - with `not_openable` instead of launching them.
+The bare browser downloads oversized files through `file_bytes` wherever the daemon runs.
 `file_index` is the ⌘P index (`hided/src/index.rs`): one lazy walk per root honoring `.gitignore` without a git process, capped at 50,000 files, ranked by the Swift fuzzy score and returned as at most 80 rows; the first query for a root answers `indexing: true` while the walk runs.
 `directory_changed` is the watch (`hided/src/watch.rs`): one owner task watches the focused checkout's root and its most recently expanded folders, at most 64 in total, releasing the least recently expanded first, and announces a change once the burst goes quiet (200 ms).
 The web's listing cache uses the same 64 (`web/src/watch.ts`) and draws a refresh badge on a folder past the cap instead of a live listing.

@@ -17,15 +17,21 @@ const OPENER_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone)]
 pub struct OpenHandler {
     configured: Option<PathBuf>,
+    supervisor_exe: PathBuf,
     slots: Arc<Semaphore>,
     recent: Arc<Mutex<VecDeque<Instant>>>,
     shutdown: Arc<Notify>,
 }
 
 impl OpenHandler {
-    pub fn new(configured: Option<PathBuf>, shutdown: Arc<Notify>) -> Self {
+    pub fn new(
+        configured: Option<PathBuf>,
+        shutdown: Arc<Notify>,
+        supervisor_exe: PathBuf,
+    ) -> Self {
         Self {
             configured,
+            supervisor_exe,
             slots: Arc::new(Semaphore::new(MAX_IN_FLIGHT_OPENERS)),
             recent: Arc::new(Mutex::new(VecDeque::new())),
             shutdown,
@@ -83,8 +89,8 @@ impl OpenHandler {
         #[cfg(unix)]
         let mut child = {
             let program = self.configured.as_deref().expect("configured opener");
-            let supervisor = std::env::current_exe().map_err(|_| "spawn_failed")?;
-            spawn_opener(&supervisor, program.as_os_str(), path).map_err(|_| "spawn_failed")?
+            spawn_opener(&self.supervisor_exe, program.as_os_str(), path)
+                .map_err(|_| "spawn_failed")?
         };
         #[cfg(windows)]
         return Err("spawn_failed");
@@ -177,7 +183,7 @@ mod tests {
 
     #[test]
     fn a_burst_is_bounded() {
-        let handler = OpenHandler::new(None, Arc::new(Notify::new()));
+        let handler = OpenHandler::new(None, Arc::new(Notify::new()), PathBuf::new());
         let mut recent = handler.recent.lock().unwrap();
         for _ in 0..MAX_OPENS_PER_MINUTE {
             recent.push_back(Instant::now());

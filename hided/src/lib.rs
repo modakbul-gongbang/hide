@@ -132,7 +132,13 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
-    let opener = opener::OpenHandler::new(env.open_command.clone(), Arc::clone(&shutdown));
+    let supervisor_exe = std::env::current_exe()
+        .map_err(|error| format!("cannot resolve opener supervisor executable: {error}"))?;
+    let opener = opener::OpenHandler::new(
+        env.open_command.clone(),
+        Arc::clone(&shutdown),
+        supervisor_exe,
+    );
     let app = AppState {
         core: Arc::new(core),
         boundary: Arc::new(boundary),

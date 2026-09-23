@@ -1046,91 +1046,41 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     running.stop();
 }
 
+#[cfg(unix)]
 #[tokio::test]
-async fn open_external_checks_the_checkout_boundary_first() {
-    let (dir, env) = test_env(true);
+async fn browser_socket_cannot_start_a_host_file_handler() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, mut env) = test_env(true);
     let home = dir.path().canonicalize().unwrap();
     let checkout = home.join("projects/alpha");
     std::fs::create_dir_all(&checkout).unwrap();
-    std::fs::write(checkout.join("notes.txt"), "x").unwrap();
+    let file = checkout.join("notes.txt");
+    std::fs::write(&file, "safe data").unwrap();
+    let marker = home.join("handler-started");
+    let opener = home.join("fake-opener");
+    std::fs::write(
+        &opener,
+        format!("#!/bin/sh\nprintf x > '{}'\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+    env.open_command = Some(opener);
     seed_registration(&env.state_dir, "w-alpha", &checkout);
     let running = hided::start_daemon(env).await.expect("start daemon");
     let mut socket = live_socket(&running).await;
 
-    // A path outside every registered root never reaches the host handler.
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::write(outside.path().join("secret.txt"), "x").unwrap();
-    let refused = send_event_expecting(
-        &mut socket,
-        "open_external",
-        json!({"path": outside.path().join("secret.txt").display().to_string()}),
-        never,
-    )
-    .await;
-    assert_eq!(refused["type"], "path_refused");
-    assert_eq!(refused["payload"]["kind"], "open_external");
-    assert_eq!(refused["payload"]["reason"], "outside_checkout");
-
-    // A directory is not a file to hand to the handler.
-    let refused = send_event_expecting(
-        &mut socket,
-        "open_external",
-        json!({"path": checkout.display().to_string()}),
-        never,
-    )
-    .await;
-    assert_eq!(refused["payload"]["reason"], "not_a_file");
-
-    // A program, a terminal script, an application bundle or an installer is
-    // inside the boundary and still never reaches the host handler: the answer
-    // is an ok:false result rather than a path refusal (D-12). The `.terminal`
-    // file is an ordinary 0644 plist that Terminal would run on open.
-    for name in [
-        "run.sh",
-        "thing.dmg",
-        "note.terminal",
-        "session.term",
-        "job.command",
-    ] {
-        let target = checkout.join(name);
-        std::fs::write(&target, "x").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if name.ends_with(".sh") {
-                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
-        }
-        let answer = send_event_expecting(
-            &mut socket,
-            "open_external",
-            json!({"path": target.display().to_string()}),
-            |frame| frame["type"] == "open_external_result",
-        )
-        .await;
-        assert_eq!(answer["payload"]["ok"], false, "{name}");
-        assert_eq!(answer["payload"]["reason"], "not_openable", "{name}");
-    }
-
-    // A program renamed to a data extension is refused by its header, which is
-    // the only remaining way past the name list.
-    let disguised = checkout.join("notes.dat");
-    let mut pe = b"MZ".to_vec();
-    pe.extend_from_slice(b"A\0\x03\x00\x00\x00\x00\x00");
-    pe.resize(0x3C, b' ');
-    pe.extend_from_slice(&0x80u32.to_le_bytes());
-    pe.resize(0x80, b' ');
-    pe.extend_from_slice(b"PE\0\0");
-    std::fs::write(&disguised, &pe).unwrap();
     let answer = send_event_expecting(
         &mut socket,
         "open_external",
-        json!({"path": disguised.display().to_string()}),
+        json!({"path": file.display().to_string()}),
         |frame| frame["type"] == "open_external_result",
     )
     .await;
     assert_eq!(answer["payload"]["ok"], false);
-    assert_eq!(answer["payload"]["reason"], "not_openable");
+    assert_eq!(answer["payload"]["reason"], "untrusted_client");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!marker.exists(), "browser frame started the host handler");
     running.stop();
 }
 

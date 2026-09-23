@@ -18,7 +18,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Notify;
-use tokio::task::JoinSet;
 
 use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
@@ -276,10 +275,6 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
     let mut directory_changes = state.watch.subscribe();
-    // A slow OS opener must not stall terminal input or snapshots on this
-    // socket. Each client has a small bounded set of pending launch replies.
-    let mut pending_openers: JoinSet<(u64, Vec<Message>)> = JoinSet::new();
-    let mut latest_open_attempt = 0u64;
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
@@ -289,21 +284,6 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     }
     loop {
         tokio::select! {
-            finished = pending_openers.join_next(), if !pending_openers.is_empty() => {
-                let replies = match finished {
-                    Some(Ok((attempt, frames))) if attempt == latest_open_attempt => frames,
-                    Some(Ok(_)) => continue,
-                    Some(Err(error)) => vec![Message::Text(
-                        json!({"type":"error","payload":{},"message":format!("opener worker: {error}")}).to_string().into(),
-                    )],
-                    None => continue,
-                };
-                let mut failed = false;
-                for frame in replies {
-                    if socket.send(frame).await.is_err() { failed = true; break; }
-                }
-                if failed { break; }
-            }
             changed = notify.recv() => {
                 match changed {
                     Ok(()) => {}
@@ -336,20 +316,6 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() { break; }
-                            }
-                            Ok(ClientAction::OpenExternal(event)) => {
-                                latest_open_attempt = latest_open_attempt.wrapping_add(1);
-                                if pending_openers.len() >= 4 {
-                                    let frame = json!({
-                                        "type":"open_external_result",
-                                        "payload":{"path":payload_str(&event, "path"),"ok":false,"reason":"over_budget"}
-                                    });
-                                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() { break; }
-                                } else {
-                                    let worker_state = state.clone();
-                                    let attempt = latest_open_attempt;
-                                    pending_openers.spawn_blocking(move || (attempt, handle_open_external(&worker_state, &event)));
-                                }
                             }
                             outcome => {
                                 let replies = match outcome {
@@ -404,7 +370,6 @@ fn token_matches(offered: &str, expected: &str) -> bool {
 /// binary frames of a `file_bytes` read.
 enum ClientAction {
     FileBytes(Value),
-    OpenExternal(Value),
     Replies(Vec<Message>),
 }
 
@@ -444,7 +409,17 @@ fn handle_client_text(
             return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("open_external") => {
-            return Ok(ClientAction::OpenExternal(event));
+            // This token-authenticated socket can be reached through an SSH
+            // tunnel. The browser cannot prove it is on the daemon's host,
+            // so it has no authority to start the host's OS handler.
+            let path = payload_str(&event, "path");
+            return Ok(ClientAction::Replies(vec![Message::Text(
+                json!({"type":"open_external_result", "payload":{
+                    "path":path, "ok":false, "reason":"untrusted_client"
+                }})
+                .to_string()
+                .into(),
+            )]));
         }
         _ => {}
     }
@@ -464,6 +439,7 @@ fn handle_client_text(
 /// `HIDE_OPEN_COMMAND` names (PRD S3 D-12). The path passes the same
 /// checkout-root boundary as every other Explorer path, so the handler can
 /// only ever be pointed at a regular file inside a registered root.
+#[allow(dead_code)] // Retained for a future transport that can prove local ownership.
 fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
     let path = payload_str(event, "path");
     let real = match state.boundary.resolve_file(&path) {
@@ -908,8 +884,8 @@ async fn send_file_bytes(
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let length = event.pointer("/payload/length").and_then(Value::as_u64);
-    let (real, total) = match boundary.resolve_file(&path) {
-        Ok(pair) => pair,
+    let (real, file, total) = match boundary.open_file(&path) {
+        Ok(source) => source,
         Err(refusal) => {
             return socket
                 .send(Message::Text(
@@ -926,15 +902,7 @@ async fn send_file_bytes(
             .await
             .map_err(|_| ());
     }
-    let mut file = match tokio::fs::File::open(&real).await {
-        Ok(file) => file,
-        Err(_) => {
-            return socket
-                .send(file_bytes_error(&request_id, &path, "read_failed"))
-                .await
-                .map_err(|_| ());
-        }
-    };
+    let mut file = tokio::fs::File::from_std(file);
     let start = offset.min(total);
     if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
         return socket
