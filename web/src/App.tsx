@@ -76,6 +76,16 @@ export function App() {
     if (connection !== "live") useUiStore.getState().setCycle(null);
   }, [connection]);
 
+  // A save mark belongs to a tab that is still unsaved: once the core reports
+  // the tab clean, the mark comes off whichever tab is showing (D-10).
+  const editorTabs = useShellStore((s) => s.editor?.tabs);
+  useEffect(() => {
+    const state = useShellStore.getState();
+    if (state.savingTabs.size === 0) return;
+    const dirty = new Set((editorTabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
+    for (const tabId of state.savingTabs) if (!dirty.has(tabId)) state.noteSaving(tabId, false);
+  }, [editorTabs]);
+
   // A buffer whose document the core no longer holds is discarded with a
   // diagnostic; an open document's buffer is restored by its editor (B8).
   useEffect(() => {

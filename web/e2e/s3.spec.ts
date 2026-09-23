@@ -258,6 +258,106 @@ test("a refused save keeps the tab dirty and takes the saving mark off", async (
   }
 });
 
+test("leaving a dirty tab saves it and never writes it into the next file", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, file } = fixture;
+  const readme = path.join(repo, "README.md");
+  const readmeBefore = fs.readFileSync(readme, "utf8");
+  try {
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 99;\n");
+
+    // Leave within the idle window: the draft still reaches its own file, and
+    // the tab that takes the screen never receives it (D-10, D-14).
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).click();
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 99;\n");
+    expect(fs.readFileSync(readme, "utf8")).toBe(readmeBefore);
+    await expect(page.locator('[data-editor-body] .cm-content')).not.toContainText("answer = 99");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("an undone edit is what the next save writes", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, sent } = fixture;
+  try {
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.type("X");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe(`${SOURCE}X`);
+
+    // Undo that keystroke: the core hears it, so the save that follows writes
+    // the text the editor shows rather than the text that was undone (B4).
+    await page.keyboard.press("Meta+KeyZ");
+    await expect(content).not.toContainText("X");
+    const savesBefore = sent.get("file_save") ?? 0;
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => sent.get("file_save")).toBeGreaterThan(savesBefore);
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe(SOURCE);
+    await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a find request does not follow into the next document", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo } = fixture;
+  try {
+    await page.locator('[data-editor-body] .cm-content').click();
+    await page.keyboard.press("Meta+KeyF");
+    await expect(page.locator(".cm-search")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".cm-search")).toHaveCount(0);
+
+    // The next document opens with the document, not with the last find bar.
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).click();
+    await expect(page.locator('[data-editor-body] .cm-content')).toContainText("repo");
+    await expect(page.locator(".cm-search")).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("closing a dirty tab saves the draft instead of dropping it", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file } = fixture;
+  try {
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 5;\n");
+
+    // Close within the idle window: the close carries the draft (B4).
+    const tab = page.locator('[data-tab-kind="file"]');
+    await tab.hover();
+    await tab.locator('button[aria-label^="Close tab"]').click();
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 5;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("the close chord closes the file tab that is showing", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { sent } = fixture;
+  try {
+    await page.locator('[data-editor-body] .cm-content').click();
+    await page.keyboard.press("Alt+KeyW");
+    await expect.poll(() => sent.get("file_close")).toBe(1);
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
+    // The terminal tab the file tab was covering is still there.
+    await expect(page.locator('[data-tab-kind="herdr"]').first()).toBeVisible();
+  } finally {
+    close(fixture);
+  }
+});
+
 test("images, PDFs and videos render from hided file bytes", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, sent } = fixture;

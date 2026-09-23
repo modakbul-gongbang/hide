@@ -32,6 +32,7 @@ export function EditorSurface({ actions }: { actions: Actions }) {
   const root = checkoutById(rest, tab.checkout_id)?.path ?? "";
   return (
     <EditorTabView
+      key={tab.id}
       tab={tab}
       root={root}
       document={showing.document}
@@ -175,7 +176,20 @@ function EditorBody({
     }, AUTOSAVE_IDLE_MS);
   };
 
-  useEffect(() => () => window.clearTimeout(autosave.current), []);
+  // Leaving the tab ends its idle window: the timer goes, and a dirty draft
+  // that the operator left behind is saved rather than waiting for a return
+  // that may never come (D-10). A tab the operator closed is already gone from
+  // the core's tab list, so its close-save is the one that carries it.
+  useEffect(
+    () => () => {
+      window.clearTimeout(autosave.current);
+      const current = latest.current;
+      if (!current?.dirty || current.conflict) return;
+      const stillOpen = useShellStore.getState().editor?.tabs.some((row) => row.id === tab.id);
+      if (stillOpen) actions.saveFile(tab.id);
+    },
+    [tab.id, actions],
+  );
 
   // A conflict pauses autosave until the operator chooses; the choice (or the
   // next edit) resumes it, because the conflict clears and the document is
@@ -311,7 +325,9 @@ function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; 
       </button>
       {failed ? (
         <span className="text-danger" data-editor-open-failed="true">
-          {`The default app could not open it: ${external.reason ?? "failed"}`}
+          {external.reason === "not_openable"
+            ? "Hide never opens a program, an app bundle or an installer"
+            : `The default app could not open it: ${external.reason ?? "failed"}`}
         </span>
       ) : null}
     </div>

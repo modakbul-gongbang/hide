@@ -99,7 +99,19 @@ export function CodeMirrorEditor({
     const listeners = (half: "front" | "body") =>
       EditorView.updateListener.of((update: ViewUpdate) => {
         if (!update.docChanged) return;
-        if (!update.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete") || tr.isUserEvent("move"))) return;
+        // An undo or a redo is the operator's edit too, and the core must hear
+        // it or the next save writes the text they just undid.
+        if (
+          !update.transactions.some(
+            (tr) =>
+              tr.isUserEvent("input") ||
+              tr.isUserEvent("delete") ||
+              tr.isUserEvent("move") ||
+              tr.isUserEvent("undo") ||
+              tr.isUserEvent("redo"),
+          )
+        )
+          return;
         const front = half === "front" ? update.state.doc.toString() : (frontView.current?.state.doc.toString() ?? "");
         const body = half === "body" ? update.state.doc.toString() : (bodyView.current?.state.doc.toString() ?? "");
         pending.current = front + body;
@@ -231,8 +243,14 @@ export function CodeMirrorEditor({
     bodyView.current?.dispatch({ effects: liveConf.reconfigure(live ? [markdownLive(), liveTheme] : []) });
   }, [live]);
 
+  // A request is an increment: the counter survives a tab switch, so only a
+  // new ⌘F opens the panel, and a freshly mounted document does not inherit
+  // the last one's find input.
+  const seenFind = useRef(findRequest);
   useEffect(() => {
-    if (findRequest > 0 && bodyView.current) openSearchPanel(bodyView.current);
+    if (findRequest <= seenFind.current) return;
+    seenFind.current = findRequest;
+    if (bodyView.current) openSearchPanel(bodyView.current);
   }, [findRequest]);
 
   return (

@@ -108,6 +108,53 @@ export function createActions(dispatch: DispatchFn) {
     if (changed) updateUiState({ expanded_paths: [...expanded] });
   };
 
+  /** The contents a save or a close would send for one file tab, or null. */
+  const draftFor = (tabId: string): string | null => {
+    const state = useShellStore.getState();
+    const draft = latestDraft(tabId);
+    if (draft !== null) return draft;
+    const showing = activeEditorTab(state.editor);
+    if (showing?.id === tabId) return state.editor?.document?.contents_utf8 ?? null;
+    return null;
+  };
+
+  /** Saves the showing document, or the named tab when one is given. */
+  const saveFile = (tabId?: string) => {
+    const state = useShellStore.getState();
+    const showing = activeEditorTab(state.editor);
+    const tab = tabId ? state.editor?.tabs.find((row) => row.id === tabId) : showing;
+    if (!tab || tab.kind !== "file") return diagnostic("file_save: no showing document");
+    const contents = draftFor(tab.id);
+    if (contents === null) return diagnostic(`file_save: no contents for ${tab.path}`);
+    dispatch({
+      schema_version: 2,
+      kind: "file_save",
+      payload: {
+        tab_id: tab.id,
+        path: tab.path,
+        contents_utf8: contents,
+        // The core falls back to the modification time it recorded when it
+        // opened the file, which is the timestamp this save compares against.
+        expected_modified_at_unix_ms: showing?.id === tab.id ? state.editor?.document?.opened_modified_at_unix_ms ?? null : null,
+      },
+    });
+  };
+
+  const closeFileTab = (tabId: string) => {
+    const state = useShellStore.getState();
+    const tab = state.editor?.tabs.find((row) => row.id === tabId);
+    if (tab) void deleteBuffer(checkoutById(state.rest, tab.checkout_id)?.path ?? "", tab.path);
+    // A dirty tab carries its contents into the close, so the core saves the
+    // draft before retiring the tab and the shell never closes an edit away
+    // without asking (B4, D-10).
+    const contents = tab?.dirty ? draftFor(tabId) : null;
+    const pending =
+      tab && contents !== null
+        ? { tab_id: tab.id, path: tab.path, contents_utf8: contents, expected_modified_at_unix_ms: null }
+        : null;
+    dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: pending } });
+  };
+
   return {
     dispatch,
     revealAncestors,
@@ -143,6 +190,10 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closeTab(tabId?: string) {
+      // The strip shows a file tab while the editor is up, so the close chord
+      // closes what the operator sees rather than the terminal tab behind it.
+      const fileTab = activeEditorTab(useShellStore.getState().editor);
+      if (!tabId && fileTab && editorFor(useShellStore.getState().editor)) return closeFileTab(fileTab.id);
       const here = current();
       const id = tabId ?? here?.tab?.id;
       if (!here || !id) return diagnostic("close_tab: no visible tab");
@@ -405,12 +456,7 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "file_focus", payload: { tab_id: tabId } });
     },
 
-    closeFileTab(tabId: string) {
-      const state = useShellStore.getState();
-      const tab = state.editor?.tabs.find((row) => row.id === tabId);
-      if (tab) void deleteBuffer(checkoutById(state.rest, tab.checkout_id)?.path ?? "", tab.path);
-      dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: null } });
-    },
+    closeFileTab,
 
     /** One keystroke's contents; the core keeps the draft and the dirty flag. */
     updateDraft(contents: string) {
@@ -418,27 +464,12 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /**
-     * A save of the showing document. The expected modification time is the
-     * one the core read when it opened the file, so a disk change since then
-     * makes the save a conflict rather than a silent overwrite (B5).
+     * A save of the showing document, or of the named tab: the expected
+     * modification time is the one the core read when it opened the file, so a
+     * disk change since then makes the save a conflict rather than a silent
+     * overwrite (B5).
      */
-    saveFile() {
-      const state = useShellStore.getState();
-      const tab = activeEditorTab(state.editor);
-      const document = state.editor?.document;
-      if (!tab || !document || tab.kind !== "file") return diagnostic("file_save: no showing document");
-      const contents = latestDraft(tab.id) ?? document.contents_utf8 ?? "";
-      dispatch({
-        schema_version: 2,
-        kind: "file_save",
-        payload: {
-          tab_id: tab.id,
-          path: tab.path,
-          contents_utf8: contents,
-          expected_modified_at_unix_ms: document.opened_modified_at_unix_ms,
-        },
-      });
-    },
+    saveFile,
 
     /** The tab's Markdown mode and wrap choice; the core persists both. */
     setFileView(live: boolean, wrap: boolean) {
