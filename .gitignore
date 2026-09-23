@@ -42,3 +42,6 @@ macos/build/
 *.swiftsourceinfo
 *.swiftdoc
 *.dia
+
+# A per-user agent permission file, not a project input.
+.claude/settings.local.json
