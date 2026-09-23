@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Notify;
 
-use crate::attachments::Attachments;
+use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
@@ -65,6 +65,8 @@ pub struct AppState {
     pub token: Arc<String>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
+    /// Numbers connections so a stage can be released with its connection.
+    pub connections: Arc<AtomicU64>,
     pub last_client_gone: Arc<Mutex<Instant>>,
     pub keep_alive: bool,
     pub idle_secs: u64,
@@ -229,6 +231,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         refuse(&mut socket, reason, None).await;
         return;
     }
+    let connection = state.connections.fetch_add(1, Ordering::SeqCst);
     let first = match socket.recv().await {
         Some(Ok(Message::Text(text))) => text,
         _ => {
@@ -270,7 +273,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         .await
         .is_err()
     {
-        client_gone(&state);
+        client_gone(&state, connection);
         return;
     }
     loop {
@@ -304,7 +307,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        let replies = match handle_client_text(&state, &text).await {
+                        let replies = match handle_client_text(&state, &text, connection).await {
                             Ok(frames) => frames,
                             Err(error) => vec![Message::Text(
                                 json!({"type":"error","payload":{},"message": error}).to_string().into(),
@@ -316,7 +319,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                             }
                         }
                     }                    Some(Ok(Message::Binary(bytes))) => {
-                        if let Some((request_id, reason)) = state.attachments.receive(&bytes)
+                        if let Some((request_id, reason)) = state.attachments.receive(connection, &bytes)
                             && socket
                                 .send(Message::Text(
                                     attachment_refused(&request_id, reason).to_string().into(),
@@ -334,7 +337,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             }
         }
     }
-    client_gone(&state);
+    client_gone(&state, connection);
 }
 
 /// Constant in the token's length, so a byte-by-byte mismatch does not leak
@@ -350,7 +353,11 @@ fn token_matches(offered: &str, expected: &str) -> bool {
 /// the snapshot stream. Anything the daemon answers itself is one or more
 /// frames for this client alone: a directory listing, a path refusal, or the
 /// binary frames of a `file_bytes` read.
-async fn handle_client_text(state: &AppState, text: &str) -> Result<Vec<Message>, String> {
+async fn handle_client_text(
+    state: &AppState,
+    text: &str,
+    connection: u64,
+) -> Result<Vec<Message>, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
     let mut event = if value.get("schema_version").is_some() && value.get("kind").is_some() {
@@ -365,7 +372,7 @@ async fn handle_client_text(state: &AppState, text: &str) -> Result<Vec<Message>
         return Ok(handle_file_index(state, &event));
     }
     match event.get("kind").and_then(Value::as_str) {
-        Some("attachment_stage") => return Ok(handle_attachment_stage(state, &event)),
+        Some("attachment_stage") => return Ok(handle_attachment_stage(state, &event, connection)),
         Some("attachment_commit") => return Ok(handle_attachment_commit(state, &event)),
         Some("attachment_cancel") => {
             state
@@ -389,7 +396,7 @@ fn attachment_refused(request_id: &str, reason: &str) -> Value {
 
 /// Opens one staged upload the client will send bytes for. The caps are
 /// checked here so a too-large file is refused before its bytes arrive.
-fn handle_attachment_stage(state: &AppState, event: &Value) -> Vec<Message> {
+fn handle_attachment_stage(state: &AppState, event: &Value, connection: u64) -> Vec<Message> {
     let request_id = payload_str(event, "request_id");
     let name = payload_str(event, "name");
     let size = event
@@ -400,7 +407,10 @@ fn handle_attachment_stage(state: &AppState, event: &Value) -> Vec<Message> {
         .pointer("/payload/clipboard")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    match state.attachments.begin(&request_id, &name, size, clipboard) {
+    match state
+        .attachments
+        .begin(connection, &request_id, &name, size, clipboard)
+    {
         Ok(()) => Vec::new(),
         Err(reason) => vec![Message::Text(
             attachment_refused(&request_id, reason).to_string().into(),
@@ -444,6 +454,13 @@ fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
     // its own request id derives, so the commit must be the stage that wrote
     // it and nothing else.
     if clipboard && (stages.len() != 1 || stages.first().is_none_or(|stage| *stage != request_id)) {
+        return vec![Message::Text(
+            attachment_refused(&request_id, "invalid_request_id")
+                .to_string()
+                .into(),
+        )];
+    }
+    if !attachments::valid_request_id(&request_id) {
         return vec![Message::Text(
             attachment_refused(&request_id, "invalid_request_id")
                 .to_string()
@@ -999,7 +1016,8 @@ async fn send_snapshot(
     Ok(())
 }
 
-fn client_gone(state: &AppState) {
+fn client_gone(state: &AppState, connection: u64) {
+    state.attachments.release(connection);
     let remaining = state
         .clients
         .fetch_sub(1, Ordering::SeqCst)

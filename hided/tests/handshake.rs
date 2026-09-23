@@ -1113,7 +1113,7 @@ async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
         &mut socket,
         "attachment_commit",
         json!({
-            "request_id": "b1",
+            "request_id": "01234567-0123-0123-0123-0123456789ab",
             "pane_id": "p1",
             "bracketed_paste": true,
             "clipboard": false,
@@ -1123,6 +1123,22 @@ async fn attachment_stages_over_the_cap_and_unknown_commits_are_refused() {
     )
     .await;
     assert_eq!(refused["payload"]["reason"], "unknown_stage");
+
+    // A commit id the core would refuse is refused before any stage is consumed.
+    let refused = send_event_expecting(
+        &mut socket,
+        "attachment_commit",
+        json!({
+            "request_id": "not-a-uuid",
+            "pane_id": "p1",
+            "bracketed_paste": true,
+            "clipboard": false,
+            "stages": ["never-staged"],
+        }),
+        |frame| frame["type"] == "attachment_refused",
+    )
+    .await;
+    assert_eq!(refused["payload"]["reason"], "invalid_request_id");
 
     // A clipboard commit must name its own stage; a different id is refused
     // (the mode binding itself is covered by the attachments unit tests).

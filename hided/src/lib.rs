@@ -10,7 +10,7 @@ pub mod spawn;
 pub mod state_file;
 pub mod watch;
 
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -140,6 +140,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         token: Arc::new(token.clone()),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
+        connections: Arc::new(AtomicU64::new(0)),
         last_client_gone: Arc::new(Mutex::new(Instant::now())),
         keep_alive: env.keep_alive,
         idle_secs: env.idle_secs,
