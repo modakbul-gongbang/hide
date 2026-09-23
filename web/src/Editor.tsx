@@ -230,7 +230,10 @@ function EditorBody({
       if (!buffer) return;
       const current = latest.current;
       if (!current) return;
-      if (bufferDecision(buffer, current) === "restore") actions.updateDraft(buffer.contents);
+      if (bufferDecision(buffer, current) === "restore") {
+        noteDraft(tab.id, buffer.contents);
+        actions.updateDraft(buffer.contents);
+      }
       else void deleteBuffer(root, tab.path);
     });
     return () => {

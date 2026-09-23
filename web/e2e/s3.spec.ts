@@ -325,7 +325,7 @@ test("a find request does not follow into the next document", async ({ page }) =
 
 test("closing a dirty tab saves the draft instead of dropping it", async ({ page }) => {
   const fixture = await openCheckout(page);
-  const { file } = fixture;
+  const { file, lastSent } = fixture;
   try {
     const content = page.locator('[data-editor-body] .cm-content');
     await content.click();
@@ -336,8 +336,53 @@ test("closing a dirty tab saves the draft instead of dropping it", async ({ page
     const tab = page.locator('[data-tab-kind="file"]');
     await tab.hover();
     await tab.locator('button[aria-label^="Close tab"]').click();
+    // The close carries the draft itself rather than relying on the idle
+    // timer that this click may have beaten (B4).
+    await expect.poll(() => (lastSent.get("file_close")?.pending_save as { contents_utf8?: string } | null)?.contents_utf8)
+      .toBe("export const answer = 5;\n");
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 5;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a conflicted background tab is not closed away with its draft", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, file, sent } = fixture;
+  const readme = path.join(repo, "README.md");
+  try {
+    // Make the first tab conflicted, then move to a second tab so the
+    // conflicted one is no longer the showing document.
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 8;\n");
+    fs.writeFileSync(file, "export const answer = 0;\n");
+    const ahead = new Date(Date.now() + 5_000);
+    fs.utimesSync(file, ahead, ahead);
+    await page.keyboard.press("Meta+KeyS");
+    await expect(page.locator("[data-editor-conflict]")).toBeVisible();
+
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).click();
+    await page.locator('[data-editor-body] .cm-content').click();
+    await page.keyboard.type("edit");
+
+    // Closing the conflicted tab from the strip must not discard its draft:
+    // the close-save is refused, so the tab stays with the conflict showing.
+    const conflicted = page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" });
+    await conflicted.hover();
+    await conflicted.locator('button[aria-label^="Close tab"]').click();
+    await expect.poll(() => sent.get("file_close")).toBe(1);
+    await expect(page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" })).toHaveCount(1);
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
+
+    // The refused close kept the tab, the draft and the choice to resolve it.
+    await page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" }).click();
+    await expect(page.locator("[data-editor-conflict]")).toBeVisible();
+    await expect(page.locator('[data-editor-body] .cm-content')).toContainText("answer = 8");
+    // The other tab kept its own edit and never received this one.
+    expect(fs.readFileSync(readme, "utf8")).not.toContain("answer = 8");
   } finally {
     close(fixture);
   }

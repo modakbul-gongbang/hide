@@ -452,16 +452,78 @@ fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
     )]
 }
 
+/// The extensions whose registered handler runs, installs or executes what it
+/// opens rather than showing it: a launcher, a terminal script, an installer,
+/// a package, a script interpreter's file. A page that can write inside a
+/// checkout could otherwise name one and have the operator's own machine start
+/// it, which is the line the shell draws for executable paths.
+const EXECUTING_EXTENSIONS: &[&str] = &[
+    // macOS bundles, packages, profiles and terminal scripts
+    "app",
+    "pkg",
+    "mpkg",
+    "dmg",
+    "mobileconfig",
+    "terminal",
+    "command",
+    "tool",
+    "workflow",
+    "scpt",
+    "scptd",
+    // shell and interpreter scripts whose handler runs them on open
+    "sh",
+    "bash",
+    "zsh",
+    "csh",
+    "fish",
+    "ksh",
+    "py",
+    "pyw",
+    "pl",
+    "rb",
+    "php",
+    "lua",
+    "jar",
+    "class",
+    "appimage",
+    "run",
+    "desktop",
+    "service",
+    // Windows executables and script hosts
+    "exe",
+    "com",
+    "scr",
+    "pif",
+    "bat",
+    "cmd",
+    "msi",
+    "msp",
+    "lnk",
+    "ps1",
+    "psm1",
+    "psd1",
+    "vbs",
+    "vbe",
+    "wsf",
+    "wsh",
+    "hta",
+    // shared libraries
+    "dylib",
+    "so",
+];
+
 /// Whether the host handler may be pointed at this file. An application
-/// bundle, an installer or anything with an execute bit is refused, because a
-/// page must not be able to start a program by naming a checkout file.
+/// bundle, an installer, a script a handler would run, anything with an
+/// execute bit, or a file whose own header says it is an executable is
+/// refused, because a page must not be able to start a program by naming a
+/// checkout file (D-12).
 fn openable(path: &Path) -> Result<(), &'static str> {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if matches!(extension.as_str(), "app" | "pkg" | "dmg") {
+    if EXECUTING_EXTENSIONS.contains(&extension.as_str()) {
         return Err("not_openable");
     }
     #[cfg(unix)]
@@ -472,7 +534,33 @@ fn openable(path: &Path) -> Result<(), &'static str> {
             return Err("not_openable");
         }
     }
+    if let Ok(mut file) = fs::File::open(path) {
+        use std::io::Read;
+        let mut magic = [0u8; 4];
+        if file.read_exact(&mut magic).is_ok() && is_executable_magic(&magic) {
+            return Err("not_openable");
+        }
+    }
     Ok(())
+}
+
+/// A Mach-O (thin or fat), ELF or PE header: the file is a program whatever
+/// its name says, and the launcher would read the same header.
+fn is_executable_magic(magic: &[u8; 4]) -> bool {
+    matches!(
+        magic,
+        // Mach-O 32/64 and their byte-swapped forms, fat binaries
+        [0xFE, 0xED, 0xFA, 0xCE]
+            | [0xFE, 0xED, 0xFA, 0xCF]
+            | [0xCE, 0xFA, 0xED, 0xFE]
+            | [0xCF, 0xFA, 0xED, 0xFE]
+            | [0xCA, 0xFE, 0xBA, 0xBE]
+            | [0xBE, 0xBA, 0xFE, 0xCA]
+            // ELF
+            | [0x7F, b'E', b'L', b'F']
+            // PE/COFF, whose DOS stub starts with MZ
+            | [b'M', b'Z', ..]
+    )
 }
 
 /// The program that opens one file: the configured one, else the host's.
@@ -1289,28 +1377,67 @@ mod tests {
         let plain = dir.path().join("notes.txt");
         std::fs::write(&plain, "x").unwrap();
         assert_eq!(openable(&plain), Ok(()), "an ordinary file opens");
-        for name in ["run.sh", "tool", "app.app", "installer.pkg", "image.dmg"] {
+        assert_eq!(
+            openable(&dir.path().join("huge.md")),
+            Err("not_found"),
+            "a file that vanished between the boundary check and the handler is refused"
+        );
+
+        // A handler that runs what it opens, on any platform, is refused by
+        // name; a plain text file with the same body is not.
+        for name in [
+            "run.sh",
+            "run.tool",
+            "app.app",
+            "installer.pkg",
+            "image.dmg",
+            "term.terminal",
+            "job.command",
+            "script.py",
+            "thing.jar",
+            "run.exe",
+            "run.bat",
+            "run.ps1",
+            "run.vbs",
+            "lib.dylib",
+            "agent.desktop",
+        ] {
             let path = dir.path().join(name);
             std::fs::write(&path, "x").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = if name.ends_with(".sh") || name == "tool" {
-                    0o755
-                } else {
-                    0o644
-                };
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
-                assert_eq!(openable(&path), Err("not_openable"), "{name}");
-            }
-            #[cfg(not(unix))]
-            {
-                let refused =
-                    name.ends_with(".app") || name.ends_with(".pkg") || name.ends_with(".dmg");
-                let expected = if refused { Err("not_openable") } else { Ok(()) };
-                assert_eq!(openable(&path), expected, "{name}");
-            }
+            assert_eq!(openable(&path), Err("not_openable"), "{name}");
         }
+        for name in [
+            "notes.txt",
+            "readme.md",
+            "data.json",
+            "clip.mp4",
+            "bundle.js",
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "x").unwrap();
+            assert_eq!(openable(&path), Ok(()), "{name}");
+        }
+
+        // An execute bit refuses a file with no telling extension.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let runnable = dir.path().join("server");
+            std::fs::write(&runnable, "x").unwrap();
+            std::fs::set_permissions(&runnable, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(openable(&runnable), Err("not_openable"), "execute bit");
+        }
+
+        // A program renamed to a document extension is refused by its header.
+        let renamed = dir.path().join("notes.pdf");
+        std::fs::write(&renamed, [0xCF, 0xFA, 0xED, 0xFE, 0, 0, 0, 0]).unwrap();
+        assert_eq!(openable(&renamed), Err("not_openable"), "Mach-O header");
+        let elf = dir.path().join("notes.png");
+        std::fs::write(&elf, [0x7F, b'E', b'L', b'F', 0, 0, 0, 0]).unwrap();
+        assert_eq!(openable(&elf), Err("not_openable"), "ELF header");
+        let pe = dir.path().join("notes.txt");
+        std::fs::write(&pe, b"MZ\x90\x00\x00").unwrap();
+        assert_eq!(openable(&pe), Err("not_openable"), "PE header");
     }
 
     #[test]
