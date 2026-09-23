@@ -662,7 +662,7 @@ test("a file past the editing cap offers the default app instead of an editor", 
 
 test("a preview-only document closes without a save", async ({ page }) => {
   const fixture = await openCheckout(page);
-  const { repo, sent } = fixture;
+  const { repo, sent, lastSent } = fixture;
   try {
     // A stale recovery buffer is exactly the trap: a preview-only document has
     // no draft the core would accept, so the restore must decline it rather
@@ -698,11 +698,17 @@ test("a preview-only document closes without a save", async ({ page }) => {
       },
       { root: repo, path: `${repo}/huge.txt`, id: stale },
     );
+    await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
+    await expect(page.locator("[data-editor-preview-only]")).toBeVisible();
+    // The stale buffer was declined rather than planted as a draft.
+    await expect.poll(() => sent.get("file_draft") ?? 0, { timeout: 2_000 }).toBe(0);
+
     // No draft the core would accept exists here, so the close is one step.
     await page.locator('[data-tab-kind="file"]').hover();
     await page.locator('[data-tab-kind="file"] button[aria-label^="Close tab"]').click();
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect.poll(() => sent.get("file_close")).toBe(1);
+    expect(lastSent.get("file_close")?.pending_save ?? null).toBeNull();
   } finally {
     close(fixture);
   }

@@ -1110,6 +1110,26 @@ async fn open_external_checks_the_checkout_boundary_first() {
         assert_eq!(answer["payload"]["ok"], false, "{name}");
         assert_eq!(answer["payload"]["reason"], "not_openable", "{name}");
     }
+
+    // A program renamed to a data extension is refused by its header, which is
+    // the only remaining way past the name list.
+    let disguised = checkout.join("notes.dat");
+    let mut pe = b"MZ".to_vec();
+    pe.extend_from_slice(b"A\0\x03\x00\x00\x00\x00\x00");
+    pe.resize(0x3C, b' ');
+    pe.extend_from_slice(&0x80u32.to_le_bytes());
+    pe.resize(0x80, b' ');
+    pe.extend_from_slice(b"PE\0\0");
+    std::fs::write(&disguised, &pe).unwrap();
+    let answer = send_event_expecting(
+        &mut socket,
+        "open_external",
+        json!({"path": disguised.display().to_string()}),
+        |frame| frame["type"] == "open_external_result",
+    )
+    .await;
+    assert_eq!(answer["payload"]["ok"], false);
+    assert_eq!(answer["payload"]["reason"], "not_openable");
     running.stop();
 }
 

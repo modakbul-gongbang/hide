@@ -496,7 +496,7 @@ const EXECUTING_EXTENSIONS: &[&str] = &[
     "run",
     "desktop",
     "service",
-    // Windows executables and script hosts
+    // Windows executables, script hosts and package installers
     "exe",
     "com",
     "scr",
@@ -511,9 +511,18 @@ const EXECUTING_EXTENSIONS: &[&str] = &[
     "psd1",
     "vbs",
     "vbe",
+    "js",
+    "jse",
     "wsf",
     "wsh",
     "hta",
+    "jnlp",
+    "msc",
+    "application",
+    "appref-ms",
+    "appx",
+    "msix",
+    "appinstaller",
     // shared libraries
     "dylib",
     "so",
@@ -1445,6 +1454,15 @@ mod tests {
             "run.bat",
             "run.ps1",
             "run.vbs",
+            "notes.js",
+            "notes.jse",
+            "launch.jnlp",
+            "snapin.msc",
+            "setup.application",
+            "ref.appref-ms",
+            "pkg.appx",
+            "pkg.msix",
+            "pkg.appinstaller",
             "lib.dylib",
             "agent.desktop",
         ] {
@@ -1457,7 +1475,7 @@ mod tests {
             "readme.md",
             "data.json",
             "clip.mp4",
-            "bundle.js",
+            "bundle.ts",
         ] {
             let path = dir.path().join(name);
             std::fs::write(&path, "x").unwrap();
@@ -1488,7 +1506,7 @@ mod tests {
         // or not: a real one carries the zero fields its header requires.
         let mut pe = b"MZ".to_vec();
         pe.extend_from_slice(b"A\0\x03\x00\x00\x00\x00\x00");
-        pe.resize(0x40, b' ');
+        pe.resize(0x3C, b' ');
         pe.extend_from_slice(&0x80u32.to_le_bytes());
         pe.resize(0x80, b' ');
         pe.extend_from_slice(b"PE\0\0");
