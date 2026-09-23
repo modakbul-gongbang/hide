@@ -1084,7 +1084,13 @@ async fn open_external_checks_the_checkout_boundary_first() {
     // inside the boundary and still never reaches the host handler: the answer
     // is an ok:false result rather than a path refusal (D-12). The `.terminal`
     // file is an ordinary 0644 plist that Terminal would run on open.
-    for name in ["run.sh", "thing.dmg", "note.terminal", "job.command"] {
+    for name in [
+        "run.sh",
+        "thing.dmg",
+        "note.terminal",
+        "session.term",
+        "job.command",
+    ] {
         let target = checkout.join(name);
         std::fs::write(&target, "x").unwrap();
         #[cfg(unix)]

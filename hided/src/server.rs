@@ -465,11 +465,18 @@ const EXECUTING_EXTENSIONS: &[&str] = &[
     "dmg",
     "mobileconfig",
     "terminal",
+    "term",
     "command",
     "tool",
     "workflow",
     "scpt",
     "scptd",
+    // locators: the handler hands the target to something else, Terminal for
+    // an ssh:// URL among them
+    "webloc",
+    "url",
+    "inetloc",
+    "fileloc",
     // shell and interpreter scripts whose handler runs them on open
     "sh",
     "bash",
@@ -547,20 +554,23 @@ fn openable(path: &Path) -> Result<(), &'static str> {
 /// A Mach-O (thin or fat), ELF or PE header: the file is a program whatever
 /// its name says, and the launcher would read the same header.
 fn is_executable_magic(magic: &[u8; 4]) -> bool {
-    matches!(
-        magic,
-        // Mach-O 32/64 and their byte-swapped forms, fat binaries
+    match magic {
+        // Mach-O 32/64 and their byte-swapped forms, 32 and 64-bit fat
         [0xFE, 0xED, 0xFA, 0xCE]
-            | [0xFE, 0xED, 0xFA, 0xCF]
-            | [0xCE, 0xFA, 0xED, 0xFE]
-            | [0xCF, 0xFA, 0xED, 0xFE]
-            | [0xCA, 0xFE, 0xBA, 0xBE]
-            | [0xBE, 0xBA, 0xFE, 0xCA]
-            // ELF
-            | [0x7F, b'E', b'L', b'F']
-            // PE/COFF, whose DOS stub starts with MZ
-            | [b'M', b'Z', ..]
-    )
+        | [0xFE, 0xED, 0xFA, 0xCF]
+        | [0xCE, 0xFA, 0xED, 0xFE]
+        | [0xCF, 0xFA, 0xED, 0xFE]
+        | [0xCA, 0xFE, 0xBA, 0xBE]
+        | [0xBE, 0xBA, 0xFE, 0xCA]
+        | [0xCA, 0xFE, 0xBA, 0xBF]
+        | [0xBF, 0xBA, 0xFE, 0xCA] => true,
+        // ELF
+        [0x7F, b'E', b'L', b'F'] => true,
+        // PE/COFF, whose DOS stub starts with MZ and two non-text bytes; a
+        // document that merely begins with those letters stays openable.
+        [b'M', b'Z', low, high] => !(0x20..0x7F).contains(low) && !(0x20..0x7F).contains(high),
+        _ => false,
+    }
 }
 
 /// The program that opens one file: the configured one, else the host's.
@@ -1392,7 +1402,9 @@ mod tests {
             "installer.pkg",
             "image.dmg",
             "term.terminal",
+            "session.term",
             "job.command",
+            "link.webloc",
             "script.py",
             "thing.jar",
             "run.exe",
@@ -1438,6 +1450,13 @@ mod tests {
         let pe = dir.path().join("notes.txt");
         std::fs::write(&pe, b"MZ\x90\x00\x00").unwrap();
         assert_eq!(openable(&pe), Err("not_openable"), "PE header");
+        let fat64 = dir.path().join("notes.md");
+        std::fs::write(&fat64, [0xCA, 0xFE, 0xBA, 0xBF, 0, 0, 0, 0]).unwrap();
+        assert_eq!(openable(&fat64), Err("not_openable"), "64-bit fat Mach-O");
+        // A document that merely starts with the same two letters opens.
+        let text = dir.path().join("notes.md");
+        std::fs::write(&text, b"MZ is a codec\n").unwrap();
+        assert_eq!(openable(&text), Ok(()), "MZ letters in text");
     }
 
     #[test]

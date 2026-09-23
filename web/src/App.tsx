@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
 import { allBuffers, deleteBuffer, identity, staleBuffers, sweepBuffers } from "./buffers";
+import { pruneDrafts } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
 import { configureFileBytes } from "./fileBytes";
@@ -80,6 +81,9 @@ export function App() {
   // the tab clean, the mark comes off whichever tab is showing (D-10).
   const editorTabs = useShellStore((s) => s.editor?.tabs);
   useEffect(() => {
+    // A tab id names a path, so a buffer for a tab that is gone would be
+    // applied to whatever opens at that path next (B5, D-14).
+    if (editorTabs) pruneDrafts(new Set(editorTabs.map((tab) => tab.id)));
     const state = useShellStore.getState();
     if (state.savingTabs.size === 0) return;
     const dirty = new Set((editorTabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));

@@ -327,21 +327,49 @@ test("closing a dirty tab saves the draft instead of dropping it", async ({ page
   const fixture = await openCheckout(page);
   const { file, lastSent } = fixture;
   try {
+    // One keystroke, then the close: the idle timer cannot have saved it yet,
+    // so the draft can only reach the disk through the close itself.
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.type("X");
+
+    const tab = page.locator('[data-tab-kind="file"]');
+    await tab.hover();
+    await tab.locator('button[aria-label^="Close tab"]').click();
+    await expect
+      .poll(() => (lastSent.get("file_close")?.pending_save as { contents_utf8?: string } | null)?.contents_utf8)
+      .toBe(`${SOURCE}X`);
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe(`${SOURCE}X`);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a closed tab's draft is not written back when the file is reopened", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, file, sent } = fixture;
+  try {
     const content = page.locator('[data-editor-body] .cm-content');
     await content.click();
     await page.keyboard.press("Meta+KeyA");
     await page.keyboard.type("export const answer = 5;\n");
-
-    // Close within the idle window: the close carries the draft (B4).
     const tab = page.locator('[data-tab-kind="file"]');
     await tab.hover();
     await tab.locator('button[aria-label^="Close tab"]').click();
-    // The close carries the draft itself rather than relying on the idle
-    // timer that this click may have beaten (B4).
-    await expect.poll(() => (lastSent.get("file_close")?.pending_save as { contents_utf8?: string } | null)?.contents_utf8)
-      .toBe("export const answer = 5;\n");
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 5;\n");
+
+    // An agent rewrites the file, the operator reopens it, and saves with
+    // nothing typed: the closed tab's draft must not come back with it (B5).
+    fs.writeFileSync(file, "export const answer = 0;\n");
+    await page.locator(`[data-explorer-row="${repo}/src/main.ts"]`).click();
+    await expect(content).toContainText("answer = 0");
+    const savesBefore = sent.get("file_save") ?? 0;
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => sent.get("file_save")).toBeGreaterThan(savesBefore);
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
   } finally {
     close(fixture);
   }

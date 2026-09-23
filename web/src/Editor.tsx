@@ -329,7 +329,7 @@ function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; 
       {failed ? (
         <span className="text-danger" data-editor-open-failed="true">
           {external.reason === "not_openable"
-            ? "Hide never opens a program, an app bundle or an installer"
+            ? "Hide never opens a file that could run or install itself"
             : `The default app could not open it: ${external.reason ?? "failed"}`}
         </span>
       ) : null}

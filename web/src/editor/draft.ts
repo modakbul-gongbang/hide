@@ -17,3 +17,12 @@ export function latestDraft(tabId: string): string | null {
 export function clearDraft(tabId: string): void {
   drafts.delete(tabId);
 }
+
+/** Drops every buffer whose tab is no longer open: a tab id names a path, so
+ * an edit that outlived its tab would otherwise be applied to the next
+ * document opened there (B5, D-14). */
+export function pruneDrafts(openTabIds: Set<string>): void {
+  for (const tabId of drafts.keys()) {
+    if (!openTabIds.has(tabId)) drafts.delete(tabId);
+  }
+}

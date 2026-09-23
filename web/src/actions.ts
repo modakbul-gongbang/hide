@@ -149,13 +149,14 @@ export function createActions(dispatch: DispatchFn) {
     // without asking (B4, D-10). A dirty tab whose text this shell cannot
     // reproduce stays open with a note instead, because the buffer is about to
     // be discarded and the core is the only copy left.
+    // The newest keystroke decides, not the last snapshot's dirty flag: a
+    // close that arrives inside one round trip of an edit still carries it.
     let pending: Record<string, unknown> | null = null;
-    if (tab.dirty) {
-      const contents = draftFor(tabId);
-      if (contents === null) {
-        return diagnostic(`file_close: ${tab.path} has unsaved changes this shell cannot reproduce; open it and save first`);
-      }
+    const contents = draftFor(tabId);
+    if (contents !== null) {
       pending = { tab_id: tab.id, path: tab.path, contents_utf8: contents, expected_modified_at_unix_ms: null };
+    } else if (tab.dirty) {
+      return diagnostic(`file_close: ${tab.path} has unsaved changes this shell cannot reproduce; open it and save first`);
     }
     void deleteBuffer(checkoutById(state.rest, tab.checkout_id)?.path ?? "", tab.path);
     dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: pending } });
