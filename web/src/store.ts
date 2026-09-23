@@ -91,6 +91,8 @@ type Store = {
   attachmentRefusal: { pane_id: string; reason: string } | null;
   /** The last open-in-default-app answer, drawn under the document (D-12). */
   externalOpen: OpenExternalResult | null;
+  /** Tabs whose save is in flight; the strip shows only these (D-10). */
+  savingTabs: Set<string>;
   /** Watch frames per folder, counted so the Explorer re-reads even a folder
    * whose listing was in flight when the change landed. */
   folderChanges: Record<string, number>;
@@ -104,6 +106,7 @@ type Store = {
   noteDiagnostic: (message: string) => void;
   clearPathRefusal: () => void;
   setAttachmentRefusal: (refusal: { pane_id: string; reason: string } | null) => void;
+  noteSaving: (tabId: string, saving: boolean) => void;
   /** Drops cached listings so the Explorer re-reads those folders. */
   invalidateListings: (paths: string[]) => void;
   applyFrame: (frame: Frame) => TerminalChunk[];
@@ -157,6 +160,7 @@ export const useShellStore = create<Store>((set, get) => ({
   fileIndex: null,
   attachmentRefusal: null,
   externalOpen: null,
+  savingTabs: new Set<string>(),
   folderChanges: {},
   diagnostics: [],
   diagnosticsDropped: 0,
@@ -169,6 +173,14 @@ export const useShellStore = create<Store>((set, get) => ({
     if (get().pathRefusal) set({ pathRefusal: null });
   },
   setAttachmentRefusal: (attachmentRefusal) => set({ attachmentRefusal }),
+  noteSaving: (tabId, saving) => {
+    const current = get().savingTabs;
+    if (saving === current.has(tabId)) return;
+    const next = new Set(current);
+    if (saving) next.add(tabId);
+    else next.delete(tabId);
+    set({ savingTabs: next });
+  },
   invalidateListings: (paths) => {
     const listings = get().listings;
     if (!paths.some((path) => path in listings)) return;
@@ -277,6 +289,10 @@ export const useShellStore = create<Store>((set, get) => ({
               }
               return agent;
             });
+      const lastError = rest.status?.last_error;
+      if (lastError && lastError.occurred_at !== previous?.status?.last_error?.occurred_at) {
+        diagnostics.push(`${lastError.kind}: ${lastError.message}`);
+      }
       set({
         rest,
         agents,

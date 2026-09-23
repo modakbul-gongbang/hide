@@ -182,14 +182,18 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     expect(lastSent.get("file_draft")).toMatchObject({ contents_utf8: "export const answer = 42;\n" });
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
 
-    // ⌘S is one file_save with the open document's timestamp, and the disk
-    // now holds the draft (B4).
-    await page.keyboard.press("Meta+KeyS");
-    await expect.poll(() => sent.get("file_save")).toBe(1);
+    // Autosave: no chord, and the draft lands on disk after the idle delay,
+    // with the tab clean again (D-10).
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
     expect(lastSent.get("file_save")).toMatchObject({ path: file, contents_utf8: "export const answer = 42;\n" });
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
     await screenshot(page, "s3-editor-saved");
+
+    // ⌘S still saves at once.
+    const savesBeforeChord = sent.get("file_save") ?? 0;
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => sent.get("file_save")).toBe(savesBeforeChord + 1);
 
     // A change on disk after the open makes the next save a conflict, and the
     // tab offers the two choices (B5).

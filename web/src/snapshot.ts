@@ -277,6 +277,8 @@ export type SnapshotRest = {
   status?: {
     herdr?: { state?: string; message?: string | null };
     async_operations?: AsyncOperation[];
+    /** The core's most recent failure; the shell logs its detail (B5). */
+    last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number } | null;
   };
   recent_closed?: RecentClosed;
   explorer_operation?: ExplorerOperation | null;

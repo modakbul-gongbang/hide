@@ -17,6 +17,9 @@ import { FileViewer } from "./viewers/FileViewer";
 
 const DEFAULT_SCALE = 1;
 
+/** How long editing must be idle before the shell saves (PRD S3 D-10). */
+export const AUTOSAVE_IDLE_MS = 600;
+
 export function EditorSurface({ actions }: { actions: Actions }) {
   const editor = useShellStore((s) => s.editor);
   const scale = useShellStore((s) => s.rest?.ui_state?.editor_text_scale);
@@ -141,6 +144,48 @@ function EditorBody({
   const latest = useRef(document);
   latest.current = document;
   const checked = useRef(false);
+  const autosave = useRef<number | undefined>(undefined);
+
+  const autosaveDue = () => {
+    const current = latest.current;
+    return (
+      !!current &&
+      (current.document_kind === "text" || current.document_kind === "markdown") &&
+      !current.readonly_reason &&
+      !current.conflict &&
+      current.dirty
+    );
+  };
+
+  /** Saves the showing document once editing has been idle for a moment. */
+  const scheduleAutosave = () => {
+    window.clearTimeout(autosave.current);
+    autosave.current = window.setTimeout(() => {
+      if (!autosaveDue()) return;
+      useShellStore.getState().noteSaving(tab.id, true);
+      actions.saveFile();
+    }, AUTOSAVE_IDLE_MS);
+  };
+
+  useEffect(() => () => window.clearTimeout(autosave.current), []);
+
+  // A conflict pauses autosave until the operator chooses; the choice (or the
+  // next edit) resumes it, because the conflict clears and the document is
+  // still dirty (D-10, B5).
+  useEffect(() => {
+    if (document?.conflict) {
+      window.clearTimeout(autosave.current);
+      useShellStore.getState().noteSaving(tab.id, false);
+      return;
+    }
+    if (document?.dirty) scheduleAutosave();
+    // `scheduleAutosave` reads the newest document through `latest`.
+  }, [document?.conflict, document?.dirty, tab.id]);
+
+  // The save landed when the core reports the document clean.
+  useEffect(() => {
+    if (document?.dirty === false) useShellStore.getState().noteSaving(tab.id, false);
+  }, [document?.dirty, tab.id]);
 
   // A reconnect may have left an unsaved buffer in IndexedDB (B8): the buffer
   // is the newest edit, so it is restored over a clean core document and
@@ -201,6 +246,7 @@ function EditorBody({
           noteDraft(tab.id, contents);
           void putBuffer(tab.path, contents);
           actions.updateDraft(contents);
+          scheduleAutosave();
         }}
       />
     </div>
