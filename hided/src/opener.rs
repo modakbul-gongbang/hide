@@ -2,12 +2,13 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::process::Command;
 use tokio::sync::{Notify, Semaphore};
+
+#[cfg(unix)]
+use crate::spawn::spawn_opener;
 
 const MAX_IN_FLIGHT_OPENERS: usize = 4;
 const MAX_OPENS_PER_MINUTE: usize = 12;
@@ -68,49 +69,53 @@ impl OpenHandler {
             return result;
         }
 
-        let mut command = self.command(path);
-        let mut child = command.spawn().map_err(|_| "spawn_failed")?;
-        let shutdown = Arc::clone(&self.shutdown);
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = child.wait() => {},
-                _ = tokio::time::sleep(OPENER_TIMEOUT) => { let _ = child.kill().await; },
-                _ = shutdown.notified() => { let _ = child.kill().await; },
-            }
-            drop(permit);
-        });
-        Ok(())
-    }
-
-    fn command(&self, path: &Path) -> Command {
-        let mut command = match self.configured.as_ref() {
-            Some(program) => Command::new(program),
-            None => platform_opener(),
+        #[cfg(unix)]
+        let mut child = {
+            let program = match self.configured.as_deref() {
+                Some(program) => program.as_os_str(),
+                None => platform_opener(),
+            };
+            let supervisor = std::env::current_exe().map_err(|_| "spawn_failed")?;
+            spawn_opener(&supervisor, program, path, self.configured.is_some())
+                .map_err(|_| "spawn_failed")?
         };
-        command
-            .arg(path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        command
+        #[cfg(windows)]
+        return Err("spawn_failed");
+        #[cfg(unix)]
+        {
+            let shutdown = Arc::clone(&self.shutdown);
+            tokio::spawn(async move {
+                let deadline = tokio::time::sleep(OPENER_TIMEOUT);
+                tokio::pin!(deadline);
+                loop {
+                    tokio::select! {
+                        _ = &mut deadline => break,
+                        _ = shutdown.notified() => break,
+                        _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                            match child.try_wait() {
+                                Ok(true) => break,
+                                Ok(false) => {},
+                                Err(_) => break,
+                            }
+                        },
+                    }
+                }
+                child.stop();
+                drop(permit);
+            });
+            Ok(())
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn platform_opener() -> Command {
-    Command::new("open")
+fn platform_opener() -> &'static std::ffi::OsStr {
+    std::ffi::OsStr::new("open")
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn platform_opener() -> Command {
-    Command::new("xdg-open")
-}
-
-#[cfg(windows)]
-fn platform_opener() -> Command {
-    // Only used for a validated explicit override on Windows.
-    unreachable!("Windows default association uses ShellExecuteW")
+fn platform_opener() -> &'static std::ffi::OsStr {
+    std::ffi::OsStr::new("xdg-open")
 }
 
 #[cfg(windows)]
@@ -158,9 +163,9 @@ mod tests {
     #[test]
     fn the_host_handler_is_shell_free() {
         #[cfg(target_os = "macos")]
-        assert_eq!(platform_opener().as_std().get_program(), "open");
+        assert_eq!(platform_opener(), "open");
         #[cfg(all(unix, not(target_os = "macos")))]
-        assert_eq!(platform_opener().as_std().get_program(), "xdg-open");
+        assert_eq!(platform_opener(), "xdg-open");
     }
 
     #[test]

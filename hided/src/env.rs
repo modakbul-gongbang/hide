@@ -81,7 +81,7 @@ pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
         key: HIDE_OPEN_COMMAND,
         required: false,
-        format: "absolute path of a program whose first argument is the file to open",
+        format: "Unix-only absolute path of an executable CLI helper whose first argument is the file to open",
         absent_behavior: "The host OS handler opens it (macOS `open`, Windows ShellExecuteW association, Linux `xdg-open`)",
     },
     EnvKey {
@@ -239,7 +239,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         },
     };
     let open_command = match read(HIDE_OPEN_COMMAND) {
-        Some(value) if !valid_program_path(Path::new(&value)) => {
+        Some(value) if cfg!(windows) || !valid_program_path(Path::new(&value)) => {
             errors.push(EnvError {
                 key: HIDE_OPEN_COMMAND,
                 kind: "invalid",
