@@ -602,6 +602,10 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await expect(page.locator(`[data-explorer-failure="${repo}/src/main.ts"]`)).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(1);
     await screenshot(page, "s3-explorer-failure");
+    await expect(clash).toHaveValue("main.ts");
+    await clash.fill("corrected.ts");
+    await clash.press("Enter");
+    await expect(page.locator(`[data-explorer-row="${repo}/src/corrected.ts"]`)).toBeVisible();
 
     // Rename: one path_rename, and the row takes the new name.
     await page.locator(`[data-explorer-row="${repo}/src/added.ts"]`).click({ button: "right" });
@@ -674,14 +678,13 @@ test("a preview-only document closes without a save", async ({ page }) => {
           const request = indexedDB.open("hide-shell", 2);
           request.onupgradeneeded = () => {
             const database = request.result;
-            if (database.objectStoreNames.contains("buffers")) database.deleteObjectStore("buffers");
-            database.createObjectStore("buffers", { keyPath: "id" });
+            if (!database.objectStoreNames.contains("buffers_v2")) database.createObjectStore("buffers_v2", { keyPath: "id" });
           };
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
             const database = request.result;
-            const transaction = database.transaction("buffers", "readwrite");
-            transaction.objectStore("buffers").put({
+            const transaction = database.transaction("buffers_v2", "readwrite");
+            transaction.objectStore("buffers_v2").put({
               id,
               root,
               path,
@@ -746,6 +749,8 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     // row again through the core's expanded set (B3).
     await page.locator(`[data-explorer-row="${repo}/src"]`).click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
+    await page.keyboard.press("Meta+Shift+KeyB");
+    await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
     // preview tab (B12).
@@ -758,6 +763,7 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     await screenshot(page, "s3-palette-files");
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);
@@ -847,11 +853,49 @@ test("an unsaved edit survives a socket drop and reconnect", async ({ page }) =>
     // the draft, and the buffer reconciles against it (B8). A live connection
     // draws no badge at all.
     await page.evaluate(() => window.__hideProbe?.dropSocket());
+    await page.context().setOffline(true);
     await expect(page.locator("[data-connection]")).toHaveText(/reconnecting/, { timeout: 15_000 });
+    // Keep the socket down past the 600 ms autosave window. A dropped save
+    // must be retried after reconnection, then reach the actual file (D-10).
+    await page.waitForTimeout(800);
+    await page.context().setOffline(false);
     await expect(page.locator("[data-connection]")).toHaveCount(0, { timeout: 20_000 });
     await expect(content).toContainText("edited across a reconnect");
-    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() => fs.readFileSync(path.join(repo, "notes.md"), "utf8"), { timeout: 20_000 }).toContain("edited across a reconnect");
+    await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
     await screenshot(page, "s3-buffer-reconnect");
+  } finally {
+    await page.context().setOffline(false);
+    close(fixture);
+  }
+});
+
+test("an existing v1 recovery draft survives the IndexedDB upgrade", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file } = fixture;
+  try {
+    await page.evaluate(async ({ path }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 1);
+        opened.onupgradeneeded = () => opened.result.createObjectStore("buffers", { keyPath: "path" });
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers", "readwrite");
+          transaction.objectStore("buffers").put({ path, contents: "export const answer = 99;\n", updated_at: Date.now() });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 99");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 99;\n");
   } finally {
     close(fixture);
   }

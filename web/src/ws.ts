@@ -8,7 +8,7 @@ export type DispatchFn = (event: {
   schema_version: number;
   kind: string;
   payload: Record<string, unknown>;
-}) => void;
+}) => unknown;
 
 type Handlers = {
   onChunks: (chunks: TerminalChunk[], full: boolean) => void;
@@ -45,9 +45,10 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       // A key typed while reconnecting is lost, not queued; the badge shows
       // the state and the log keeps the fact.
       useShellStore.getState().noteDiagnostic(`dispatch dropped: ${event.kind} while socket not open`);
-      return;
+      return false;
     }
     socket.send(JSON.stringify(event));
+    return true;
   };
 
   /** Attachment bytes ride the same socket as binary frames (PRD B14). */

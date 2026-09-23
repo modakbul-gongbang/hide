@@ -20,7 +20,7 @@ type Pending = {
   total: number;
   chunks: Uint8Array[];
   received: number;
-  resolve: (bytes: Uint8Array) => void;
+  resolve: (answer: { bytes: Uint8Array; total: number }) => void;
   reject: (error: Error) => void;
 };
 
@@ -63,7 +63,7 @@ export function receiveBytes(data: ArrayBuffer): void {
       joined.set(chunk, at);
       at += chunk.byteLength;
     }
-    entry.resolve(joined);
+    entry.resolve({ bytes: joined, total: entry.total });
   }
 }
 
@@ -100,7 +100,7 @@ export function clearPending(reason: string): void {
  * end; a range read names an offset and a length. The promise rejects with the
  * daemon's reason code (`outside_checkout`, `too_large`, `read_failed`, ...).
  */
-export function requestFileBytes(path: string, range?: { offset?: number; length?: number }): Promise<Uint8Array> {
+function requestFileBytesWithTotal(path: string, range?: { offset?: number; length?: number }): Promise<{ bytes: Uint8Array; total: number }> {
   return new Promise((resolve, reject) => {
     if (!dispatchFn) {
       reject(new Error("not_connected"));
@@ -109,7 +109,7 @@ export function requestFileBytes(path: string, range?: { offset?: number; length
     const request_id = `bytes-${nextRequest}`;
     nextRequest += 1;
     pending.set(request_id, { path, total: 0, chunks: [], received: 0, resolve, reject });
-    dispatchFn({
+    const sent = dispatchFn({
       schema_version: 2,
       kind: "file_bytes",
       payload: {
@@ -119,7 +119,15 @@ export function requestFileBytes(path: string, range?: { offset?: number; length
         length: range?.length ?? null,
       },
     });
+    if (sent === false) {
+      pending.delete(request_id);
+      reject(new Error("not_connected"));
+    }
   });
+}
+
+export async function requestFileBytes(path: string, range?: { offset?: number; length?: number }): Promise<Uint8Array> {
+  return (await requestFileBytesWithTotal(path, range)).bytes;
 }
 
 /**
@@ -128,11 +136,39 @@ export function requestFileBytes(path: string, range?: { offset?: number; length
  * machine, so the bytes come down the same `file_bytes` stream the viewers use.
  */
 export async function downloadFile(path: string): Promise<void> {
+  const name = path.split("/").pop() || "download";
+  // Chromium and the eventual desktop shell can write one range at a time to
+  // the chosen file. Invoke the picker inside the click's user activation.
+  const picker = (window as Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<FileSystemFileHandle> }).showSaveFilePicker;
+  if (picker) {
+    const handle = await picker.call(window, { suggestedName: name });
+    const writer = await handle.createWritable();
+    try {
+      const rangeSize = 4 * 1024 * 1024;
+      let offset = 0;
+      let total: number | null = null;
+      do {
+        const answer = await requestFileBytesWithTotal(path, { offset, length: rangeSize });
+        if (total !== null && total !== answer.total) throw new Error("file_changed_during_download");
+        total = answer.total;
+        if (answer.bytes.length === 0 && offset < total) throw new Error("incomplete_download");
+        await writer.write(answer.bytes as BufferSource);
+        offset += answer.bytes.length;
+      } while (total === null || offset < total);
+      await writer.close();
+    } catch (error) {
+      await writer.abort().catch(() => {});
+      throw error;
+    }
+    return;
+  }
+  // Browsers without a streaming file writer retain the existing Blob path.
+  // Its protocol read cap is explicit; a failure is shown beside the button.
   const bytes = await requestFileBytes(path);
   const url = blobUrl(bytes, "application/octet-stream");
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = path.split("/").pop() || "download";
+  anchor.download = name;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();

@@ -90,22 +90,22 @@ export function createActions(dispatch: DispatchFn) {
   const revealAncestors = (path: string) => {
     // Highlighting a row needs a tree to highlight it in, so the reveal shows
     // the panel the core's own `reveal_path` would show.
-    showExplorerPanel();
     const state = rest()?.ui_state;
     const root = rest()?.navigator?.root_path;
-    if (!state || !root || !path.startsWith(`${root}/`)) return;
+    if (!state || !root || !path.startsWith(`${root}/`)) {
+      showExplorerPanel();
+      return;
+    }
     const parts = path.slice(root.length + 1).split("/");
     parts.pop();
     const expanded = new Set(state.expanded_paths ?? []);
-    let changed = false;
     for (let depth = 1; depth <= parts.length; depth += 1) {
       const ancestor = `${root}/${parts.slice(0, depth).join("/")}`;
-      if (!expanded.has(ancestor)) {
-        expanded.add(ancestor);
-        changed = true;
-      }
+      expanded.add(ancestor);
     }
-    if (changed) updateUiState({ expanded_paths: [...expanded] });
+    // ui_state_update replaces the whole core state. Two updates based on one
+    // snapshot race, and the second would hide the panel again.
+    updateUiState({ right_panel_visible: true, right_panel_section: "explorer", expanded_paths: [...expanded] });
   };
 
   /** The contents a save or a close would send for one file tab, or null. */
@@ -123,17 +123,23 @@ export function createActions(dispatch: DispatchFn) {
     const state = useShellStore.getState();
     const showing = activeEditorTab(state.editor);
     const tab = tabId ? state.editor?.tabs.find((row) => row.id === tabId) : showing;
-    if (!tab || tab.kind !== "file") return diagnostic("file_save: no showing document");
+    if (!tab || tab.kind !== "file") {
+      diagnostic("file_save: no showing document");
+      return false;
+    }
     // A read-only or preview-only document has nothing the core would accept:
     // a save of it is refused, and the refusal would mark it dirty.
     const document = showing?.id === tab.id ? state.editor?.document : null;
     if (document && (document.readonly_reason !== null || document.contents_utf8 === null)) {
-      return diagnostic(`file_save: ${tab.path} is not editable here`);
+      diagnostic(`file_save: ${tab.path} is not editable here`);
+      return false;
     }
     const contents = draftFor(tab.id);
-    if (contents === null) return diagnostic(`file_save: no contents for ${tab.path}`);
-    noteSent(tab.id, contents);
-    dispatch({
+    if (contents === null) {
+      diagnostic(`file_save: no contents for ${tab.path}`);
+      return false;
+    }
+    const sent = dispatch({
       schema_version: 2,
       kind: "file_save",
       payload: {
@@ -145,6 +151,9 @@ export function createActions(dispatch: DispatchFn) {
         expected_modified_at_unix_ms: showing?.id === tab.id ? state.editor?.document?.opened_modified_at_unix_ms ?? null : null,
       },
     });
+    if (sent === false) return false;
+    noteSent(tab.id, contents);
+    return true;
   };
 
   const closeFileTab = (tabId: string) => {

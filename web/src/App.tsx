@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
-import { allBuffers, bufferFor, deleteBuffer, identity, putBuffer, staleBuffers, sweepBuffers } from "./buffers";
+import { allBuffers, bufferFor, claimLegacyBuffer, deleteBuffer, discardLegacyBuffers, flushBuffer, identity, putBuffer, staleBuffers, sweepBuffers } from "./buffers";
 import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
@@ -123,12 +123,18 @@ export function App() {
   useEffect(() => {
     if (connection !== "live") return;
     const rest = useShellStore.getState().rest;
-    const open = new Set(
-      (useShellStore.getState().editor?.tabs ?? [])
-        .filter((tab) => tab.kind === "file")
-        .map((tab) => identity(checkoutById(rest, tab.checkout_id)?.path ?? "", tab.path)),
-    );
-    void allBuffers().then((buffers) => {
+    const documents = (useShellStore.getState().editor?.tabs ?? [])
+      .filter((tab) => tab.kind === "file")
+      .map((tab) => ({ root: checkoutById(rest, tab.checkout_id)?.path ?? "", path: tab.path }));
+    const open = new Set(documents.map(({ root, path }) => identity(root, path)));
+    void (async () => {
+      await Promise.all(documents.map(({ root, path }) => flushBuffer(root, path)));
+      await Promise.all(documents.map(({ root, path }) => claimLegacyBuffer(root, path)));
+      const legacyDiscarded = await discardLegacyBuffers(new Set(documents.map(({ path }) => path)));
+      for (const path of legacyDiscarded) {
+        useShellStore.getState().noteDiagnostic(`discarded the unsaved buffer for closed document ${path}`);
+      }
+      const buffers = await allBuffers();
       // A buffer the core no longer holds is discarded, and one that has gone
       // unclaimed for two weeks goes with it (D-14).
       const discarded = [...sweepBuffers(buffers, open), ...staleBuffers(buffers, Date.now())];
@@ -138,7 +144,7 @@ export function App() {
           .noteDiagnostic(`discarded the unsaved buffer for closed document ${buffer.path}`);
         void deleteBuffer(buffer.root, buffer.path);
       }
-    });
+    })();
   }, [connection]);
 
   return (

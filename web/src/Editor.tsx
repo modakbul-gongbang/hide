@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, bufferDecision, bufferFor, deleteBuffer, putBuffer } from "./buffers";
+import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, queueBuffer } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { clearDraft, noteDraft } from "./editor/draft";
 import { activeEditorTab, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
@@ -154,6 +154,7 @@ function EditorBody({
   latest.current = document;
   const checked = useRef(false);
   const autosave = useRef<number | undefined>(undefined);
+  const connection = useShellStore((s) => s.connection);
 
   const autosaveDue = () => {
     const current = latest.current;
@@ -171,8 +172,8 @@ function EditorBody({
     window.clearTimeout(autosave.current);
     autosave.current = window.setTimeout(() => {
       if (!autosaveDue()) return;
-      useShellStore.getState().noteSaving(tab.id, true);
-      actions.saveFile();
+      if (useShellStore.getState().connection !== "live") return;
+      useShellStore.getState().noteSaving(tab.id, actions.saveFile() === true);
     }, AUTOSAVE_IDLE_MS);
   };
 
@@ -195,14 +196,14 @@ function EditorBody({
   // next edit) resumes it, because the conflict clears and the document is
   // still dirty (D-10, B5).
   useEffect(() => {
-    if (document?.conflict) {
+    if (document?.conflict || connection !== "live") {
       window.clearTimeout(autosave.current);
       useShellStore.getState().noteSaving(tab.id, false);
       return;
     }
     if (document?.dirty) scheduleAutosave();
     // `scheduleAutosave` reads the newest document through `latest`.
-  }, [document?.conflict, document?.dirty, tab.id]);
+  }, [document?.conflict, document?.dirty, tab.id, connection]);
 
   // The save landed when the core reports the document clean.
   useEffect(() => {
@@ -222,8 +223,9 @@ function EditorBody({
   // dropped when the core already holds the same contents.
   useEffect(() => {
     checked.current = false;
+    if (connection !== "live") return;
     let live = true;
-    void allBuffers().then((buffers) => {
+    void flushBuffer(root, tab.path).then(() => claimLegacyBuffer(root, tab.path)).then(allBuffers).then((buffers) => {
       if (!live) return;
       const buffer = bufferFor(buffers, root, tab.path);
       checked.current = true;
@@ -249,7 +251,7 @@ function EditorBody({
     return () => {
       live = false;
     };
-  }, [tab.id, root, tab.path, actions]);
+  }, [tab.id, root, tab.path, actions, connection]);
 
   // A document the core reports clean has nothing unsaved, so its buffer goes.
   useEffect(() => {
@@ -289,9 +291,9 @@ function EditorBody({
           noteDraft(tab.id, contents);
           // A buffer that cannot be stored keeps the edit alive and says so on
           // the tab; the session continues either way (D-14).
-          void putBuffer(root, tab.path, contents).then((stored) =>
-            useShellStore.getState().noteBufferWarning(tab.id, !stored),
-          );
+          queueBuffer(root, tab.path, contents, (stored) => {
+            if (stored !== null) useShellStore.getState().noteBufferWarning(tab.id, !stored);
+          });
           actions.updateDraft(contents);
           scheduleAutosave();
         }}
@@ -304,6 +306,7 @@ function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; 
   const external = useShellStore((s) => s.externalOpen);
   const local = isLocalHost();
   const failed = external?.ok === false && external.path === document.path;
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-sm px-md text-center text-caption text-muted" data-editor-preview-only="true">
       <span>{document.readonly_reason ?? "This file is too large to edit here."}</span>
@@ -313,7 +316,14 @@ function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; 
         data-editor-open-external="true"
         onClick={() => {
           if (local) actions.openExternal(document.path);
-          else void downloadFile(document.path);
+          else {
+            setDownloadError(null);
+            void downloadFile(document.path).catch((error: unknown) => {
+              if ((error as { name?: string }).name !== "AbortError") {
+                setDownloadError(error instanceof Error ? error.message : "download_failed");
+              }
+            });
+          }
         }}
       >
         {local ? "Open in default app" : "Download"}
@@ -325,6 +335,7 @@ function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; 
             : `The default app could not open it: ${external.reason ?? "failed"}`}
         </span>
       ) : null}
+      {downloadError ? <span className="text-danger" data-editor-download-failed="true">The download failed: {downloadError}</span> : null}
     </div>
   );
 }
