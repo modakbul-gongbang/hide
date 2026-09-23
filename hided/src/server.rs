@@ -662,9 +662,11 @@ async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
 /// the core has no event for reading a directory and the Explorer shows files
 /// the core's own listing never carries.
 ///
-/// An attachment event carries paths the shell staged itself, so only their
-/// shape is checked; a path that fails is dropped from the batch rather than
-/// losing the whole event. Every other kind passes untouched.
+/// The shell's own attachment events are hided's to send (a web client stages
+/// bytes through `attachment_*` instead), so a client that sends one is
+/// answered with an error frame and it never reaches the core: those events
+/// name arbitrary paths for the core to read. Every other kind passes
+/// untouched to the core.
 fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
     let kind = event.get("kind").and_then(Value::as_str)?.to_owned();
     match kind.as_str() {
@@ -689,7 +691,7 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
 }
 
 /// The path a client sent, as written; a field the event omits reads as empty
-/// and fails the shape check like any other empty path.
+/// and is refused like any other empty path.
 fn payload_str(event: &Value, field: &str) -> String {
     event
         .pointer(&format!("/payload/{field}"))

@@ -45,7 +45,7 @@ const MAX_OPEN_UPLOADS: usize = 64;
 /// name a path hided did not choose. Returns `None` for a shape no stage may
 /// carry.
 fn safe_component(value: &str) -> Option<String> {
-    if value.is_empty() || value.len() > 128 {
+    if value.is_empty() || value.len() > 96 {
         return None;
     }
     if value == "."
@@ -63,6 +63,8 @@ struct Upload {
     path: PathBuf,
     file: Option<File>,
     written: u64,
+    /// What the client said it would send; the byte budget counts it.
+    declared: u64,
 }
 
 /// One staged file on disk, with what eviction needs to judge it.
@@ -172,6 +174,22 @@ impl Attachments {
         let Some(name) = safe_component(name) else {
             return Err("invalid_request_id");
         };
+        {
+            let state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            // One id, one stage: a second begin for the same id would leave two
+            // entries for one file, and one of them could be evicted while the
+            // other is committed.
+            if state
+                .staged
+                .iter()
+                .any(|entry| entry.request_id == request_id)
+            {
+                return Err("invalid_request_id");
+            }
+        }
         let root = if clipboard {
             &self.clipboard_root
         } else {
@@ -183,7 +201,7 @@ impl Attachments {
             format!("{request_id}-{name}")
         };
         let path = root.join(&file_name);
-        if path.parent() != Some(root.as_path()) {
+        if path.parent() != Some(root.as_path()) || file_name.len() > 255 {
             return Err("invalid_request_id");
         }
         let mut state = self
@@ -191,6 +209,8 @@ impl Attachments {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         make_room(&mut state, size)?;
+        // The declared size is a reservation: the bytes on disk are charged
+        // against it, and `write` refuses a stage whose bytes do not match it.
         let file = File::create(&path).map_err(|_| "stage_failed")?;
         // An abandoned stage would otherwise hold its file descriptor for the
         // daemon's life; the oldest open one goes instead.
@@ -214,29 +234,50 @@ impl Attachments {
                 path,
                 file: Some(file),
                 written: 0,
+                declared: size,
             },
         );
         Ok(())
     }
 
     /// Appends one chunk; `eof` closes the stage. Returns whether it closed.
+    ///
+    /// A stage that closes with fewer or more bytes than it declared is
+    /// dropped: the declared size is the reservation the byte budget counts,
+    /// so a stage whose bytes do not match it would make that budget a lie.
     pub fn write(&self, request_id: &str, bytes: &[u8], eof: bool) -> Result<bool, &'static str> {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let Some(upload) = state.uploads.get_mut(request_id) else {
-            return Err("unknown_stage");
+        let declared = match state.uploads.get_mut(request_id) {
+            Some(upload) => {
+                if upload.written + bytes.len() as u64 > MAX_FILE_BYTES {
+                    return Err("too_large");
+                }
+                if let Some(file) = upload.file.as_mut() {
+                    file.write_all(bytes).map_err(|_| "stage_failed")?;
+                }
+                upload.written += bytes.len() as u64;
+                upload.declared
+            }
+            None => return Err("unknown_stage"),
         };
-        if upload.written + bytes.len() as u64 > MAX_FILE_BYTES {
-            return Err("too_large");
-        }
-        if let Some(file) = upload.file.as_mut() {
-            file.write_all(bytes).map_err(|_| "stage_failed")?;
-        }
-        upload.written += bytes.len() as u64;
+        let written = state
+            .uploads
+            .get(request_id)
+            .map(|upload| upload.written)
+            .unwrap_or_default();
         if eof {
-            if let Some(mut file) = upload.file.take() {
+            if written != declared {
+                drop_stage(&mut state, request_id);
+                return Err("size_mismatch");
+            }
+            if let Some(mut file) = state
+                .uploads
+                .get_mut(request_id)
+                .and_then(|upload| upload.file.take())
+            {
                 let _ = file.flush();
             }
             return Ok(true);
@@ -339,12 +380,22 @@ impl Attachments {
     }
 
     /// Drops a stage that was refused or abandoned, so the file goes with it.
+    /// A file the core was already told about is left to eviction's grace: a
+    /// cancel must not unlink a path the terminal was just handed.
     pub fn discard(&self, request_id: &str) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        drop_stage(&mut state, request_id);
+        let committed = state
+            .staged
+            .iter()
+            .any(|entry| entry.request_id == request_id && entry.committed_at.is_some());
+        state.uploads.remove(request_id);
+        state.open.retain(|id| id != request_id);
+        if !committed {
+            drop_stage(&mut state, request_id);
+        }
     }
 }
 
@@ -436,44 +487,85 @@ mod tests {
 
     #[test]
     fn staged_bytes_are_bounded_and_a_fresh_commit_is_spared() {
-        let (_dir, service) = attachments();
-        // A committed file inside the grace window survives eviction pressure.
-        service.begin("keep", "keep.png", 1, false).unwrap();
-        service.write("keep", &[1], true).unwrap();
-        let kept = service.commit(&["keep".to_owned()], false).unwrap();
-        let big = 20 * 1024 * 1024;
-        for index in 0..14 {
-            service
-                .begin(&format!("big{index}"), "x", big, false)
-                .unwrap();
-        }
+        let mut state = State::default();
+        state.staged.push_back(Staged {
+            request_id: "keep".to_owned(),
+            path: PathBuf::from("/nonexistent/keep"),
+            bytes: 1,
+            committed_at: Some(Instant::now()),
+        });
+        state.staged.push_back(Staged {
+            request_id: "old".to_owned(),
+            path: PathBuf::from("/nonexistent/old"),
+            bytes: MAX_STAGED_BYTES,
+            committed_at: None,
+        });
+        state.staged_bytes = MAX_STAGED_BYTES + 1;
+        make_room(&mut state, 1).unwrap();
         assert!(
-            std::path::Path::new(&kept[0]).is_file(),
+            state.staged.iter().any(|entry| entry.request_id == "keep"),
             "a fresh commit stays"
         );
-        // Everything else past the byte budget was evicted.
-        assert_eq!(service.write("big0", &[1], true), Err("unknown_stage"));
+        assert!(!state.staged.iter().any(|entry| entry.request_id == "old"));
     }
 
     #[test]
-    fn a_directory_full_of_fresh_commits_refuses_rather_than_unlinks() {
-        let (_dir, service) = attachments();
-        let big = 20 * 1024 * 1024;
-        let mut committed = Vec::new();
-        // Twelve files stay under the 256 MiB budget even though each commit
-        // is fresh, so the budget is what the next stage trips.
-        for index in 0..12 {
-            let id = format!("c{index}");
-            service.begin(&id, "x", big, false).unwrap();
-            service.write(&id, &[1], true).unwrap();
-            // One batch each: the batch cap is 40 MiB, the staged budget 256.
-            committed.extend(service.commit(&[id], false).unwrap());
+    fn a_set_of_fresh_commits_refuses_rather_than_unlinks() {
+        let mut state = State::default();
+        for index in 0..2 {
+            state.staged.push_back(Staged {
+                request_id: format!("c{index}"),
+                path: PathBuf::from(format!("/nonexistent/c{index}")),
+                bytes: MAX_STAGED_BYTES,
+                committed_at: Some(Instant::now()),
+            });
         }
-        assert_eq!(committed.len(), 12);
-        // Every staged file is a fresh commit, so the budget is over but
-        // nothing may be evicted; the next stage is refused instead.
-        assert_eq!(service.begin("late", "x", big, false), Err("staging_full"));
-        assert!(std::path::Path::new(&committed[0]).is_file());
+        state.staged_bytes = MAX_STAGED_BYTES * 2;
+        assert_eq!(make_room(&mut state, 1), Err("staging_full"));
+        assert_eq!(state.staged.len(), 2, "nothing may be unlinked");
+    }
+
+    #[test]
+    fn a_stage_whose_bytes_do_not_match_its_declaration_is_dropped() {
+        let (_dir, service) = attachments();
+        service.begin("r1", "x", 5, false).unwrap();
+        assert_eq!(service.write("r1", &[1, 2], true), Err("size_mismatch"));
+        assert_eq!(service.write("r1", &[1], true), Err("unknown_stage"));
+        assert_eq!(
+            service.commit(&["r1".to_owned()], false),
+            Err("unknown_stage")
+        );
+        // The declared size is what the honest client sends.
+        service.begin("r2", "x", 2, false).unwrap();
+        assert_eq!(service.write("r2", &[1, 2], true), Ok(true));
+        assert!(service.commit(&["r2".to_owned()], false).is_ok());
+    }
+
+    #[test]
+    fn one_id_is_one_stage_and_an_over_long_name_is_refused() {
+        let (_dir, service) = attachments();
+        service.begin("r1", "a", 1, false).unwrap();
+        assert_eq!(
+            service.begin("r1", "b", 1, false),
+            Err("invalid_request_id")
+        );
+        assert_eq!(
+            service.begin("r2", &"a".repeat(97), 1, false),
+            Err("invalid_request_id")
+        );
+    }
+
+    #[test]
+    fn a_cancel_does_not_unlink_a_committed_file() {
+        let (_dir, service) = attachments();
+        service.begin("r1", "x", 1, false).unwrap();
+        service.write("r1", &[1], true).unwrap();
+        let paths = service.commit(&["r1".to_owned()], false).unwrap();
+        service.discard("r1");
+        assert!(
+            Path::new(&paths[0]).is_file(),
+            "the core may still be reading what it was told about"
+        );
     }
 
     #[test]

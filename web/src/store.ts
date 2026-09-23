@@ -209,9 +209,11 @@ export const useShellStore = create<Store>((set, get) => ({
       const path = payload.path;
       if (path) {
         get().invalidateListings([path]);
-        const next = { ...get().folderChanges, [path]: (get().folderChanges[path] ?? 0) + 1 };
-        // A bounded map: the Explorer only needs the counts it has not seen
-        // yet, and a long session must not grow one key per changed folder.
+        // A bounded map ordered by recency: the count is re-inserted so a
+        // folder that keeps changing is the last one evicted.
+        const next = { ...get().folderChanges };
+        delete next[path];
+        next[path] = (get().folderChanges[path] ?? 0) + 1;
         const paths = Object.keys(next);
         const overflow = paths.length - FOLDER_CHANGE_CAP;
         for (const stale of overflow > 0 ? paths.slice(0, overflow) : []) delete next[stale];

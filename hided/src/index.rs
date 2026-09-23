@@ -146,7 +146,7 @@ impl IndexService {
             if !entry.building.swap(true, Ordering::SeqCst) {
                 let root = root.to_path_buf();
                 let target = Arc::clone(&entry);
-                std::thread::Builder::new()
+                if std::thread::Builder::new()
                     .name("hided-index".to_owned())
                     .spawn(move || {
                         let data = Arc::new(build(&root));
@@ -156,7 +156,12 @@ impl IndexService {
                             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(data);
                         target.building.store(false, Ordering::SeqCst);
                     })
-                    .ok();
+                    .is_err()
+                {
+                    // A thread that never started must not leave the index
+                    // answering `indexing` forever.
+                    entry.building.store(false, Ordering::SeqCst);
+                }
             }
             return IndexAnswer::Indexing;
         };

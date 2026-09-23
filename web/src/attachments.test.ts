@@ -6,6 +6,7 @@ import {
   preflightRefusal,
   receiveAttachmentRefusal,
   refusalText,
+  safeName,
   submitAttachments,
   type AttachmentInput,
 } from "./attachments";
@@ -87,10 +88,21 @@ describe("attachment upload", () => {
     expect(useShellStore.getState().attachmentRefusal).toEqual({ pane_id: "pane-9", reason: "too_large" });
   });
 
+  it("stages a name the daemon will accept, else a neutral one", () => {
+    expect(safeName("shot.png")).toBe("shot.png");
+    expect(safeName("")).toBe("attachment.bin");
+    expect(safeName("..")).toBe("attachment.bin");
+    expect(safeName("a/b")).toBe("attachment.bin");
+    expect(safeName("a\\b")).toBe("attachment.bin");
+    expect(safeName("a".repeat(97))).toBe("attachment.bin");
+  });
+
   it("turns a reason into one line", () => {
     expect(refusalText("too_large")).toContain("20 MiB");
     expect(refusalText("batch_too_large")).toContain("40 MiB");
     expect(refusalText("too_many_files")).toContain("1 and 8");
+    expect(refusalText("staging_full")).toContain("staged");
+    expect(refusalText("size_mismatch")).toContain("changed");
     expect(refusalText("wat")).toBe("The attachment was refused.");
   });
 });

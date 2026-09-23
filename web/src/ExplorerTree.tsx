@@ -124,6 +124,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
       bumped.push(path);
     }
     if (bumped.length > 0) invalidateListings(bumped);
+    // Keep only the counts the store still holds, so a capped map does not
+    // leave this ref growing for the session.
+    for (const path of Object.keys(seenChanges.current)) {
+      if (!(path in folderChanges)) delete seenChanges.current[path];
+    }
     invalidateListings(
       expandedUnderRoot(rootPath, expandedPaths).filter((path) => path !== rootPath && !watchedNow.has(path)),
     );

@@ -43,6 +43,15 @@ export function refusalText(reason: string): string {
       return "The selection exceeds the 40 MiB attachment limit.";
     case "too_many_files":
       return "Choose between 1 and 8 regular files.";
+    case "staging_full":
+      return "Too many attachments are staged right now; try again in a moment.";
+    case "invalid_request_id":
+      return "That file name cannot be attached.";
+    case "size_mismatch":
+      return "The file changed while it was being attached.";
+    case "unknown_stage":
+    case "stage_incomplete":
+      return "The attachment upload did not finish.";
     case "stage_failed":
       return "The file could not be staged for the terminal.";
     case "forward_failed":
@@ -168,15 +177,20 @@ export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_BATCH_BYTES = 40 * 1024 * 1024;
 export const MAX_FILES = 8;
 
-/** The image files a clipboard or drop carries, as attachment inputs. */
-export function imageInputs(files: FileList | null): File[] {
-  if (!files) return [];
-  return Array.from(files).filter((file) => file.type.startsWith("image/"));
+/** A name the daemon accepts: one path component, at most 96 bytes. A Finder
+ * name outside that shape is staged under a neutral one, not refused. */
+export function safeName(name: string): string {
+  const byteLength = new TextEncoder().encode(name).length;
+  if (name === "" || byteLength > 96) return "attachment.bin";
+  if (name === "." || name === ".." || name.includes("/") || name.includes("\\")) return "attachment.bin";
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(name)) return "attachment.bin";
+  return name;
 }
 
 export async function readInputs(files: FileList | File[]): Promise<AttachmentInput[]> {
   const list = Array.from(files);
   return Promise.all(
-    list.map(async (file) => ({ name: file.name || "attachment.bin", bytes: new Uint8Array(await file.arrayBuffer()) })),
+    list.map(async (file) => ({ name: safeName(file.name), bytes: new Uint8Array(await file.arrayBuffer()) })),
   );
 }
