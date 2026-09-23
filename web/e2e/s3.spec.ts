@@ -75,6 +75,12 @@ async function openCheckout(page: Page): Promise<Fixture> {
       path.join(repoDir, "notes.md"),
       "# Title\n\n- one\n- two\n\n- [ ] open\n\nsee [text](https://example.com) now\n\n```rust\nfn main() {}\n```\n",
     );
+    // A block longer than the pane's eight lines, so the pane scrolls inside
+    // itself rather than pushing the body down (D-11).
+    fs.writeFileSync(
+      path.join(repoDir, "post.md"),
+      `---\ntitle: Post\n${Array.from({ length: 12 }, (_, index) => `key${index}: value`).join("\n")}\n---\n\n# Body\n`,
+    );
     fs.writeFileSync(path.join(repoDir, ".gitignore"), "node_modules\n");
     fs.writeFileSync(path.join(repoDir, "shot.png"), PNG);
     fs.writeFileSync(path.join(repoDir, "doc.pdf"), minimalPdf());
@@ -292,6 +298,55 @@ test("Markdown opens in Live and toggles to source", async ({ page }) => {
     await page.locator('[data-markdown-mode="source"]').click();
     await expect.poll(() => sent.get("file_view")).toBe(2);
     await expect(page.locator(".cm-md-heading-1")).toHaveCount(1);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("Markdown Live draws frontmatter in its own scrolling pane", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, lastSent } = fixture;
+  try {
+    await page.locator(`[data-explorer-row="${repo}/post.md"]`).click();
+    await expect(page.locator('[data-markdown-mode="live"]')).toBeVisible();
+    const pane = page.locator("[data-editor-frontmatter]");
+    const body = page.locator("[data-editor-body] .cm-content");
+    await expect(pane.locator(".cm-content")).toContainText("title: Post");
+    // The block left the body: it is drawn once, in the pane (D-11).
+    await expect(body).not.toContainText("title: Post");
+    // Live hides the heading's hash when the caret is elsewhere, so the body
+    // reads as its text.
+    await expect(body).toContainText("Body");
+
+    // The pane is about eight lines tall and scrolls inside itself, so the
+    // body below it does not move with the block (D-11).
+    const measured = await pane.evaluate((element) => ({
+      client: element.clientHeight,
+      scroll: element.querySelector(".cm-scroller")?.scrollHeight ?? 0,
+    }));
+    const lineHeight = await pane.evaluate(() => Number.parseFloat(getComputedStyle(document.querySelector("[data-editor-frontmatter] .cm-content")!).fontSize) * 1.5);
+    expect(measured.scroll).toBeGreaterThan(measured.client);
+    expect(measured.client).toBeGreaterThan(lineHeight * 6);
+    expect(measured.client).toBeLessThan(lineHeight * 9);
+
+    // Editing the pane edits the document: the draft carries the whole file,
+    // block first (D-11, B4).
+    await pane.locator(".cm-content").click();
+    await page.keyboard.type("x");
+    await expect.poll(() => lastSent.get("file_draft")?.contents_utf8 ?? "").toContain("x");
+    const draft = String(lastSent.get("file_draft")?.contents_utf8 ?? "");
+    expect(draft.startsWith("---\n")).toBe(true);
+    expect(draft).toContain("# Body");
+
+    // Source mode is unchanged: one buffer, the block inline (D-11).
+    await page.locator('[data-markdown-mode="live"]').click();
+    await expect(page.locator("[data-editor-frontmatter]")).toHaveCount(0);
+    await expect(page.locator("[data-editor-codemirror] .cm-content")).toContainText("title: Post");
+
+    // And Live brings the pane back.
+    await page.locator('[data-markdown-mode="source"]').click();
+    await expect(page.locator("[data-editor-frontmatter]")).toBeVisible();
+    await expect(page.locator("[data-editor-body] .cm-content")).not.toContainText("title: Post");
   } finally {
     close(fixture);
   }
