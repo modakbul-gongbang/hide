@@ -580,7 +580,20 @@ impl Boundary {
     /// Whether `raw` resolves under a current registered root. A save keeps
     /// the original spelling because the core compares it with its open tab.
     pub fn is_under_root(&self, raw: &str) -> bool {
-        self.resolve_target(raw).is_ok()
+        if self.resolve_target(raw).is_ok() {
+            return true;
+        }
+        // An open tab may outlive a file deleted on disk. Let the core report
+        // the failed save and preserve its draft, but only when the missing
+        // leaf's existing parent is still within the pinned checkout.
+        let Ok(expanded) = self.expand(raw) else {
+            return false;
+        };
+        let path = Path::new(&expanded);
+        matches!(fs::symlink_metadata(path), Err(error) if error.kind() == io::ErrorKind::NotFound)
+            && path
+                .parent()
+                .is_some_and(|parent| self.resolve_target(&parent.to_string_lossy()).is_ok())
     }
 
     /// The most specific root `path` is written under, with what follows it.
@@ -1390,6 +1403,11 @@ mod tests {
             "the spelling that was checked is the one forwarded"
         );
         assert!(f.boundary.is_under_root(&s(&repo.join("src/main.rs"))));
+        assert!(f.boundary.is_under_root(&s(&repo.join("src/deleted.rs"))));
+        assert!(
+            !f.boundary
+                .is_under_root(&s(&repo.join("missing/deleted.rs")))
+        );
     }
 
     #[test]

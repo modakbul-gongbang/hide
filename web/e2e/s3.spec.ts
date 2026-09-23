@@ -258,6 +258,25 @@ test("a refused save keeps the tab dirty and takes the saving mark off", async (
   }
 });
 
+test("a deleted open file reports a failed save without losing its draft", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, sent } = fixture;
+  try {
+    fs.unlinkSync(file);
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 44;\n");
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveAttribute("data-saving", "false", { timeout: 10_000 });
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+    await expect(content).toContainText("export const answer = 44;");
+    expect(fs.existsSync(file)).toBe(false);
+  } finally {
+    close(fixture);
+  }
+});
+
 test("leaving a dirty tab saves it and never writes it into the next file", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, file } = fixture;
@@ -709,6 +728,31 @@ test("a loopback browser downloads a file past the editing cap", async ({ page }
     expect(sent.get("open_external") ?? 0).toBe(0);
     expect(sent.get("file_bytes") ?? 0).toBeGreaterThan(1);
     await expect(page.locator("[data-editor-download-failed]")).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a browser without a save picker explains the 256 MiB download limit", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    fs.truncateSync(path.join(repo, "huge.txt"), 257 * 1024 * 1024);
+    await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
+    await expect(page.locator("[data-editor-preview-only]")).toBeVisible();
+    await page.evaluate(() => {
+      Object.defineProperty(window, "showSaveFilePicker", { configurable: true, value: undefined });
+    });
+    await page.locator("[data-editor-download]").click();
+    await expect(page.locator("[data-editor-download-failed]")).toContainText(
+      "Use a browser with a file save picker for files over 256 MiB.",
+    );
+    const evidenceDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (evidenceDir) {
+      await page.locator("[data-editor-preview-only]").screenshot({ path: path.join(evidenceDir, "s3-no-picker-limit.png") });
+    }
+    expect(sent.get("file_bytes")).toBe(1);
+    expect(sent.get("open_external") ?? 0).toBe(0);
   } finally {
     close(fixture);
   }

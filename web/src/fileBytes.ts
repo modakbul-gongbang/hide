@@ -164,7 +164,12 @@ export async function downloadFile(path: string): Promise<void> {
   }
   // Browsers without a streaming file writer retain the existing Blob path.
   // Its protocol read cap is explicit; a failure is shown beside the button.
-  const bytes = await requestFileBytes(path);
+  const bytes = await requestFileBytes(path).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "too_large") {
+      throw new Error("Use a browser with a file save picker for files over 256 MiB.");
+    }
+    throw error;
+  });
   const url = blobUrl(bytes, "application/octet-stream");
   const anchor = document.createElement("a");
   anchor.href = url;
