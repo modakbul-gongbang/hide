@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, queueBuffer } from "./buffers";
+import { allBuffers, BUFFER_MAX_AGE_MS, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, queueBuffer } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { clearDraft, noteDraft } from "./editor/draft";
 import { activeEditorTab, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
@@ -230,6 +230,11 @@ function EditorBody({
       const buffer = bufferFor(buffers, root, tab.path);
       checked.current = true;
       if (!buffer) return;
+      if (Date.now() - buffer.updated_at > BUFFER_MAX_AGE_MS) {
+        void deleteBuffer(root, tab.path);
+        useShellStore.getState().noteDiagnostic(`discarded the stale unsaved buffer for ${tab.path}`);
+        return;
+      }
       const current = latest.current;
       if (!current) return;
       // A read-only or preview-only document has no draft the core would

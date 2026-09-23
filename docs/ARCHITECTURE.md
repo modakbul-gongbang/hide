@@ -311,7 +311,8 @@ An opened document is revealed by merging its ancestors into `ui_state.expanded_
 The editor is CodeMirror 6 (`web/src/editor/`): language packs load per document kind, an edit saves itself after 600 ms of idle and ⌘S saves at once (D-10), a disk change becomes the core's conflict choice, and Markdown Live hides the same markup the Swift view hides (`markdownLive.ts` is a pure plan) while a leading YAML frontmatter block is drawn in its own eight-line pane that scrolls inside itself (`frontmatter.ts` finds the block; the editor then holds one document in two views, and the split and merge never enter either history, D-11).
 Image, PDF and video viewers read hided's bytes; the web decides video from the extension because the core has no Video kind (D-09).
 Unsaved buffers live in IndexedDB (`web/src/buffers.ts`), keyed by checkout root and real path: an open document's buffer is restored on reconnect, a closed one is discarded with a diagnostic, a rename or move carries the buffer to the new path, and one nobody claimed for 14 days goes on the next start; a buffer that cannot be stored leaves editing alone and marks its tab "kept in this tab only" (B8, D-14).
-The already shipped path-keyed store remains through the v2 database upgrade; a live core tab supplies the checkout root before its old draft is claimed, while edits are coalesced to one active and one pending committed write per document with a bounded total queue.
+The v3 database upgrade keeps shipped v1 path-keyed drafts until a live core tab supplies their checkout root, and copies completion-build v2 root-keyed drafts into the current store in one upgrade transaction.
+Edits are coalesced to one active and one pending committed write per document with a bounded total queue; a move retires the old identity in the same transaction that claims the new one.
 
 ### The shortcut registry
 

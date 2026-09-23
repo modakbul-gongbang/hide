@@ -23,7 +23,7 @@ const DATABASE = "hide-shell";
 const LEGACY_STORE = "buffers";
 const STORE = "buffers_v2";
 /** v2 keys a buffer by (checkout root, real path); v1 keyed by path alone. */
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 
 function openDatabase(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
@@ -45,6 +45,25 @@ function openDatabase(): Promise<IDBDatabase | null> {
       // snapshot can identify their open tabs; deleting the store here would
       // lose work during the upgrade from the already shipped S3 shell.
       if (!database.objectStoreNames.contains(STORE)) database.createObjectStore(STORE, { keyPath: "id" });
+      // Completion builds also wrote root-keyed rows to the old store at DB
+      // version 2. Move those rows in the upgrade transaction; without a
+      // version bump, onupgradeneeded would never create the new store.
+      if (database.objectStoreNames.contains(LEGACY_STORE)) {
+        const source = request.transaction!.objectStore(LEGACY_STORE);
+        if (source.keyPath === "id") {
+          const read = source.getAll();
+          read.onsuccess = () => {
+            const destination = request.transaction!.objectStore(STORE);
+            for (const row of read.result as StoredBuffer[]) {
+              destination.get(row.id).onsuccess = (lookup) => {
+                const current = (lookup.target as IDBRequest<StoredBuffer | undefined>).result;
+                if (!current || current.updated_at < row.updated_at) destination.put(row);
+              };
+            }
+            database.deleteObjectStore(LEGACY_STORE);
+          };
+        }
+      }
     };
     request.onsuccess = () => {
       if (settled) request.result.close();
@@ -240,6 +259,39 @@ export function flushBuffer(root: string, path: string): Promise<void> {
   return new Promise((resolve) => {
     queue.idleWaiters.push(resolve);
     if (!queue.active) void flush(key, queue);
+  });
+}
+
+/** Retarget an unsaved draft in one transaction after its old writes settle. */
+export async function moveBuffer(oldRoot: string, oldPath: string, root: string, path: string): Promise<"moved" | "missing" | "failed"> {
+  await flushBuffer(oldRoot, oldPath);
+  const database = await openDatabase();
+  if (!database) return "failed";
+  return new Promise((resolve) => {
+    let transaction: IDBTransaction;
+    try { transaction = database.transaction(STORE, "readwrite"); }
+    catch { database.close(); resolve("failed"); return; }
+    const store = transaction.objectStore(STORE);
+    const oldKey = identity(oldRoot, oldPath);
+    const newKey = identity(root, path);
+    let found = false;
+    store.get(oldKey).onsuccess = (event) => {
+      const old = (event.target as IDBRequest<StoredBuffer | undefined>).result;
+      if (!old) return;
+      found = true;
+      store.get(newKey).onsuccess = (lookup) => {
+        const current = (lookup.target as IDBRequest<StoredBuffer | undefined>).result;
+        // A newer edit at the destination wins. A still-queued destination
+        // edit will commit after this transaction and also wins.
+        if (!current || current.updated_at < old.updated_at) {
+          store.put({ ...old, id: newKey, root, path });
+        }
+        store.delete(oldKey);
+      };
+    };
+    transaction.oncomplete = () => { database.close(); resolve(found ? "moved" : "missing"); };
+    transaction.onabort = () => { database.close(); resolve("failed"); };
+    transaction.onerror = () => { database.close(); resolve("failed"); };
   });
 }
 

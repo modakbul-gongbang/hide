@@ -608,6 +608,21 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await expect(page.locator(`[data-explorer-row="${repo}/src/corrected.ts"]`)).toBeVisible();
 
     // Rename: one path_rename, and the row takes the new name.
+    await page.evaluate(async ({ root, path }) => {
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 3);
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers_v2", "readwrite");
+          transaction.objectStore("buffers_v2").put({
+            id: `${root}\u0000${path}`, root, path, contents: "unsaved recovery copy", updated_at: Date.now(),
+          });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { root: repo, path: `${repo}/src/added.ts` });
     await page.locator(`[data-explorer-row="${repo}/src/added.ts"]`).click({ button: "right" });
     await page.locator('[data-menu-item="rename"]').click();
     const rename = page.locator('[data-explorer-draft="rename"] input');
@@ -616,6 +631,19 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await expect.poll(() => sent.get("path_rename")).toBe(1);
     expect(lastSent.get("path_rename")).toMatchObject({ root: repo, path: `${repo}/src/added.ts`, name: "renamed.ts" });
     await expect(page.locator(`[data-explorer-row="${repo}/src/renamed.ts"]`)).toBeVisible();
+    await expect.poll(() => page.evaluate(async ({ root, path }) => {
+      return new Promise<boolean>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 3);
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers_v2", "readonly");
+          const read = transaction.objectStore("buffers_v2").get(`${root}\u0000${path}`);
+          read.onsuccess = () => { database.close(); resolve(read.result === undefined); };
+          read.onerror = () => { database.close(); reject(read.error); };
+        };
+      });
+    }, { root: repo, path: `${repo}/src/added.ts` })).toBe(true);
 
     // New Folder in the root, then drag the file onto it: one path_move.
     await page.locator("[data-explorer-tree]").click({ button: "right", position: { x: 20, y: 400 } });
@@ -675,7 +703,7 @@ test("a preview-only document closes without a save", async ({ page }) => {
     await page.evaluate(
       async ({ root, path, id }) => {
         await new Promise<void>((resolve, reject) => {
-          const request = indexedDB.open("hide-shell", 2);
+          const request = indexedDB.open("hide-shell", 3);
           request.onupgradeneeded = () => {
             const database = request.result;
             if (!database.objectStoreNames.contains("buffers_v2")) database.createObjectStore("buffers_v2", { keyPath: "id" });
@@ -896,6 +924,70 @@ test("an existing v1 recovery draft survives the IndexedDB upgrade", async ({ pa
     await page.reload();
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 99");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 99;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a root-keyed v2 recovery draft survives the IndexedDB upgrade", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  try {
+    await page.evaluate(async ({ path, root }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 2);
+        opened.onupgradeneeded = () => opened.result.createObjectStore("buffers", { keyPath: "id" });
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers", "readwrite");
+          transaction.objectStore("buffers").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 98;\n", updated_at: Date.now() });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file, root: repo });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 98");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 98;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("an expired recovery draft is not restored before its sweep", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  const original = fs.readFileSync(file, "utf8");
+  try {
+    await page.evaluate(async ({ path, root }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 3);
+        opened.onupgradeneeded = () => opened.result.createObjectStore("buffers_v2", { keyPath: "id" });
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers_v2", "readwrite");
+          transaction.objectStore("buffers_v2").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 97;\n", updated_at: Date.now() - 15 * 24 * 60 * 60 * 1000 });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file, root: repo });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).not.toContainText("answer = 97");
+    await page.waitForTimeout(800);
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
   } finally {
     close(fixture);
   }

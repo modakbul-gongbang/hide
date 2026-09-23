@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
-import { allBuffers, bufferFor, claimLegacyBuffer, deleteBuffer, discardLegacyBuffers, flushBuffer, identity, putBuffer, staleBuffers, sweepBuffers } from "./buffers";
+import { allBuffers, claimLegacyBuffer, deleteBuffer, discardLegacyBuffers, flushBuffer, identity, moveBuffer, staleBuffers, sweepBuffers } from "./buffers";
 import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
@@ -93,15 +93,8 @@ export function App() {
       // A rename or a move retargets the stored buffer to the new identity,
       // showing tab or background tab alike (D-14).
       if (before && (before.root !== root || before.path !== tab.path)) {
-        void allBuffers().then((buffers) => {
-          const buffer = bufferFor(buffers, before.root, before.path);
-          if (!buffer) return;
-          // The old record goes only once the move landed: a buffer that could
-          // not be stored keeps its recovery copy and says so (D-14).
-          void putBuffer(root, tab.path, buffer.contents).then((stored) => {
-            if (stored) void deleteBuffer(before.root, before.path);
-            else useShellStore.getState().noteBufferWarning(tab.id, true);
-          });
+        void moveBuffer(before.root, before.path, root, tab.path).then((outcome) => {
+          if (outcome === "failed" && tab.dirty) useShellStore.getState().noteBufferWarning(tab.id, true);
         });
       }
     }
