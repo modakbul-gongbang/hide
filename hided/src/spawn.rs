@@ -47,7 +47,16 @@ impl OwnedOpener {
     }
 
     pub fn try_wait(&mut self) -> io::Result<bool> {
-        Ok(self.supervisor.try_wait()?.is_some())
+        let Some(owner) = self.owner.as_mut() else {
+            return Ok(true);
+        };
+        let mut byte = [0];
+        match owner.read(&mut byte) {
+            Ok(0) => Ok(true),
+            Ok(_) => Err(io::Error::other("unexpected opener supervisor message")),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn stop(&mut self) {
@@ -78,7 +87,7 @@ impl Drop for OwnedOpener {
 }
 
 /// Hands a default association utility to the OS. Tokio's process driver
-/// reaps a short-lived utility after its handle is dropped, while a utility
+/// attempts to reap a short-lived utility after its handle is dropped; one
 /// that becomes the registered application may live for that app's lifetime.
 #[cfg(unix)]
 pub fn handoff_default_opener(program: &OsStr, path: &Path) -> io::Result<()> {
@@ -140,6 +149,9 @@ pub fn spawn_opener(
         ));
     }
     owner.set_read_timeout(None)?;
+    // EOF now observes supervisor completion without reaping its PID. That
+    // keeps its process-group ID reserved until stop signals the group.
+    owner.set_nonblocking(true)?;
     Ok(opener)
 }
 

@@ -294,6 +294,7 @@ At most four opener requests may run at once and at most twelve launches are acc
 On Unix, a private `hided` supervisor owns an explicit `HIDE_OPEN_COMMAND` CLI helper and all processes that remain in its process group; normal stop, timeout, or daemon death including `SIGKILL` ends that group.
 The override must not detach into another session or process group, which this ownership boundary cannot supervise.
 The normal `open` or `xdg-open` utility is started directly as an OS default-application handoff, since `xdg-open` can stay attached to the application for its lifetime; the daemon does not signal that process or its descendants after acceptance.
+Tokio's process driver attempts to reap a short-lived default utility after the handle is dropped; it does not own the registered application's lifetime.
 An opener request is accepted when its utility starts, not when the application confirms it opened the file.
 The WebSocket handles the bounded launch handshake on a blocking worker, so terminal input and snapshots can continue on the same connection.
 Only the latest opener attempt on a connection emits its result; an older asynchronous completion cannot replace the newest result in the web shell's one-result state.
