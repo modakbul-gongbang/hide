@@ -300,6 +300,12 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             changed = directory_changes.recv() => {
                 match changed {
                     Ok(frame) => {
+                        let path = serde_json::from_str::<Value>(&frame)
+                            .ok()
+                            .and_then(|value| value.pointer("/payload/path").and_then(Value::as_str).map(str::to_owned));
+                        if !path.is_some_and(|path| state.boundary.resolve_target(&path).is_ok()) {
+                            continue;
+                        }
                         if socket.send(Message::Text(frame.into())).await.is_err() {
                             break;
                         }
@@ -807,10 +813,13 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
         IndexAnswer::Ready { entries, truncated } => {
             let listed: Vec<Value> = entries
                 .iter()
-                .map(|relative| {
-                    json!({
-                        "path": known.join(relative).display().to_string(),
-                        "relative_path": relative,
+                .filter_map(|relative| {
+                    let path = known.join(relative).display().to_string();
+                    state.boundary.resolve_target(&path).ok().map(|_| {
+                        json!({
+                            "path": path,
+                            "relative_path": relative,
+                        })
                     })
                 })
                 .collect();

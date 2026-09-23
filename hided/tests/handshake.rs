@@ -817,6 +817,35 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_swift_order() {
         assert_eq!(refused["payload"]["kind"], "file_list");
         assert_eq!(refused["payload"]["reason"], "outside_checkout");
     }
+
+    // The snapshot still registers this spelling after the directory is
+    // replaced. Neither the new outside rows nor a write through it may pass.
+    std::fs::write(outside.path().join("outside-secret.txt"), "secret").unwrap();
+    std::fs::rename(&checkout, home.join("projects/alpha-old")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &checkout).unwrap();
+    for (kind, payload) in [
+        (
+            "file_list",
+            json!({"root": checkout_path, "path": checkout_path}),
+        ),
+        (
+            "file_create",
+            json!({"root": checkout_path, "parent": checkout_path, "name": "written.txt"}),
+        ),
+        (
+            "file_save",
+            json!({"path": checkout.join("outside-secret.txt").display().to_string()}),
+        ),
+        (
+            "file_index",
+            json!({"root": checkout_path, "query": "outside"}),
+        ),
+    ] {
+        let refused = send_event_expecting(&mut socket, kind, payload, never).await;
+        assert_eq!(refused["type"], "path_refused", "{kind}");
+        assert_eq!(refused["payload"]["reason"], "outside_checkout", "{kind}");
+    }
+    assert!(!outside.path().join("written.txt").exists());
     running.stop();
 }
 
@@ -942,6 +971,51 @@ async fn file_bytes_streams_a_checkout_file_and_refuses_a_path_outside_it() {
     .await;
     assert_eq!(refused["type"], "file_bytes_error");
     assert_eq!(refused["payload"]["reason"], "too_large");
+    running.stop();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_fifo_byte_request_is_refused_and_another_socket_stays_responsive() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let (dir, env) = test_env(true);
+    let checkout = dir.path().canonicalize().unwrap().join("projects/alpha");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let pipe = checkout.join("pipe");
+    let name = CString::new(pipe.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+    let mut socket = live_socket(&running).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        send_event_expecting(
+            &mut socket,
+            "file_bytes",
+            json!({"request_id": "fifo", "path": pipe.display().to_string(), "offset": 0, "length": Value::Null}),
+            never,
+        ),
+    )
+    .await;
+    if result.is_err() {
+        let _ = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&pipe);
+    }
+    let refused = result.expect("a FIFO must not block the WebSocket");
+    assert_eq!(refused["payload"]["reason"], "not_a_file");
+    let mut second = live_socket(&running).await;
+    let listing = send_event_expecting(
+        &mut second,
+        "file_list",
+        json!({"root": checkout.display().to_string(), "path": checkout.display().to_string()}),
+        |frame| frame["type"] == "directory_list",
+    )
+    .await;
+    assert_eq!(listing["type"], "directory_list");
     running.stop();
 }
 

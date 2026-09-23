@@ -286,6 +286,11 @@ fn apply_snapshot(
     );
     boundary.set_roots(roots);
     let (root, expanded) = watch_state_from_value(value);
+    let root = root.filter(|root| boundary.known_root(root).is_some());
+    let expanded = expanded
+        .into_iter()
+        .filter(|path| boundary.resolve_target(path).is_ok())
+        .collect();
     watch.reconcile(root, expanded);
 }
 
