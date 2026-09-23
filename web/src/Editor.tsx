@@ -4,7 +4,7 @@ import { allBuffers, BUFFER_MAX_AGE_MS, bufferDecision, bufferFor, claimLegacyBu
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { clearDraft, noteDraft } from "./editor/draft";
 import { activeEditorTab, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
-import { downloadFile, isLocalHost } from "./fileBytes";
+import { downloadFile } from "./fileBytes";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
@@ -271,10 +271,10 @@ function EditorBody({
   if (!editable) {
     return <FileViewer document={document} />;
   }
-  // A text document the core would not read (past the editable cap) offers the
-  // host OS handler instead of an editor (D-12); a remote daemon downloads.
+  // A bare browser cannot prove that the daemon is on the viewer's machine,
+  // even when its URL is localhost through an SSH tunnel (D-12).
   if (document.contents_utf8 === null) {
-    return <PreviewOnly document={document} actions={actions} />;
+    return <PreviewOnly document={document} />;
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -307,10 +307,7 @@ function EditorBody({
   );
 }
 
-function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; actions: Actions }) {
-  const external = useShellStore((s) => s.externalOpen);
-  const local = isLocalHost();
-  const failed = external?.ok === false && external.path === document.path;
+function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-sm px-md text-center text-caption text-muted" data-editor-preview-only="true">
@@ -318,28 +315,18 @@ function PreviewOnly({ document, actions }: { document: EditorDocumentSnapshot; 
       <button
         type="button"
         className="rounded-sm bg-elevated px-md py-xs text-primary hover:bg-divider"
-        data-editor-open-external="true"
+        data-editor-download="true"
         onClick={() => {
-          if (local) actions.openExternal(document.path);
-          else {
-            setDownloadError(null);
-            void downloadFile(document.path).catch((error: unknown) => {
-              if ((error as { name?: string }).name !== "AbortError") {
-                setDownloadError(error instanceof Error ? error.message : "download_failed");
-              }
-            });
-          }
+          setDownloadError(null);
+          void downloadFile(document.path).catch((error: unknown) => {
+            if ((error as { name?: string }).name !== "AbortError") {
+              setDownloadError(error instanceof Error ? error.message : "download_failed");
+            }
+          });
         }}
       >
-        {local ? "Open in default app" : "Download"}
+        Download
       </button>
-      {failed ? (
-        <span className="text-danger" data-editor-open-failed="true">
-          {external.reason === "not_openable"
-            ? "Hide never opens a file that could run or install itself"
-            : `The default app could not open it: ${external.reason ?? "failed"}`}
-        </span>
-      ) : null}
       {downloadError ? <span className="text-danger" data-editor-download-failed="true">The download failed: {downloadError}</span> : null}
     </div>
   );

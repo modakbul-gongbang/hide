@@ -86,8 +86,8 @@ async function openCheckout(page: Page): Promise<Fixture> {
     fs.writeFileSync(path.join(repoDir, "doc.pdf"), minimalPdf());
     fs.copyFileSync(path.resolve("e2e/fixtures/tiny.mp4"), path.join(repoDir, "clip.mp4"));
     gitFixture(repoDir);
-    // Sparse and untracked: past the editable cap, so the editor offers the
-    // host OS handler instead of a buffer (D-12).
+    // Sparse and untracked: past the editable cap, so the browser offers a
+    // download instead of a buffer (D-12).
     fs.writeFileSync(path.join(repoDir, "huge.txt"), "");
     fs.truncateSync(path.join(repoDir, "huge.txt"), 17 * 1024 * 1024);
     const repo = fs.realpathSync(repoDir);
@@ -674,7 +674,7 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
   }
 });
 
-test("a file past the editing cap offers the default app instead of an editor", async ({ page }) => {
+test("a loopback browser downloads a file past the editing cap", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, sent } = fixture;
   try {
@@ -682,11 +682,33 @@ test("a file past the editing cap offers the default app instead of an editor", 
     const body = page.locator("[data-editor-preview-only]");
     await expect(body).toBeVisible();
     await expect(body).toContainText("preview-only");
+    const download = page.locator("[data-editor-download]");
+    await expect(download).toHaveText("Download");
     await screenshot(page, "s3-preview-only");
 
-    await page.locator("[data-editor-open-external]").click();
-    await expect.poll(() => sent.get("open_external")).toBe(1);
-    await expect(page.locator("[data-editor-open-failed]")).toHaveCount(0);
+    // The URL is 127.0.0.1 in this fixture, just as an SSH tunnel can be.
+    // Fake only the browser's file picker; the real daemon supplies all bytes.
+    await page.evaluate(() => {
+      const browser = window as Window & { downloadedBytes?: number; downloadClosed?: boolean };
+      browser.downloadedBytes = 0;
+      browser.downloadClosed = false;
+      Object.defineProperty(window, "showSaveFilePicker", {
+        configurable: true,
+        value: async () => ({
+          createWritable: async () => ({
+            write: async (bytes: Uint8Array) => { browser.downloadedBytes = (browser.downloadedBytes ?? 0) + bytes.byteLength; },
+            close: async () => { browser.downloadClosed = true; },
+            abort: async () => {},
+          }),
+        }),
+      });
+    });
+    await download.click();
+    await expect.poll(() => page.evaluate(() => (window as Window & { downloadClosed?: boolean }).downloadClosed)).toBe(true);
+    expect(await page.evaluate(() => (window as Window & { downloadedBytes?: number }).downloadedBytes)).toBe(17 * 1024 * 1024);
+    expect(sent.get("open_external") ?? 0).toBe(0);
+    expect(sent.get("file_bytes") ?? 0).toBeGreaterThan(1);
+    await expect(page.locator("[data-editor-download-failed]")).toHaveCount(0);
   } finally {
     close(fixture);
   }

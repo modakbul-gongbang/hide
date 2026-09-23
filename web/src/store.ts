@@ -28,11 +28,6 @@ export type DirectoryList = {
 export type PathRefusal = { kind: string; path: string; reason: string };
 export type DirectoryChanged = { path: string };
 export type FileIndexEntry = { path: string; relative_path: string };
-export type OpenExternalResult = {
-  path: string;
-  ok: boolean;
-  reason: string | null;
-};
 export type FileIndexResult = {
   root_path: string;
   query: string;
@@ -56,8 +51,7 @@ export type Frame = {
   } & Partial<DirectoryList> &
     Partial<PathRefusal> &
     Partial<DirectoryChanged> &
-    Partial<FileIndexResult> &
-    Partial<OpenExternalResult>;
+    Partial<FileIndexResult>;
 };
 
 type Store = {
@@ -89,8 +83,6 @@ type Store = {
   fileIndex: FileIndexResult | null;
   /** The last attachment the daemon refused, drawn as one line over its pane (B15). */
   attachmentRefusal: { pane_id: string; reason: string } | null;
-  /** The last open-in-default-app answer, drawn under the document (D-12). */
-  externalOpen: OpenExternalResult | null;
   /** Tabs whose save is in flight; the strip shows only these (D-10). */
   savingTabs: Set<string>;
   /** Tabs whose buffer could not be stored; they say "kept in this tab only" (D-14). */
@@ -162,7 +154,6 @@ export const useShellStore = create<Store>((set, get) => ({
   pathRefusal: null,
   fileIndex: null,
   attachmentRefusal: null,
-  externalOpen: null,
   savingTabs: new Set<string>(),
   bufferWarnings: new Set<string>(),
   folderChanges: {},
@@ -254,16 +245,7 @@ export const useShellStore = create<Store>((set, get) => ({
       }
       return [];
     }
-    if (frame.type === "open_external_result") {
-      set({
-        externalOpen: {
-          path: payload.path ?? "",
-          ok: payload.ok ?? false,
-          reason: payload.reason ?? null,
-        },
-      });
-      return [];
-    }
+    if (frame.type === "open_external_result") return [];
     if (frame.type === "file_index_result") {
       set({
         fileIndex: {
