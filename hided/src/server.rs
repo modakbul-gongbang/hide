@@ -278,7 +278,8 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     let mut directory_changes = state.watch.subscribe();
     // A slow OS opener must not stall terminal input or snapshots on this
     // socket. Each client has a small bounded set of pending launch replies.
-    let mut pending_openers: JoinSet<Vec<Message>> = JoinSet::new();
+    let mut pending_openers: JoinSet<(u64, Vec<Message>)> = JoinSet::new();
+    let mut latest_open_attempt = 0u64;
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
@@ -290,7 +291,8 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         tokio::select! {
             finished = pending_openers.join_next(), if !pending_openers.is_empty() => {
                 let replies = match finished {
-                    Some(Ok(frames)) => frames,
+                    Some(Ok((attempt, frames))) if attempt == latest_open_attempt => frames,
+                    Some(Ok(_)) => continue,
                     Some(Err(error)) => vec![Message::Text(
                         json!({"type":"error","payload":{},"message":format!("opener worker: {error}")}).to_string().into(),
                     )],
@@ -336,6 +338,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                                 if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() { break; }
                             }
                             Ok(ClientAction::OpenExternal(event)) => {
+                                latest_open_attempt = latest_open_attempt.wrapping_add(1);
                                 if pending_openers.len() >= 4 {
                                     let frame = json!({
                                         "type":"open_external_result",
@@ -344,7 +347,8 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                                     if socket.send(Message::Text(frame.to_string().into())).await.is_err() { break; }
                                 } else {
                                     let worker_state = state.clone();
-                                    pending_openers.spawn_blocking(move || handle_open_external(&worker_state, &event));
+                                    let attempt = latest_open_attempt;
+                                    pending_openers.spawn_blocking(move || (attempt, handle_open_external(&worker_state, &event)));
                                 }
                             }
                             outcome => {

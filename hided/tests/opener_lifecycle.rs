@@ -72,7 +72,6 @@ fn owner_process() {
         Path::new(env!("CARGO_BIN_EXE_hided")),
         script.as_os_str(),
         &marker,
-        true,
     );
     if std::env::var_os("HIDED_EXPECT_OPENER_TIMEOUT").is_some() {
         assert!(launched.is_err());
@@ -83,20 +82,13 @@ fn owner_process() {
     std::thread::sleep(Duration::from_secs(30));
 }
 
-#[test]
-fn default_app_handoff_survives_supervisor_close() {
+#[tokio::test]
+async fn default_app_handoff_survives_caller_close() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_default_app(dir.path());
     let marker = dir.path().join("handoff");
-    let mut opener = hided::spawn::spawn_opener(
-        Path::new(env!("CARGO_BIN_EXE_hided")),
-        script.as_os_str(),
-        &marker,
-        false,
-    )
-    .unwrap();
+    hided::spawn::handoff_default_opener(script.as_os_str(), &marker).unwrap();
     let pid = wait_for_pid(&sidecar(&marker, "pid"));
-    opener.stop();
     assert!(alive(pid), "successful default app handoff was closed");
     let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
     assert_gone(pid);
@@ -134,11 +126,38 @@ fn normal_close_reaps_cli_and_its_child() {
         Path::new(env!("CARGO_BIN_EXE_hided")),
         script.as_os_str(),
         &marker,
-        true,
     )
     .unwrap();
     let pid = wait_for_pid(&sidecar(&marker, "pid"));
     let child = wait_for_pid(&sidecar(&marker, "child"));
+    opener.stop();
+    assert_gone(pid);
+    assert_gone(child);
+}
+
+#[test]
+fn unexpected_supervisor_exit_still_ends_owned_cli_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = fake_opener(dir.path());
+    let marker = dir.path().join("supervisor-crash");
+    let mut opener = hided::spawn::spawn_opener(
+        Path::new(env!("CARGO_BIN_EXE_hided")),
+        script.as_os_str(),
+        &marker,
+    )
+    .unwrap();
+    let pid = wait_for_pid(&sidecar(&marker, "pid"));
+    let child = wait_for_pid(&sidecar(&marker, "child"));
+    assert_eq!(
+        unsafe { libc::kill(opener.supervisor_pid() as i32, libc::SIGKILL) },
+        0
+    );
+    let until = Instant::now() + Duration::from_secs(5);
+    while !opener.try_wait().unwrap() {
+        assert!(Instant::now() < until, "supervisor did not exit");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(alive(pid) && alive(child));
     opener.stop();
     assert_gone(pid);
     assert_gone(child);
@@ -280,6 +299,52 @@ async fn websocket_keeps_serving_during_opener_acceptance() {
     };
     assert_eq!(opened["type"], "open_external_result");
     assert_eq!(opened["payload"]["ok"], true);
+}
+
+#[tokio::test]
+async fn newest_over_budget_result_is_not_erased_by_older_launches() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let checkout = root.join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    seed_registration(&root, &checkout);
+    let script = fake_opener(&root);
+    let (mut daemon, state) = start_private_daemon_with_pause(&root, &script, Some(1_500));
+    let mut socket = connect(&state).await;
+    let file = checkout.join("repeated.txt");
+    std::fs::write(&file, "safe data").unwrap();
+    for _ in 0..5 {
+        socket
+            .send(Message::Text(
+                json!({"schema_version":2,"kind":"open_external","payload":{"path":file.display().to_string()}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+    }
+    let latest = loop {
+        let frame = next_json(&mut socket).await;
+        if frame["type"] == "open_external_result" {
+            break frame;
+        }
+    };
+    assert_eq!(latest["payload"]["reason"], "over_budget");
+    let stale = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let frame = next_json(&mut socket).await;
+            if frame["type"] == "open_external_result" {
+                break frame;
+            }
+        }
+    })
+    .await;
+    assert!(
+        stale.is_err(),
+        "older opener result replaced the newest failure"
+    );
+    daemon.0.kill().unwrap();
+    daemon.0.wait().unwrap();
 }
 
 type Socket =

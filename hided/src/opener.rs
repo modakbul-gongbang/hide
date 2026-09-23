@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Notify, Semaphore};
 
 #[cfg(unix)]
-use crate::spawn::spawn_opener;
+use crate::spawn::{handoff_default_opener, spawn_opener};
 
 const MAX_IN_FLIGHT_OPENERS: usize = 4;
 const MAX_OPENS_PER_MINUTE: usize = 12;
@@ -37,8 +37,8 @@ impl OpenHandler {
     }
 
     /// A successful call means the handler accepted the file, not that the
-    /// eventual application opened it. The utility process is reaped or killed
-    /// within ten seconds, and a daemon stop ends it sooner.
+    /// eventual application opened it. An explicit CLI helper is ended within
+    /// ten seconds or on daemon stop; the OS default is handed off at spawn.
     pub fn launch(&self, path: &Path) -> Result<(), &'static str> {
         let permit = self
             .slots
@@ -70,14 +70,21 @@ impl OpenHandler {
         }
 
         #[cfg(unix)]
+        if self.configured.is_none() {
+            // Starting the OS association utility is the handoff. It may
+            // become or wait for the chosen application, so it is not an
+            // owned CLI helper and must not enter the ten-second kill path.
+            let result =
+                handoff_default_opener(platform_opener(), path).map_err(|_| "spawn_failed");
+            drop(permit);
+            return result;
+        }
+
+        #[cfg(unix)]
         let mut child = {
-            let program = match self.configured.as_deref() {
-                Some(program) => program.as_os_str(),
-                None => platform_opener(),
-            };
+            let program = self.configured.as_deref().expect("configured opener");
             let supervisor = std::env::current_exe().map_err(|_| "spawn_failed")?;
-            spawn_opener(&supervisor, program, path, self.configured.is_some())
-                .map_err(|_| "spawn_failed")?
+            spawn_opener(&supervisor, program.as_os_str(), path).map_err(|_| "spawn_failed")?
         };
         #[cfg(windows)]
         return Err("spawn_failed");

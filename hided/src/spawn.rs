@@ -42,14 +42,21 @@ pub struct OwnedOpener {
 
 #[cfg(unix)]
 impl OwnedOpener {
+    pub fn supervisor_pid(&self) -> u32 {
+        self.supervisor.id()
+    }
+
     pub fn try_wait(&mut self) -> io::Result<bool> {
         Ok(self.supervisor.try_wait()?.is_some())
     }
 
     pub fn stop(&mut self) {
-        // EOF makes the supervisor end its CLI process group first. A stuck
-        // supervisor is then killed and reaped by this owner.
+        // Close the group ourselves even if the supervisor crashed before its
+        // watcher ran. Taking it makes explicit stop followed by Drop safe.
         self.owner.take();
+        if let Some(group) = self.owned_group.take() {
+            let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
+        }
         let until = Instant::now() + Duration::from_millis(250);
         while Instant::now() < until {
             match self.supervisor.try_wait() {
@@ -57,12 +64,6 @@ impl OwnedOpener {
                 Err(_) => break,
                 Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             }
-        }
-        // The supervisor might have been paused between spawning the CLI and
-        // starting its watcher. Its own process group lets the owner close
-        // that gap even when no acceptance byte was ever sent.
-        if let Some(group) = self.owned_group {
-            let _ = unsafe { libc::killpg(group, libc::SIGKILL) };
         }
         let _ = self.supervisor.kill();
         let _ = self.supervisor.wait();
@@ -76,14 +77,28 @@ impl Drop for OwnedOpener {
     }
 }
 
-/// Starts the same hided binary in its internal opener-supervisor mode. The
-/// supervisor alone starts the CLI utility and watches this owner's socket.
+/// Hands a default association utility to the OS. Tokio's process driver
+/// reaps a short-lived utility after its handle is dropped, while a utility
+/// that becomes the registered application may live for that app's lifetime.
+#[cfg(unix)]
+pub fn handoff_default_opener(program: &OsStr, path: &Path) -> io::Result<()> {
+    let mut command = tokio::process::Command::new(program);
+    command
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let _app = command.spawn()?;
+    Ok(())
+}
+
+/// Starts the same hided binary in its internal supervisor mode for an
+/// explicit CLI override. The supervisor watches this owner's socket.
 #[cfg(unix)]
 pub fn spawn_opener(
     supervisor_exe: &Path,
     program: &OsStr,
     path: &Path,
-    override_program: bool,
 ) -> io::Result<OwnedOpener> {
     let (owner, supervisor_socket) = UnixStream::pair()?;
     let inherited_fd = supervisor_socket.as_raw_fd();
@@ -91,19 +106,12 @@ pub fn spawn_opener(
     command
         .arg("--open-helper")
         .arg(inherited_fd.to_string())
-        .arg(if override_program {
-            "override"
-        } else {
-            "default"
-        })
         .arg(program)
         .arg(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if override_program {
-        command.process_group(0);
-    }
+    command.process_group(0);
     // UnixStream::pair uses close-on-exec. Only the supervisor receives its
     // end; the parent end stays close-on-exec and the launched app receives no
     // liveness descriptor.
@@ -118,7 +126,7 @@ pub fn spawn_opener(
     let supervisor = command.spawn()?;
     drop(supervisor_socket);
     let mut opener = OwnedOpener {
-        owned_group: override_program.then_some(supervisor.id() as i32),
+        owned_group: Some(supervisor.id() as i32),
         supervisor,
         owner: Some(owner),
     };
@@ -137,10 +145,10 @@ pub fn spawn_opener(
 
 /// Invoked only by hided's private `--open-helper` mode. An owner death closes
 /// the socket even after SIGKILL; the watcher then kills the still-running CLI
-/// process group. Successful default-app handoff is not killed after exit.
+/// process group. Default-app handoff does not enter this helper.
 #[cfg(unix)]
 pub fn run_opener_helper(args: &[OsString]) -> Result<(), String> {
-    if args.len() != 5 || args[0] != "--open-helper" {
+    if args.len() != 4 || args[0] != "--open-helper" {
         return Err("invalid opener helper arguments".into());
     }
     let fd: i32 = args[1]
@@ -148,19 +156,14 @@ pub fn run_opener_helper(args: &[OsString]) -> Result<(), String> {
         .and_then(|value| value.parse().ok())
         .filter(|fd| *fd >= 3)
         .ok_or("invalid opener helper descriptor")?;
-    let override_program = match args[2].to_str() {
-        Some("override") => true,
-        Some("default") => false,
-        _ => return Err("invalid opener helper mode".into()),
-    };
     let mut owner = unsafe { UnixStream::from_raw_fd(fd) };
     // The actual CLI must never inherit the liveness channel.
     if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } == -1 {
         return Err(io::Error::last_os_error().to_string());
     }
-    let mut command = Command::new(&args[3]);
+    let mut command = Command::new(&args[2]);
     command
-        .arg(&args[4])
+        .arg(&args[3])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -178,13 +181,6 @@ pub fn run_opener_helper(args: &[OsString]) -> Result<(), String> {
         .filter(|value| *value <= 3_000)
     {
         std::thread::sleep(Duration::from_millis(milliseconds));
-    }
-    if !override_program {
-        // A default association may keep xdg-open attached to the selected
-        // application for its lifetime. Starting it is the OS handoff; it is
-        // never safe for our timeout to signal that process or its children.
-        let _ = owner.write_all(&[1]);
-        return Ok(());
     }
     let group = std::process::id() as i32;
     let mut watcher_owner = match owner.try_clone() {
