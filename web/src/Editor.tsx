@@ -195,6 +195,14 @@ function EditorBody({
     if (document?.dirty === false) useShellStore.getState().noteSaving(tab.id, false);
   }, [document?.dirty, tab.id]);
 
+  // A refused save never reaches the clean state, so the core's failure is
+  // what takes the saving mark off the tab; the document stays dirty and the
+  // reason is in the diagnostic log (B5).
+  const failureAt = useShellStore((s) => s.rest?.status?.last_error?.occurred_at ?? null);
+  useEffect(() => {
+    if (failureAt !== null) useShellStore.getState().noteSaving(tab.id, false);
+  }, [failureAt, tab.id]);
+
   // A reconnect may have left an unsaved buffer in IndexedDB (B8): the buffer
   // is the newest edit, so it is restored over a clean core document and
   // dropped when the core already holds the same contents.

@@ -228,6 +228,36 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
   }
 });
 
+test("a refused save keeps the tab dirty and takes the saving mark off", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, sent } = fixture;
+  try {
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 42;\n");
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
+
+    // A file the process can no longer write: the next autosave is refused, so
+    // the tab stops saying it is saving and stays dirty, with the detail in
+    // the diagnostic log (B5, D-10).
+    fs.chmodSync(file, 0o444);
+    const savesBefore = sent.get("file_save") ?? 0;
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 43;\n");
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThan(savesBefore);
+    const tab = page.locator('[data-tab-kind="file"]');
+    await expect(tab).toHaveAttribute("data-saving", "false", { timeout: 10_000 });
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
+  } finally {
+    fs.chmodSync(file, 0o644);
+    close(fixture);
+  }
+});
+
 test("images, PDFs and videos render from hided file bytes", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, sent } = fixture;
