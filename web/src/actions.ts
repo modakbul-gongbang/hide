@@ -8,7 +8,7 @@ import { latestDraft } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
 import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore, type SidebarMode } from "./ui";
+import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 
 export type Actions = ReturnType<typeof createActions>;
@@ -61,17 +61,25 @@ export function createActions(dispatch: DispatchFn) {
   const focusCheckout = (workspaceId: string, checkoutId: string) =>
     dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
 
-  /**
-   * Switches the sidebar's mode. Explorer mode also tells the core, because
-   * the core computes a checkout's changed files only while its Explorer or
-   * Changes surface is visible (`Runtime::changes_request`); without that ui
-   * state the tree's rows carry no Git decoration.
-   */
+  /** Switches the left sidebar's mode; the Explorer is a right panel now. */
   const showSidebarMode = (mode: SidebarMode) => {
     ui().setSidebarMode(mode);
-    if (mode === "explorer") {
-      updateUiState({ right_panel_visible: true, right_panel_section: "explorer" });
-    }
+  };
+
+  /**
+   * Shows or hides the right panel's Explorer (D-13). The core owns the flag
+   * and computes a checkout's changed files only while the panel shows the
+   * Explorer (`Runtime::changes_request`), so the shell dispatches the ui
+   * state it wants and the panel follows the snapshot.
+   */
+  const showExplorerPanel = () => {
+    updateUiState({ right_panel_visible: true, right_panel_section: "explorer" });
+  };
+
+  const toggleRightPanel = () => {
+    const state = rest()?.ui_state;
+    const showing = !!state?.right_panel_visible && state.right_panel_section === "explorer";
+    updateUiState({ right_panel_visible: !showing, right_panel_section: "explorer" });
   };
 
   /**
@@ -80,6 +88,9 @@ export function createActions(dispatch: DispatchFn) {
    * which would open a pinned tab (B3).
    */
   const revealAncestors = (path: string) => {
+    // Highlighting a row needs a tree to highlight it in, so the reveal shows
+    // the panel the core's own `reveal_path` would show.
+    showExplorerPanel();
     const state = rest()?.ui_state;
     const root = rest()?.navigator?.root_path;
     if (!state || !root || !path.startsWith(`${root}/`)) return;
@@ -238,12 +249,15 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     toggleSidebarView() {
-      const order: SidebarMode[] = ["agents", "projects", "explorer"];
+      const order: SidebarMode[] = [...SIDEBAR_MODES];
       const index = order.indexOf(ui().sidebarMode);
       showSidebarMode(order[(index + 1) % order.length] ?? "agents");
     },
 
     showSidebarMode,
+
+    showExplorerPanel,
+    toggleRightPanel,
 
     openShortcuts() {
       ui().openOverlay(ui().overlay === "shortcuts" ? "none" : "shortcuts");

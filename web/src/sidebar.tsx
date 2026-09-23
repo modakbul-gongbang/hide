@@ -1,6 +1,5 @@
 import { memo } from "react";
 import type { Actions } from "./actions";
-import { ExplorerTree } from "./ExplorerTree";
 import { NewWorkspace } from "./NewWorkspace";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import type { AgentRow, Checkout, InactiveProjectGroup, Workspace } from "./snapshot";
@@ -34,7 +33,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             className={mode === candidate ? "text-primary" : "text-muted hover:text-secondary"}
             onClick={() => actions.showSidebarMode(candidate)}
           >
-            {candidate === "agents" ? "Agents" : candidate === "projects" ? "Projects" : "Explorer"}
+            {candidate === "agents" ? "Agents" : "Projects"}
           </button>
         ))}
         <span className="flex-1" />
@@ -43,8 +42,8 @@ export function Sidebar({ actions }: { actions: Actions }) {
       {status ? (
         <div className="border-b border-divider px-md py-sm text-caption text-muted">{status}</div>
       ) : null}
-      {mode === "agents" ? <AgentList actions={actions} /> : mode === "projects" ? <ProjectList actions={actions} /> : <ExplorerTree actions={actions} />}
-      {mode === "explorer" ? null : <NewWorkspace actions={actions} />}
+      {mode === "agents" ? <AgentList actions={actions} /> : <ProjectList actions={actions} />}
+      <NewWorkspace actions={actions} />
       <button
         type="button"
         data-new-workspace-button="true"

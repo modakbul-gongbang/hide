@@ -10,6 +10,7 @@ import { PaneCanvas } from "./PaneGrid";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
+import { RightPanel } from "./RightPanel";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
 import { checkoutById, editorFor, focusedCheckout } from "./snapshot";
@@ -109,6 +110,7 @@ export function App() {
           <FindBar actions={actions} />
           <Canvas actions={actions} />
         </main>
+        <RightPanel actions={actions} />
       </div>
       <CycleOverlay />
       <ConfirmClose actions={actions} />

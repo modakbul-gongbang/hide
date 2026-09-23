@@ -95,12 +95,15 @@ async function openCheckout(page: Page): Promise<Fixture> {
     const sent = countSent(page, lastSent);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
-    // Focus the repository checkout, then the Explorer mode.
+    // Focus the repository checkout, then show the right panel's Explorer,
+    // which is where the tree lives now (D-13).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
     await row.click();
     await expect(row).toHaveAttribute("aria-current", "true");
-    await page.locator('[data-sidebar-mode="explorer"]').click();
+    await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
+    await page.keyboard.press("Meta+Shift+KeyB");
+    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
 
     // Expand src and open the file into the preview tab.
