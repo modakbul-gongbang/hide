@@ -660,6 +660,22 @@ test("a file past the editing cap offers the default app instead of an editor", 
   }
 });
 
+test("a preview-only document closes without a save", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
+    await expect(page.locator("[data-editor-preview-only]")).toBeVisible();
+    // No draft the core would accept exists here, so the close is one step.
+    await page.locator('[data-tab-kind="file"]').hover();
+    await page.locator('[data-tab-kind="file"] button[aria-label^="Close tab"]').click();
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
+    await expect.poll(() => sent.get("file_close")).toBe(1);
+  } finally {
+    close(fixture);
+  }
+});
+
 test("a change in an expanded folder refreshes the tree without a reload", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo } = fixture;

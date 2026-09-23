@@ -96,8 +96,12 @@ export function App() {
         void allBuffers().then((buffers) => {
           const buffer = bufferFor(buffers, before.root, before.path);
           if (!buffer) return;
-          void putBuffer(root, tab.path, buffer.contents);
-          void deleteBuffer(before.root, before.path);
+          // The old record goes only once the move landed: a buffer that could
+          // not be stored keeps its recovery copy and says so (D-14).
+          void putBuffer(root, tab.path, buffer.contents).then((stored) => {
+            if (stored) void deleteBuffer(before.root, before.path);
+            else useShellStore.getState().noteBufferWarning(tab.id, true);
+          });
         });
       }
     }

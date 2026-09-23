@@ -44,4 +44,24 @@ describe("draft buffers", () => {
     settleDraft("c");
     expect(latestDraft("c")).toBeNull();
   });
+
+  it("does not settle a buffer typed again with the same text after a clear", () => {
+    noteDraft("d", "x");
+    noteSent("d", "x");
+    clearDraft("d");
+    noteDraft("d", "x");
+    settleDraft("d");
+    expect(latestDraft("d")).toBe("x");
+  });
+
+  it("keeps a newer buffer when an older save's echo lands after it", () => {
+    noteDraft("a", "first");
+    noteSent("a", "first");
+    // The operator types again before that save's echo arrives, and a second
+    // save is dispatched with the newer text.
+    noteDraft("a", "second");
+    noteSent("a", "second");
+    settleDraft("a");
+    expect(latestDraft("a")).toBeNull();
+  });
 });

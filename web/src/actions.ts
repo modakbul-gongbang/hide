@@ -124,6 +124,12 @@ export function createActions(dispatch: DispatchFn) {
     const showing = activeEditorTab(state.editor);
     const tab = tabId ? state.editor?.tabs.find((row) => row.id === tabId) : showing;
     if (!tab || tab.kind !== "file") return diagnostic("file_save: no showing document");
+    // A read-only or preview-only document has nothing the core would accept:
+    // a save of it is refused, and the refusal would mark it dirty.
+    const document = showing?.id === tab.id ? state.editor?.document : null;
+    if (document && (document.readonly_reason !== null || document.contents_utf8 === null)) {
+      return diagnostic(`file_save: ${tab.path} is not editable here`);
+    }
     const contents = draftFor(tab.id);
     if (contents === null) return diagnostic(`file_save: no contents for ${tab.path}`);
     noteSent(tab.id, contents);
@@ -149,12 +155,16 @@ export function createActions(dispatch: DispatchFn) {
     // last snapshot's dirty flag, and a clean tab closes in one step rather
     // than through a save the core may refuse (B4, D-10). A dirty tab whose
     // text this shell cannot reproduce stays open with a note instead.
-    let contents = latestDraft(tabId);
-    if (contents === null && tab.dirty) {
-      const showing = activeEditorTab(state.editor);
-      if (showing?.id === tabId) contents = state.editor?.document?.contents_utf8 ?? null;
+    const showing = activeEditorTab(state.editor);
+    const document = showing?.id === tabId ? state.editor?.document : null;
+    // A read-only or preview-only document has no draft the core would accept,
+    // so its close is one step however the tab got marked (D-10, D-14).
+    const editable = document ? document.readonly_reason === null && document.contents_utf8 !== null : true;
+    let contents = editable ? latestDraft(tabId) : null;
+    if (contents === null && tab.dirty && editable) {
+      if (document) contents = document.contents_utf8 ?? null;
     }
-    if (contents === null && tab.dirty) {
+    if (contents === null && tab.dirty && editable) {
       return diagnostic(`file_close: ${tab.path} has unsaved changes this shell cannot reproduce; open it and save first`);
     }
     const pending =

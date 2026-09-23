@@ -230,6 +230,16 @@ function EditorBody({
       if (!buffer) return;
       const current = latest.current;
       if (!current) return;
+      // A read-only or preview-only document has no draft the core would
+      // accept, so its buffer is the shell's own and cannot be restored: it
+      // goes with a note rather than blocking the tab's close forever (D-14).
+      if (current.readonly_reason !== null || current.contents_utf8 === null) {
+        void deleteBuffer(root, tab.path);
+        useShellStore
+          .getState()
+          .noteDiagnostic(`discarded the unsaved buffer for a document that is not editable here: ${tab.path}`);
+        return;
+      }
       if (bufferDecision(buffer, current) === "restore") {
         noteDraft(tab.id, buffer.contents);
         actions.updateDraft(buffer.contents);
