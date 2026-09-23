@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
-import { allBuffers, deleteBuffer, identity, staleBuffers, sweepBuffers } from "./buffers";
-import { pruneDrafts } from "./editor/draft";
+import { allBuffers, bufferFor, deleteBuffer, identity, putBuffer, staleBuffers, sweepBuffers } from "./buffers";
+import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
 import { configureFileBytes } from "./fileBytes";
@@ -80,13 +80,37 @@ export function App() {
   // A save mark belongs to a tab that is still unsaved: once the core reports
   // the tab clean, the mark comes off whichever tab is showing (D-10).
   const editorTabs = useShellStore((s) => s.editor?.tabs);
+  const identities = useRef(new Map<string, { root: string; path: string }>());
   useEffect(() => {
+    if (!editorTabs) return;
+    const rest = useShellStore.getState().rest;
+    const open = new Set<string>();
+    for (const tab of editorTabs) {
+      open.add(tab.id);
+      const root = checkoutById(rest, tab.checkout_id)?.path ?? "";
+      const before = identities.current.get(tab.id);
+      identities.current.set(tab.id, { root, path: tab.path });
+      // A rename or a move retargets the stored buffer to the new identity,
+      // showing tab or background tab alike (D-14).
+      if (before && (before.root !== root || before.path !== tab.path)) {
+        void allBuffers().then((buffers) => {
+          const buffer = bufferFor(buffers, before.root, before.path);
+          if (!buffer) return;
+          void putBuffer(root, tab.path, buffer.contents);
+          void deleteBuffer(before.root, before.path);
+        });
+      }
+    }
+    for (const tabId of [...identities.current.keys()]) {
+      if (!open.has(tabId)) identities.current.delete(tabId);
+    }
     // A tab id names a path, so a buffer for a tab that is gone would be
     // applied to whatever opens at that path next (B5, D-14).
-    if (editorTabs) pruneDrafts(new Set(editorTabs.map((tab) => tab.id)));
+    pruneDrafts(open);
+    for (const tab of editorTabs) if (!tab.dirty) settleDraft(tab.id);
     const state = useShellStore.getState();
     if (state.savingTabs.size === 0) return;
-    const dirty = new Set((editorTabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
+    const dirty = new Set(editorTabs.filter((tab) => tab.dirty).map((tab) => tab.id));
     for (const tabId of state.savingTabs) if (!dirty.has(tabId)) state.noteSaving(tabId, false);
   }, [editorTabs]);
 

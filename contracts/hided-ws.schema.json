@@ -124,7 +124,7 @@
       }
     },
     "openExternalResult": {
-      "description": "Payload of an open_external_result frame: the real path that was handed to the opener and whether the opener started. reason is spawn_failed when the opener could not start and not_openable when the file is a program, an application bundle or an installer.",
+      "description": "Payload of an open_external_result frame: the real path that was handed to the opener and whether the opener started. reason is spawn_failed when the opener could not start, not_found when the file vanished after the boundary check, and not_openable when the file is something a handler would run or install - a program, an application bundle or installer, a terminal session or script, a shell or interpreter script, a locator, anything with an execute bit, or a file whose own header is a program.",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "ok", "reason"],

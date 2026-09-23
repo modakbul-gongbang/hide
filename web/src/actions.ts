@@ -4,7 +4,7 @@
 
 import { deleteBuffer } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
-import { latestDraft } from "./editor/draft";
+import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
 import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
@@ -126,6 +126,7 @@ export function createActions(dispatch: DispatchFn) {
     if (!tab || tab.kind !== "file") return diagnostic("file_save: no showing document");
     const contents = draftFor(tab.id);
     if (contents === null) return diagnostic(`file_save: no contents for ${tab.path}`);
+    noteSent(tab.id, contents);
     dispatch({
       schema_version: 2,
       kind: "file_save",
@@ -144,21 +145,34 @@ export function createActions(dispatch: DispatchFn) {
     const state = useShellStore.getState();
     const tab = state.editor?.tabs.find((row) => row.id === tabId);
     if (!tab) return;
-    // A dirty tab carries its contents into the close, so the core saves the
-    // draft before retiring the tab and the shell never closes an edit away
-    // without asking (B4, D-10). A dirty tab whose text this shell cannot
-    // reproduce stays open with a note instead, because the buffer is about to
-    // be discarded and the core is the only copy left.
-    // The newest keystroke decides, not the last snapshot's dirty flag: a
-    // close that arrives inside one round trip of an edit still carries it.
-    let pending: Record<string, unknown> | null = null;
-    const contents = draftFor(tabId);
-    if (contents !== null) {
-      pending = { tab_id: tab.id, path: tab.path, contents_utf8: contents, expected_modified_at_unix_ms: null };
-    } else if (tab.dirty) {
+    // Only unsaved work rides a close: the newest keystroke decides, not the
+    // last snapshot's dirty flag, and a clean tab closes in one step rather
+    // than through a save the core may refuse (B4, D-10). A dirty tab whose
+    // text this shell cannot reproduce stays open with a note instead.
+    let contents = latestDraft(tabId);
+    if (contents === null && tab.dirty) {
+      const showing = activeEditorTab(state.editor);
+      if (showing?.id === tabId) contents = state.editor?.document?.contents_utf8 ?? null;
+    }
+    if (contents === null && tab.dirty) {
       return diagnostic(`file_close: ${tab.path} has unsaved changes this shell cannot reproduce; open it and save first`);
     }
-    void deleteBuffer(checkoutById(state.rest, tab.checkout_id)?.path ?? "", tab.path);
+    const pending =
+      contents !== null
+        ? { tab_id: tab.id, path: tab.path, contents_utf8: contents, expected_modified_at_unix_ms: null }
+        : null;
+    const root = checkoutById(state.rest, tab.checkout_id)?.path ?? "";
+    if (pending) {
+      // The buffer goes when the close lands, not when it is asked for: a
+      // close the core refuses keeps its recovery copy (D-14).
+      const unsubscribe = useShellStore.subscribe((next) => {
+        if ((next.editor?.tabs ?? []).some((row) => row.id === tabId)) return;
+        unsubscribe();
+        void deleteBuffer(root, tab.path);
+      });
+    } else {
+      void deleteBuffer(root, tab.path);
+    }
     dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: pending } });
   };
 

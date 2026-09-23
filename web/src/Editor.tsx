@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, bufferDecision, bufferFor, deleteBuffer, identity, putBuffer } from "./buffers";
+import { allBuffers, bufferDecision, bufferFor, deleteBuffer, putBuffer } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { clearDraft, noteDraft } from "./editor/draft";
 import { activeEditorTab, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
@@ -240,24 +240,6 @@ function EditorBody({
       live = false;
     };
   }, [tab.id, root, tab.path, actions]);
-
-  // A rename or a move retargets the open tab; its buffer follows the new
-  // identity so an unsaved draft is not orphaned (D-14).
-  const previous = useRef<string | null>(null);
-  useEffect(() => {
-    const current = identity(root, tab.path);
-    const before = previous.current;
-    previous.current = current;
-    if (!before || before === current) return;
-    const [oldRoot, oldPath] = before.split("\u0000");
-    if (!oldRoot || !oldPath) return;
-    void allBuffers().then((buffers) => {
-      const buffer = bufferFor(buffers, oldRoot, oldPath);
-      if (!buffer) return;
-      void putBuffer(root, tab.path, buffer.contents);
-      void deleteBuffer(oldRoot, oldPath);
-    });
-  }, [tab.id, root, tab.path]);
 
   // A document the core reports clean has nothing unsaved, so its buffer goes.
   useEffect(() => {
