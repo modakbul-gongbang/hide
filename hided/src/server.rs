@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
@@ -406,6 +407,28 @@ fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
             )];
         }
     };
+    // The shell reveals an executable, an application bundle or an installer
+    // rather than opening it, and this frame is a page's request rather than
+    // the operator's own click, so the same rule holds here (D-12).
+    if let Err(reason) = openable(&real) {
+        eprintln!(
+            "{}",
+            json!({
+                "component": "hided",
+                "kind": "open.external.refused",
+                "reason": reason,
+                "path": real.display().to_string(),
+            })
+        );
+        return vec![Message::Text(
+            json!({
+                "type": "open_external_result",
+                "payload": {"path": real.display().to_string(), "ok": false, "reason": reason},
+            })
+            .to_string()
+            .into(),
+        )];
+    }
     let (ok, reason) = match open_with_handler(&real) {
         Ok(()) => (true, Value::Null),
         Err(reason) => (false, Value::String(reason.to_owned())),
@@ -427,6 +450,29 @@ fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
         .to_string()
         .into(),
     )]
+}
+
+/// Whether the host handler may be pointed at this file. An application
+/// bundle, an installer or anything with an execute bit is refused, because a
+/// page must not be able to start a program by naming a checkout file.
+fn openable(path: &Path) -> Result<(), &'static str> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(extension.as_str(), "app" | "pkg" | "dmg") {
+        return Err("not_openable");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = fs::metadata(path).map_err(|_| "not_found")?;
+        if metadata.permissions().mode() & 0o111 != 0 {
+            return Err("not_openable");
+        }
+    }
+    Ok(())
 }
 
 /// The program that opens one file: the configured one, else the host's.
@@ -460,15 +506,19 @@ fn platform_opener() -> Command {
 }
 
 /// Spawns the handler detached: the daemon never waits for an application to
-/// exit, and the handler's own output is not the shell's.
+/// exit, and the handler's own output is not the shell's. A dropped child
+/// would stay a zombie for the daemon's life, so one thread reaps it.
 fn open_with_handler(path: &Path) -> Result<(), &'static str> {
-    opener(path)
+    let mut child = opener(path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map(|_| ())
-        .map_err(|_| "spawn_failed")
+        .map_err(|_| "spawn_failed")?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// One line of a refused attachment: the request and why nothing was staged.
@@ -1231,6 +1281,36 @@ mod tests {
         assert_eq!(platform_opener().get_program(), "cmd");
         #[cfg(all(unix, not(target_os = "macos")))]
         assert_eq!(platform_opener().get_program(), "xdg-open");
+    }
+
+    #[test]
+    fn the_host_handler_never_gets_a_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("notes.txt");
+        std::fs::write(&plain, "x").unwrap();
+        assert_eq!(openable(&plain), Ok(()), "an ordinary file opens");
+        for name in ["run.sh", "tool", "app.app", "installer.pkg", "image.dmg"] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "x").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = if name.ends_with(".sh") || name == "tool" {
+                    0o755
+                } else {
+                    0o644
+                };
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+                assert_eq!(openable(&path), Err("not_openable"), "{name}");
+            }
+            #[cfg(not(unix))]
+            {
+                let refused =
+                    name.ends_with(".app") || name.ends_with(".pkg") || name.ends_with(".dmg");
+                let expected = if refused { Err("not_openable") } else { Ok(()) };
+                assert_eq!(openable(&path), expected, "{name}");
+            }
+        }
     }
 
     #[test]

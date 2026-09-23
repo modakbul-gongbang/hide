@@ -1079,6 +1079,30 @@ async fn open_external_checks_the_checkout_boundary_first() {
     )
     .await;
     assert_eq!(refused["payload"]["reason"], "not_a_file");
+
+    // A program, an application bundle or an installer is inside the boundary
+    // and still never reaches the host handler: the answer is an ok:false
+    // result rather than a path refusal (D-12).
+    for name in ["run.sh", "thing.dmg"] {
+        let target = checkout.join(name);
+        std::fs::write(&target, "x").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if name.ends_with(".sh") {
+                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let answer = send_event_expecting(
+            &mut socket,
+            "open_external",
+            json!({"path": target.display().to_string()}),
+            |frame| frame["type"] == "open_external_result",
+        )
+        .await;
+        assert_eq!(answer["payload"]["ok"], false, "{name}");
+        assert_eq!(answer["payload"]["reason"], "not_openable", "{name}");
+    }
     running.stop();
 }
 
