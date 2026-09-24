@@ -141,7 +141,8 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
             ..ChangesSnapshot::default()
         };
     }
-    let Some(scope) = repository_scope(&toplevel, &request.root_path) else {
+    let Some(scope) = repository_scope(&toplevel, &request.checkout_path, &request.root_path)
+    else {
         return ChangesSnapshot {
             root_path: Some(root_path),
             unavailable_reason: Some(
@@ -224,9 +225,12 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
 /// reader, but project only paths owned by that folder. Git's rename source
 /// can cross the boundary, so an inbound rename is an addition and an
 /// outbound rename is a deletion from this checkout's perspective.
-fn repository_scope(toplevel: &Path, root: &Path) -> Option<PathBuf> {
+fn repository_scope(toplevel: &Path, checkout: &Path, root: &Path) -> Option<PathBuf> {
     let repository = toplevel.canonicalize().ok()?;
-    let registered_relative = root.strip_prefix(toplevel).ok()?;
+    // Git may spell the same checkout through a system symlink (for example
+    // /tmp versus /private/tmp). The registered root and checkout came from
+    // the same registration path, so compare their lexical relationship.
+    let registered_relative = root.strip_prefix(checkout).ok()?;
     let resolved = root.canonicalize().ok()?;
     let resolved_relative = resolved.strip_prefix(repository).ok()?;
     // Registration stores the canonical folder. If its path now resolves to
