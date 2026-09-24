@@ -283,11 +283,37 @@ Both frames and the reason codes are in `contracts/hided-ws.schema.json`.
 Every Explorer path - listing, open, reveal, save, create, rename, move, trash, index and file bytes - is checked against the root the event names, or the focused checkout's root, on the real path.
 A path under a root is walked one component at a time from that root, so a symlink whose target leaves the checkout is refused as `outside_checkout` before its target is read, and a sibling whose name merely starts with the root's path is not inside it.
 Roots come from `rest.navigator.workspaces` (a local workspace whose checkout exists) and are replaced wholesale whenever that section changes: the boot seed reads the whole snapshot, and the notify path keeps a revision and a terminal-sequence cursor so a delta that changed only terminal chunks carries no `rest` and never reaches the boundary (`spawn_root_refresh`, `carries_roots`).
+The boundary pins each registered root's physical path and file identity across repeated snapshots and refuses an Explorer request when the root's current spelling no longer resolves to that pin.
+On Windows, root handles deny delete sharing so a root cannot be renamed while the core uses its capability, and directory rows are enumerated from the verified handle.
+`file_list` opens relative to a verified root handle and enumerates that handle, then filters each child against the same pin, so replacing the pathname during enumeration cannot expose an outside directory's rows.
+The daemon supplies opened checkout-root handles to the core's Rust API; editor reads, saves and Explorer mutations resolve under those handles when their workers perform I/O, while the Swift shell retains its existing ambient path behavior and the C ABI remains unchanged.
+Trash moves the selected item through its opened parent handle into a private temporary directory outside the mutable checkout path before handing that staged path to the platform Trash API; a failed handoff restores through the retained handles or retains the recovery stage when restoration fails, and an unavailable same-volume move leaves the original in place.
+`file_index` retains the checked root handle and opens one directory at a time from it, so a wide checkout does not hold every sibling directory open; ignore files are read only from nonblocking regular-file handles.
+Explorer watch polling retains opened folder handles and rebinds an expanded folder when a changed parent reveals that its path now names a different directory.
 `apply_boundary` answers a refused path with a `path_refused` frame and a `path.refused` log line, and forwards an accepted one as the canonical path that was checked.
 `file_list` answers the Explorer's listing for one folder under a root: files and directories, hidden names included, `.git` dropped, directories first then the Swift natural order, capped at `LIST_CAP`.
 `file_bytes` streams a file's bytes behind the same boundary: the client names a path, an offset and a length, and the daemon answers with one or more binary frames (a 4-byte big-endian header length, the header JSON, then the bytes) of at most 4 MiB, refusing a read past `MAX_FILE_BYTES` (256 MiB) with a `file_bytes_error` frame; the image, PDF and video viewers read through it and build a blob, and no HTTP endpoint serves file bytes (S1 D-03).
+The bare browser cannot establish that the daemon is on the viewer's own machine from a loopback URL, because an SSH tunnel can also present `localhost`; its oversized-file action therefore downloads through `file_bytes` even at a loopback URL.
+The download asks for 4 MiB ranges and writes each into a browser-selected file when a streaming file writer is available; it does not accumulate an unbounded download in the page.
+This S3 stage assumes a browser with a file-save picker for downloads above 256 MiB.
+Without that browser API, the existing Blob download remains available for one protocol read of at most 256 MiB and reports a larger read's refusal beside the button; there is no separate unbounded fallback.
+The browser WebSocket explicitly refuses `open_external` with `untrusted_client`, even when the page URL is loopback and the socket has its normal token, so an SSH-forwarded browser cannot start a program on the daemon host.
+The bounded host opener remains implemented for a future transport that can establish local ownership: macOS `open`, Windows `ShellExecuteW` default-file association, Linux `xdg-open`, or a validated absolute Unix `HIDE_OPEN_COMMAND` CLI helper.
+No such trusted transport is present in S3.
+For `file_bytes`, hided verifies the path of the opened file handle against the registered checkout root and streams from that same handle, so a symlink swap between path validation and open cannot redirect the read outside the checkout.
+On Unix, the byte source is opened with nonblocking flags before its handle is checked as a regular file, so a FIFO cannot stall the WebSocket while waiting for a writer.
+The Windows association preserves the default-app action without passing a checkout filename through `cmd`.
+At most four opener requests may run at once and at most twelve launches are accepted per minute; crossing a cap answers `over_budget`.
+On Unix, a private `hided` supervisor owns an explicit `HIDE_OPEN_COMMAND` CLI helper and all processes that remain in its process group; normal stop, timeout, or daemon death including `SIGKILL` ends that group.
+The override must not detach into another session or process group, which this ownership boundary cannot supervise.
+The normal `open` or `xdg-open` utility is started directly as an OS default-application handoff, since `xdg-open` can stay attached to the application for its lifetime; the daemon does not signal that process or its descendants after acceptance.
+Tokio's process driver attempts to reap a short-lived default utility after the handle is dropped; it does not own the registered application's lifetime.
+An opener request is accepted when its utility starts, not when the application confirms it opened the file.
+Windows `ShellExecuteW` returns after handing the document to its registered application without a CLI child; `HIDE_OPEN_COMMAND` is rejected at boot on Windows because that override has no equivalent owner-death supervision.
+The retained host opener refuses files the handler would run or install - application bundles, installers, terminal sessions, scripts, locators, executable files, and files whose header identifies a program - with `not_openable` instead of launching them.
+The bare browser downloads oversized files through `file_bytes` wherever the daemon runs.
 `file_index` is the ⌘P index (`hided/src/index.rs`): one lazy walk per root honoring `.gitignore` without a git process, capped at 50,000 files, ranked by the Swift fuzzy score and returned as at most 80 rows; the first query for a root answers `indexing: true` while the walk runs.
-`directory_changed` is the watch (`hided/src/watch.rs`): one owner task watches the focused checkout's root and its most recently expanded folders, at most 64 in total, releasing the least recently expanded first, and announces a change once the burst goes quiet (200 ms).
+`directory_changed` is the watch (`hided/src/watch.rs`): one owner task polls the opened handles for the focused checkout's root and its most recently expanded folders, at most 64 in total, releasing the least recently expanded first, and announces a change once the burst goes quiet (200 ms).
 The web's listing cache uses the same 64 (`web/src/watch.ts`) and draws a refresh badge on a folder past the cap instead of a live listing.
 Terminal attachments (`hided/src/attachments.rs`) are the bytes-in path: the browser reads a dropped file's or pasted image's bytes but cannot name its path, so it stages one file per upload in binary frames and commits a batch, and hided writes the staged files and sends the one `terminal_attachment` the Swift shell sends, with the staged paths as `paths`.
 Both the id and the name are flattened to one path component, one id and one path identify one stage, a stage whose bytes do not match its declared size is dropped at eof, every arriving byte is charged to a 256 MiB staged budget with a 60-second grace on a fresh commit, hided's own attachments directory starts empty each run, staged files and their directories stay private (0600/0700), a stage commits only into the root its mode opened, a completed stage leaves the open-upload cap and a connection's uncommitted stages are released when it goes, and the shell's own attachment events are the daemon's to send: a client that sends `terminal_attachment`, `terminal_attachment_ready` or `terminal_attachment_action` is answered with an error frame and it never reaches the core, because those events name arbitrary paths.
@@ -297,14 +323,16 @@ Every frame and reason code lives in `contracts/hided-ws.schema.json`.
 
 ### The Explorer, editor and viewers
 
-The sidebar's third mode is the Explorer (`web/src/ExplorerTree.tsx`): the core owns which folders are expanded (`ui_state.expanded_paths`) and hided answers one listing per folder, so a row is a pure function of those, the checkout's changed-file set and the file's icon (`web/src/explorer.ts`, unit-tested without a browser).
+The Explorer (`web/src/ExplorerTree.tsx`) is the right panel's section, drawn where the core's `right_panel_visible` and `right_panel_section: "explorer"` say (`web/src/RightPanel.tsx`, D-13): the core owns which folders are expanded (`ui_state.expanded_paths`) and hided answers one listing per folder, so a row is a pure function of those, the checkout's changed-file set and the file's icon (`web/src/explorer.ts`, unit-tested without a browser).
 `@tanstack/react-virtual` lays out a 10,000-row folder; nothing in a row runs git or reads the disk (B16).
-The core computes a checkout's changed files only while its Explorer or Changes surface is visible, so Explorer mode sends that ui state (`right_panel_visible`, `right_panel_section: "explorer"`) or the rows carry no Git colour.
+The core computes a checkout's changed files only while its Explorer or Changes surface is visible, so showing the panel's Explorer sends that ui state (⌘⇧B, or opening a file, which reveals its row) or the rows carry no Git colour; the panel's other sections arrive with S4 and S5.
 A single click opens the checkout's preview tab, a double click or ⌘⇧K promotes it, and the tab strip draws file and diff entries beside Herdr tabs, in italics while preview.
 An opened document is revealed by merging its ancestors into `ui_state.expanded_paths` (`actions.revealAncestors`), not by the core's `reveal_path`, which promotes the tab and would contradict the preview the palette's Enter promises (B3, B12); the core's `selected_path` then highlights the row.
-The editor is CodeMirror 6 (`web/src/editor/`): language packs load per document kind, ⌘S is one `file_save` carrying the open document's timestamp, a disk change becomes the core's conflict choice, and Markdown Live hides the same markup the Swift view hides (`markdownLive.ts` is a pure plan).
+The editor is CodeMirror 6 (`web/src/editor/`): language packs load per document kind, an edit saves itself after 600 ms of idle and ⌘S saves at once (D-10), a disk change becomes the core's conflict choice, and Markdown Live hides the same markup the Swift view hides (`markdownLive.ts` is a pure plan) while a leading YAML frontmatter block is drawn in its own eight-line pane that scrolls inside itself (`frontmatter.ts` finds the block; the editor then holds one document in two views, and the split and merge never enter either history, D-11).
 Image, PDF and video viewers read hided's bytes; the web decides video from the extension because the core has no Video kind (D-09).
-Unsaved buffers live in IndexedDB (`web/src/buffers.ts`) and reconcile against the core on reconnect: an open document's buffer is restored, a closed document's is discarded with a diagnostic (B8).
+Unsaved buffers live in IndexedDB (`web/src/buffers.ts`), keyed by checkout root and real path: an open document's buffer is restored on reconnect, a closed one is discarded with a diagnostic, a rename or move carries the buffer to the new path, and one nobody claimed for 14 days goes on the next start; a buffer that cannot be stored leaves editing alone and marks its tab "kept in this tab only" (B8, D-14).
+The v3 database upgrade keeps shipped v1 path-keyed drafts until a live core tab supplies their checkout root, and copies completion-build v2 root-keyed drafts into the current store in one upgrade transaction.
+Edits are coalesced to one active and one pending committed write per document with a bounded total queue; a move retires the old identity in the same transaction that claims the new one.
 
 ### The shortcut registry
 
@@ -323,7 +351,7 @@ The Electron column is empty until that host exists (TODO: fill it from `ShellMe
 | Search, Open file, Toggle right panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | TODO |
 | Project home | ⌘⇧H | same chord, answered "준비 중" | TODO |
 | Save file | ⌘S | ⌘S | TODO |
-| Toggle left sidebar, Toggle sidebar view, Find in pane, Keep open | ⌘B, ⌘E, ⌘F, ⌘⇧K | same chords | TODO |
+| Toggle left sidebar, Toggle sidebar view, Toggle right panel, Find in pane, Keep open | ⌘B, ⌘E, ⌘⇧B, ⌘F, ⌘⇧K | same chords | TODO |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | TODO |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | TODO |
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | TODO |

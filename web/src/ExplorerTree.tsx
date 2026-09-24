@@ -51,7 +51,7 @@ export function displayRows(rows: ExplorerRow[], draft: ExplorerDraft | null): D
   const anchor = index === -1 ? undefined : rows[index];
   const depth = anchor ? anchor.depth + 1 : 0;
   const at = index === -1 ? 0 : index + 1;
-  base.splice(at, 0, { kind: "draft", depth, parent: draft.parent, path: draft.parent, initial: "", draftKind: draft.kind });
+  base.splice(at, 0, { kind: "draft", depth, parent: draft.parent, path: draft.parent, initial: draft.initial, draftKind: draft.kind });
   return base;
 }
 
@@ -88,6 +88,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   // Folders this pane has asked hided for and not yet heard about; a refusal
   // keeps its entry so a refused folder is not re-asked on every render.
   const pending = useRef<Set<string>>(new Set());
+  const pendingName = useRef<ExplorerDraft | null>(null);
   /** The watch-frame count already acted on, per folder. */
   const seenChanges = useRef<Record<string, number>>({});
 
@@ -142,18 +143,29 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     }
   }, [rootPath, expandedPaths, listings, refreshTick, folderChanges, actions, invalidateListings]);
 
-  // A reveal (or an open from anywhere) sets the core's selected_path; the
-  // local cursor follows it so the tree highlights what was revealed.
+  // A reveal (or an open from anywhere) sets the core's selected_path. A
+  // palette pick also sets the local cursor before the core replies; a panel
+  // remount must not replace that newer pick with the older snapshot path.
+  const previousCoreSelection = useRef(selectedPath);
   useEffect(() => {
-    if (selectedPath) setSelection(selectedPath);
+    if (selectedPath && (previousCoreSelection.current !== selectedPath || !useUiStore.getState().explorerSelection)) {
+      setSelection(selectedPath);
+    }
+    previousCoreSelection.current = selectedPath;
   }, [selectedPath, setSelection]);
 
-  // Switching checkouts drops the cursor: the previous path is not a row here.
+  // A panel remount keeps the current selection; only a real checkout switch
+  // invalidates its cursor and pending inline name.
+  const previousRoot = useRef(rootPath);
   useEffect(() => {
-    setSelection(null);
+    if (previousRoot.current === rootPath) return;
+    previousRoot.current = rootPath;
+    const selected = useShellStore.getState().rest?.ui_state?.selected_path ?? null;
+    setSelection(rootPath && selected?.startsWith(`${rootPath}/`) ? selected : null);
     pending.current.clear();
     setMenu(null);
     setDraft(null);
+    pendingName.current = null;
   }, [rootPath, setSelection, setDraft]);
 
   const lastOperation = useRef<number | null>(null);
@@ -161,6 +173,17 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     if (!operation || operation.phase === "working") return;
     if (operation.id === lastOperation.current) return;
     lastOperation.current = operation.id;
+    const submitted = pendingName.current;
+    if (submitted) {
+      const expected = submitted.kind === "rename" ? submitted.path : `${submitted.parent}/${submitted.initial}`;
+      const matches = operation.path === expected || (operation.kind === "refused" && operation.path === submitted.parent);
+      if (matches) {
+        pendingName.current = null;
+        // The failed operation leaves its typed name in an editable row, so
+        // the operator can correct a collision without starting over (B10).
+        if (operation.phase === "failed") setDraft(submitted);
+      }
+    }
     // A settled change moved a row: the folders it touched are re-read, and
     // the created item is selected so the operator sees it (B9).
     const folders = [parentPath(operation.path), parentPath(operation.destination)];
@@ -333,6 +356,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                     rename={entry.draftKind === "rename"}
                     top={virtualRow.start}
                     onCommit={(name) => {
+                      pendingName.current = { kind: entry.draftKind, parent: entry.parent, path: entry.path, initial: name };
                       setDraft(null);
                       if (entry.draftKind === "rename") actions.renameEntry(entry.path, name);
                       else actions.createEntry(entry.parent, name, entry.draftKind === "folder");

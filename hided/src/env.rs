@@ -21,6 +21,7 @@ pub const HIDE_VITE_ORIGIN: &str = "HIDE_VITE_ORIGIN";
 pub const HIDE_PORT: &str = "HIDE_PORT";
 pub const HIDE_IDLE_SECS: &str = "HIDE_IDLE_SECS";
 pub const HOME: &str = "HOME";
+pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -78,6 +79,12 @@ pub const REGISTRY: &[EnvKey] = &[
         absent_behavior: "Idle timeout is 600 seconds",
     },
     EnvKey {
+        key: HIDE_OPEN_COMMAND,
+        required: false,
+        format: "Unix-only absolute path of an executable CLI helper whose first argument is the file to open",
+        absent_behavior: "The host OS handler opens it (macOS `open`, Windows ShellExecuteW association, Linux `xdg-open`)",
+    },
+    EnvKey {
         key: HOME,
         required: true,
         format: "absolute home-directory path",
@@ -99,6 +106,8 @@ pub struct Env {
     pub vite_origin: Option<String>,
     pub bind: SocketAddr,
     pub idle_secs: u64,
+    /// Optional test/operator-selected host opener, validated before serving.
+    pub open_command: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -229,6 +238,17 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
             }
         },
     };
+    let open_command = match read(HIDE_OPEN_COMMAND) {
+        Some(value) if cfg!(windows) || !valid_program_path(Path::new(&value)) => {
+            errors.push(EnvError {
+                key: HIDE_OPEN_COMMAND,
+                kind: "invalid",
+            });
+            None
+        }
+        Some(value) => Some(PathBuf::from(value)),
+        None => None,
+    };
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -241,7 +261,25 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         vite_origin,
         bind: SocketAddr::from(([127, 0, 0, 1], port)),
         idle_secs,
+        open_command,
     })
+}
+
+fn valid_program_path(path: &Path) -> bool {
+    if !path.is_absolute() || !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if path
+            .metadata()
+            .map_or(true, |meta| meta.permissions().mode() & 0o111 == 0)
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn first_on_path(path: &str, name: &str) -> Option<PathBuf> {
@@ -317,5 +355,34 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err[0].key, HIDE_VITE_ORIGIN);
+    }
+
+    #[test]
+    fn open_command_is_validated_at_boot() {
+        let err = from_map(&[
+            ("HOME", "/Users/example"),
+            (HIDE_OPEN_COMMAND, "relative-opener"),
+        ])
+        .unwrap_err();
+        assert_eq!(err[0].key, HIDE_OPEN_COMMAND);
+        let executable = std::env::current_exe().unwrap();
+        #[cfg(unix)]
+        {
+            let env = from_map(&[
+                ("HOME", "/Users/example"),
+                (HIDE_OPEN_COMMAND, executable.to_str().unwrap()),
+            ])
+            .unwrap();
+            assert_eq!(env.open_command.as_deref(), Some(executable.as_path()));
+        }
+        #[cfg(windows)]
+        {
+            let err = from_map(&[
+                ("HOME", "/Users/example"),
+                (HIDE_OPEN_COMMAND, executable.to_str().unwrap()),
+            ])
+            .unwrap_err();
+            assert_eq!(err[0].key, HIDE_OPEN_COMMAND);
+        }
     }
 }

@@ -297,6 +297,13 @@ impl HerdrCore {
         changed
     }
 
+    /// Rust-only daemon capability handoff. This does not alter the six-call C ABI.
+    pub fn set_file_roots(&self, roots: crate::files::FileRoots) {
+        if check_owner_thread(self, "set_file_roots") {
+            lock_recover(&self.runtime).set_file_roots(roots);
+        }
+    }
+
     pub fn snapshot_delta(&self, have_revision: u64, have_terminal_sequence: u64) -> Vec<u8> {
         if !check_owner_thread(self, "snapshot") {
             notify_change(self);

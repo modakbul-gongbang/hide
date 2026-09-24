@@ -6,6 +6,13 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+        if args.first().is_some_and(|arg| arg == "--open-helper") {
+            return hided::spawn::run_opener_helper(&args);
+        }
+    }
     let env = hided::env::load().map_err(|errors| {
         errors
             .iter()

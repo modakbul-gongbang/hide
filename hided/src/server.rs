@@ -1,5 +1,7 @@
 use std::collections::HashSet;
+use std::fs;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,6 +23,7 @@ use crate::attachments::{self, Attachments};
 use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
+use crate::opener::OpenHandler;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::watch::WatchService;
 
@@ -62,6 +65,8 @@ pub struct AppState {
     pub index: Arc<IndexService>,
     /// Staged dropped files on their way to the core's attachment directory.
     pub attachments: Arc<Attachments>,
+    /// One bounded, daemon-owned path for OS file associations.
+    pub opener: OpenHandler,
     pub token: Arc<String>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -138,6 +143,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         "version": state.version,
         "schema_version": SCHEMA_VERSION,
         "clients": state.clients.load(Ordering::SeqCst),
+        "open_handlers_in_flight": state.opener.in_flight(),
         "idle_remaining_secs": idle_remaining_secs(&state),
     }))
 }
@@ -294,6 +300,12 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             changed = directory_changes.recv() => {
                 match changed {
                     Ok(frame) => {
+                        let path = serde_json::from_str::<Value>(&frame)
+                            .ok()
+                            .and_then(|value| value.pointer("/payload/path").and_then(Value::as_str).map(str::to_owned));
+                        if !path.is_some_and(|path| state.boundary.resolve_target(&path).is_ok()) {
+                            continue;
+                        }
                         if socket.send(Message::Text(frame.into())).await.is_err() {
                             break;
                         }
@@ -307,18 +319,27 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        let replies = match handle_client_text(&state, &text, connection).await {
-                            Ok(frames) => frames,
-                            Err(error) => vec![Message::Text(
-                                json!({"type":"error","payload":{},"message": error}).to_string().into(),
-                            )],
-                        };
-                        for frame in replies {
-                            if socket.send(frame).await.is_err() {
-                                break;
+                        match handle_client_text(&state, &text, connection) {
+                            Ok(ClientAction::FileBytes(event)) => {
+                                if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() { break; }
+                            }
+                            outcome => {
+                                let replies = match outcome {
+                                    Ok(ClientAction::Replies(frames)) => frames,
+                                    Err(error) => vec![Message::Text(
+                                        json!({"type":"error","payload":{},"message": error}).to_string().into(),
+                                    )],
+                                    _ => unreachable!(),
+                                };
+                                let mut failed = false;
+                                for frame in replies {
+                                    if socket.send(frame).await.is_err() { failed = true; break; }
+                                }
+                                if failed { break; }
                             }
                         }
-                    }                    Some(Ok(Message::Binary(bytes))) => {
+                    }
+                    Some(Ok(Message::Binary(bytes))) => {
                         if let Some((request_id, reason)) = state.attachments.receive(connection, &bytes)
                             && socket
                                 .send(Message::Text(
@@ -353,11 +374,16 @@ fn token_matches(offered: &str, expected: &str) -> bool {
 /// the snapshot stream. Anything the daemon answers itself is one or more
 /// frames for this client alone: a directory listing, a path refusal, or the
 /// binary frames of a `file_bytes` read.
-async fn handle_client_text(
+enum ClientAction {
+    FileBytes(Value),
+    Replies(Vec<Message>),
+}
+
+fn handle_client_text(
     state: &AppState,
     text: &str,
     connection: u64,
-) -> Result<Vec<Message>, String> {
+) -> Result<ClientAction, String> {
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("client json: {error}"))?;
     let mut event = if value.get("schema_version").is_some() && value.get("kind").is_some() {
@@ -366,27 +392,276 @@ async fn handle_client_text(
         return Err("expected a core event {schema_version, kind, payload}".to_owned());
     };
     if event.get("kind").and_then(Value::as_str) == Some("file_bytes") {
-        return Ok(handle_file_bytes(&state.boundary, &event).await);
+        return Ok(ClientAction::FileBytes(event));
     }
     if event.get("kind").and_then(Value::as_str) == Some("file_index") {
-        return Ok(handle_file_index(state, &event));
+        return Ok(ClientAction::Replies(handle_file_index(state, &event)));
     }
     match event.get("kind").and_then(Value::as_str) {
-        Some("attachment_stage") => return Ok(handle_attachment_stage(state, &event, connection)),
-        Some("attachment_commit") => return Ok(handle_attachment_commit(state, &event)),
+        Some("attachment_stage") => {
+            return Ok(ClientAction::Replies(handle_attachment_stage(
+                state, &event, connection,
+            )));
+        }
+        Some("attachment_commit") => {
+            return Ok(ClientAction::Replies(handle_attachment_commit(
+                state, &event,
+            )));
+        }
         Some("attachment_cancel") => {
             state
                 .attachments
                 .discard(&payload_str(&event, "request_id"));
-            return Ok(Vec::new());
+            return Ok(ClientAction::Replies(Vec::new()));
+        }
+        Some("open_external") => {
+            // This token-authenticated socket can be reached through an SSH
+            // tunnel. The browser cannot prove it is on the daemon's host,
+            // so it has no authority to start the host's OS handler.
+            let path = payload_str(&event, "path");
+            return Ok(ClientAction::Replies(vec![Message::Text(
+                json!({"type":"open_external_result", "payload":{
+                    "path":path, "ok":false, "reason":"untrusted_client"
+                }})
+                .to_string()
+                .into(),
+            )]));
         }
         _ => {}
     }
     if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
-        return Ok(vec![Message::Text(reply.to_string().into())]);
+        return Ok(ClientAction::Replies(vec![Message::Text(
+            reply.to_string().into(),
+        )]));
     }
     let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
-    state.core.dispatch(bytes).map(|()| Vec::new())
+    state
+        .core
+        .dispatch(bytes)
+        .map(|()| ClientAction::Replies(Vec::new()))
+}
+
+/// Opens a checkout file with the host OS handler, or with the program
+/// `HIDE_OPEN_COMMAND` names (PRD S3 D-12). The path passes the same
+/// checkout-root boundary as every other Explorer path, so the handler can
+/// only ever be pointed at a regular file inside a registered root.
+#[allow(dead_code)] // Retained for a future transport that can prove local ownership.
+fn handle_open_external(state: &AppState, event: &Value) -> Vec<Message> {
+    let path = payload_str(event, "path");
+    let real = match state.boundary.resolve_file(&path) {
+        Ok((real, _)) => real,
+        Err(refusal) => {
+            return vec![Message::Text(
+                refused("open_external", &path, refusal).to_string().into(),
+            )];
+        }
+    };
+    // The shell reveals an executable, an application bundle or an installer
+    // rather than opening it, and this frame is a page's request rather than
+    // the operator's own click, so the same rule holds here (D-12).
+    if let Err(reason) = openable(&real) {
+        eprintln!(
+            "{}",
+            json!({
+                "component": "hided",
+                "kind": "open.external.refused",
+                "reason": reason,
+            })
+        );
+        return vec![Message::Text(
+            json!({
+                "type": "open_external_result",
+                "payload": {"path": real.display().to_string(), "ok": false, "reason": reason},
+            })
+            .to_string()
+            .into(),
+        )];
+    }
+    let (ok, reason) = match state.opener.launch(&real) {
+        Ok(()) => (true, Value::Null),
+        Err(reason) => (false, Value::String(reason.to_owned())),
+    };
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "open.external",
+            "ok": ok,
+            "open_handlers_in_flight": state.opener.in_flight(),
+        })
+    );
+    vec![Message::Text(
+        json!({
+            "type": "open_external_result",
+            "payload": {"path": real.display().to_string(), "ok": ok, "reason": reason},
+        })
+        .to_string()
+        .into(),
+    )]
+}
+
+/// The extensions whose registered handler runs, installs or executes what it
+/// opens rather than showing it: a launcher, a terminal script, an installer,
+/// a package, a script interpreter's file. A page that can write inside a
+/// checkout could otherwise name one and have the operator's own machine start
+/// it, which is the line the shell draws for executable paths.
+const EXECUTING_EXTENSIONS: &[&str] = &[
+    // macOS bundles, packages, profiles and terminal scripts
+    "app",
+    "pkg",
+    "mpkg",
+    "dmg",
+    "mobileconfig",
+    "terminal",
+    "term",
+    "command",
+    "tool",
+    "workflow",
+    "scpt",
+    "scptd",
+    // locators: the handler hands the target to something else, Terminal for
+    // an ssh:// URL among them
+    "webloc",
+    "url",
+    "inetloc",
+    "fileloc",
+    // shell and interpreter scripts whose handler runs them on open
+    "sh",
+    "bash",
+    "zsh",
+    "csh",
+    "fish",
+    "ksh",
+    "py",
+    "pyw",
+    "pl",
+    "rb",
+    "php",
+    "lua",
+    "jar",
+    "class",
+    "appimage",
+    "run",
+    "desktop",
+    "service",
+    // Windows executables, script hosts and package installers
+    "exe",
+    "com",
+    "scr",
+    "pif",
+    "bat",
+    "cmd",
+    "msi",
+    "msp",
+    "lnk",
+    "ps1",
+    "psm1",
+    "psd1",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+    "hta",
+    "jnlp",
+    "msc",
+    "application",
+    "appref-ms",
+    "appx",
+    "msix",
+    "appinstaller",
+    // shared libraries
+    "dylib",
+    "so",
+];
+
+/// Whether the host handler may be pointed at this file. An application
+/// bundle, an installer, a script a handler would run, anything with an
+/// execute bit, or a file whose own header says it is an executable is
+/// refused, because a page must not be able to start a program by naming a
+/// checkout file (D-12).
+fn openable(path: &Path) -> Result<(), &'static str> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if EXECUTING_EXTENSIONS.contains(&extension.as_str()) {
+        return Err("not_openable");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = fs::metadata(path).map_err(|_| "not_found")?;
+        if metadata.permissions().mode() & 0o111 != 0 {
+            return Err("not_openable");
+        }
+    }
+    let mut file = fs::File::open(path).map_err(|_| "not_found")?;
+    if is_executable_header(&mut file)? {
+        return Err("not_openable");
+    }
+    Ok(())
+}
+
+/// Whether the file's own header says it is a program: Mach-O (thin or fat,
+/// either byte order), ELF, or the DOS/PE MZ family. A real MZ executable
+/// either carries the zero fields its header format requires or the loader
+/// signature its header points at, while a document that merely begins with
+/// those letters has neither.
+fn is_executable_header(file: &mut fs::File) -> Result<bool, &'static str> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut head = [0u8; 512];
+    let read = file.read(&mut head).map_err(|_| "not_found")?;
+    let head = &head[..read];
+    if head.len() < 4 {
+        return Ok(false);
+    }
+    let magic4 = [head[0], head[1], head[2], head[3]];
+    if matches!(
+        magic4,
+        // Mach-O 32/64 and their byte-swapped forms, 32 and 64-bit fat
+        [0xFE, 0xED, 0xFA, 0xCE]
+            | [0xFE, 0xED, 0xFA, 0xCF]
+            | [0xCE, 0xFA, 0xED, 0xFE]
+            | [0xCF, 0xFA, 0xED, 0xFE]
+            | [0xCA, 0xFE, 0xBA, 0xBE]
+            | [0xBE, 0xBA, 0xFE, 0xCA]
+            | [0xCA, 0xFE, 0xBA, 0xBF]
+            | [0xBF, 0xBA, 0xFE, 0xCA]
+            // ELF
+            | [0x7F, b'E', b'L', b'F']
+    ) {
+        return Ok(true);
+    }
+    if head[0] != b'M' || head[1] != b'Z' {
+        return Ok(false);
+    }
+    // Every real MZ family executable has zero fields in its header; a text
+    // document that begins with those two letters has none.
+    if head.contains(&0) {
+        return Ok(true);
+    }
+    // `e_lfanew` says where the loader signature is. A header that points at
+    // PE/NE/LE/LX is a program whatever its extension claims.
+    if head.len() < 0x40 {
+        return Ok(false);
+    }
+    let at = u64::from(u32::from_le_bytes([
+        head[0x3C], head[0x3D], head[0x3E], head[0x3F],
+    ]));
+    if at < 0x40 || file.seek(SeekFrom::Start(at)).is_err() {
+        return Ok(false);
+    }
+    let mut signature = [0u8; 4];
+    if file.read_exact(&mut signature).is_err() {
+        return Ok(false);
+    }
+    Ok(matches!(
+        &signature,
+        b"PE\0\0" | b"NE\0\0" | b"LE\0\0" | b"LX\0\0" | b"W4\0\0" | b"DL\0\0"
+    ))
 }
 
 /// One line of a refused attachment: the request and why nothing was staged.
@@ -519,7 +794,7 @@ fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
 fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
     let root = payload_str(event, "root");
     let query = payload_str(event, "query");
-    let Some(known) = state.boundary.known_root(&root) else {
+    let Ok((known, opened)) = state.boundary.open_directory(Path::new(&root), &root) else {
         return vec![Message::Text(
             refused("file_index", &root, Refusal::OutsideCheckout)
                 .to_string()
@@ -527,7 +802,7 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
         )];
     };
     let root_path = known.display().to_string();
-    let payload = match state.index.query(&known, &query) {
+    let payload = match state.index.query(&known, opened, &query) {
         IndexAnswer::Indexing => json!({
             "root_path": root_path,
             "query": query,
@@ -538,10 +813,13 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
         IndexAnswer::Ready { entries, truncated } => {
             let listed: Vec<Value> = entries
                 .iter()
-                .map(|relative| {
-                    json!({
-                        "path": known.join(relative).display().to_string(),
-                        "relative_path": relative,
+                .filter_map(|relative| {
+                    let path = known.join(relative).display().to_string();
+                    state.boundary.resolve_target(&path).ok().map(|_| {
+                        json!({
+                            "path": path,
+                            "relative_path": relative,
+                        })
                     })
                 })
                 .collect();
@@ -600,10 +878,14 @@ fn file_bytes_error(request_id: &str, path: &str, reason: &str) -> Message {
     )
 }
 
-/// A `file_bytes` read: the path is checked against the checkout roots, the
-/// cap is applied, and the requested range is streamed as binary frames. A
-/// boundary refusal is the same `path_refused` frame every other path gets.
-async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
+/// A `file_bytes` read keeps only one bounded chunk in memory. Sending each
+/// frame before reading the next gives the socket backpressure even when all
+/// eight authenticated clients ask for the maximum range together.
+async fn send_file_bytes(
+    socket: &mut WebSocket,
+    boundary: &Boundary,
+    event: &Value,
+) -> Result<(), ()> {
     let request_id = payload_str(event, "request_id");
     let path = payload_str(event, "path");
     let offset = event
@@ -611,29 +893,34 @@ async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let length = event.pointer("/payload/length").and_then(Value::as_u64);
-    let (real, total) = match boundary.resolve_file(&path) {
-        Ok(pair) => pair,
+    let (real, file, total) = match boundary.open_file(&path) {
+        Ok(source) => source,
         Err(refusal) => {
-            return vec![Message::Text(
-                refused("file_bytes", &path, refusal).to_string().into(),
-            )];
+            return socket
+                .send(Message::Text(
+                    refused("file_bytes", &path, refusal).to_string().into(),
+                ))
+                .await
+                .map_err(|_| ());
         }
     };
     let wanted = length.unwrap_or_else(|| total.saturating_sub(offset.min(total)));
     if wanted > boundary::MAX_FILE_BYTES {
-        return vec![file_bytes_error(&request_id, &path, "too_large")];
+        return socket
+            .send(file_bytes_error(&request_id, &path, "too_large"))
+            .await
+            .map_err(|_| ());
     }
-    let mut file = match tokio::fs::File::open(&real).await {
-        Ok(file) => file,
-        Err(_) => return vec![file_bytes_error(&request_id, &path, "read_failed")],
-    };
+    let mut file = tokio::fs::File::from_std(file);
     let start = offset.min(total);
     if start > 0 && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
-        return vec![file_bytes_error(&request_id, &path, "read_failed")];
+        return socket
+            .send(file_bytes_error(&request_id, &path, "read_failed"))
+            .await
+            .map_err(|_| ());
     }
     let end = start.saturating_add(wanted).min(total);
     let displayed = real.display().to_string();
-    let mut frames = Vec::new();
     let mut cursor = start;
     loop {
         let take = (end - cursor).min(BYTES_CHUNK) as usize;
@@ -641,8 +928,10 @@ async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
         let read = match file.read(&mut buffer).await {
             Ok(read) => read,
             Err(_) => {
-                frames.push(file_bytes_error(&request_id, &path, "read_failed"));
-                return frames;
+                return socket
+                    .send(file_bytes_error(&request_id, &path, "read_failed"))
+                    .await
+                    .map_err(|_| ());
             }
         };
         buffer.truncate(read);
@@ -657,10 +946,13 @@ async fn handle_file_bytes(boundary: &Boundary, event: &Value) -> Vec<Message> {
             "total": total,
             "eof": eof,
         });
-        frames.push(Message::Binary(bytes_frame(&header, &buffer).into()));
+        socket
+            .send(Message::Binary(bytes_frame(&header, &buffer).into()))
+            .await
+            .map_err(|_| ())?;
         cursor += read as u64;
         if eof {
-            return frames;
+            return Ok(());
         }
     }
 }
@@ -1138,6 +1430,129 @@ mod tests {
             classify_frame(9, Some(7), false),
             None,
             "revision from the future"
+        );
+    }
+
+    #[test]
+    fn the_host_handler_never_gets_a_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("notes.txt");
+        std::fs::write(&plain, "x").unwrap();
+        assert_eq!(openable(&plain), Ok(()), "an ordinary file opens");
+        assert_eq!(
+            openable(&dir.path().join("huge.md")),
+            Err("not_found"),
+            "a file that vanished between the boundary check and the handler is refused"
+        );
+
+        // A handler that runs what it opens, on any platform, is refused by
+        // name; a plain text file with the same body is not.
+        for name in [
+            "run.sh",
+            "run.tool",
+            "app.app",
+            "installer.pkg",
+            "image.dmg",
+            "term.terminal",
+            "session.term",
+            "job.command",
+            "link.webloc",
+            "script.py",
+            "thing.jar",
+            "run.exe",
+            "run.bat",
+            "run.ps1",
+            "run.vbs",
+            "notes.js",
+            "notes.jse",
+            "launch.jnlp",
+            "snapin.msc",
+            "setup.application",
+            "ref.appref-ms",
+            "pkg.appx",
+            "pkg.msix",
+            "pkg.appinstaller",
+            "lib.dylib",
+            "agent.desktop",
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "x").unwrap();
+            assert_eq!(openable(&path), Err("not_openable"), "{name}");
+        }
+        for name in [
+            "notes.txt",
+            "readme.md",
+            "data.json",
+            "clip.mp4",
+            "bundle.ts",
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "x").unwrap();
+            assert_eq!(openable(&path), Ok(()), "{name}");
+        }
+
+        // An execute bit refuses a file with no telling extension.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let runnable = dir.path().join("server");
+            std::fs::write(&runnable, "x").unwrap();
+            std::fs::set_permissions(&runnable, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(openable(&runnable), Err("not_openable"), "execute bit");
+        }
+
+        // A program renamed to a document extension is refused by its header.
+        let renamed = dir.path().join("notes.pdf");
+        std::fs::write(&renamed, [0xCF, 0xFA, 0xED, 0xFE, 0, 0, 0, 0]).unwrap();
+        assert_eq!(openable(&renamed), Err("not_openable"), "Mach-O header");
+        let elf = dir.path().join("notes.png");
+        std::fs::write(&elf, [0x7F, b'E', b'L', b'F', 0, 0, 0, 0]).unwrap();
+        assert_eq!(openable(&elf), Err("not_openable"), "ELF header");
+        let fat64 = dir.path().join("notes.md");
+        std::fs::write(&fat64, [0xCA, 0xFE, 0xBA, 0xBF, 0, 0, 0, 0]).unwrap();
+        assert_eq!(openable(&fat64), Err("not_openable"), "64-bit fat Mach-O");
+        // A DOS/PE executable is refused whether its size field reads as text
+        // or not: a real one carries the zero fields its header requires.
+        let mut pe = b"MZ".to_vec();
+        pe.extend_from_slice(b"A\0\x03\x00\x00\x00\x00\x00");
+        pe.resize(0x3C, b' ');
+        pe.extend_from_slice(&0x80u32.to_le_bytes());
+        pe.resize(0x80, b' ');
+        pe.extend_from_slice(b"PE\0\0");
+        let pe_path = dir.path().join("notes.dat");
+        std::fs::write(&pe_path, &pe).unwrap();
+        assert_eq!(openable(&pe_path), Err("not_openable"), "PE header");
+        let stub = dir.path().join("notes.txt");
+        std::fs::write(&stub, b"MZ\x90\x00\x00").unwrap();
+        assert_eq!(openable(&stub), Err("not_openable"), "MZ stub");
+        // A document that merely starts with the same two letters opens.
+        let text = dir.path().join("notes.md");
+        std::fs::write(&text, b"MZ is a codec\n").unwrap();
+        assert_eq!(openable(&text), Ok(()), "MZ letters in text");
+        // And a PE whose header has no zero field at all is still caught by
+        // the loader signature its `e_lfanew` points at.
+        let at = 0x0101_0101u32;
+        let mut crafted = b"MZ".to_vec();
+        crafted.extend_from_slice(&[b'A'; 0x3A]);
+        crafted.extend_from_slice(&at.to_le_bytes());
+        crafted.resize(512, b'A');
+        assert!(
+            !crafted.contains(&0),
+            "the crafted header carries no zero byte"
+        );
+        let crafted_path = dir.path().join("huge.md");
+        {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&crafted_path).unwrap();
+            file.write_all(&crafted).unwrap();
+            file.write_all(&vec![b'A'; at as usize - crafted.len()])
+                .unwrap();
+            file.write_all(b"PE\0\0").unwrap();
+        }
+        assert_eq!(
+            openable(&crafted_path),
+            Err("not_openable"),
+            "PE by e_lfanew"
         );
     }
 

@@ -24,8 +24,8 @@ libc = "=0.2.189"
 tower-http = { version = "=0.6.8", features = ["fs"] }
 base64 = "=0.23.1"
 subtle = "=2.6.1"
-notify = "=8.2.0"
 ignore = "=0.4.33"
+cap-std = "=4.0.3"
 
 [dev-dependencies]
 tempfile = "=3.27.0"

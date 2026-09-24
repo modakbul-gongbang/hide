@@ -1,11 +1,16 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
+
+use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 
 use crate::model::{DocumentKind, EditorConflictSnapshot, EditorDocumentSnapshot};
 
-const MAX_EDITABLE_BYTES: u64 = 2 * 1024 * 1024;
+/// The largest file the editor reads into a document. Past it the shell
+/// offers the OS default handler instead (PRD S3 D-12).
+const MAX_EDITABLE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// The first bytes of every PDF, whatever the file is called.
 const PDF_SIGNATURE: &[u8] = b"%PDF-";
@@ -15,9 +20,85 @@ const PDF_SIGNATURE: &[u8] = b"%PDF-";
 /// reports a file that is not what its name says.
 const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "tiff", "heic", "avif"];
 
+/// Opened checkout roots supplied by the daemon after its registration check.
+/// The Swift shell uses the ambient path calls below; both shells share the
+/// document and explorer logic, while the daemon's paths resolve through
+/// these directory capabilities when the actual I/O runs.
+#[derive(Clone, Default)]
+pub struct FileRoots(Arc<Vec<(PathBuf, Arc<Dir>)>>);
+
+impl FileRoots {
+    pub fn from_opened(roots: Vec<(PathBuf, File)>) -> Self {
+        Self(Arc::new(
+            roots
+                .into_iter()
+                .map(|(path, file)| (path, Arc::new(Dir::from_std_file(file))))
+                .collect(),
+        ))
+    }
+
+    fn relative<'a>(&'a self, path: &'a Path) -> io::Result<(&'a Dir, &'a Path)> {
+        self.0
+            .iter()
+            .filter_map(|(root, dir)| path.strip_prefix(root).ok().map(|rest| (root, dir, rest)))
+            .max_by_key(|(root, _, _)| root.components().count())
+            .map(|(_, dir, rest)| (dir.as_ref(), rest))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "path is outside registered checkout",
+                )
+            })
+    }
+
+    pub(crate) fn open(&self, path: &Path, write: bool) -> io::Result<File> {
+        let (dir, relative) = self.relative(path)?;
+        let mut options = CapOpenOptions::new();
+        options.read(true).write(write);
+        #[cfg(unix)]
+        {
+            use cap_std::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+        }
+        dir.open_with(relative, &options)
+            .map(|file| file.into_std())
+    }
+
+    fn parent(&self, path: &Path) -> io::Result<(Dir, std::ffi::OsString)> {
+        let (dir, relative) = self.relative(path)?;
+        let name = relative.file_name().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "checkout root is not an item")
+        })?;
+        let parent = relative
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        dir.open_dir(parent).map(|parent| (parent, name.to_owned()))
+    }
+}
+
+fn open_handle(path: &Path, roots: Option<&FileRoots>, write: bool) -> io::Result<File> {
+    match roots {
+        Some(roots) => roots.open(path, write),
+        None if write => OpenOptions::new().read(true).write(true).open(path),
+        None => File::open(path),
+    }
+}
+
+#[cfg(test)]
 pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
-    let metadata =
-        fs::metadata(path).map_err(|_| "The selected file could not be read".to_owned())?;
+    open_with_roots(path, None)
+}
+
+pub fn open_with_roots(
+    path: &Path,
+    roots: Option<&FileRoots>,
+) -> Result<EditorDocumentSnapshot, String> {
+    let mut file = open_handle(path, roots, false)
+        .map_err(|_| "The selected file could not be read".to_owned())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "The selected file could not be read".to_owned())?;
     if !metadata.is_file() {
         return Err("Only existing regular files can be opened".to_owned());
     }
@@ -39,18 +120,29 @@ pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
     if has_image_extension(path) {
         return Ok(document(DocumentKind::Image, None, None));
     }
-    if starts_with_pdf_signature(path)? {
+    if starts_with_pdf_signature(&mut file)? {
         return Ok(document(DocumentKind::Pdf, None, None));
     }
     if metadata.len() > MAX_EDITABLE_BYTES {
         return Ok(document(
             DocumentKind::Text,
             None,
-            Some("Files larger than 2 MB are preview-only".to_owned()),
+            Some("Files larger than 16 MB are preview-only".to_owned()),
         ));
     }
-    let bytes =
-        fs::read(path).map_err(|_| "The selected file contents could not be read".to_owned())?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| "The selected file contents could not be read".to_owned())?;
+    let mut bytes = Vec::new();
+    file.take(MAX_EDITABLE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "The selected file contents could not be read".to_owned())?;
+    if bytes.len() as u64 > MAX_EDITABLE_BYTES {
+        return Ok(document(
+            DocumentKind::Text,
+            None,
+            Some("Files larger than 16 MB are preview-only".to_owned()),
+        ));
+    }
     let Ok(contents) = String::from_utf8(bytes) else {
         return Ok(document(DocumentKind::Binary, None, None));
     };
@@ -77,9 +169,7 @@ fn has_image_extension(path: &Path) -> bool {
 /// Reads only the signature's worth of bytes: a PDF is recognised by its
 /// content so that a file with no extension opens as one, and a large PDF is
 /// not read whole to find that out.
-fn starts_with_pdf_signature(path: &Path) -> Result<bool, String> {
-    let mut file =
-        File::open(path).map_err(|_| "The selected file contents could not be read".to_owned())?;
+fn starts_with_pdf_signature(file: &mut File) -> Result<bool, String> {
     let mut header = [0u8; PDF_SIGNATURE.len()];
     let mut filled = 0;
     while filled < header.len() {
@@ -107,11 +197,22 @@ pub fn update_draft(editor: &mut EditorDocumentSnapshot, contents: String) -> Re
     Ok(())
 }
 
+#[cfg(test)]
 pub fn save(
     editor: &mut EditorDocumentSnapshot,
     path: &Path,
     contents: String,
     expected_modified_at_unix_ms: Option<u64>,
+) -> Result<(), String> {
+    save_with_roots(editor, path, contents, expected_modified_at_unix_ms, None)
+}
+
+pub fn save_with_roots(
+    editor: &mut EditorDocumentSnapshot,
+    path: &Path,
+    contents: String,
+    expected_modified_at_unix_ms: Option<u64>,
+    roots: Option<&FileRoots>,
 ) -> Result<(), String> {
     if editor.path != path.to_string_lossy() {
         return Err("The save target does not match the open document".to_owned());
@@ -122,7 +223,10 @@ pub fn save(
     if editor.readonly_reason.is_some() {
         return Err("The current file is read-only; the draft was preserved".to_owned());
     }
-    let metadata = fs::metadata(path).map_err(|_| {
+    let mut output = open_handle(path, roots, true).map_err(|_| {
+        "The existing file could not be inspected; the draft was preserved".to_owned()
+    })?;
+    let metadata = output.metadata().map_err(|_| {
         "The existing file could not be inspected; the draft was preserved".to_owned()
     })?;
     if !metadata.is_file() {
@@ -131,8 +235,14 @@ pub fn save(
         );
     }
     let disk_modified = modified_milliseconds(&metadata)?;
-    let disk_bytes = fs::read(path)
+    let mut disk_bytes = Vec::new();
+    (&mut output)
+        .take(MAX_EDITABLE_BYTES + 1)
+        .read_to_end(&mut disk_bytes)
         .map_err(|_| "The existing file could not be read; the draft was preserved".to_owned())?;
+    if disk_bytes.len() as u64 > MAX_EDITABLE_BYTES {
+        return Err("The file grew beyond the editable size; the draft was preserved".to_owned());
+    }
 
     if disk_bytes == contents.as_bytes() {
         editor.contents_utf8 = Some(contents);
@@ -155,10 +265,9 @@ pub fn save(
         return Err("The file changed on disk; choose Reload or Keep Editing".to_owned());
     }
 
-    let mut output = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(path)
+    output
+        .seek(SeekFrom::Start(0))
+        .and_then(|_| output.set_len(0))
         .map_err(|_| {
             "The file could not be opened for writing; the draft was preserved".to_owned()
         })?;
@@ -166,7 +275,8 @@ pub fn save(
         .write_all(contents.as_bytes())
         .and_then(|_| output.sync_all())
         .map_err(|_| "The file could not be saved; the draft was preserved".to_owned())?;
-    let modified = fs::metadata(path)
+    let modified = output
+        .metadata()
         .ok()
         .and_then(|metadata| modified_milliseconds(&metadata).ok())
         .unwrap_or(disk_modified);
@@ -177,9 +287,12 @@ pub fn save(
     Ok(())
 }
 
-pub fn reload(editor: &mut EditorDocumentSnapshot) -> Result<(), String> {
+pub fn reload_with_roots(
+    editor: &mut EditorDocumentSnapshot,
+    roots: Option<&FileRoots>,
+) -> Result<(), String> {
     let path = editor.path.clone();
-    *editor = open(Path::new(&path))?;
+    *editor = open_with_roots(Path::new(&path), roots)?;
     Ok(())
 }
 
@@ -347,7 +460,18 @@ impl ExplorerOperation {
 /// Runs the change on disk. Nothing here overwrites: every call is the
 /// exclusive form, so a name that appears between the runtime's decision
 /// and this call is refused rather than replaced.
+#[cfg(test)]
 pub fn apply_explorer_operation(operation: &ExplorerOperation) -> Result<(), String> {
+    apply_explorer_operation_with_roots(operation, None)
+}
+
+pub fn apply_explorer_operation_with_roots(
+    operation: &ExplorerOperation,
+    roots: Option<&FileRoots>,
+) -> Result<(), String> {
+    if let Some(roots) = roots {
+        return apply_rooted_explorer_operation(operation, roots);
+    }
     let describe = |error: io::Error| describe_explorer_error(operation, error);
     match operation.kind {
         ExplorerOperationKind::FileCreate => OpenOptions::new()
@@ -381,6 +505,282 @@ pub fn apply_explorer_operation(operation: &ExplorerOperation) -> Result<(), Str
             })
         }
     }
+}
+
+/// The daemon's mutation path uses opened parent directories. Relative
+/// operations remain inside the registered root even if a checked pathname
+/// is replaced before the worker runs.
+fn apply_rooted_explorer_operation(
+    operation: &ExplorerOperation,
+    roots: &FileRoots,
+) -> Result<(), String> {
+    let describe = |error: io::Error| describe_explorer_error(operation, error);
+    let (source_parent, source_name) = roots.parent(&operation.source).map_err(describe)?;
+    match operation.kind {
+        ExplorerOperationKind::FileCreate => {
+            let mut options = CapOpenOptions::new();
+            options.write(true).create_new(true);
+            source_parent
+                .open_with(Path::new(&source_name), &options)
+                .map(drop)
+                .map_err(describe)
+        }
+        ExplorerOperationKind::DirCreate => source_parent
+            .create_dir(Path::new(&source_name))
+            .map_err(describe),
+        ExplorerOperationKind::PathRename | ExplorerOperationKind::PathMove => {
+            rooted_source(&source_parent, &source_name, operation, describe)?;
+            let (destination_parent, destination_name) =
+                roots.parent(&operation.destination).map_err(describe)?;
+            rename_rooted_exclusive(
+                &source_parent,
+                &source_name,
+                &destination_parent,
+                &destination_name,
+            )
+            .map_err(describe)
+        }
+        ExplorerOperationKind::PathTrash => {
+            let present = rooted_source(&source_parent, &source_name, operation, describe)?;
+            if let Some(expected) = operation.expected_inode
+                && rooted_inode_of(&present) != expected
+            {
+                return Err(format!(
+                    "{} changed while the prompt was open; nothing was moved",
+                    operation.item_name()
+                ));
+            }
+            move_rooted_to_trash(&source_parent, &source_name, operation, roots)
+        }
+    }
+}
+
+fn rooted_source(
+    parent: &Dir,
+    name: &std::ffi::OsStr,
+    operation: &ExplorerOperation,
+    describe: impl FnOnce(io::Error) -> String,
+) -> Result<cap_std::fs::Metadata, String> {
+    match parent.symlink_metadata(Path::new(name)) {
+        Ok(metadata) => Ok(metadata),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(format!(
+            "{} no longer exists",
+            operation
+                .source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        )),
+        Err(error) => Err(describe(error)),
+    }
+}
+
+#[cfg(unix)]
+fn rooted_inode_of(metadata: &cap_std::fs::Metadata) -> u64 {
+    use cap_std::fs::MetadataExt;
+    metadata.ino()
+}
+
+#[cfg(not(unix))]
+fn rooted_inode_of(_metadata: &cap_std::fs::Metadata) -> u64 {
+    0
+}
+
+#[cfg(target_os = "macos")]
+fn rename_rooted_exclusive(
+    from_dir: &Dir,
+    from: &std::ffi::OsStr,
+    to_dir: &Dir,
+    to: &std::ffi::OsStr,
+) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let from = CString::new(from.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid source name"))?;
+    let to = CString::new(to.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid destination name"))?;
+    let result = unsafe {
+        libc::renameatx_np(
+            from_dir.as_raw_fd(),
+            from.as_ptr(),
+            to_dir.as_raw_fd(),
+            to.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn rename_rooted_exclusive(
+    from_dir: &Dir,
+    from: &std::ffi::OsStr,
+    to_dir: &Dir,
+    to: &std::ffi::OsStr,
+) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let from = CString::new(from.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid source name"))?;
+    let to = CString::new(to.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid destination name"))?;
+    let result = unsafe {
+        libc::renameat2(
+            from_dir.as_raw_fd(),
+            from.as_ptr(),
+            to_dir.as_raw_fd(),
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn rename_rooted_exclusive(
+    from_dir: &Dir,
+    from: &std::ffi::OsStr,
+    to_dir: &Dir,
+    to: &std::ffi::OsStr,
+) -> io::Result<()> {
+    if to_dir.symlink_metadata(Path::new(to)).is_ok() {
+        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+    }
+    from_dir.rename(Path::new(from), to_dir, Path::new(to))
+}
+
+fn move_rooted_to_trash(
+    parent: &Dir,
+    name: &std::ffi::OsStr,
+    operation: &ExplorerOperation,
+    roots: &FileRoots,
+) -> Result<(), String> {
+    // The platform Trash API takes a pathname. Move the selected item through
+    // its checked parent handle into a private directory outside the mutable
+    // checkout spelling, then hand that independent path to the OS.
+    let stage = tempfile::Builder::new()
+        .prefix("hide-trash-")
+        .tempdir()
+        .map_err(|error| format!("Trash staging could not be created: {error}"))?;
+    if stage_is_inside_root(stage.path(), roots)
+        .map_err(|error| format!("Trash staging could not be inspected: {error}"))?
+    {
+        return Err("Trash staging must be outside registered checkouts".to_owned());
+    }
+    let staged = Dir::open_ambient_dir(stage.path(), cap_std::ambient_authority())
+        .map_err(|error| format!("Trash staging could not be opened: {error}"))?;
+    let item_path = stage.path().join(name);
+    let mut preserve_stage = false;
+    let result = (|| {
+        rename_rooted_exclusive(parent, name, &staged, name).map_err(|error| {
+            if error.kind() == io::ErrorKind::CrossesDevices {
+                "Trash staging is on another volume; the item was left in place".to_owned()
+            } else {
+                describe_explorer_error(operation, error)
+            }
+        })?;
+        let before_handoff = (|| {
+            if let Some(expected) = operation.expected_inode {
+                let actual = staged.symlink_metadata(Path::new(name)).map_err(|error| {
+                    format!(
+                        "{} could not be inspected after staging: {error}",
+                        operation.item_name()
+                    )
+                })?;
+                if rooted_inode_of(&actual) != expected {
+                    return Err(format!(
+                        "{} changed while the prompt was open; nothing was moved",
+                        operation.item_name()
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = before_handoff {
+            rename_rooted_exclusive(&staged, name, parent, name).map_err(|restore_error| {
+                preserve_stage = true;
+                format!(
+                    "{} could not be restored after staging: {restore_error}",
+                    operation.item_name()
+                )
+            })?;
+            return Err(error);
+        }
+        let outcome = move_to_trash(&item_path).map_err(|error| {
+            format!(
+                "{} could not be moved to the Trash: {error}",
+                operation.item_name()
+            )
+        });
+        if outcome.is_err() {
+            rename_rooted_exclusive(&staged, name, parent, name).map_err(|error| {
+                preserve_stage = true;
+                format!(
+                    "Trash failed and {} could not be restored: {error}",
+                    operation.item_name()
+                )
+            })?;
+        }
+        outcome
+    })();
+    if preserve_stage {
+        let recovery = stage.keep();
+        return Err(format!(
+            "{}; inspect recovery staging at {}",
+            result.unwrap_err(),
+            recovery.display()
+        ));
+    }
+    result
+}
+
+/// Compare the temporary path's ancestors with the *opened* checkout roots,
+/// not their mutable names. This also covers an environment temp directory
+/// placed inside a checkout whose original spelling has since been replaced.
+fn stage_is_inside_root(stage: &Path, roots: &FileRoots) -> io::Result<bool> {
+    let real = stage.canonicalize()?;
+    for (_, root) in roots.0.iter() {
+        let root_metadata = root.dir_metadata()?;
+        for ancestor in real.ancestors() {
+            if same_directory_identity(&root_metadata, &fs::metadata(ancestor)?) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(unix)]
+fn same_directory_identity(root: &cap_std::fs::Metadata, other: &fs::Metadata) -> bool {
+    use cap_std::fs::MetadataExt as _;
+    use std::os::unix::fs::MetadataExt as _;
+    root.dev() == other.dev() && root.ino() == other.ino()
+}
+
+#[cfg(windows)]
+fn same_directory_identity(root: &cap_std::fs::Metadata, other: &fs::Metadata) -> bool {
+    use cap_std::fs::MetadataExt as _;
+    use std::os::windows::fs::MetadataExt as _;
+    root.volume_serial_number()
+        .zip(root.file_index())
+        .is_some_and(|identity| {
+            Some(identity) == other.volume_serial_number().zip(other.file_index())
+        })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_directory_identity(_root: &cap_std::fs::Metadata, _other: &fs::Metadata) -> bool {
+    true
 }
 
 /// A rename, move or trash of an item that is already gone is named as
@@ -697,6 +1097,35 @@ pub(crate) mod tests {
         assert_eq!(language_for(Path::new("LICENSE")), None);
     }
 
+    #[test]
+    fn a_document_past_the_editable_cap_opens_as_a_preview() {
+        let root = explorer_fixture();
+        let big = root.join("big.txt");
+        // Sparse: the file reports the size without holding the bytes.
+        File::create(&big)
+            .unwrap()
+            .set_len(MAX_EDITABLE_BYTES + 1)
+            .unwrap();
+        let document = open(&big).unwrap();
+        assert_eq!(document.document_kind, DocumentKind::Text);
+        assert_eq!(document.contents_utf8, None);
+        assert_eq!(
+            document.readonly_reason.as_deref(),
+            Some("Files larger than 16 MB are preview-only")
+        );
+        let at_cap = root.join("at-cap.txt");
+        File::create(&at_cap)
+            .unwrap()
+            .set_len(MAX_EDITABLE_BYTES)
+            .unwrap();
+        let document = open(&at_cap).unwrap();
+        assert!(
+            document.contents_utf8.is_some(),
+            "the cap itself is editable"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
     fn explorer_fixture() -> PathBuf {
         let sequence = NEXT_EXPLORER_FIXTURE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
@@ -711,6 +1140,121 @@ pub(crate) mod tests {
         fs::write(root.join("README.md"), "readme").unwrap();
         fs::write(root.join("src/lib.rs"), "lib").unwrap();
         root
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opened_checkout_root_keeps_reads_and_saves_inside_after_path_swap() {
+        use std::os::unix::fs::symlink;
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("checkout");
+        let outside = sandbox.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(root.join("note.txt"), "inside").unwrap();
+        fs::write(outside.join("note.txt"), "outside").unwrap();
+        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
+        let mut document = open_with_roots(&root.join("note.txt"), Some(&roots)).unwrap();
+        assert_eq!(document.contents_utf8.as_deref(), Some("inside"));
+        let create = ExplorerOperation::create(
+            ExplorerOperationKind::FileCreate,
+            &root,
+            &root,
+            "created.txt",
+        )
+        .unwrap();
+        fs::rename(&root, sandbox.path().join("moved")).unwrap();
+        symlink(&outside, &root).unwrap();
+        save_with_roots(
+            &mut document,
+            &root.join("note.txt"),
+            "edited".to_owned(),
+            None,
+            Some(&roots),
+        )
+        .unwrap();
+        apply_explorer_operation_with_roots(&create, Some(&roots)).unwrap();
+        assert_eq!(
+            fs::read_to_string(sandbox.path().join("moved/note.txt")).unwrap(),
+            "edited"
+        );
+        assert!(sandbox.path().join("moved/created.txt").is_file());
+        assert!(!outside.join("created.txt").exists());
+        assert_eq!(
+            fs::read_to_string(outside.join("note.txt")).unwrap(),
+            "outside"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rooted_mutations_refuse_outside_symlink() {
+        use std::os::unix::fs::symlink;
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("checkout");
+        let outside = sandbox.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
+        fs::create_dir(root.join("escape")).unwrap();
+        let escaped = ExplorerOperation::create(
+            ExplorerOperationKind::FileCreate,
+            &root,
+            &root.join("escape"),
+            "bad.txt",
+        )
+        .unwrap();
+        fs::rename(root.join("escape"), root.join("former_escape")).unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+        assert!(apply_explorer_operation_with_roots(&escaped, Some(&roots)).is_err());
+        assert!(!outside.join("bad.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rooted_trash_hands_off_the_selected_item_after_checkout_path_replacement() {
+        use std::os::unix::fs::symlink;
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("checkout");
+        let moved = sandbox.path().join("moved");
+        let outside = sandbox.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let (name, _) = unique_trash_names();
+        fs::write(root.join(&name), "selected").unwrap();
+        fs::write(outside.join(&name), "outside").unwrap();
+        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
+        let shown = inode_of(&fs::symlink_metadata(root.join(&name)).unwrap());
+        let operation =
+            ExplorerOperation::trash(&root, &root.join(&name), &root, Some(shown)).unwrap();
+
+        fs::rename(&root, &moved).unwrap();
+        symlink(&outside, &root).unwrap();
+        apply_explorer_operation_with_roots(&operation, Some(&roots)).unwrap();
+        assert!(!moved.join(&name).exists());
+        assert_eq!(fs::read_to_string(outside.join(&name)).unwrap(), "outside");
+        fs::remove_file(&root).unwrap();
+        remove_from_trash(&[&name]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trash_stage_checks_the_opened_root_even_after_its_name_moves() {
+        use std::os::unix::fs::symlink;
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("checkout");
+        let outside = sandbox.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
+        let inside_stage = tempfile::tempdir_in(&root).unwrap();
+        let outside_stage = tempfile::tempdir_in(&outside).unwrap();
+        let moved = sandbox.path().join("moved");
+        fs::rename(&root, &moved).unwrap();
+        symlink(&outside, &root).unwrap();
+        let moved_stage = moved.join(inside_stage.path().file_name().unwrap());
+        assert!(stage_is_inside_root(&moved_stage, &roots).unwrap());
+        assert!(!stage_is_inside_root(outside_stage.path(), &roots).unwrap());
     }
 
     /// Names no other Trash entry can carry, so a trashed fixture can be

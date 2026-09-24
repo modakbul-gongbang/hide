@@ -19,6 +19,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         vite_origin: None,
         bind: "127.0.0.1:0".parse().unwrap(),
         idle_secs: 600,
+        open_command: None,
     };
     (dir, env)
 }
@@ -794,6 +795,34 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_swift_order() {
     );
     assert!(nested["payload"]["entries"].as_array().unwrap().is_empty());
 
+    // The daemon resolves an absolute in-checkout link before the core's
+    // capability operation sees the path. The created file must land in the
+    // linked folder, while the outside link above remains excluded.
+    socket
+        .send(Message::Text(
+            json!({
+                "schema_version": 2,
+                "kind": "file_create",
+                "payload": {
+                    "root": checkout_path,
+                    "parent": checkout.join("alias").display().to_string(),
+                    "name": "through-link.txt"
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !checkout.join("src/through-link.txt").is_file() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("an in-checkout link allows file creation through the daemon");
+    assert!(!outside.path().join("through-link.txt").exists());
+
     // The root the listing names has to be a registered one, and the folder has
     // to be under it: a folder under home that no checkout covers, and a
     // symlink out of the checkout, are both refused as outside_checkout.
@@ -816,6 +845,35 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_swift_order() {
         assert_eq!(refused["payload"]["kind"], "file_list");
         assert_eq!(refused["payload"]["reason"], "outside_checkout");
     }
+
+    // The snapshot still registers this spelling after the directory is
+    // replaced. Neither the new outside rows nor a write through it may pass.
+    std::fs::write(outside.path().join("outside-secret.txt"), "secret").unwrap();
+    std::fs::rename(&checkout, home.join("projects/alpha-old")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &checkout).unwrap();
+    for (kind, payload) in [
+        (
+            "file_list",
+            json!({"root": checkout_path, "path": checkout_path}),
+        ),
+        (
+            "file_create",
+            json!({"root": checkout_path, "parent": checkout_path, "name": "written.txt"}),
+        ),
+        (
+            "file_save",
+            json!({"path": checkout.join("outside-secret.txt").display().to_string()}),
+        ),
+        (
+            "file_index",
+            json!({"root": checkout_path, "query": "outside"}),
+        ),
+    ] {
+        let refused = send_event_expecting(&mut socket, kind, payload, never).await;
+        assert_eq!(refused["type"], "path_refused", "{kind}");
+        assert_eq!(refused["payload"]["reason"], "outside_checkout", "{kind}");
+    }
+    assert!(!outside.path().join("written.txt").exists());
     running.stop();
 }
 
@@ -944,6 +1002,51 @@ async fn file_bytes_streams_a_checkout_file_and_refuses_a_path_outside_it() {
     running.stop();
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_fifo_byte_request_is_refused_and_another_socket_stays_responsive() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let (dir, env) = test_env(true);
+    let checkout = dir.path().canonicalize().unwrap().join("projects/alpha");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let pipe = checkout.join("pipe");
+    let name = CString::new(pipe.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+    let mut socket = live_socket(&running).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        send_event_expecting(
+            &mut socket,
+            "file_bytes",
+            json!({"request_id": "fifo", "path": pipe.display().to_string(), "offset": 0, "length": Value::Null}),
+            never,
+        ),
+    )
+    .await;
+    if result.is_err() {
+        let _ = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&pipe);
+    }
+    let refused = result.expect("a FIFO must not block the WebSocket");
+    assert_eq!(refused["payload"]["reason"], "not_a_file");
+    let mut second = live_socket(&running).await;
+    let listing = send_event_expecting(
+        &mut second,
+        "file_list",
+        json!({"root": checkout.display().to_string(), "path": checkout.display().to_string()}),
+        |frame| frame["type"] == "directory_list",
+    )
+    .await;
+    assert_eq!(listing["type"], "directory_list");
+    running.stop();
+}
+
 #[tokio::test]
 async fn a_change_in_a_watched_checkout_is_announced() {
     let (dir, env) = test_env(true);
@@ -1042,6 +1145,44 @@ async fn the_file_index_answers_the_ranked_matches_for_a_checkout() {
     assert_eq!(refused["type"], "path_refused");
     assert_eq!(refused["payload"]["kind"], "file_index");
     assert_eq!(refused["payload"]["reason"], "outside_checkout");
+    running.stop();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn browser_socket_cannot_start_a_host_file_handler() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, mut env) = test_env(true);
+    let home = dir.path().canonicalize().unwrap();
+    let checkout = home.join("projects/alpha");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let file = checkout.join("notes.txt");
+    std::fs::write(&file, "safe data").unwrap();
+    let marker = home.join("handler-started");
+    let opener = home.join("fake-opener");
+    std::fs::write(
+        &opener,
+        format!("#!/bin/sh\nprintf x > '{}'\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+    env.open_command = Some(opener);
+    seed_registration(&env.state_dir, "w-alpha", &checkout);
+    let running = hided::start_daemon(env).await.expect("start daemon");
+    let mut socket = live_socket(&running).await;
+
+    let answer = send_event_expecting(
+        &mut socket,
+        "open_external",
+        json!({"path": file.display().to_string()}),
+        |frame| frame["type"] == "open_external_result",
+    )
+    .await;
+    assert_eq!(answer["payload"]["ok"], false);
+    assert_eq!(answer["payload"]["reason"], "untrusted_client");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!marker.exists(), "browser frame started the host handler");
     running.stop();
 }
 

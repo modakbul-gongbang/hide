@@ -26,7 +26,7 @@
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused"] },
+        "type": { "type": "string", "enum": ["snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
       }
@@ -107,11 +107,31 @@
             "path_move",
             "path_trash",
             "file_bytes",
-            "file_index"
+            "file_index",
+            "open_external"
           ]
         },
         "path": { "type": "string" },
         "reason": { "$ref": "#/$defs/pathRefusalReason" }
+      }
+    },
+    "openExternal": {
+      "description": "A browser WebSocket client open_external event is always answered with open_external_result {path, ok:false, reason:\"untrusted_client\"}, even with a valid token and loopback Origin: localhost may be forwarded from another machine. The bare S3 browser downloads oversized files through file_bytes. The bounded host opener remains implemented for a future transport that can establish local ownership (macOS open, Windows ShellExecuteW default association, Linux xdg-open, or validated absolute HIDE_OPEN_COMMAND); no such transport is present in S3. Windows never passes the pathname through cmd.",
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" }
+      }
+    },
+    "openExternalResult": {
+      "description": "Payload of an open_external_result frame: the path supplied by the client, ok false, and reason untrusted_client. The browser WebSocket has no authority to launch the daemon host handler. The retained host opener may later report spawn_failed, over_budget, not_found, or not_openable on a separately authenticated local transport.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "ok", "reason"],
+      "properties": {
+        "path": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] }
       }
     },
     "attachments": {

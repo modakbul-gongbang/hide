@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
-import { allBuffers, deleteBuffer, sweepBuffers } from "./buffers";
+import { allBuffers, claimLegacyBuffer, deleteBuffer, discardLegacyBuffers, flushBuffer, identity, moveBuffer, staleBuffers, sweepBuffers } from "./buffers";
+import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { EditorSurface } from "./Editor";
 import { configureFileBytes } from "./fileBytes";
@@ -10,9 +11,10 @@ import { PaneCanvas } from "./PaneGrid";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
+import { RightPanel } from "./RightPanel";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { editorFor, focusedCheckout } from "./snapshot";
+import { checkoutById, editorFor, focusedCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { TabBar } from "./TabBar";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
@@ -75,22 +77,67 @@ export function App() {
     if (connection !== "live") useUiStore.getState().setCycle(null);
   }, [connection]);
 
+  // A save mark belongs to a tab that is still unsaved: once the core reports
+  // the tab clean, the mark comes off whichever tab is showing (D-10).
+  const editorTabs = useShellStore((s) => s.editor?.tabs);
+  const identities = useRef(new Map<string, { root: string; path: string }>());
+  useEffect(() => {
+    if (!editorTabs) return;
+    const rest = useShellStore.getState().rest;
+    const open = new Set<string>();
+    for (const tab of editorTabs) {
+      open.add(tab.id);
+      const root = checkoutById(rest, tab.checkout_id)?.path ?? "";
+      const before = identities.current.get(tab.id);
+      identities.current.set(tab.id, { root, path: tab.path });
+      // A rename or a move retargets the stored buffer to the new identity,
+      // showing tab or background tab alike (D-14).
+      if (before && (before.root !== root || before.path !== tab.path)) {
+        void moveBuffer(before.root, before.path, root, tab.path).then((outcome) => {
+          if (outcome === "failed" && tab.dirty) useShellStore.getState().noteBufferWarning(tab.id, true);
+        });
+      }
+    }
+    for (const tabId of [...identities.current.keys()]) {
+      if (!open.has(tabId)) identities.current.delete(tabId);
+    }
+    // A tab id names a path, so a buffer for a tab that is gone would be
+    // applied to whatever opens at that path next (B5, D-14).
+    pruneDrafts(open);
+    for (const tab of editorTabs) if (!tab.dirty) settleDraft(tab.id);
+    const state = useShellStore.getState();
+    if (state.savingTabs.size === 0) return;
+    const dirty = new Set(editorTabs.filter((tab) => tab.dirty).map((tab) => tab.id));
+    for (const tabId of state.savingTabs) if (!dirty.has(tabId)) state.noteSaving(tabId, false);
+  }, [editorTabs]);
+
   // A buffer whose document the core no longer holds is discarded with a
   // diagnostic; an open document's buffer is restored by its editor (B8).
   useEffect(() => {
     if (connection !== "live") return;
-    const editor = useShellStore.getState().editor;
-    const openPaths = new Set(
-      (editor?.tabs ?? []).filter((tab) => tab.kind === "file").map((tab) => tab.path),
-    );
-    void allBuffers().then((buffers) => {
-      for (const buffer of sweepBuffers(buffers, openPaths)) {
+    const rest = useShellStore.getState().rest;
+    const documents = (useShellStore.getState().editor?.tabs ?? [])
+      .filter((tab) => tab.kind === "file")
+      .map((tab) => ({ root: checkoutById(rest, tab.checkout_id)?.path ?? "", path: tab.path }));
+    const open = new Set(documents.map(({ root, path }) => identity(root, path)));
+    void (async () => {
+      await Promise.all(documents.map(({ root, path }) => flushBuffer(root, path)));
+      await Promise.all(documents.map(({ root, path }) => claimLegacyBuffer(root, path)));
+      const legacyDiscarded = await discardLegacyBuffers(new Set(documents.map(({ path }) => path)));
+      for (const path of legacyDiscarded) {
+        useShellStore.getState().noteDiagnostic(`discarded the unsaved buffer for closed document ${path}`);
+      }
+      const buffers = await allBuffers();
+      // A buffer the core no longer holds is discarded, and one that has gone
+      // unclaimed for two weeks goes with it (D-14).
+      const discarded = [...sweepBuffers(buffers, open), ...staleBuffers(buffers, Date.now())];
+      for (const buffer of discarded) {
         useShellStore
           .getState()
           .noteDiagnostic(`discarded the unsaved buffer for closed document ${buffer.path}`);
-        void deleteBuffer(buffer.path);
+        void deleteBuffer(buffer.root, buffer.path);
       }
-    });
+    })();
   }, [connection]);
 
   return (
@@ -104,6 +151,7 @@ export function App() {
           <FindBar actions={actions} />
           <Canvas actions={actions} />
         </main>
+        <RightPanel actions={actions} />
       </div>
       <CycleOverlay />
       <ConfirmClose actions={actions} />

@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { clearPending, configureFileBytes, receiveBytes, receiveBytesError, receiveBytesRefusal, requestFileBytes } from "./fileBytes";
+import { describe, expect, it, vi } from "vitest";
+import { clearPending, configureFileBytes, downloadFile, receiveBytes, receiveBytesError, receiveBytesRefusal, requestFileBytes } from "./fileBytes";
 
 /** The frame hided sends: 4-byte big-endian header length, header JSON, bytes. */
-function frame(header: Record<string, unknown>, bytes: number[]): ArrayBuffer {
+function frame(header: Record<string, unknown>, bytes: number[] | Uint8Array): ArrayBuffer {
   const json = new TextEncoder().encode(JSON.stringify(header));
   const out = new Uint8Array(4 + json.length + bytes.length);
   new DataView(out.buffer).setUint32(0, json.length, false);
@@ -68,5 +68,40 @@ describe("file bytes", () => {
     receiveBytesError({ request_id: requestId, reason: "outside_checkout" });
     await expect(promise).rejects.toThrow("outside_checkout");
     expect(() => receiveBytes(frame({ type: "file_bytes", request_id: "nobody", offset: 0, total: 1, eof: true }, [9]))).not.toThrow();
+  });
+
+  it("streams a remote download in bounded range requests into the chosen file", async () => {
+    const range = 4 * 1024 * 1024;
+    const written: number[] = [];
+    const close = vi.fn(async () => {});
+    const abort = vi.fn(async () => {});
+    const showSaveFilePicker = vi.fn(async () => ({
+      createWritable: async () => ({
+        write: async (chunk: Uint8Array) => { written.push(chunk.byteLength); },
+        close,
+        abort,
+      }),
+    }));
+    vi.stubGlobal("window", { showSaveFilePicker });
+    const offsets: number[] = [];
+    configureFileBytes((event) => {
+      const payload = event.payload as { request_id: string; offset: number; path: string };
+      offsets.push(payload.offset);
+      const bytes = new Uint8Array(payload.offset === 0 ? range : 3);
+      queueMicrotask(() => receiveBytes(frame({
+        type: "file_bytes", request_id: payload.request_id, path: payload.path,
+        offset: payload.offset, total: range + 3, eof: true,
+      }, bytes)));
+    });
+    try {
+      await downloadFile("/repo/large.txt");
+      expect(showSaveFilePicker).toHaveBeenCalledWith({ suggestedName: "large.txt" });
+      expect(offsets).toEqual([0, range]);
+      expect(written).toEqual([range, 3]);
+      expect(close).toHaveBeenCalledOnce();
+      expect(abort).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -75,11 +75,21 @@ async function openCheckout(page: Page): Promise<Fixture> {
       path.join(repoDir, "notes.md"),
       "# Title\n\n- one\n- two\n\n- [ ] open\n\nsee [text](https://example.com) now\n\n```rust\nfn main() {}\n```\n",
     );
+    // A block longer than the pane's eight lines, so the pane scrolls inside
+    // itself rather than pushing the body down (D-11).
+    fs.writeFileSync(
+      path.join(repoDir, "post.md"),
+      `---\ntitle: Post\n${Array.from({ length: 12 }, (_, index) => `key${index}: value`).join("\n")}\n---\n\n# Body\n`,
+    );
     fs.writeFileSync(path.join(repoDir, ".gitignore"), "node_modules\n");
     fs.writeFileSync(path.join(repoDir, "shot.png"), PNG);
     fs.writeFileSync(path.join(repoDir, "doc.pdf"), minimalPdf());
     fs.copyFileSync(path.resolve("e2e/fixtures/tiny.mp4"), path.join(repoDir, "clip.mp4"));
     gitFixture(repoDir);
+    // Sparse and untracked: past the editable cap, so the browser offers a
+    // download instead of a buffer (D-12).
+    fs.writeFileSync(path.join(repoDir, "huge.txt"), "");
+    fs.truncateSync(path.join(repoDir, "huge.txt"), 17 * 1024 * 1024);
     const repo = fs.realpathSync(repoDir);
     herdr.run([
       "workspace", "create", "--cwd", repoDir, "--label", "repo",
@@ -91,12 +101,15 @@ async function openCheckout(page: Page): Promise<Fixture> {
     const sent = countSent(page, lastSent);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
-    // Focus the repository checkout, then the Explorer mode.
+    // Focus the repository checkout, then show the right panel's Explorer,
+    // which is where the tree lives now (D-13).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
     await row.click();
     await expect(row).toHaveAttribute("aria-current", "true");
-    await page.locator('[data-sidebar-mode="explorer"]').click();
+    await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
+    await page.keyboard.press("Meta+Shift+KeyB");
+    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
 
     // Expand src and open the file into the preview tab.
@@ -178,14 +191,18 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     expect(lastSent.get("file_draft")).toMatchObject({ contents_utf8: "export const answer = 42;\n" });
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
 
-    // ⌘S is one file_save with the open document's timestamp, and the disk
-    // now holds the draft (B4).
-    await page.keyboard.press("Meta+KeyS");
-    await expect.poll(() => sent.get("file_save")).toBe(1);
+    // Autosave: no chord, and the draft lands on disk after the idle delay,
+    // with the tab clean again (D-10).
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
     expect(lastSent.get("file_save")).toMatchObject({ path: file, contents_utf8: "export const answer = 42;\n" });
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
     await screenshot(page, "s3-editor-saved");
+
+    // ⌘S still saves at once.
+    const savesBeforeChord = sent.get("file_save") ?? 0;
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => sent.get("file_save")).toBe(savesBeforeChord + 1);
 
     // A change on disk after the open makes the next save a conflict, and the
     // tab offers the two choices (B5).
@@ -206,6 +223,228 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     await expect(content).toContainText("export const answer = 0;");
     await expect.poll(() => sent.get("file_conflict")).toBe(1);
     expect(lastSent.get("file_conflict")).toMatchObject({ action: "reload" });
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a refused save keeps the tab dirty and takes the saving mark off", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, sent } = fixture;
+  try {
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 42;\n");
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
+
+    // A file the process can no longer write: the next autosave is refused, so
+    // the tab stops saying it is saving and stays dirty, with the detail in
+    // the diagnostic log (B5, D-10).
+    fs.chmodSync(file, 0o444);
+    const savesBefore = sent.get("file_save") ?? 0;
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 43;\n");
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThan(savesBefore);
+    const tab = page.locator('[data-tab-kind="file"]');
+    await expect(tab).toHaveAttribute("data-saving", "false", { timeout: 10_000 });
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
+  } finally {
+    fs.chmodSync(file, 0o644);
+    close(fixture);
+  }
+});
+
+test("a deleted open file reports a failed save without losing its draft", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, sent } = fixture;
+  try {
+    fs.unlinkSync(file);
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 44;\n");
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveAttribute("data-saving", "false", { timeout: 10_000 });
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+    await expect(content).toContainText("export const answer = 44;");
+    expect(fs.existsSync(file)).toBe(false);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("leaving a dirty tab saves it and never writes it into the next file", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, file } = fixture;
+  const readme = path.join(repo, "README.md");
+  const readmeBefore = fs.readFileSync(readme, "utf8");
+  try {
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 99;\n");
+
+    // Leave within the idle window: the draft still reaches its own file, and
+    // the tab that takes the screen never receives it (D-10, D-14).
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).click();
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 99;\n");
+    expect(fs.readFileSync(readme, "utf8")).toBe(readmeBefore);
+    await expect(page.locator('[data-editor-body] .cm-content')).not.toContainText("answer = 99");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("an undone edit is what the next save writes", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, sent } = fixture;
+  try {
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.type("X");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe(`${SOURCE}X`);
+
+    // Undo that keystroke: the core hears it, so the save that follows writes
+    // the text the editor shows rather than the text that was undone (B4).
+    await page.keyboard.press("Meta+KeyZ");
+    await expect(content).not.toContainText("X");
+    const savesBefore = sent.get("file_save") ?? 0;
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => sent.get("file_save")).toBeGreaterThan(savesBefore);
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe(SOURCE);
+    await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a find request does not follow into the next document", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo } = fixture;
+  try {
+    await page.locator('[data-editor-body] .cm-content').click();
+    await page.keyboard.press("Meta+KeyF");
+    await expect(page.locator(".cm-search")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".cm-search")).toHaveCount(0);
+
+    // The next document opens with the document, not with the last find bar.
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).click();
+    await expect(page.locator('[data-editor-body] .cm-content')).toContainText("repo");
+    await expect(page.locator(".cm-search")).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("closing a dirty tab saves the draft instead of dropping it", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, lastSent } = fixture;
+  try {
+    // One keystroke, then the close: the idle timer cannot have saved it yet,
+    // so the draft can only reach the disk through the close itself.
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.type("X");
+
+    const tab = page.locator('[data-tab-kind="file"]');
+    await tab.hover();
+    await tab.locator('button[aria-label^="Close tab"]').click();
+    await expect
+      .poll(() => (lastSent.get("file_close")?.pending_save as { contents_utf8?: string } | null)?.contents_utf8)
+      .toBe(`${SOURCE}X`);
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe(`${SOURCE}X`);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a closed tab's draft is not written back when the file is reopened", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, file, sent } = fixture;
+  try {
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 5;\n");
+    const tab = page.locator('[data-tab-kind="file"]');
+    await tab.hover();
+    await tab.locator('button[aria-label^="Close tab"]').click();
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 5;\n");
+
+    // An agent rewrites the file, the operator reopens it, and saves with
+    // nothing typed: the closed tab's draft must not come back with it (B5).
+    fs.writeFileSync(file, "export const answer = 0;\n");
+    await page.locator(`[data-explorer-row="${repo}/src/main.ts"]`).click();
+    await expect(content).toContainText("answer = 0");
+    const savesBefore = sent.get("file_save") ?? 0;
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => sent.get("file_save")).toBeGreaterThan(savesBefore);
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a conflicted background tab is not closed away with its draft", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, file, sent } = fixture;
+  const readme = path.join(repo, "README.md");
+  try {
+    // Make the first tab conflicted, then move to a second tab so the
+    // conflicted one is no longer the showing document.
+    const content = page.locator('[data-editor-body] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 8;\n");
+    fs.writeFileSync(file, "export const answer = 0;\n");
+    const ahead = new Date(Date.now() + 5_000);
+    fs.utimesSync(file, ahead, ahead);
+    await page.keyboard.press("Meta+KeyS");
+    await expect(page.locator("[data-editor-conflict]")).toBeVisible();
+
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).click();
+    await page.locator('[data-editor-body] .cm-content').click();
+    await page.keyboard.type("edit");
+
+    // Closing the conflicted tab from the strip must not discard its draft:
+    // the close-save is refused, so the tab stays with the conflict showing.
+    const conflicted = page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" });
+    await conflicted.hover();
+    await conflicted.locator('button[aria-label^="Close tab"]').click();
+    await expect.poll(() => sent.get("file_close")).toBe(1);
+    await expect(page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" })).toHaveCount(1);
+    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
+
+    // The refused close kept the tab, the draft and the choice to resolve it.
+    await page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" }).click();
+    await expect(page.locator("[data-editor-conflict]")).toBeVisible();
+    await expect(page.locator('[data-editor-body] .cm-content')).toContainText("answer = 8");
+    // The other tab kept its own edit and never received this one.
+    expect(fs.readFileSync(readme, "utf8")).not.toContain("answer = 8");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("the close chord closes the file tab that is showing", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { sent } = fixture;
+  try {
+    await page.locator('[data-editor-body] .cm-content').click();
+    await page.keyboard.press("Alt+KeyW");
+    await expect.poll(() => sent.get("file_close")).toBe(1);
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
+    // The terminal tab the file tab was covering is still there.
+    await expect(page.locator('[data-tab-kind="herdr"]').first()).toBeVisible();
   } finally {
     close(fixture);
   }
@@ -286,6 +525,55 @@ test("Markdown opens in Live and toggles to source", async ({ page }) => {
   }
 });
 
+test("Markdown Live draws frontmatter in its own scrolling pane", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, lastSent } = fixture;
+  try {
+    await page.locator(`[data-explorer-row="${repo}/post.md"]`).click();
+    await expect(page.locator('[data-markdown-mode="live"]')).toBeVisible();
+    const pane = page.locator("[data-editor-frontmatter]");
+    const body = page.locator("[data-editor-body] .cm-content");
+    await expect(pane.locator(".cm-content")).toContainText("title: Post");
+    // The block left the body: it is drawn once, in the pane (D-11).
+    await expect(body).not.toContainText("title: Post");
+    // Live hides the heading's hash when the caret is elsewhere, so the body
+    // reads as its text.
+    await expect(body).toContainText("Body");
+
+    // The pane is about eight lines tall and scrolls inside itself, so the
+    // body below it does not move with the block (D-11).
+    const measured = await pane.evaluate((element) => ({
+      client: element.clientHeight,
+      scroll: element.querySelector(".cm-scroller")?.scrollHeight ?? 0,
+    }));
+    const lineHeight = await pane.evaluate(() => Number.parseFloat(getComputedStyle(document.querySelector("[data-editor-frontmatter] .cm-content")!).fontSize) * 1.5);
+    expect(measured.scroll).toBeGreaterThan(measured.client);
+    expect(measured.client).toBeGreaterThan(lineHeight * 6);
+    expect(measured.client).toBeLessThan(lineHeight * 9);
+
+    // Editing the pane edits the document: the draft carries the whole file,
+    // block first (D-11, B4).
+    await pane.locator(".cm-content").click();
+    await page.keyboard.type("x");
+    await expect.poll(() => lastSent.get("file_draft")?.contents_utf8 ?? "").toContain("x");
+    const draft = String(lastSent.get("file_draft")?.contents_utf8 ?? "");
+    expect(draft.startsWith("---\n")).toBe(true);
+    expect(draft).toContain("# Body");
+
+    // Source mode is unchanged: one buffer, the block inline (D-11).
+    await page.locator('[data-markdown-mode="live"]').click();
+    await expect(page.locator("[data-editor-frontmatter]")).toHaveCount(0);
+    await expect(page.locator("[data-editor-codemirror] .cm-content")).toContainText("title: Post");
+
+    // And Live brings the pane back.
+    await page.locator('[data-markdown-mode="source"]').click();
+    await expect(page.locator("[data-editor-frontmatter]")).toBeVisible();
+    await expect(page.locator("[data-editor-body] .cm-content")).not.toContainText("title: Post");
+  } finally {
+    close(fixture);
+  }
+});
+
 /** A drag of HTML5 `draggable` rows, which Playwright's mouse drag does not
  * drive: the source's dragstart carries a DataTransfer to the folder's drop. */
 async function dragRow(page: Page, from: string, to: string): Promise<void> {
@@ -333,8 +621,27 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await expect(page.locator(`[data-explorer-failure="${repo}/src/main.ts"]`)).toBeVisible({ timeout: 20_000 });
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(1);
     await screenshot(page, "s3-explorer-failure");
+    await expect(clash).toHaveValue("main.ts");
+    await clash.fill("corrected.ts");
+    await clash.press("Enter");
+    await expect(page.locator(`[data-explorer-row="${repo}/src/corrected.ts"]`)).toBeVisible();
 
     // Rename: one path_rename, and the row takes the new name.
+    await page.evaluate(async ({ root, path }) => {
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 3);
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers_v2", "readwrite");
+          transaction.objectStore("buffers_v2").put({
+            id: `${root}\u0000${path}`, root, path, contents: "unsaved recovery copy", updated_at: Date.now(),
+          });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { root: repo, path: `${repo}/src/added.ts` });
     await page.locator(`[data-explorer-row="${repo}/src/added.ts"]`).click({ button: "right" });
     await page.locator('[data-menu-item="rename"]').click();
     const rename = page.locator('[data-explorer-draft="rename"] input');
@@ -343,6 +650,19 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await expect.poll(() => sent.get("path_rename")).toBe(1);
     expect(lastSent.get("path_rename")).toMatchObject({ root: repo, path: `${repo}/src/added.ts`, name: "renamed.ts" });
     await expect(page.locator(`[data-explorer-row="${repo}/src/renamed.ts"]`)).toBeVisible();
+    await expect.poll(() => page.evaluate(async ({ root, path }) => {
+      return new Promise<boolean>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 3);
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers_v2", "readonly");
+          const read = transaction.objectStore("buffers_v2").get(`${root}\u0000${path}`);
+          read.onsuccess = () => { database.close(); resolve(read.result === undefined); };
+          read.onerror = () => { database.close(); reject(read.error); };
+        };
+      });
+    }, { root: repo, path: `${repo}/src/added.ts` })).toBe(true);
 
     // New Folder in the root, then drag the file onto it: one path_move.
     await page.locator("[data-explorer-tree]").click({ button: "right", position: { x: 20, y: 400 } });
@@ -368,6 +688,124 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     // The tree selects the removed folder's next sibling, which is `src`.
     expect(lastSent.get("path_trash")).toMatchObject({ root: repo, path: `${repo}/dest`, select_after: `${repo}/src` });
     await expect(page.locator(`[data-explorer-row="${repo}/dest"]`)).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a loopback browser downloads a file past the editing cap", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
+    const body = page.locator("[data-editor-preview-only]");
+    await expect(body).toBeVisible();
+    await expect(body).toContainText("preview-only");
+    const download = page.locator("[data-editor-download]");
+    await expect(download).toHaveText("Download");
+    await screenshot(page, "s3-preview-only");
+
+    // The URL is 127.0.0.1 in this fixture, just as an SSH tunnel can be.
+    // Fake only the browser's file picker; the real daemon supplies all bytes.
+    await page.evaluate(() => {
+      const browser = window as Window & { downloadedBytes?: number; downloadClosed?: boolean };
+      browser.downloadedBytes = 0;
+      browser.downloadClosed = false;
+      Object.defineProperty(window, "showSaveFilePicker", {
+        configurable: true,
+        value: async () => ({
+          createWritable: async () => ({
+            write: async (bytes: Uint8Array) => { browser.downloadedBytes = (browser.downloadedBytes ?? 0) + bytes.byteLength; },
+            close: async () => { browser.downloadClosed = true; },
+            abort: async () => {},
+          }),
+        }),
+      });
+    });
+    await download.click();
+    await expect.poll(() => page.evaluate(() => (window as Window & { downloadClosed?: boolean }).downloadClosed)).toBe(true);
+    expect(await page.evaluate(() => (window as Window & { downloadedBytes?: number }).downloadedBytes)).toBe(17 * 1024 * 1024);
+    expect(sent.get("open_external") ?? 0).toBe(0);
+    expect(sent.get("file_bytes") ?? 0).toBeGreaterThan(1);
+    await expect(page.locator("[data-editor-download-failed]")).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a browser without a save picker explains the 256 MiB download limit", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent } = fixture;
+  try {
+    fs.truncateSync(path.join(repo, "huge.txt"), 257 * 1024 * 1024);
+    await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
+    await expect(page.locator("[data-editor-preview-only]")).toBeVisible();
+    await page.evaluate(() => {
+      Object.defineProperty(window, "showSaveFilePicker", { configurable: true, value: undefined });
+    });
+    await page.locator("[data-editor-download]").click();
+    await expect(page.locator("[data-editor-download-failed]")).toContainText(
+      "Use a browser with a file save picker for files over 256 MiB.",
+    );
+    const evidenceDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (evidenceDir) {
+      await page.locator("[data-editor-preview-only]").screenshot({ path: path.join(evidenceDir, "s3-no-picker-limit.png") });
+    }
+    expect(sent.get("file_bytes")).toBe(1);
+    expect(sent.get("open_external") ?? 0).toBe(0);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a preview-only document closes without a save", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo, sent, lastSent } = fixture;
+  try {
+    // A stale recovery buffer is exactly the trap: a preview-only document has
+    // no draft the core would accept, so the restore must decline it rather
+    // than hand it back as a close-save the core refuses (D-14).
+    const stale = `${repo}\u0000${repo}/huge.txt`;
+    await page.evaluate(
+      async ({ root, path, id }) => {
+        await new Promise<void>((resolve, reject) => {
+          const request = indexedDB.open("hide-shell", 3);
+          request.onupgradeneeded = () => {
+            const database = request.result;
+            if (!database.objectStoreNames.contains("buffers_v2")) database.createObjectStore("buffers_v2", { keyPath: "id" });
+          };
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const database = request.result;
+            const transaction = database.transaction("buffers_v2", "readwrite");
+            transaction.objectStore("buffers_v2").put({
+              id,
+              root,
+              path,
+              contents: "stale draft\n",
+              updated_at: Date.now(),
+            });
+            transaction.oncomplete = () => {
+              database.close();
+              resolve();
+            };
+            transaction.onerror = () => reject(transaction.error);
+          };
+        });
+      },
+      { root: repo, path: `${repo}/huge.txt`, id: stale },
+    );
+    await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
+    await expect(page.locator("[data-editor-preview-only]")).toBeVisible();
+    // The stale buffer was declined rather than planted as a draft.
+    await expect.poll(() => sent.get("file_draft") ?? 0, { timeout: 2_000 }).toBe(0);
+
+    // No draft the core would accept exists here, so the close is one step.
+    await page.locator('[data-tab-kind="file"]').hover();
+    await page.locator('[data-tab-kind="file"] button[aria-label^="Close tab"]').click();
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
+    await expect.poll(() => sent.get("file_close")).toBe(1);
+    expect(lastSent.get("file_close")?.pending_save ?? null).toBeNull();
   } finally {
     close(fixture);
   }
@@ -405,6 +843,8 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     // row again through the core's expanded set (B3).
     await page.locator(`[data-explorer-row="${repo}/src"]`).click();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
+    await page.keyboard.press("Meta+Shift+KeyB");
+    await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
     // preview tab (B12).
@@ -417,6 +857,7 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     await screenshot(page, "s3-palette-files");
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
+    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);
@@ -506,11 +947,113 @@ test("an unsaved edit survives a socket drop and reconnect", async ({ page }) =>
     // the draft, and the buffer reconciles against it (B8). A live connection
     // draws no badge at all.
     await page.evaluate(() => window.__hideProbe?.dropSocket());
+    await page.context().setOffline(true);
     await expect(page.locator("[data-connection]")).toHaveText(/reconnecting/, { timeout: 15_000 });
+    // Keep the socket down past the 600 ms autosave window. A dropped save
+    // must be retried after reconnection, then reach the actual file (D-10).
+    await page.waitForTimeout(800);
+    await page.context().setOffline(false);
     await expect(page.locator("[data-connection]")).toHaveCount(0, { timeout: 20_000 });
     await expect(content).toContainText("edited across a reconnect");
-    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() => fs.readFileSync(path.join(repo, "notes.md"), "utf8"), { timeout: 20_000 }).toContain("edited across a reconnect");
+    await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
     await screenshot(page, "s3-buffer-reconnect");
+  } finally {
+    await page.context().setOffline(false);
+    close(fixture);
+  }
+});
+
+test("an existing v1 recovery draft survives the IndexedDB upgrade", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file } = fixture;
+  try {
+    await page.evaluate(async ({ path }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 1);
+        opened.onupgradeneeded = () => opened.result.createObjectStore("buffers", { keyPath: "path" });
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers", "readwrite");
+          transaction.objectStore("buffers").put({ path, contents: "export const answer = 99;\n", updated_at: Date.now() });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 99");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 99;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a root-keyed v2 recovery draft survives the IndexedDB upgrade", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  try {
+    await page.evaluate(async ({ path, root }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 2);
+        opened.onupgradeneeded = () => opened.result.createObjectStore("buffers", { keyPath: "id" });
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers", "readwrite");
+          transaction.objectStore("buffers").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 98;\n", updated_at: Date.now() });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file, root: repo });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 98");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 98;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("an expired recovery draft is not restored before its sweep", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  const original = fs.readFileSync(file, "utf8");
+  try {
+    await page.evaluate(async ({ path, root }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 3);
+        opened.onupgradeneeded = () => opened.result.createObjectStore("buffers_v2", { keyPath: "id" });
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers_v2", "readwrite");
+          transaction.objectStore("buffers_v2").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 97;\n", updated_at: Date.now() - 15 * 24 * 60 * 60 * 1000 });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file, root: repo });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).not.toContainText("answer = 97");
+    await page.waitForTimeout(800);
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
   } finally {
     close(fixture);
   }

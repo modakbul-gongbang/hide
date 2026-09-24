@@ -13,9 +13,20 @@ import { useShellStore } from "./store";
 export function TabBar({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => focusedCheckout(s.rest));
   const editor = useShellStore((s) => s.editor);
+  const savingTabs = useShellStore((s) => s.savingTabs);
+  const bufferWarnings = useShellStore((s) => s.bufferWarnings);
   const operations = useShellStore((s) => s.rest?.status?.async_operations);
   if (!checkout) return <div className="h-[var(--size-tab-strip)] shrink-0 bg-panel" data-tab-bar="empty" />;
-  return <Strip checkout={checkout} editor={editor} operations={operations ?? NONE} actions={actions} />;
+  return (
+    <Strip
+      checkout={checkout}
+      editor={editor}
+      savingTabs={savingTabs}
+      bufferWarnings={bufferWarnings}
+      operations={operations ?? NONE}
+      actions={actions}
+    />
+  );
 }
 
 const NONE: AsyncOperation[] = [];
@@ -41,11 +52,15 @@ export function activeStripId(checkout: Checkout, editor: EditorSnapshot | null)
 const Strip = memo(function Strip({
   checkout,
   editor,
+  savingTabs,
+  bufferWarnings,
   operations,
   actions,
 }: {
   checkout: Checkout;
   editor: EditorSnapshot | null;
+  savingTabs: Set<string>;
+  bufferWarnings: Set<string>;
   operations: AsyncOperation[];
   actions: Actions;
 }) {
@@ -76,6 +91,8 @@ const Strip = memo(function Strip({
             entry={entry}
             active={showingEditor === isEditor && entry.source_id === activeId}
             dirty={dirty.has(entry.source_id)}
+            saving={savingTabs.has(entry.source_id)}
+            tabOnly={bufferWarnings.has(entry.source_id)}
             closing={!isEditor && closingSuffix(entry.source_id, "tab.close", operations)}
             dragging={dragging === entry.id}
             over={over === entry.id && dragging !== entry.id}
@@ -125,6 +142,8 @@ const TabButton = memo(function TabButton({
   entry,
   active,
   dirty,
+  saving,
+  tabOnly,
   closing,
   dragging,
   over,
@@ -138,6 +157,8 @@ const TabButton = memo(function TabButton({
   entry: StripTab;
   active: boolean;
   dirty: boolean;
+  saving: boolean;
+  tabOnly: boolean;
   closing: boolean;
   dragging: boolean;
   over: boolean;
@@ -155,6 +176,8 @@ const TabButton = memo(function TabButton({
       data-tab={entry.source_id}
       data-tab-kind={entry.kind}
       data-preview={entry.preview ? "true" : "false"}
+      data-saving={saving ? "true" : "false"}
+      data-tab-only={tabOnly ? "true" : "false"}
       data-closing={closing ? "true" : "false"}
       className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default items-center gap-xs px-sm text-caption ${
         active ? "bg-background text-primary" : "text-secondary hover:bg-elevated"
@@ -171,7 +194,8 @@ const TabButton = memo(function TabButton({
       {over ? <span className="absolute inset-y-0 left-0 w-[var(--size-tab-indicator)] bg-accent" /> : null}
       <span className={`min-w-0 flex-1 truncate ${entry.preview ? "italic" : ""}`}>
         {entry.label}
-        {dirty ? <span className="text-warning"> ●</span> : null}
+        {saving ? <span className="text-muted"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
+        {tabOnly ? <span className="text-muted"> kept in this tab only</span> : null}
         {closing ? <span className="text-muted"> closing…</span> : null}
       </span>
       <button

@@ -4,11 +4,11 @@
 
 import { deleteBuffer } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
-import { latestDraft } from "./editor/draft";
+import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
-import { activeEditorTab, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
+import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore, type SidebarMode } from "./ui";
+import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 
 export type Actions = ReturnType<typeof createActions>;
@@ -61,17 +61,25 @@ export function createActions(dispatch: DispatchFn) {
   const focusCheckout = (workspaceId: string, checkoutId: string) =>
     dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
 
-  /**
-   * Switches the sidebar's mode. Explorer mode also tells the core, because
-   * the core computes a checkout's changed files only while its Explorer or
-   * Changes surface is visible (`Runtime::changes_request`); without that ui
-   * state the tree's rows carry no Git decoration.
-   */
+  /** Switches the left sidebar's mode; the Explorer is a right panel now. */
   const showSidebarMode = (mode: SidebarMode) => {
     ui().setSidebarMode(mode);
-    if (mode === "explorer") {
-      updateUiState({ right_panel_visible: true, right_panel_section: "explorer" });
-    }
+  };
+
+  /**
+   * Shows or hides the right panel's Explorer (D-13). The core owns the flag
+   * and computes a checkout's changed files only while the panel shows the
+   * Explorer (`Runtime::changes_request`), so the shell dispatches the ui
+   * state it wants and the panel follows the snapshot.
+   */
+  const showExplorerPanel = () => {
+    updateUiState({ right_panel_visible: true, right_panel_section: "explorer" });
+  };
+
+  const toggleRightPanel = () => {
+    const state = rest()?.ui_state;
+    const showing = !!state?.right_panel_visible && state.right_panel_section === "explorer";
+    updateUiState({ right_panel_visible: !showing, right_panel_section: "explorer" });
   };
 
   /**
@@ -80,21 +88,111 @@ export function createActions(dispatch: DispatchFn) {
    * which would open a pinned tab (B3).
    */
   const revealAncestors = (path: string) => {
+    // Highlighting a row needs a tree to highlight it in, so the reveal shows
+    // the panel the core's own `reveal_path` would show.
     const state = rest()?.ui_state;
     const root = rest()?.navigator?.root_path;
-    if (!state || !root || !path.startsWith(`${root}/`)) return;
+    if (!state || !root || !path.startsWith(`${root}/`)) {
+      showExplorerPanel();
+      return;
+    }
     const parts = path.slice(root.length + 1).split("/");
     parts.pop();
     const expanded = new Set(state.expanded_paths ?? []);
-    let changed = false;
     for (let depth = 1; depth <= parts.length; depth += 1) {
       const ancestor = `${root}/${parts.slice(0, depth).join("/")}`;
-      if (!expanded.has(ancestor)) {
-        expanded.add(ancestor);
-        changed = true;
-      }
+      expanded.add(ancestor);
     }
-    if (changed) updateUiState({ expanded_paths: [...expanded] });
+    // ui_state_update replaces the whole core state. Two updates based on one
+    // snapshot race, and the second would hide the panel again.
+    updateUiState({ right_panel_visible: true, right_panel_section: "explorer", expanded_paths: [...expanded] });
+  };
+
+  /** The contents a save or a close would send for one file tab, or null. */
+  const draftFor = (tabId: string): string | null => {
+    const state = useShellStore.getState();
+    const draft = latestDraft(tabId);
+    if (draft !== null) return draft;
+    const showing = activeEditorTab(state.editor);
+    if (showing?.id === tabId) return state.editor?.document?.contents_utf8 ?? null;
+    return null;
+  };
+
+  /** Saves the showing document, or the named tab when one is given. */
+  const saveFile = (tabId?: string) => {
+    const state = useShellStore.getState();
+    const showing = activeEditorTab(state.editor);
+    const tab = tabId ? state.editor?.tabs.find((row) => row.id === tabId) : showing;
+    if (!tab || tab.kind !== "file") {
+      diagnostic("file_save: no showing document");
+      return false;
+    }
+    // A read-only or preview-only document has nothing the core would accept:
+    // a save of it is refused, and the refusal would mark it dirty.
+    const document = showing?.id === tab.id ? state.editor?.document : null;
+    if (document && (document.readonly_reason !== null || document.contents_utf8 === null)) {
+      diagnostic(`file_save: ${tab.path} is not editable here`);
+      return false;
+    }
+    const contents = draftFor(tab.id);
+    if (contents === null) {
+      diagnostic(`file_save: no contents for ${tab.path}`);
+      return false;
+    }
+    const sent = dispatch({
+      schema_version: 2,
+      kind: "file_save",
+      payload: {
+        tab_id: tab.id,
+        path: tab.path,
+        contents_utf8: contents,
+        // The core falls back to the modification time it recorded when it
+        // opened the file, which is the timestamp this save compares against.
+        expected_modified_at_unix_ms: showing?.id === tab.id ? state.editor?.document?.opened_modified_at_unix_ms ?? null : null,
+      },
+    });
+    if (sent === false) return false;
+    noteSent(tab.id, contents);
+    return true;
+  };
+
+  const closeFileTab = (tabId: string) => {
+    const state = useShellStore.getState();
+    const tab = state.editor?.tabs.find((row) => row.id === tabId);
+    if (!tab) return;
+    // Only unsaved work rides a close: the newest keystroke decides, not the
+    // last snapshot's dirty flag, and a clean tab closes in one step rather
+    // than through a save the core may refuse (B4, D-10). A dirty tab whose
+    // text this shell cannot reproduce stays open with a note instead.
+    const showing = activeEditorTab(state.editor);
+    const document = showing?.id === tabId ? state.editor?.document : null;
+    // A read-only or preview-only document has no draft the core would accept,
+    // so its close is one step however the tab got marked (D-10, D-14).
+    const editable = document ? document.readonly_reason === null && document.contents_utf8 !== null : true;
+    let contents = editable ? latestDraft(tabId) : null;
+    if (contents === null && tab.dirty && editable) {
+      if (document) contents = document.contents_utf8 ?? null;
+    }
+    if (contents === null && tab.dirty && editable) {
+      return diagnostic(`file_close: ${tab.path} has unsaved changes this shell cannot reproduce; open it and save first`);
+    }
+    const pending =
+      contents !== null
+        ? { tab_id: tab.id, path: tab.path, contents_utf8: contents, expected_modified_at_unix_ms: null }
+        : null;
+    const root = checkoutById(state.rest, tab.checkout_id)?.path ?? "";
+    if (pending) {
+      // The buffer goes when the close lands, not when it is asked for: a
+      // close the core refuses keeps its recovery copy (D-14).
+      const unsubscribe = useShellStore.subscribe((next) => {
+        if ((next.editor?.tabs ?? []).some((row) => row.id === tabId)) return;
+        unsubscribe();
+        void deleteBuffer(root, tab.path);
+      });
+    } else {
+      void deleteBuffer(root, tab.path);
+    }
+    dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: pending } });
   };
 
   return {
@@ -132,6 +230,10 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closeTab(tabId?: string) {
+      // The strip shows a file tab while the editor is up, so the close chord
+      // closes what the operator sees rather than the terminal tab behind it.
+      const fileTab = activeEditorTab(useShellStore.getState().editor);
+      if (!tabId && fileTab && editorFor(useShellStore.getState().editor)) return closeFileTab(fileTab.id);
       const here = current();
       const id = tabId ?? here?.tab?.id;
       if (!here || !id) return diagnostic("close_tab: no visible tab");
@@ -238,12 +340,15 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     toggleSidebarView() {
-      const order: SidebarMode[] = ["agents", "projects", "explorer"];
+      const order: SidebarMode[] = [...SIDEBAR_MODES];
       const index = order.indexOf(ui().sidebarMode);
       showSidebarMode(order[(index + 1) % order.length] ?? "agents");
     },
 
     showSidebarMode,
+
+    showExplorerPanel,
+    toggleRightPanel,
 
     openShortcuts() {
       ui().openOverlay(ui().overlay === "shortcuts" ? "none" : "shortcuts");
@@ -386,11 +491,7 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "file_focus", payload: { tab_id: tabId } });
     },
 
-    closeFileTab(tabId: string) {
-      const tab = useShellStore.getState().editor?.tabs.find((row) => row.id === tabId);
-      if (tab) void deleteBuffer(tab.path);
-      dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: null } });
-    },
+    closeFileTab,
 
     /** One keystroke's contents; the core keeps the draft and the dirty flag. */
     updateDraft(contents: string) {
@@ -398,27 +499,12 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /**
-     * A save of the showing document. The expected modification time is the
-     * one the core read when it opened the file, so a disk change since then
-     * makes the save a conflict rather than a silent overwrite (B5).
+     * A save of the showing document, or of the named tab: the expected
+     * modification time is the one the core read when it opened the file, so a
+     * disk change since then makes the save a conflict rather than a silent
+     * overwrite (B5).
      */
-    saveFile() {
-      const state = useShellStore.getState();
-      const tab = activeEditorTab(state.editor);
-      const document = state.editor?.document;
-      if (!tab || !document || tab.kind !== "file") return diagnostic("file_save: no showing document");
-      const contents = latestDraft(tab.id) ?? document.contents_utf8 ?? "";
-      dispatch({
-        schema_version: 2,
-        kind: "file_save",
-        payload: {
-          tab_id: tab.id,
-          path: tab.path,
-          contents_utf8: contents,
-          expected_modified_at_unix_ms: document.opened_modified_at_unix_ms,
-        },
-      });
-    },
+    saveFile,
 
     /** The tab's Markdown mode and wrap choice; the core persists both. */
     setFileView(live: boolean, wrap: boolean) {

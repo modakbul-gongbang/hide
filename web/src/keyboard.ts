@@ -75,7 +75,7 @@ export function installKeyboard(actions: Actions): () => void {
       case "project_home":
         return actions.notReady("Project home (⌘⇧H)");
       case "toggle_right_panel":
-        return actions.notReady("Right panel (⌘⇧B)");
+        return actions.toggleRightPanel();
       case "toggle_left_sidebar":
         return actions.toggleLeftSidebar();
       case "toggle_sidebar_view":
