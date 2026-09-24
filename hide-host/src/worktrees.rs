@@ -643,7 +643,7 @@ pub fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
     .map_err(|error| format!("git could not be run: {error}"))?;
     let Some(output) = output else {
         return Err(format!(
-            "git {} exceeded {} s",
+            "git {} did not finish within {} s",
             arguments[0],
             GIT_DEADLINE.as_secs()
         ));
@@ -830,7 +830,10 @@ pub fn output_within(
     // so what was read may be cut short: the call did not finish, never an
     // empty answer a safety check would read as clean.
     let (Some(status), Some(stdout), Some(stderr)) = (status, stdout, stderr) else {
-        let _ = kill_group(&mut child);
+        // The deadline path has already stopped the group.
+        if status.is_some() {
+            let _ = kill_group(&mut child);
+        }
         return Ok(None);
     };
     Ok(Some(std::process::Output {
@@ -850,8 +853,11 @@ pub(crate) fn kill_group(child: &mut std::process::Child) -> std::io::Result<()>
 }
 
 /// Sends SIGKILL to the process group `leader` leads; whether one was there.
-/// A group id is not reused while any member lives, so this reaches only what
-/// that child started, even after the child itself has ended.
+/// A group id is not reused while its leader is unreaped or any member lives,
+/// so this reaches only what that child started, even after the child itself
+/// has ended; once every member has left, the id could name a later group,
+/// which needs the process ids to wrap within the one second a held pipe is
+/// waited for.
 pub(crate) fn stop_group(leader: u32) -> bool {
     #[cfg(unix)]
     {
@@ -999,20 +1005,30 @@ pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
 /// Every build cache the checkout owns lives inside it (`target/`,
 /// `macos/.build/`), so this one Git command is the whole cleanup.
 pub fn remove_worktree(repository_root: &Path, checkout: &Path) -> Result<String, String> {
-    git(
+    let answer = git(
         repository_root,
         &["worktree", "remove", "--", &checkout.to_string_lossy()],
-    )?;
-    if registered(repository_root)?
-        .iter()
-        .any(|row| Path::new(&row.path) == checkout)
-        || checkout.try_exists().map_err(|error| error.to_string())?
-    {
-        return Err(
+    );
+    // What is on disk decides, so an answer cut short (a held pipe) after
+    // Git removed the folder still reads as removed, and a failure whose
+    // readback also fails keeps Git's own reason.
+    let remains = registered(repository_root).map(|rows| {
+        rows.iter().any(|row| Path::new(&row.path) == checkout)
+    });
+    let remains = match (remains, &answer) {
+        (Ok(listed), _) => listed || checkout.try_exists().map_err(|error| error.to_string())?,
+        (Err(_), Err(_)) => true,
+        (Err(error), Ok(_)) => return Err(error),
+    };
+    match (answer, remains) {
+        (_, false) => {
+            Ok("Worktree folder and its build output removed. Branch and Git history kept.".into())
+        }
+        (Err(error), true) => Err(error),
+        (Ok(_), true) => Err(
             "Git acknowledged removal but the folder or registration remains. Review again.".into(),
-        );
+        ),
     }
-    Ok("Worktree folder and its build output removed. Branch and Git history kept.".into())
 }
 
 /// One operator-confirmed worktree deletion, as the runtime recorded it when

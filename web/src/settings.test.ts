@@ -62,9 +62,9 @@ describe("deviceRemovalLines", () => {
       "mini",
       [{ device_id: "mini" }, { device_id: "local" }],
       [
-        { checkout_id: "remote:mini:checkout:w1", dirty: true },
-        { checkout_id: "remote:mini:checkout:w2", dirty: false },
-        { checkout_id: "checkout:here", dirty: true },
+        { id: "t1", checkout_id: "remote:mini:checkout:w1", dirty: true },
+        { id: "t2", checkout_id: "remote:mini:checkout:w2", dirty: false },
+        { id: "t3", checkout_id: "checkout:here", dirty: true },
       ],
       [{ device: "mini" }, { device: "local" }, { device: null }],
     );
@@ -73,6 +73,18 @@ describe("deviceRemovalLines", () => {
       "2 unsaved drafts stay in this browser under unsaved drafts, to export or discard.",
     ]);
     expect(deviceRemovalLines("studio", [], [], [])).toEqual([]);
+  });
+
+  it("says a draft that was only exported leaves as that file, not as a stored draft (B44)", () => {
+    const tabs = [
+      { id: "t1", checkout_id: "remote:mini:checkout:w1", dirty: true },
+      { id: "t2", checkout_id: "remote:mini:checkout:w1", dirty: true },
+    ];
+    expect(deviceRemovalLines("mini", [], tabs, [], (tabId) => tabId === "t1")).toEqual([
+      "Hide forgets 0 registered projects and closes 2 file tabs of it here.",
+      "1 unsaved draft stays in this browser under unsaved drafts, to export or discard.",
+      "1 draft could not be stored in this browser and leaves only as the file you exported.",
+    ]);
   });
 });
 

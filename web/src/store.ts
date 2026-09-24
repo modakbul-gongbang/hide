@@ -232,6 +232,13 @@ export const useShellStore = create<Store>((set, get) => ({
     const next = new Set(current);
     if (warned) next.add(tabId);
     else next.delete(tabId);
+    // A draft stored here again no longer needs the text it was exported as.
+    if (!warned && get().exportedDrafts.has(tabId)) {
+      const exportedDrafts = new Map(get().exportedDrafts);
+      exportedDrafts.delete(tabId);
+      set({ bufferWarnings: next, exportedDrafts });
+      return;
+    }
     set({ bufferWarnings: next });
   },
   noteSaving: (tabId, saving) => {

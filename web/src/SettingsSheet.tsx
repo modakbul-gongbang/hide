@@ -530,10 +530,13 @@ function DevicesTab({ actions }: { actions: Actions }) {
   const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations);
   const editorTabs = useShellStore((s) => s.editor?.tabs);
   const recoveryDrafts = useShellStore((s) => s.recoveryDrafts);
-  const removalLines = removing ? deviceRemovalLines(removing.id, registrations ?? [], editorTabs ?? [], recoveryDrafts) : [];
-  const bufferWarnings = useShellStore((s) => s.bufferWarnings);
   const exportedDrafts = useShellStore((s) => s.exportedDrafts);
-  const unstored = removing ? unstoredDeviceDrafts(removing.id, editorTabs ?? [], bufferWarnings, draftExported(exportedDrafts, latestDraft)) : [];
+  const bufferWarnings = useShellStore((s) => s.bufferWarnings);
+  const released = draftExported(exportedDrafts, latestDraft);
+  const removalLines = removing
+    ? deviceRemovalLines(removing.id, registrations ?? [], editorTabs ?? [], recoveryDrafts, (tabId) => bufferWarnings.has(tabId) && released(tabId))
+    : [];
+  const unstored = removing ? unstoredDeviceDrafts(removing.id, editorTabs ?? [], bufferWarnings, released) : [];
   return (
     <>
       <Group title="Devices" note="Hide stores only a label and an SSH alias. Authentication stays in the daemon machine's SSH environment; no password or key is asked for.">
@@ -706,10 +709,12 @@ function DevicesTab({ actions }: { actions: Actions }) {
                   setRemovalBusy(true);
                   // A draft that failed to store while it was flushed keeps
                   // the dialog open, where its note now names it.
-                  void actions.removeDevice(target.id).then((kept) => {
-                    setRemovalBusy(false);
-                    if (kept.length === 0) setRemoving((current) => (current?.id === target.id ? null : current));
-                  });
+                  void actions
+                    .removeDevice(target.id)
+                    .then((kept) => {
+                      if (kept.length === 0) setRemoving((current) => (current?.id === target.id ? null : current));
+                    })
+                    .finally(() => setRemovalBusy(false));
                 }}
               >
                 {removalBusy ? "Storing drafts…" : `Remove ${removing.label}`}

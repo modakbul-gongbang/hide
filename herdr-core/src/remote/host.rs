@@ -748,8 +748,7 @@ async fn install(
     ensure_private_dir(raw, &version_dir, owner).await?;
     let final_path = format!("{version_dir}/{HELPER_NAME}");
     if let Ok(existing) = raw.lstat(&final_path).await
-        && existing.attrs.is_regular()
-        && existing.attrs.uid == Some(owner)
+        && private_file(&existing.attrs, owner)
         && existing.attrs.size == Some(bytes.len() as u64)
         && remote_digest(raw, &final_path, bytes.len())
             .await
@@ -803,8 +802,27 @@ async fn install(
     raw.rename(&staging, &final_path)
         .await
         .map_err(|error| sftp_failure("The helper could not be put in place", error))?;
+    let placed = raw
+        .lstat(&final_path)
+        .await
+        .map_err(|error| sftp_failure("The installed helper could not be inspected", error))?;
+    if !private_file(&placed.attrs, owner) {
+        let _ = raw.remove(&final_path).await;
+        return Err(EstablishError::Install(format!(
+            "{final_path} was not left a file only the account can change, so the helper was not started"
+        )));
+    }
     remove_older_builds(raw, &root, &digest[..16]).await;
     Ok((final_path, true))
+}
+
+/// A helper file the account owns and no group or other account can write.
+/// Its folder is already private, so this refuses what a device's own
+/// defaults could leave behind, not what another account could swap in.
+fn private_file(attrs: &FileAttributes, owner: u32) -> bool {
+    attrs.is_regular()
+        && attrs.uid == Some(owner)
+        && attrs.permissions.is_some_and(|mode| mode & 0o022 == 0)
 }
 
 /// Creates and checks the helper root, and answers the real path it resolves
@@ -901,12 +919,12 @@ async fn ensure_private_dirs(
             .await
             .map_err(|error| sftp_failure("The helper folder could not be inspected", error))?
             .attrs;
-        validate_ancestor(&attrs, owner, &ancestor)?;
         if !attrs.is_dir() {
             return Err(EstablishError::Install(format!(
                 "{ancestor} is not a folder on the resolved helper path, so the helper was not installed"
             )));
         }
+        validate_ancestor(&attrs, owner, &ancestor)?;
     }
     let attrs = raw
         .lstat(&resolved)
@@ -1286,6 +1304,24 @@ mod tests {
         assert!(line.ok.is_none());
         assert_eq!(line.error.unwrap().code, hide_host::ErrorCode::InvalidPath);
         assert!(serde_json::from_str::<AnswerLine>(r#"{"ok":1}"#).is_err());
+    }
+
+    /// A helper file is reused or started only as the account's own file no
+    /// group or other account can write, and never when its mode is unknown.
+    #[test]
+    fn a_helper_file_others_can_write_is_not_reused_or_started() {
+        let me = 501;
+        let file = |uid: u32, mode: Option<u32>| FileAttributes {
+            uid: Some(uid),
+            permissions: mode.map(|mode| 0o100000 | mode),
+            ..FileAttributes::empty()
+        };
+        assert!(private_file(&file(me, Some(0o700)), me));
+        assert!(!private_file(&file(me, Some(0o720)), me));
+        assert!(!private_file(&file(me, Some(0o702)), me));
+        assert!(!private_file(&file(502, Some(0o700)), me));
+        assert!(!private_file(&file(me, None), me));
+        assert!(!private_file(&folder(me, 0o700), me));
     }
 
     /// The folders on the way to the helper root follow OpenSSH's rule: the

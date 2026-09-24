@@ -92,6 +92,19 @@ function higherRisk(current: ChangedFileStatus | undefined, candidate: ChangedFi
  * section rather than per row: a folder's badge is the riskiest status under
  * it, so every ancestor of every changed file is marked.
  */
+/**
+ * The line above the Explorer tree about the checkout's Git status: still
+ * loading, unavailable, or decorations kept from an earlier read after the
+ * latest one failed, which are never shown as current (PRD S5.5 B20, B22).
+ * Nothing when the status is current.
+ */
+export function explorerGitLine(changes: ChangesSnapshot | null): { state: "loading" | "unavailable" | "stale"; text: string } | null {
+  if (!changes) return { state: "loading", text: "Loading Git status" };
+  if (changes.unavailable_reason) return { state: "unavailable", text: `Git status unavailable: ${changes.unavailable_reason}` };
+  if (changes.stale_reason) return { state: "stale", text: `Git status may be out of date: ${changes.stale_reason}` };
+  return null;
+}
+
 export function gitDecorations(changes: ChangesSnapshot | null, rootPath: string | null): GitDecorations {
   const files = new Map<string, ChangedFileStatus>();
   const directories = new Map<string, ChangedFileStatus>();

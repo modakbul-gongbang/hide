@@ -5,6 +5,7 @@ import {
   disclosureMark,
   explorerRows,
   firstChildSelection,
+  explorerGitLine,
   gitBadgeColor,
   moveSelection,
   parentPath,
@@ -96,6 +97,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   /** The watch-frame count already acted on, per folder. */
   const seenChanges = useRef<Record<string, number>>({});
 
+  const gitLine = explorerGitLine(changes);
   const expandedKey = expandedPaths.join("\n");
   const rows = useMemo(
     () => (rootPath ? explorerRows({ rootPath, listings, expandedPaths, changes }) : EMPTY_ROWS),
@@ -323,6 +325,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           ↻
         </button>
       </div>
+      {gitLine ? (
+        <div className={`break-words border-b border-divider px-md py-xs text-caption ${gitLine.state === "loading" ? "text-muted" : "text-warning"}`} data-explorer-git={gitLine.state}>
+          {gitLine.text}
+        </div>
+      ) : null}
       {refused ? (
         <div className="border-b border-divider px-md py-sm text-caption text-danger" data-explorer-refusal={refused}>
           {refused}

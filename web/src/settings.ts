@@ -208,13 +208,16 @@ export function deviceIdFor(alias: string, existing: readonly string[]): string 
 export function deviceRemovalLines(
   deviceId: string,
   registrations: readonly { device_id: string }[],
-  tabs: readonly { checkout_id: string; dirty: boolean }[],
+  tabs: readonly { id: string; checkout_id: string; dirty: boolean }[],
   drafts: readonly { device: string | null }[],
+  /** Tabs whose draft is not stored here and leaves only as the file the operator exported (B44). */
+  onlyExported: (tabId: string) => boolean = () => false,
 ): string[] {
   const scope = `remote:${deviceId}:`;
   const projects = registrations.filter((row) => row.device_id === deviceId).length;
   const own = tabs.filter((tab) => tab.checkout_id.startsWith(scope));
-  const unsaved = own.filter((tab) => tab.dirty).length + drafts.filter((draft) => draft.device === deviceId).length;
+  const exportedOnly = own.filter((tab) => tab.dirty && onlyExported(tab.id)).length;
+  const unsaved = own.filter((tab) => tab.dirty).length - exportedOnly + drafts.filter((draft) => draft.device === deviceId).length;
   const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const lines: string[] = [];
   if (projects > 0 || own.length > 0) {
@@ -222,6 +225,9 @@ export function deviceRemovalLines(
   }
   if (unsaved > 0) {
     lines.push(`${count(unsaved, "unsaved draft stays", "unsaved drafts stay")} in this browser under unsaved drafts, to export or discard.`);
+  }
+  if (exportedOnly > 0) {
+    lines.push(`${count(exportedOnly, "draft", "drafts")} could not be stored in this browser and ${exportedOnly === 1 ? "leaves" : "leave"} only as the file you exported.`);
   }
   return lines;
 }
@@ -242,11 +248,15 @@ export function unstoredDeviceDrafts(
   return tabs.filter((tab) => tab.checkout_id.startsWith(scope) && unstored.has(tab.id) && !exported(tab.id)).map((tab) => tab.path);
 }
 
-/** Whether the tab's current draft is exactly the text the operator last exported. */
+/**
+ * Whether the tab's current draft is exactly the text the operator last
+ * exported. A tab with no draft edited in this page exported the document it
+ * holds, which only an edit (a draft) can change.
+ */
 export function draftExported(exported: ReadonlyMap<string, string>, current: (tabId: string) => string | null) {
   return (tabId: string) => {
     const text = exported.get(tabId);
-    return text !== undefined && text === current(tabId);
+    return text !== undefined && (current(tabId) ?? text) === text;
   };
 }
 

@@ -666,8 +666,10 @@ impl Watchdog {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             // The group goes even when git itself has ended, because
             // something it started may still hold its output open.
-            let running = matches!(child.try_wait(), Ok(None));
+            // Signalled before it is reaped, so its unreaped leader still
+            // holds the group id the signal names.
             let group = crate::worktrees::stop_group(child.id());
+            let running = matches!(child.try_wait(), Ok(None));
             if running && !group {
                 let _ = child.kill();
             }
