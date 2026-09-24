@@ -24,6 +24,17 @@ export function purposeCountLabel(text: string): string {
   return `${scalarCount(text)} / ${PURPOSE_RECOMMENDED}`;
 }
 
+/**
+ * Where a saved purpose is kept (PRD S5.5 B30). A device's purpose is its
+ * Herdr's workspace metadata only; on this machine a branch also keeps it as
+ * its Git description, which outlives the Herdr workspace.
+ */
+export function purposeScope(deviceLabel: string | null, branch: string | null): string {
+  if (deviceLabel) return `Kept in Herdr's workspace metadata on ${deviceLabel}; its Git config is not changed.`;
+  if (branch) return `Kept in Herdr's workspace metadata and as the Git description of ${branch} on this machine.`;
+  return "Kept in Herdr's workspace metadata on this machine.";
+}
+
 export function purposeIsLong(text: string): boolean {
   return scalarCount(text) > PURPOSE_RECOMMENDED;
 }

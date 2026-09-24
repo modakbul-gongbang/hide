@@ -18,6 +18,7 @@ import {
   projectRemovalConsequences,
   purposeCountLabel,
   purposeIsLong,
+  purposeScope,
   removalFor,
   taskFor,
 } from "./workspaceManage";
@@ -36,6 +37,13 @@ function findTarget(workspaceId: string, checkoutId?: string): { workspace: Work
     rest?.status?.remote?.flatMap((row) => row.session?.workspaces ?? []).find((row) => row.id === workspaceId);
   if (!workspace) return null;
   return { workspace, checkout: checkoutId ? (workspace.checkouts.find((row) => row.id === checkoutId) ?? null) : null };
+}
+
+/** The device a workspace belongs to, by its label, or null for this machine. */
+function deviceLabel(workspace: Workspace): string | null {
+  const device = workspace.remote_target_id ?? (workspace.device_id === "local" ? null : workspace.device_id);
+  if (!device) return null;
+  return useShellStore.getState().rest?.navigator?.devices?.find((row) => row.id === device)?.label ?? device;
 }
 
 export function WorkspaceDialogs({ actions }: { actions: Actions }) {
@@ -68,7 +76,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   }
   if (dialog.kind === "new_worktree") return <NewWorktreeDialog actions={actions} workspace={target.workspace} onClose={close} />;
   if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} onClose={close} />;
-  if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} onClose={close} />;
+  if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} deviceLabel={deviceLabel(target.workspace)} onClose={close} />;
   if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;
   return null;
 }
@@ -244,7 +252,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
   );
 }
 
-function PurposeDialog({ actions, checkout, onClose }: { actions: Actions; checkout: Checkout; onClose: () => void }) {
+function PurposeDialog({ actions, checkout, deviceLabel, onClose }: { actions: Actions; checkout: Checkout; deviceLabel: string | null; onClose: () => void }) {
   // Only a purpose someone wrote is the field's value; a title the row falls
   // back to is shown as the placeholder, so saving never stores a guess.
   const written = checkout.purpose && (checkout.purpose.origin === "token" || checkout.purpose.origin === "branch_description") ? checkout.purpose.text : "";
@@ -291,6 +299,9 @@ function PurposeDialog({ actions, checkout, onClose }: { actions: Actions; check
         <p className={`text-caption ${purposeIsLong(text) ? "text-warning" : "text-muted"}`} data-purpose-count="true">
           {purposeCountLabel(text)}
           {purposeIsLong(text) ? " · longer than a sidebar row shows" : ""}
+        </p>
+        <p className="text-caption text-muted" data-purpose-scope="true">
+          {purposeScope(deviceLabel, checkout.branch ?? null)}
         </p>
         {failure ? (
           <Note tone="error" data-purpose-error="true">

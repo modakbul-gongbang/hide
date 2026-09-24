@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, TaskOperation, Workspace } from "./snapshot";
-import { branchProblem, checkoutMenu, normalizePurpose, projectMenu, purposeCountLabel, purposeIsLong, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import { branchProblem, checkoutMenu, normalizePurpose, projectMenu, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
 
 const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   id: "w1",
@@ -132,5 +132,13 @@ describe("receipts", () => {
     // The same path on another device is not this page's removal.
     expect(removalFor(removal, "studio", "/r-feature", 2)).toBeNull();
     expect(removalFor({ ...removal, device_id: "studio" }, "studio", "/r-feature", 2)?.id).toBe(3);
+  });
+});
+
+describe("purposeScope", () => {
+  it("names the device's Herdr as the only store for a device purpose and adds the branch description here", () => {
+    expect(purposeScope("MacBook", "feature")).toBe("Kept in Herdr's workspace metadata on MacBook; its Git config is not changed.");
+    expect(purposeScope(null, "feature")).toBe("Kept in Herdr's workspace metadata and as the Git description of feature on this machine.");
+    expect(purposeScope(null, null)).toBe("Kept in Herdr's workspace metadata on this machine.");
   });
 });
