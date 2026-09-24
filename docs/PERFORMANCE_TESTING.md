@@ -371,7 +371,7 @@ The complete ordered path payload and held input use one existing terminal write
 One worker and one clipboard preparation task are admitted globally, with at most one additional refusal notice, and immediate-directory staging inspection stops at 128 entries and 256 MiB.
 Expiry is 24 hours on the next explicit intent, not a timer or idle scan.
 `TerminalFileDropTests` checks native focus, Control-V fallback, image Command-V/Control-V, IME preservation, private PNG normalization, size limits, scoped core failure, held Enter and ordered retry through the real bridge.
-Rust attachment tests cover source validation and quoted bytes; the ignored `remote_attachment_sftp_roundtrip_probe` uses the existing `HERDR_TEST_SSH_ALIAS` to verify actual upload, same-byte retry, readback and exact generated-file cleanup without terminal input.
+Rust attachment tests cover source validation and quoted bytes; the ignored `remote_attachment_sftp_roundtrip_probe` uses the existing `HERDR_TEST_SSH_ALIAS` to verify actual upload, a same-byte retry that compares the staged file byte for byte, and exact generated-file cleanup without terminal input.
 Record idle and driven measurements separately with representative clipboard size, file count, remote latency and queue load; a compile or unit test does not establish native responsiveness.
 Native OS drag geometry remains a separate user review when desktop automation is unavailable.
 Editor highlighting uses the configured font at creation and actual font changes; identical language/font updates schedule no new full-document highlight.

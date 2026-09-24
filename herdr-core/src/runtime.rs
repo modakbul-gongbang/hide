@@ -1,14 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
 mod attachments;
+mod device_catalog;
 mod devices;
+mod documents;
 mod editor;
 mod events;
+mod hosts;
 mod issues;
 mod memory;
 mod operations;
@@ -42,7 +45,6 @@ use crate::model::{
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
-use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -51,6 +53,84 @@ fn conversation_agent_kind(kind: &str) -> bool {
         kind.to_ascii_lowercase().as_str(),
         "claude" | "claude-code" | "claude_code" | "codex"
     )
+}
+
+/// Which Herdr workspace each tab belongs to, from each workspace's tab order.
+pub(super) fn tab_owners(order: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, String> {
+    order
+        .iter()
+        .flat_map(|(workspace_id, tab_ids)| {
+            tab_ids
+                .iter()
+                .map(move |tab_id| (tab_id.clone(), workspace_id.clone()))
+        })
+        .collect()
+}
+
+/// A device's Herdr workspaces' tab orders, keyed by Herdr's own workspace id
+/// and naming each tab by its device-scoped id, as the device's strips do.
+/// The raw session carries one checkout per Herdr workspace, in Herdr's order.
+pub(super) fn device_workspace_tab_order(
+    raw: &RemoteSessionSnapshot,
+) -> BTreeMap<String, Vec<String>> {
+    raw.workspaces
+        .iter()
+        .filter_map(|workspace| {
+            let herdr_id = workspace.session_workspace_ids.first()?;
+            let tabs = workspace
+                .checkouts
+                .iter()
+                .flat_map(|checkout| checkout.tabs.iter())
+                .filter_map(|tab| tab.id.clone())
+                .collect();
+            Some((herdr_id.clone(), tabs))
+        })
+        .collect()
+}
+
+/// Places one checkout's strip from its Herdr and editor tabs, settling a
+/// held reorder once Herdr reports the order it asked for.
+///
+/// A held reorder lands the moment Herdr reports the order it asked for,
+/// whichever path carried it: the `tab_moved` event, a move Herdr had already
+/// made, or a move made from the TUI. A held reorder whose tabs are no longer
+/// the checkout's tabs can never be reported, so it is dropped rather than
+/// kept waiting for an order that cannot arrive.
+fn place_checkout_strip(
+    checkout: &mut CheckoutSnapshot,
+    editor: Vec<StripTabSnapshot>,
+    owners: &BTreeMap<String, String>,
+    order: &mut BTreeMap<String, Vec<String>>,
+    pending: &mut BTreeMap<String, PendingTabMove>,
+    dropped_moves: &mut Vec<String>,
+) {
+    let herdr = StripTabSnapshot::from_herdr_tabs(&checkout.tabs);
+    let stored = order.entry(checkout.id.clone()).or_default();
+    if let Some(held) = pending.get(&checkout.id) {
+        // Only the tabs the move was asked about: the workspace it named, as
+        // this checkout currently holds them.
+        let live_owned = herdr
+            .iter()
+            .map(|entry| &entry.source_id)
+            .filter(|tab_id| owners.get(*tab_id) == Some(&held.workspace_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if live_owned.iter().cloned().collect::<BTreeSet<_>>()
+            != held.herdr_order.iter().cloned().collect::<BTreeSet<_>>()
+        {
+            pending.remove(&checkout.id);
+            dropped_moves.push(checkout.id.clone());
+        } else if live_owned == held.herdr_order {
+            *stored = held.desired.clone();
+            pending.remove(&checkout.id);
+        }
+    }
+    checkout.strip = ordered_strip(stored, &herdr, &editor, owners);
+    *stored = checkout
+        .strip
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect();
 }
 
 /// Places one checkout's tab strip.
@@ -140,6 +220,13 @@ struct PendingTabMove {
     retryable: bool,
 }
 
+/// The Herdr that carries a tab move: this machine's, or the device whose
+/// checkout the moved tab is in.
+enum TabMoveCarrier {
+    Local(LiveContext),
+    Device(RemoteControlContext),
+}
+
 /// Translates a wanted Herdr tab order into the index `tab.move` takes.
 ///
 /// Herdr counts the insertion point in the list it still holds, before the
@@ -196,6 +283,17 @@ fn herdr_insert_index(
 /// `path` with the `source` prefix replaced by `destination`, or `None`
 /// when `path` is neither `source` nor inside it. Component-wise, so
 /// `/repo/src2` is not inside `/repo/src`.
+/// The checkout an explorer change was decided for: its tabs, its device's
+/// expanded folders and its host are the ones the result applies to,
+/// whatever is in front when the result lands.
+#[derive(Clone, Debug)]
+pub(crate) struct ExplorerTarget {
+    pub(crate) workspace_id: String,
+    pub(crate) checkout_id: String,
+    pub(crate) device_id: String,
+    pub(crate) root: String,
+}
+
 fn retarget_path(path: &str, source: &str, destination: &str) -> Option<String> {
     if path == source {
         return Some(destination.to_owned());
@@ -629,9 +727,9 @@ fn remote_terminal_pane_sets(
     }
     let active_tab_id = session.focused_tab_id.as_deref().or_else(|| {
         session
-            .focused_workspace_id
+            .focused_checkout_id
             .as_deref()
-            .and_then(|workspace_id| session.active_tab_ids.get(workspace_id))
+            .and_then(|checkout_id| session.active_tab_ids.get(checkout_id))
             .map(String::as_str)
     });
     let active_tab = active_tab_id.and_then(|tab_id| {
@@ -662,6 +760,13 @@ fn remote_tab_creation_key(
         } => Some((
             target_id.to_owned(),
             workspace_id.clone(),
+            cwd.clone(),
+            label.clone(),
+        )),
+        // A workspace created for a registered project is keyed by its folder.
+        RemoteControlAction::CreateWorkspace { cwd, label } => Some((
+            target_id.to_owned(),
+            cwd.clone(),
             cwd.clone(),
             label.clone(),
         )),
@@ -722,9 +827,6 @@ pub struct Runtime {
     /// `None` when the process has no usable HOME, which every connect then
     /// reports rather than guessing a path.
     home_path: Option<PathBuf>,
-    /// False when the SSH agent socket is unavailable at launch, which every
-    /// registered device reports as `disabled` instead of attempting SSH.
-    remote_enabled: bool,
     /// The SSH client and coordinator of each registered device that is
     /// connected or connecting, keyed by device id. Removing a device drops
     /// its entry; the coordinator handle moves to `retired_remote_syncs`.
@@ -736,6 +838,34 @@ pub struct Runtime {
     /// The last connection test of each device, kept apart from the device
     /// rows because those are rebuilt with every catalog.
     remote_device_tests: HashMap<String, crate::model::DeviceTestSnapshot>,
+    /// Each device's helper connection and the consent it runs under.
+    device_hosts: HashMap<String, hosts::DeviceHost>,
+    /// The last helper attempt number, for every device. Never reset, so an
+    /// answer from an attempt made before a device was removed and added
+    /// again under the same id cannot match the new attempt.
+    last_host_generation: u64,
+    /// The device and folder `snapshot.changes` was read for.
+    changes_published_key: Option<crate::changes::ChangesKey>,
+    /// Each device's session as its Herdr reported it, before its projects
+    /// are grouped from the helper's facts (`device_catalog`).
+    device_raw_sessions: HashMap<String, RemoteSessionSnapshot>,
+    device_facts: HashMap<String, crate::device_catalog::DeviceFacts>,
+    /// Each device's repositories' worktrees, read through its helper
+    /// (`hide_host::worktrees`); the device's rows carry them.
+    device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
+    /// This machine's file host: the helper's dispatch, run in place.
+    local_host: Arc<dyn crate::host_access::HostChannel>,
+    /// Where each open file tab's saves go.
+    document_places: HashMap<String, crate::files::DocumentPlace>,
+    /// Each file tab's save in flight, the newest draft waiting behind it,
+    /// and a save whose answer was lost.
+    document_saves: HashMap<String, documents::SaveSlot>,
+    /// Remote reads not yet shown as tabs, by tab id, with the generation
+    /// that fences a late answer.
+    document_opens: HashMap<String, documents::OpenRequest>,
+    next_document_generation: u64,
+    host_packages: crate::remote::host::HelperPackages,
+    host_helper_root: String,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
@@ -1026,11 +1156,22 @@ struct RuntimeWorkerContext {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
+        let (host_packages, host_helper_root) = Self::helper_packages_from(&options);
         let mut snapshot = Snapshot::initial(&options);
         snapshot.status.environment = environment.statuses;
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         snapshot.ui_state = ui_state;
         snapshot.navigator.devices = workspace::devices(&snapshot.ui_state.device_registrations);
+        // This machine's row names the root a device consent would name, so
+        // the add form can show it before the first device exists.
+        if let Some(local) = snapshot
+            .navigator
+            .devices
+            .iter_mut()
+            .find(|device| device.kind != "remote")
+        {
+            local.host.helper_root = Some(host_helper_root.clone());
+        }
         snapshot.navigator.focused_device_id = Some(
             snapshot
                 .ui_state
@@ -1073,10 +1214,22 @@ impl Runtime {
             file_roots: None,
             state_path,
             home_path: environment.home_path,
-            remote_enabled: environment.remote_enabled,
             remote_connections: HashMap::new(),
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
+            device_hosts: HashMap::new(),
+            last_host_generation: 0,
+            changes_published_key: None,
+            device_raw_sessions: HashMap::new(),
+            device_facts: HashMap::new(),
+            device_worktrees: HashMap::new(),
+            local_host: Arc::new(crate::host_access::InProcessHost),
+            document_places: HashMap::new(),
+            document_saves: HashMap::new(),
+            document_opens: HashMap::new(),
+            next_document_generation: 0,
+            host_packages,
+            host_helper_root,
             live: None,
             remote_controls: HashMap::new(),
             remote_terminals: HashMap::new(),

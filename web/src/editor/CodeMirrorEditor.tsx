@@ -54,6 +54,7 @@ export function CodeMirrorEditor({
   wrap,
   live,
   findRequest,
+  held = false,
   onDraft,
 }: {
   tabId: string;
@@ -62,6 +63,8 @@ export function CodeMirrorEditor({
   wrap: boolean;
   live: boolean;
   findRequest: number;
+  /** Read-only while unsaved drafts cannot be stored (S5.5 B44). */
+  held?: boolean;
   onDraft: (contents: string) => void;
 }) {
   const bodyHost = useRef<HTMLDivElement>(null);
@@ -80,7 +83,7 @@ export function CodeMirrorEditor({
   const contents = document.contents_utf8 ?? "";
   const contentsRef = useRef(contents);
   contentsRef.current = contents;
-  const readonly = document.readonly_reason !== null || document.document_kind !== "text" && document.document_kind !== "markdown";
+  const readonly = held || document.readonly_reason !== null || document.document_kind !== "text" && document.document_kind !== "markdown";
   // The pane belongs to Live mode's markdown only; source mode and every
   // other kind keep one buffer (D-11).
   const split = document.document_kind === "markdown" && live && splitFrontmatter(contents) !== null;

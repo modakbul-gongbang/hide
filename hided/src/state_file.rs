@@ -62,6 +62,60 @@ pub fn new_token() -> String {
     hex::encode(bytes)
 }
 
+/// This daemon host's identity, kept in its state directory: the first start
+/// writes one and every later start reads it back, so a browser's unsaved
+/// drafts name the host that held them (PRD S5.5 B9-B12) and a daemon
+/// restart, a new port or a new token is still the same host. Written to a
+/// temporary file and renamed, so an interrupted first start leaves no torn id.
+pub fn host_id(dir: &Path) -> io::Result<String> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join("host-id");
+    match fs::read_to_string(&path) {
+        Ok(text) if is_host_id(text.trim()) => return Ok(text.trim().to_owned()),
+        Ok(text) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} does not hold a host id ({} bytes); refusing to replace it",
+                    path.display(),
+                    text.len()
+                ),
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut bytes = [0_u8; 16];
+    getrandom::getrandom(&mut bytes).expect("getrandom");
+    let id = format!("host-{}", hex::encode(bytes));
+    let staging = dir.join(format!("host-id.{}.tmp", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&staging)?;
+    file.write_all(id.as_bytes())?;
+    file.sync_all()?;
+    // Another start that won the race keeps its id; this one reads it.
+    match fs::hard_link(&staging, &path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            let _ = fs::remove_file(&staging);
+            return Err(error);
+        }
+    }
+    let _ = fs::remove_file(&staging);
+    let stored = fs::read_to_string(&path)?;
+    Ok(stored.trim().to_owned())
+}
+
+fn is_host_id(text: &str) -> bool {
+    text.strip_prefix("host-")
+        .is_some_and(|hex| hex.len() == 32 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 pub fn acquire_lock(dir: &Path) -> io::Result<File> {
     fs::create_dir_all(dir)?;
     let file = OpenOptions::new()
@@ -106,5 +160,19 @@ mod tests {
         .unwrap();
         let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn a_host_keeps_its_id_across_starts_and_a_damaged_id_is_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = host_id(dir.path()).unwrap();
+        assert!(is_host_id(&first));
+        assert_eq!(host_id(dir.path()).unwrap(), first);
+        fs::write(dir.path().join("host-id"), "garbage").unwrap();
+        assert!(host_id(dir.path()).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("host-id")).unwrap(),
+            "garbage"
+        );
     }
 }

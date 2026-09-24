@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceIdFor, deviceLine, diagnosticsText, herdrLine, offeredModels, redact, usableAccent, usableFontSize } from "./settings";
-import type { AiProvider, Device } from "./snapshot";
+import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
+import type { AiProvider, Device, DeviceHost } from "./snapshot";
 
 const device = (patch: Partial<Device>): Device => ({
   id: "studio",
@@ -13,6 +13,79 @@ const device = (patch: Partial<Device>): Device => ({
   agent_count: 0,
   test: null,
   ...patch,
+});
+
+describe("where settings live and what a device reported", () => {
+  const daemon = {
+    version: "0.1.0",
+    host_id: "host-00000000000000000000000000000000",
+    host_name: "mini",
+    schema_version: 2,
+    pid: 42,
+    started_at_unix: "1",
+    state_dir: "/s",
+    core_state_path: "/s/core-state.json",
+    herdr_bin_path: null,
+    herdr_socket_path: null,
+    keep_alive: false,
+    idle_secs: 600,
+  };
+
+  it("names the daemon's machine as the owner whichever device is selected", () => {
+    expect(ownerLine(daemon, null)).toContain("kept by hided on mini.");
+    const selected = ownerLine(daemon, device({ label: "Studio" }));
+    expect(selected).toContain("kept by hided on mini.");
+    expect(selected).toContain("Studio is selected");
+    expect(ownerLine({ ...daemon, host_name: null }, null)).toContain("the daemon's machine");
+  });
+
+  it("shows only facts the device reported", () => {
+    expect(deviceFacts(device({}), undefined)).toEqual([]);
+    const host = { state: "ready", platform: "macos aarch64" } as DeviceHost;
+    const status = { target_id: "studio", state: "connected", message: null, herdr_version: "0.9.1" };
+    expect(deviceFacts(device({ host }), status)).toEqual(["Herdr 0.9.1", "helper on macos aarch64"]);
+    expect(deviceFacts(device({ host: { ...host, state: "connecting" } }), status)).toEqual(["Herdr 0.9.1"]);
+    expect(deviceFacts(device({ kind: "local", host }), status)).toEqual([]);
+  });
+
+  it("tells a changed host key, an unknown one and a refused sign-in apart", () => {
+    expect(deviceProblemLine("host_key_changed", "studio")?.headline).toBe("Host key changed");
+    expect(deviceProblemLine("host_key_unknown", "studio")?.action).toContain("ssh studio");
+    expect(deviceProblemLine("authentication", "studio")?.headline).toBe("Sign-in refused");
+    expect(deviceProblemLine(null, "studio")).toBeNull();
+  });
+});
+
+describe("deviceRemovalLines", () => {
+  it("counts the device's projects, tabs and drafts and nothing of this machine's", () => {
+    const lines = deviceRemovalLines(
+      "mini",
+      [{ device_id: "mini" }, { device_id: "local" }],
+      [
+        { id: "t1", checkout_id: "remote:mini:checkout:w1", dirty: true },
+        { id: "t2", checkout_id: "remote:mini:checkout:w2", dirty: false },
+        { id: "t3", checkout_id: "checkout:here", dirty: true },
+      ],
+      [{ device: "mini" }, { device: "local" }, { device: null }],
+    );
+    expect(lines).toEqual([
+      "Hide forgets 1 registered project and closes 2 file tabs of it here.",
+      "2 unsaved drafts stay in this browser under unsaved drafts, to export or discard.",
+    ]);
+    expect(deviceRemovalLines("studio", [], [], [])).toEqual([]);
+  });
+
+  it("says a draft that was only exported leaves as that file, not as a stored draft (B44)", () => {
+    const tabs = [
+      { id: "t1", checkout_id: "remote:mini:checkout:w1", dirty: true },
+      { id: "t2", checkout_id: "remote:mini:checkout:w1", dirty: true },
+    ];
+    expect(deviceRemovalLines("mini", [], tabs, [], (tabId) => tabId === "t1")).toEqual([
+      "Hide forgets 0 registered projects and closes 2 file tabs of it here.",
+      "1 unsaved draft stays in this browser under unsaved drafts, to export or discard.",
+      "1 draft could not be stored in this browser and leaves only as the file you exported.",
+    ]);
+  });
 });
 
 describe("settings rules", () => {
@@ -77,6 +150,8 @@ describe("settings rules", () => {
     const text = diagnosticsText({
       daemon: {
         version: "0.1.0",
+        host_id: "host-00000000000000000000000000000000",
+        host_name: "studio-host",
         schema_version: 2,
         pid: 42,
         started_at_unix: "1",
@@ -99,5 +174,47 @@ describe("settings rules", () => {
     expect(text).not.toContain(token);
     expect(text).not.toContain("abc123");
     expect(redact("password=hunter2 ok")).toBe("password=[redacted] ok");
+  });
+
+  it("says whether a device's helper may run and never reads a refusal as ready", () => {
+    const host = (patch: Partial<DeviceHost>): DeviceHost => ({
+      consent: "granted",
+      helper_root: "~/.local/share/hide/host-helper",
+      contract: 1,
+      bound_identity: null,
+      granted_at_unix_ms: 1,
+      state: "ready",
+      message: null,
+      platform: "macos aarch64",
+      helper_path: null,
+      ...patch,
+    });
+    expect(hostLine(host({})).tone).toBe("ok");
+    expect(hostLine(host({ consent: "none", state: "not_allowed" }))).toEqual({ text: "helper not allowed", tone: "muted" });
+    expect(hostLine(host({ consent: "outdated", state: "not_allowed" })).text).toBe("helper needs a new consent");
+    expect(hostLine(host({ state: "identity_changed" })).tone).toBe("warn");
+    expect(hostLine(host({ state: "unavailable" })).tone).toBe("warn");
+    expect(hostLine(host({ consent: "this_machine" })).tone).toBe("local");
+  });
+
+  it("names the install root in the consent and refuses a relative device socket", () => {
+    expect(helperConsentTerms("/opt/hide")[0]).toContain("/opt/hide");
+    expect(socketProblem("")).toBeNull();
+    expect(socketProblem("/tmp/herdr.sock")).toBeNull();
+    expect(socketProblem("herdr.sock")).not.toBeNull();
+    expect(socketProblem("/")).not.toBeNull();
+    expect(socketProblem("/tmp/a\nb")).not.toBeNull();
+  });
+});
+
+describe("unstoredDeviceDrafts (S5.5 B26, B44)", () => {
+  it("names the device's tabs whose draft is only in the tab", () => {
+    const tabs = [
+      { id: "t1", checkout_id: "remote:mac:checkout:w1", path: "/r/a.txt" },
+      { id: "t2", checkout_id: "remote:mac:checkout:w1", path: "/r/b.txt" },
+      { id: "t3", checkout_id: "local:checkout", path: "/r/a.txt" },
+    ];
+    expect(unstoredDeviceDrafts("mac", tabs, new Set(["t2", "t3"]))).toEqual(["/r/b.txt"]);
+    expect(unstoredDeviceDrafts("mac", tabs, new Set())).toEqual([]);
   });
 });

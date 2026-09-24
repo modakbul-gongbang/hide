@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, BUFFER_MAX_AGE_MS, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, queueBuffer } from "./buffers";
+import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, draftStorageHold, flushBuffer, identity, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { PatchView } from "./editor/PatchView";
-import { clearDraft, noteDraft } from "./editor/draft";
-import { activeEditorTab, changesFor, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
+import { clearDraft, latestDraft, noteDraft } from "./editor/draft";
+import { activeEditorTab, changesFor, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
 import { downloadFile } from "./fileBytes";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
+import { useFileSource } from "./viewers/useFileBytes";
 
 // The document surface (PRD B3-B7). The core owns the open tabs and the
 // document; this draws the one that is showing and dispatches the events that
@@ -24,18 +25,20 @@ export const AUTOSAVE_IDLE_MS = 600;
 export function EditorSurface({ actions }: { actions: Actions }) {
   const editor = useShellStore((s) => s.editor);
   const rest = useShellStore((s) => s.rest);
+  const host = useShellStore((s) => s.daemon?.host_id ?? null);
   const scale = useShellStore((s) => s.rest?.ui_state?.editor_text_scale);
   const findRequest = useUiStore((s) => s.editorFindRequest);
   const showing = editorFor(editor);
   const tab = activeEditorTab(editor);
   if (!showing || !tab) return null;
-  // A buffer's identity is its checkout root plus the real path (D-14).
-  const root = checkoutById(rest, tab.checkout_id)?.path ?? "";
+  // A draft is filed under this daemon host, the tab's device, its checkout
+  // root and the real path (D-14, S5.5 B9).
+  const draftKey = tab.kind === "file" ? tabBufferKey(host, rest, tab) : null;
   return (
     <EditorTabView
       key={tab.id}
       tab={tab}
-      root={root}
+      draftKey={draftKey}
       document={showing.document}
       scale={typeof scale === "number" ? scale : DEFAULT_SCALE}
       findRequest={findRequest}
@@ -46,14 +49,14 @@ export function EditorSurface({ actions }: { actions: Actions }) {
 
 function EditorTabView({
   tab,
-  root,
+  draftKey,
   document,
   scale,
   findRequest,
   actions,
 }: {
   tab: EditorTabSnapshot;
-  root: string;
+  draftKey: BufferKey | null;
   document: EditorDocumentSnapshot | null;
   scale: number;
   findRequest: number;
@@ -64,7 +67,7 @@ function EditorTabView({
       <EditorHeader tab={tab} document={document} actions={actions} />
       {tab.kind === "diff"
         ? <DiffBody tab={tab} scale={scale} />
-        : <EditorBody tab={tab} root={root} document={document} scale={scale} findRequest={findRequest} actions={actions} />}
+        : <EditorBody tab={tab} draftKey={draftKey} document={document} scale={scale} findRequest={findRequest} actions={actions} />}
     </div>
   );
 }
@@ -72,7 +75,7 @@ function EditorTabView({
 function DiffBody({ tab, scale }: { tab: EditorTabSnapshot; scale: number }) {
   const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   if (!changes) return <Notice text="Reading the diff…" state="diff-loading" />;
-  if (changes.unavailable_reason) return <Notice text="History is unavailable for this checkout. Reselect the file to retry." state="diff-unavailable" />;
+  if (changes.unavailable_reason) return <Notice text={`History is unavailable: ${changes.unavailable_reason}`} state="diff-unavailable" />;
   const committed = tab.diff_committed === true;
   const group = committed ? changes.committed : changes.entries;
   if (!group.some((entry) => entry.path === tab.path)) {
@@ -159,25 +162,40 @@ function EditorHeader({
 
 function EditorBody({
   tab,
-  root,
+  draftKey,
   document,
   scale,
   findRequest,
   actions,
 }: {
   tab: EditorTabSnapshot;
-  root: string;
+  draftKey: BufferKey | null;
   document: EditorDocumentSnapshot | null;
   scale: number;
   findRequest: number;
   actions: Actions;
 }) {
+  const draftId = draftKey ? identity(draftKey) : null;
+  const keyRef = useRef(draftKey);
+  keyRef.current = draftKey;
   const editable = document?.document_kind === "text" || document?.document_kind === "markdown";
   const latest = useRef(document);
   latest.current = document;
   const checked = useRef(false);
   const autosave = useRef<number | undefined>(undefined);
   const connection = useShellStore((s) => s.connection);
+  // A draft store that refused a write holds every other clean document
+  // read-only until there is room again (B44); only open tabs count, so a
+  // closed tab's old refusal does not hold the editor forever.
+  const storageFull = useShellStore((s) => (s.editor?.tabs ?? []).some((row) => s.bufferWarnings.has(row.id)));
+  const unstored = useShellStore((s) => s.bufferWarnings.has(tab.id));
+  const hold = draftStorageHold({ storageFull, unstored, dirty: document?.dirty ?? false });
+  // A saved document needs no stored draft, so its tab-only mark goes with
+  // the save, and with it the hold on every other document.
+  const clean = document ? !document.dirty : false;
+  useEffect(() => {
+    if (clean) useShellStore.getState().noteBufferWarning(tab.id, false);
+  }, [clean, tab.id]);
 
   const autosaveDue = () => {
     const current = latest.current;
@@ -186,6 +204,9 @@ function EditorBody({
       (current.document_kind === "text" || current.document_kind === "markdown") &&
       !current.readonly_reason &&
       !current.conflict &&
+      // A save whose answer was lost blocks the next one until it is read
+      // back; a running or waiting save takes the newest draft behind it.
+      (!current.save || current.save.state === "saving" || current.save.state === "waiting") &&
       current.dirty
     );
   };
@@ -236,57 +257,61 @@ function EditorBody({
   // A refused save never reaches the clean state, so the core's failure is
   // what takes the saving mark off the tab; the document stays dirty and the
   // reason is in the diagnostic log (B5).
-  const failureAt = useShellStore((s) => s.rest?.status?.last_error?.occurred_at ?? null);
+  // Only a file error settles a save; a device or catalog error that lands
+  // while a slow device save runs leaves its mark alone (S5.5 B45).
+  const failureAt = useShellStore((s) => {
+    const error = s.rest?.status?.last_error;
+    return error && error.kind.startsWith("file.") ? error.occurred_at : null;
+  });
   useEffect(() => {
     if (failureAt !== null) useShellStore.getState().noteSaving(tab.id, false);
   }, [failureAt, tab.id]);
 
-  // A reconnect may have left an unsaved buffer in IndexedDB (B8): the buffer
+  // A reconnect may have left an unsaved draft in IndexedDB (B8): the draft
   // is the newest edit, so it is restored over a clean core document and
-  // dropped when the core already holds the same contents.
+  // dropped when the core already holds the same contents. A draft is never
+  // dropped for its age (S5.5 B12).
   useEffect(() => {
     checked.current = false;
-    if (connection !== "live") return;
+    const key = keyRef.current;
+    if (connection !== "live" || !key) return;
     let live = true;
-    void flushBuffer(root, tab.path).then(() => claimLegacyBuffer(root, tab.path)).then(allBuffers).then((buffers) => {
+    void flushBuffer(key).then(() => claimLegacyBuffer(key)).then(allBuffers).then((buffers) => {
       if (!live) return;
-      const buffer = bufferFor(buffers, root, tab.path);
+      const buffer = bufferFor(buffers, key);
       checked.current = true;
       if (!buffer) return;
-      if (Date.now() - buffer.updated_at > BUFFER_MAX_AGE_MS) {
-        void deleteBuffer(root, tab.path);
-        useShellStore.getState().noteDiagnostic(`discarded the stale unsaved buffer for ${tab.path}`);
-        return;
-      }
       const current = latest.current;
       if (!current) return;
-      // A read-only or preview-only document has no draft the core would
-      // accept, so its buffer is the shell's own and cannot be restored: it
-      // goes with a note rather than blocking the tab's close forever (D-14).
+      // A read-only or preview-only document takes no draft, so this one
+      // cannot be restored into it; it stays a recovery item to export or
+      // discard rather than being deleted here (D-14, B11).
       if (current.readonly_reason !== null || current.contents_utf8 === null) {
-        void deleteBuffer(root, tab.path);
         useShellStore
           .getState()
-          .noteDiagnostic(`discarded the unsaved buffer for a document that is not editable here: ${tab.path}`);
+          .noteDiagnostic(`an unsaved draft for ${tab.path} is kept for recovery: the document is not editable here`);
         return;
       }
-      if (bufferDecision(buffer, current) === "restore") {
+      const decision = bufferDecision(buffer, current);
+      if (decision === "restore") {
         noteDraft(tab.id, buffer.contents);
         actions.updateDraft(buffer.contents);
-      }
-      else void deleteBuffer(root, tab.path);
+      } else if (decision === "drop") void deleteBuffer(key);
     });
     return () => {
       live = false;
     };
-  }, [tab.id, root, tab.path, actions, connection]);
+  }, [tab.id, draftId, tab.path, actions, connection]);
 
-  // A document the core reports clean has nothing unsaved, so its buffer goes.
+  // A document the core reports clean holds the draft on disk, so its copy
+  // goes: the core is clean only after a save of the draft landed, or when no
+  // draft was ever made (the restore above runs first).
   useEffect(() => {
-    if (!checked.current || document?.dirty) return;
+    const key = keyRef.current;
+    if (!key || !checked.current || document?.dirty) return;
     if (document?.document_kind !== "text" && document?.document_kind !== "markdown") return;
-    void deleteBuffer(root, tab.path);
-  }, [document?.dirty, document?.document_kind, root, tab.path]);
+    void deleteBuffer(key);
+  }, [document?.dirty, document?.document_kind, draftId]);
 
   if (!document) {
     return <Notice text="Loading…" state="loading" />;
@@ -306,7 +331,21 @@ function EditorBody({
           {document.readonly_reason}
         </div>
       ) : null}
-      {document.conflict ? <ConflictBar tabId={tab.id} root={root} path={tab.path} actions={actions} /> : null}
+      {hold === "held" ? (
+        <div role="status" className="border-b border-divider px-md py-xs text-caption text-warning" data-editor-draft-hold="held">
+          Unsaved drafts cannot be stored right now (their storage is full at 512 MiB or this browser's quota, or unavailable), so this document stays read-only until the unstored draft is saved, exported or discarded. Stored drafts are never removed to make room.
+        </div>
+      ) : null}
+      {hold === "unstored" ? (
+        <div role="status" className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-draft-hold="unstored">
+          <span className="min-w-0 flex-1">This draft is not stored: draft storage is full or unavailable, so it lives in this tab only. Save or export it; the next edit is stored again once there is room.</span>
+          <ExportDraftButton tabId={tab.id} path={tab.path} />
+        </div>
+      ) : null}
+      {document.conflict ? (
+        <ConflictBar tabId={tab.id} draftKey={draftKey} path={tab.path} removed={document.conflict.disk_revision === null} actions={actions} />
+      ) : null}
+      {document.save && document.save.state !== "saving" ? <SaveStatusBar tabId={tab.id} path={tab.path} save={document.save} actions={actions} /> : null}
       <CodeMirrorEditor
         key={tab.id}
         tabId={tab.id}
@@ -315,13 +354,18 @@ function EditorBody({
         wrap={tab.wrap}
         live={document.document_kind === "markdown" && tab.markdown_live}
         findRequest={findRequest}
+        held={hold === "held"}
         onDraft={(contents) => {
-          noteDraft(tab.id, contents);
+          noteDraft(tab.id, contents); 
           // A buffer that cannot be stored keeps the edit alive and says so on
           // the tab; the session continues either way (D-14).
-          queueBuffer(root, tab.path, contents, (stored) => {
-            if (stored !== null) useShellStore.getState().noteBufferWarning(tab.id, !stored);
-          });
+          if (draftKey) {
+            queueBuffer(draftKey, contents, (stored) => {
+              if (stored !== null) useShellStore.getState().noteBufferWarning(tab.id, !stored);
+            });
+          } else {
+            useShellStore.getState().noteBufferWarning(tab.id, true);
+          }
           actions.updateDraft(contents);
           scheduleAutosave();
         }}
@@ -332,6 +376,7 @@ function EditorBody({
 
 function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const source = useFileSource();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-sm px-md text-center text-caption text-muted" data-editor-preview-only="true">
       <span>{document.readonly_reason ?? "This file is too large to edit here."}</span>
@@ -341,7 +386,7 @@ function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
         data-editor-download="true"
         onClick={() => {
           setDownloadError(null);
-          void downloadFile(document.path).catch((error: unknown) => {
+          void downloadFile(document.path, source).catch((error: unknown) => {
             if ((error as { name?: string }).name !== "AbortError") {
               setDownloadError(error instanceof Error ? error.message : "download_failed");
             }
@@ -355,17 +400,76 @@ function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
   );
 }
 
-function ConflictBar({ tabId, root, path, actions }: { tabId: string; root: string; path: string; actions: Actions }) {
+/**
+ * Saves the draft the operator sees to a file of their choosing, for a
+ * document whose own save cannot land (B13-B15): the draft leaves through the
+ * browser's download, never through the host's filesystem.
+ */
+function exportDraft(tabId: string, path: string) {
+  const contents = latestDraft(tabId) ?? useShellStore.getState().editor?.document?.contents_utf8 ?? "";
+  const url = URL.createObjectURL(new Blob([contents], { type: "text/plain;charset=utf-8" }));
+  const link = window.document.createElement("a");
+  link.href = url;
+  link.download = `${path.split("/").pop() || "draft"}.draft`;
+  link.click();
+  URL.revokeObjectURL(url);
+  // The exported text no longer depends on this tab, so a device removal
+  // held for it can go ahead (B26, B44).
+  useShellStore.getState().noteDraftExported(tabId, contents);
+}
+
+function ExportDraftButton({ tabId, path }: { tabId: string; path: string }) {
+  return (
+    <button type="button" className="text-secondary hover:text-primary" data-export-draft="true" onClick={() => exportDraft(tabId, path)}>
+      Export draft
+    </button>
+  );
+}
+
+/**
+ * A save that has no result yet: one waiting for the device's helper, or one
+ * whose answer was lost, which is never resent and is read back to settle it
+ * (B14). Or a save that was refused or not sent, with its reason, Export and
+ * Retry at the same place; autosave waits for Retry rather than repeating a
+ * refusal (S5.5 B15, B45).
+ */
+function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: string; save: NonNullable<EditorDocumentSnapshot["save"]>; actions: Actions }) {
+  // `not_applied` is an unanswered save read back unchanged: it has not
+  // reached the file yet but may still, so it is not called unsaved. Retry
+  // is safe there: a save that meets the late one lands as a conflict.
+  const prefix = save.state === "refused" ? "Not saved: " : save.state === "not_applied" ? "Not saved yet: " : "";
+  const settled = prefix !== "";
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-save-state={save.state}>
+      <span className="min-w-0 flex-1 break-words">
+        {prefix}
+        {save.message ?? "The last save's result is unknown; reading the file back."}
+        {settled ? "" : " Your draft is preserved."}
+      </span>
+      <ExportDraftButton tabId={tabId} path={path} />
+      {settled ? (
+        <button type="button" className="text-secondary hover:text-primary" data-save-retry="true" onClick={() => actions.saveFile(tabId)}>
+          Retry
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function ConflictBar({ tabId, draftKey, path, removed, actions }: { tabId: string; draftKey: BufferKey | null; path: string; removed: boolean; actions: Actions }) {
   return (
     <div className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-conflict="true">
-      <span className="flex-1">This file changed on disk. Your draft is preserved.</span>
+      <span className="flex-1">
+        {removed ? "This file was removed or could not be read back." : "This file changed on disk."} Your draft is preserved.
+      </span>
+      <ExportDraftButton tabId={tabId} path={path} />
       <button
         type="button"
         className="text-secondary hover:text-primary"
         data-conflict-action="reload"
         onClick={() => {
           clearDraft(tabId);
-          void deleteBuffer(root, path);
+          if (draftKey) void deleteBuffer(draftKey);
           actions.resolveConflict("reload");
         }}
       >

@@ -332,6 +332,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         }
     }
 
+    private static func hostHelperDirectory() -> Any {
+        guard let directory = Bundle.main.resourceURL?.appendingPathComponent("host-helper"),
+              FileManager.default.fileExists(atPath: directory.path)
+        else { return NSNull() }
+        return directory.path
+    }
+
     private static func createCore(
         herdrBinaryPath: String?,
         fixtureMode: Bool,
@@ -342,6 +349,9 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "herdr_socket_path": fixtureMode ? NSNull() : HideRuntimeEnvironment.herdrSocketPath() as Any,
             "herdr_bin_path": herdrBinaryPath.map { $0 as Any } ?? NSNull(),
             "app_state_path": statePath,
+            // The device helper packages the app bundle carries; a build
+            // without them reports devices' files as unavailable.
+            "host_helper_dir": hostHelperDirectory() as Any,
         ]
         guard
             let data = try? JSONSerialization.data(withJSONObject: options),
@@ -685,6 +695,15 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "focus_device", payload: ["device_id": deviceID])
     }
 
+    /// The operator's consent for Hide's helper on one device, given where
+    /// the helper's scope is described (PRD S5.5 B50).
+    func allowDeviceHost(deviceID: String) {
+        dispatch(kind: "device_host_consent", payload: [
+            "device_id": deviceID,
+            "allow": true,
+        ])
+    }
+
     func listRemoteFiles(targetID: String, rootPath: String) {
         dispatch(kind: "remote_file_list", payload: [
             "target_id": targetID,
@@ -898,11 +917,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
     }
 
-    func focusRemoteWorkspace(targetID: String, workspaceID: String) {
+    /// A device's project can hold several Herdr workspaces; the checkout
+    /// names the one to focus (`device_catalog`).
+    func focusRemoteWorkspace(targetID: String, workspaceID: String, checkoutID: String) {
         dispatchRemoteControl(
             targetID: targetID,
             action: "focus_workspace",
-            extra: ["workspace_id": workspaceID]
+            extra: ["workspace_id": workspaceID, "checkout_id": checkoutID]
         )
     }
 
@@ -917,6 +938,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func createRemoteTab(
         targetID: String,
         workspaceID: String,
+        checkoutID: String,
         cwd: String,
         label: String
     ) {
@@ -925,6 +947,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             action: "create_tab",
             extra: [
                 "workspace_id": workspaceID,
+                "checkout_id": checkoutID,
                 "cwd": cwd,
                 "label": label,
             ]
@@ -1114,7 +1137,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "tab_id": tabID,
             "path": path,
             "contents_utf8": contents,
-            "expected_modified_at_unix_ms": editor.openedModifiedAt.map { NSNumber(value: $0) as Any } ?? NSNull(),
         ])
     }
 
@@ -1126,7 +1148,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         pendingFileSave?.cancel()
         pendingFileSavePayload = [
             "tab_id": tabID, "path": path, "contents_utf8": contents,
-            "expected_modified_at_unix_ms": editor.openedModifiedAt.map { NSNumber(value: $0) as Any } ?? NSNull(),
         ]
         pendingFileSave = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .milliseconds(450)) } catch { return }

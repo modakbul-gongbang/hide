@@ -20,6 +20,8 @@ export type ExplorerRow = {
   name: string;
   depth: number;
   isDirectory: boolean;
+  /** The entry's own inode, which a trash of the row sends so the host moves only this item; null when the listing carried none. */
+  inode: number | null;
   /** True while the operator has this folder expanded. */
   expanded: boolean;
   /** The children hided answered for this folder; null while none has arrived. */
@@ -83,6 +85,19 @@ export type GitDecorations = {
 function higherRisk(current: ChangedFileStatus | undefined, candidate: ChangedFileStatus): ChangedFileStatus {
   if (!current) return candidate;
   return RISK.indexOf(candidate) < RISK.indexOf(current) ? candidate : current;
+}
+
+/**
+ * The line above the Explorer tree about the checkout's Git status: still
+ * loading, unavailable, or decorations kept from an earlier read after the
+ * latest one failed, which are never shown as current (PRD S5.5 B20, B22).
+ * Nothing when the status is current.
+ */
+export function explorerGitLine(changes: ChangesSnapshot | null): { state: "loading" | "unavailable" | "stale"; text: string } | null {
+  if (!changes) return { state: "loading", text: "Loading Git status" };
+  if (changes.unavailable_reason) return { state: "unavailable", text: `Git status unavailable: ${changes.unavailable_reason}` };
+  if (changes.stale_reason) return { state: "stale", text: `Git status may be out of date: ${changes.stale_reason}` };
+  return null;
 }
 
 /**
@@ -157,6 +172,7 @@ export function explorerRows({
         name: entry.name,
         depth,
         isDirectory: entry.is_directory,
+        inode: entry.inode ?? null,
         expanded: open,
         listing: entry.is_directory ? (listings[entry.path] ?? null) : null,
         decoration: decorationFor(decorations, entry.path, rootPath, entry.is_directory),

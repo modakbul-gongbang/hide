@@ -20,6 +20,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         bind: "127.0.0.1:0".parse().unwrap(),
         idle_secs: 600,
         open_command: None,
+        host_helper_root: None,
     };
     (dir, env)
 }
@@ -186,6 +187,13 @@ async fn the_daemon_describes_itself_before_the_first_snapshot() {
     assert_eq!(daemon["type"], "daemon");
     assert_eq!(daemon["payload"]["schema_version"], 2);
     assert_eq!(daemon["payload"]["pid"], std::process::id());
+    let host_id = std::fs::read_to_string(dir.path().join("host-id")).unwrap();
+    assert_eq!(daemon["payload"]["host_id"], host_id.trim());
+    // Settings names this machine as the owner of what the daemon stores (S5.5 B35).
+    let host_name = daemon["payload"]["host_name"]
+        .as_str()
+        .expect("the daemon names its machine");
+    assert!(!host_name.is_empty());
     assert_eq!(
         daemon["payload"]["core_state_path"],
         dir.path().join("core-state.json").display().to_string()

@@ -281,6 +281,16 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
     let mut directory_changes = state.watch.subscribe();
+    // Answers a device's helper gives for this client alone (the Explorer's
+    // listing of a device checkout) arrive here from their own tasks, so a
+    // slow device never holds up this socket's snapshot stream.
+    let (device_frames_tx, mut device_frames) = tokio::sync::mpsc::channel::<String>(16);
+    // Device file reads for this client, each in its own task: their frames
+    // come back through `device_bytes`, at most two ranges ahead of the
+    // socket, and every read ends with the connection.
+    let (device_bytes_tx, mut device_bytes) = tokio::sync::mpsc::channel::<Message>(2);
+    let mut device_reads: std::collections::VecDeque<DeviceRead> =
+        std::collections::VecDeque::new();
     let daemon = json!({"type": "daemon", "payload": state.daemon_info.as_ref()});
     if socket
         .send(Message::Text(daemon.to_string().into()))
@@ -315,10 +325,24 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             changed = directory_changes.recv() => {
                 match changed {
                     Ok(frame) => {
-                        let path = serde_json::from_str::<Value>(&frame)
-                            .ok()
-                            .and_then(|value| value.pointer("/payload/path").and_then(Value::as_str).map(str::to_owned));
-                        if !path.is_some_and(|path| state.boundary.resolve_target(&path).is_ok()) {
+                        let value = serde_json::from_str::<Value>(&frame).ok();
+                        let field = |name: &str| {
+                            value
+                                .as_ref()
+                                .and_then(|value| value.pointer(&format!("/payload/{name}")))
+                                .and_then(Value::as_str)
+                        };
+                        // A folder on this machine is re-checked against its
+                        // checkout roots; a device's folder names a path there,
+                        // which only that device's catalog roots can vouch for.
+                        let admitted = match (field("path"), field("device_id")) {
+                            (Some(path), Some(herdr_core::workspace::LOCAL_DEVICE_ID) | None) => {
+                                state.boundary.resolve_target(path).is_ok()
+                            }
+                            (Some(path), Some(device)) => state.boundary.is_under_device_root(device, path),
+                            (None, _) => false,
+                        };
+                        if !admitted {
                             continue;
                         }
                         if socket.send(Message::Text(frame.into())).await.is_err() {
@@ -331,12 +355,36 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
                 }
             }
+            Some(frame) = device_bytes.recv() => {
+                if socket.send(frame).await.is_err() {
+                    break;
+                }
+            }
+            Some(frame) = device_frames.recv() => {
+                if socket.send(Message::Text(frame.into())).await.is_err() {
+                    break;
+                }
+            }
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
-                                if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() { break; }
+                                if let Some(device) = event_device(&event) {
+                                    let superseded = start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), device, event);
+                                    // Sent here rather than through `device_bytes`,
+                                    // which this loop drains and could be full.
+                                    if let Some(frame) = superseded
+                                        && socket.send(frame).await.is_err()
+                                    {
+                                        break;
+                                    }
+                                } else if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Ok(ClientAction::DeviceListing(event)) => {
+                                spawn_device_listing(&state, event, device_frames_tx.clone());
                             }
                             outcome => {
                                 let replies = match outcome {
@@ -373,7 +421,72 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             }
         }
     }
+    for read in device_reads {
+        read.task.abort();
+    }
     client_gone(&state, connection);
+}
+
+/// How many device file reads one client runs at once. A viewer asks for one
+/// file; a read beyond this is most likely for a view the page has left, so
+/// the oldest read is ended to make room and answered as `superseded`, so
+/// whatever waits on it settles (D-15).
+const DEVICE_READS_PER_CLIENT: usize = 2;
+
+struct DeviceRead {
+    request_id: String,
+    path: String,
+    task: tokio::task::AbortHandle,
+}
+
+/// Starts a device read and returns the error frame for the read it ended to
+/// make room, if any.
+fn start_device_read(
+    state: &AppState,
+    reads: &mut std::collections::VecDeque<DeviceRead>,
+    frames: tokio::sync::mpsc::Sender<Message>,
+    device: String,
+    event: Value,
+) -> Option<Message> {
+    reads.retain(|read| !read.task.is_finished());
+    let mut superseded = None;
+    if reads.len() >= DEVICE_READS_PER_CLIENT
+        && let Some(oldest) = reads.pop_front()
+    {
+        oldest.task.abort();
+        eprintln!(
+            "{}",
+            json!({
+                "component": "hided", "kind": "device.file_bytes_ended",
+                "device": device,
+                "request_id": oldest.request_id.chars().take(LOGGED_PATH_CAP).collect::<String>(),
+                "reason": "a newer read for this client took its place",
+            })
+        );
+        superseded = Some(file_bytes_error(
+            &oldest.request_id,
+            &oldest.path,
+            "superseded",
+        ));
+    }
+    // Kept to answer this read by its own id if a newer one ends it.
+    let (request_id, path) = (
+        payload_str(&event, "request_id"),
+        payload_str(&event, "path"),
+    );
+    let task = tokio::spawn(stream_device_file_bytes(
+        frames,
+        Arc::clone(&state.core),
+        Arc::clone(&state.boundary),
+        device,
+        event,
+    ));
+    reads.push_back(DeviceRead {
+        request_id,
+        path,
+        task: task.abort_handle(),
+    });
+    superseded
 }
 
 /// Constant in the token's length, so a byte-by-byte mismatch does not leak
@@ -391,7 +504,37 @@ fn token_matches(offered: &str, expected: &str) -> bool {
 /// binary frames of a `file_bytes` read.
 enum ClientAction {
     FileBytes(Value),
+    /// A `file_list` for a checkout on an SSH device, answered by its helper.
+    DeviceListing(Value),
     Replies(Vec<Message>),
+}
+
+/// The file events a checkout on an SSH device answers through that
+/// device's helper. This machine's checkout roots and home say nothing about
+/// another machine's paths, so these never meet the local boundary: the core
+/// finds the checkout and its device in its own catalog, and the helper
+/// confines the path to the checkout root it opened, or, for a registration,
+/// to that device's own home (`hide_host::register`).
+const DEVICE_FILE_EVENTS: [&str; 10] = [
+    "create_workspace",
+    "file_list",
+    "file_open",
+    "reveal_path",
+    "file_save",
+    "file_create",
+    "dir_create",
+    "path_rename",
+    "path_move",
+    "path_trash",
+];
+
+/// The SSH device a file event names, or `None` for this machine.
+fn event_device(event: &Value) -> Option<String> {
+    event
+        .pointer("/payload/device_id")
+        .and_then(Value::as_str)
+        .filter(|device| !device.is_empty() && *device != herdr_core::workspace::LOCAL_DEVICE_ID)
+        .map(str::to_owned)
 }
 
 fn handle_client_text(
@@ -447,6 +590,17 @@ fn handle_client_text(
         }
         _ => {}
     }
+    let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
+    if DEVICE_FILE_EVENTS.contains(&kind) && event_device(&event).is_some() {
+        if kind == "file_list" {
+            return Ok(ClientAction::DeviceListing(event));
+        }
+        let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
+        return state
+            .core
+            .dispatch(bytes)
+            .map(|()| ClientAction::Replies(Vec::new()));
+    }
     if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
         return Ok(ClientAction::Replies(vec![Message::Text(
             reply.to_string().into(),
@@ -457,6 +611,91 @@ fn handle_client_text(
         .core
         .dispatch(bytes)
         .map(|()| ClientAction::Replies(Vec::new()))
+}
+
+/// Lists one folder of a device checkout on a blocking task and hands the
+/// answer to the client's socket loop. A client gone by then drops it.
+fn spawn_device_listing(state: &AppState, event: Value, frames: tokio::sync::mpsc::Sender<String>) {
+    let core = Arc::clone(&state.core);
+    let boundary = Arc::clone(&state.boundary);
+    tokio::spawn(async move {
+        let frame = tokio::task::spawn_blocking(move || device_listing(&core, &boundary, &event))
+            .await
+            .unwrap_or_else(|error| {
+                json!({"type": "error", "payload": {}, "message": format!("device listing failed: {error}")})
+            });
+        let _ = frames.send(frame.to_string()).await;
+    });
+}
+
+/// One folder of a checkout on an SSH device. The root has to be a checkout
+/// the core's catalog carries for that device; the folder is spelled under it
+/// and the helper refuses anything that leaves it.
+fn device_listing(core: &CoreHandle, boundary: &Boundary, event: &Value) -> Value {
+    let device = payload_str(event, "device_id");
+    let root = payload_str(event, "root");
+    let raw = payload_str(event, "path");
+    if !boundary.is_device_root(&device, &root) {
+        return refused("file_list", &root, Refusal::OutsideCheckout);
+    }
+    let folder = if raw.is_empty() { root.clone() } else { raw };
+    let relative = if folder == root {
+        String::new()
+    } else {
+        match folder
+            .strip_prefix(root.trim_end_matches('/'))
+            .and_then(|rest| rest.strip_prefix('/'))
+            .filter(|rest| hide_host::relative_path(rest).is_ok())
+        {
+            Some(rest) => rest.to_owned(),
+            None => return refused("file_list", &folder, Refusal::OutsideCheckout),
+        }
+    };
+    let unavailable = |code: &str, message: String| {
+        eprintln!(
+            "{}",
+            json!({
+                "component": "hided",
+                "kind": "device.listing_unavailable",
+                "device": device,
+                "code": code,
+                "message": message,
+            })
+        );
+        json!({"type": "directory_unavailable", "payload": {
+            "kind": "file_list", "device_id": device, "root_path": folder, "code": code, "message": message,
+        }})
+    };
+    let channel = match core.device_channel(&device) {
+        Ok(channel) => channel,
+        Err(message) => return unavailable("not_ready", message),
+    };
+    use herdr_core::host_access::HostCallError;
+    match herdr_core::host_access::list_folder(channel.as_ref(), &root, &relative) {
+        Ok(listing) => {
+            let base = folder.trim_end_matches('/');
+            let entries: Vec<Value> = listing
+                .entries
+                .into_iter()
+                .map(|entry| {
+                    json!({
+                        "path": format!("{base}/{}", entry.name),
+                        "name": entry.name,
+                        "is_directory": entry.is_directory,
+                        "inode": entry.inode,
+                    })
+                })
+                .collect();
+            json!({"type": "directory_list", "payload": {
+                "kind": "file_list", "device_id": device, "root_path": folder,
+                "entries": entries, "truncated": listing.truncated,
+            }})
+        }
+        Err(HostCallError::NotConnected(message)) => unavailable("not_ready", message),
+        Err(error @ HostCallError::Busy) => unavailable("busy", error.to_string()),
+        Err(HostCallError::Unknown(message)) => unavailable("unknown", message),
+        Err(HostCallError::Refused(error)) => unavailable("refused", error.message),
+    }
 }
 
 /// Splits an `ai_settings` event: the observation hint is this connection's
@@ -874,6 +1113,13 @@ fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
 fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
     let root = payload_str(event, "root");
     let query = payload_str(event, "query");
+    if let Some(device) = event_device(event) {
+        return vec![Message::Text(
+            device_file_index(state, &device, &root, &query)
+                .to_string()
+                .into(),
+        )];
+    }
     let Ok((known, opened)) = state.boundary.open_directory(Path::new(&root), &root) else {
         return vec![Message::Text(
             refused("file_index", &root, Refusal::OutsideCheckout)
@@ -882,41 +1128,97 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
         )];
     };
     let root_path = known.display().to_string();
-    let payload = match state.index.query(&known, opened, &query) {
-        IndexAnswer::Indexing => json!({
-            "root_path": root_path,
-            "query": query,
-            "files": [],
-            "truncated": false,
-            "indexing": true,
-        }),
-        IndexAnswer::Ready { entries, truncated } => {
-            let listed: Vec<Value> = entries
+    let walk_root = known.clone();
+    let answer = state.index.query(
+        herdr_core::workspace::LOCAL_DEVICE_ID,
+        &root_path,
+        &query,
+        move || {
+            Ok(hide_host::index::walk(
+                &cap_std::fs::Dir::from_std_file(opened),
+                &walk_root,
+            ))
+        },
+    );
+    vec![Message::Text(
+        index_result(
+            herdr_core::workspace::LOCAL_DEVICE_ID,
+            &root_path,
+            &query,
+            answer,
+            |relative| {
+                let path = known.join(relative).display().to_string();
+                state.boundary.resolve_target(&path).ok().map(|_| path)
+            },
+        )
+        .to_string()
+        .into(),
+    )]
+}
+
+/// The `file_index_result` frame for one answer. `path_of` gives an entry's
+/// absolute path on its device, or `None` to leave an entry out.
+fn index_result(
+    device: &str,
+    root: &str,
+    query: &str,
+    answer: IndexAnswer,
+    path_of: impl Fn(&str) -> Option<String>,
+) -> Value {
+    let (files, truncated, indexing, unavailable) = match answer {
+        IndexAnswer::Indexing => (Vec::new(), false, true, None),
+        IndexAnswer::Ready { entries, truncated } => (
+            entries
                 .iter()
                 .filter_map(|relative| {
-                    let path = known.join(relative).display().to_string();
-                    state.boundary.resolve_target(&path).ok().map(|_| {
-                        json!({
-                            "path": path,
-                            "relative_path": relative,
-                        })
-                    })
+                    path_of(relative).map(|path| json!({"path": path, "relative_path": relative}))
                 })
-                .collect();
-            json!({
-                "root_path": root_path,
-                "query": query,
-                "files": listed,
-                "truncated": truncated,
-                "indexing": false,
-            })
-        }
+                .collect(),
+            truncated,
+            false,
+            None,
+        ),
+        IndexAnswer::Failed(message) => (Vec::new(), false, false, Some(message)),
     };
-    vec![Message::Text(
-        json!({"type": "file_index_result", "payload": payload})
-            .to_string()
-            .into(),
-    )]
+    json!({"type": "file_index_result", "payload": {
+        "device_id": device,
+        "root_path": root,
+        "query": query,
+        "files": files,
+        "truncated": truncated,
+        "indexing": indexing,
+        "unavailable": unavailable,
+    }})
+}
+
+/// A `file_index` query for a checkout on an SSH device. The root has to be
+/// one the core's catalog carries for that device; the walk is the device's
+/// helper's, reached on the index worker, and its paths are that device's.
+fn device_file_index(state: &AppState, device: &str, root: &str, query: &str) -> Value {
+    if !state.boundary.is_device_root(device, root) {
+        return refused("file_index", root, Refusal::OutsideCheckout);
+    }
+    let core = Arc::clone(&state.core);
+    let (walk_device, walk_root) = (device.to_owned(), root.to_owned());
+    let answer = state.index.query(device, root, query, move || {
+        let channel = core.device_channel(&walk_device)?;
+        herdr_core::host_access::index_root(channel.as_ref(), &walk_root).map_err(|error| {
+            eprintln!(
+                "{}",
+                json!({
+                    "component": "hided",
+                    "kind": "device.index_unavailable",
+                    "device": walk_device,
+                    "message": error.to_string(),
+                })
+            );
+            error.to_string()
+        })
+    });
+    let base = root.trim_end_matches('/');
+    index_result(device, root, query, answer, |relative| {
+        Some(format!("{base}/{relative}"))
+    })
 }
 
 /// Bytes one binary frame carries; a read streams in frames this size so a
@@ -956,6 +1258,183 @@ fn file_bytes_error(request_id: &str, path: &str, reason: &str) -> Message {
         .to_string()
         .into(),
     )
+}
+
+/// A `file_bytes` read of a file on an SSH device. The root has to be a
+/// checkout the core's catalog carries for that device and the path is spelled
+/// under it; the device's helper confines the read and answers one bounded
+/// range per call, so this keeps one range in memory as the local read does.
+/// A file that changed between ranges ends the read as `read_failed` rather
+/// than joining two files' bytes.
+///
+/// Each range is a helper round trip that can take seconds, so the read runs
+/// in its own task and hands its frames to the client loop through a bounded
+/// channel: the socket keeps carrying typing and snapshots meanwhile, and a
+/// full channel holds the read back instead of buffering it.
+async fn stream_device_file_bytes(
+    frames: tokio::sync::mpsc::Sender<Message>,
+    core: Arc<CoreHandle>,
+    boundary: Arc<Boundary>,
+    device: String,
+    event: Value,
+) -> Result<(), ()> {
+    let (device, event) = (device.as_str(), &event);
+    let request_id = payload_str(event, "request_id");
+    let path = payload_str(event, "path");
+    let root = payload_str(event, "root");
+    let offset = event
+        .pointer("/payload/offset")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let length = event.pointer("/payload/length").and_then(Value::as_u64);
+    let relative = path
+        .strip_prefix(root.trim_end_matches('/'))
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|rest| hide_host::relative_path(rest).is_ok())
+        .map(str::to_owned);
+    let Some(relative) = relative.filter(|_| boundary.is_device_root(device, &root)) else {
+        return frames
+            .send(Message::Text(
+                refused("file_bytes", &path, Refusal::OutsideCheckout)
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .map_err(|_| ());
+    };
+    if length.is_some_and(|length| length > boundary::MAX_FILE_BYTES) {
+        return frames
+            .send(file_bytes_error(&request_id, &path, "too_large"))
+            .await
+            .map_err(|_| ());
+    }
+    let mut cursor = offset;
+    let mut end: Option<u64> = None;
+    let mut first: Option<hide_host::bytes::FileStamp> = None;
+    let mut total: Option<u64> = None;
+    loop {
+        let wanted = end.map_or(hide_host::bytes::MAX_RANGE, |end| {
+            end.saturating_sub(cursor).min(hide_host::bytes::MAX_RANGE)
+        });
+        let core = Arc::clone(&core);
+        let (read_device, read_root, read_relative) =
+            (device.to_owned(), root.clone(), relative.clone());
+        let range = tokio::task::spawn_blocking(move || {
+            let channel = core.device_channel(&read_device)?;
+            herdr_core::host_access::read_bytes(
+                channel.as_ref(),
+                &read_root,
+                &read_relative,
+                cursor,
+                wanted,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result);
+        let range = match range {
+            Ok(range) => range,
+            Err(message) => {
+                eprintln!(
+                    "{}",
+                    json!({
+                        "component": "hided",
+                        "kind": "device.file_bytes_failed",
+                        "device": device,
+                        "message": message,
+                    })
+                );
+                return frames
+                    .send(file_bytes_error(&request_id, &path, "read_failed"))
+                    .await
+                    .map_err(|_| ());
+            }
+        };
+        let end_now = *end.get_or_insert_with(|| {
+            let wanted = length.unwrap_or_else(|| range.total.saturating_sub(range.offset));
+            range.offset.saturating_add(wanted).min(range.total)
+        });
+        if end_now - range.offset.min(end_now) > boundary::MAX_FILE_BYTES {
+            return frames
+                .send(file_bytes_error(&request_id, &path, "too_large"))
+                .await
+                .map_err(|_| ());
+        }
+        if first.get_or_insert_with(|| range.file.clone()) != &range.file {
+            return frames
+                .send(file_bytes_error(&request_id, &path, "read_failed"))
+                .await
+                .map_err(|_| ());
+        }
+        let expected_total = *total.get_or_insert(range.total);
+        let Ok(bytes) = range.bytes() else {
+            return frames
+                .send(file_bytes_error(&request_id, &path, "read_failed"))
+                .await
+                .map_err(|_| ());
+        };
+        let asked = AskedRange {
+            offset: cursor,
+            length: wanted,
+            end: end_now,
+            total: expected_total,
+        };
+        let Some((taken, eof)) = asked.accept(range.offset, range.total, bytes.len()) else {
+            return frames
+                .send(file_bytes_error(&request_id, &path, "read_failed"))
+                .await
+                .map_err(|_| ());
+        };
+        let header = json!({
+            "type": "file_bytes",
+            "request_id": request_id,
+            "path": path,
+            "offset": range.offset,
+            "total": range.total,
+            "eof": eof,
+        });
+        frames
+            .send(Message::Binary(
+                bytes_frame(&header, &bytes[..taken]).into(),
+            ))
+            .await
+            .map_err(|_| ())?;
+        cursor = range.offset + taken as u64;
+        if eof {
+            return Ok(());
+        }
+    }
+}
+
+/// One range a device read asked its helper for.
+struct AskedRange {
+    offset: u64,
+    length: u64,
+    /// Where the whole read ends.
+    end: u64,
+    /// The file size the read started with.
+    total: u64,
+}
+
+impl AskedRange {
+    /// The helper's answer is untrusted input: it has to be the range asked
+    /// for, of the same file size, no longer than asked, and short only where
+    /// the read ends, or a misbehaving helper could stretch one read into
+    /// millions of round trips or end it early as if the file were shorter.
+    /// Returns how many of the answered bytes to send and whether they end
+    /// the read; `None` fails the read.
+    fn accept(&self, offset: u64, total: u64, length: usize) -> Option<(usize, bool)> {
+        if offset != self.offset || total != self.total || length as u64 > self.length {
+            return None;
+        }
+        let taken = length.min(self.end.saturating_sub(offset) as usize);
+        let eof = offset + taken as u64 >= self.end;
+        if !eof && (length as u64) < self.length {
+            return None;
+        }
+        Some((taken, eof))
+    }
 }
 
 /// A `file_bytes` read keeps only one bounded chunk in memory. Sending each
@@ -1497,6 +1976,57 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A device range is accepted only as the range asked for: same offset
+    /// and file size, never longer, and short only where the read ends
+    /// (PRD S5.5 B39, B43).
+    #[test]
+    fn a_device_range_answer_is_the_range_asked_for_or_the_read_fails() {
+        const MIB: u64 = 1024 * 1024;
+        let asked = AskedRange {
+            offset: 0,
+            length: 4 * MIB,
+            end: 10 * MIB,
+            total: 10 * MIB,
+        };
+        let full = (4 * MIB) as usize;
+        assert_eq!(asked.accept(0, 10 * MIB, full), Some((full, false)));
+        // One byte per range would take ten million round trips.
+        assert_eq!(asked.accept(0, 10 * MIB, 1), None);
+        // An empty answer before the end is not the end of the file.
+        assert_eq!(asked.accept(0, 10 * MIB, 0), None);
+        assert_eq!(asked.accept(0, 10 * MIB, full + 1), None);
+        assert_eq!(asked.accept(1, 10 * MIB, full), None);
+        assert_eq!(asked.accept(0, 11 * MIB, full), None);
+
+        // The last range is short because the read ends there.
+        let last = AskedRange {
+            offset: 8 * MIB,
+            length: 2 * MIB,
+            end: 10 * MIB,
+            total: 10 * MIB,
+        };
+        assert_eq!(
+            last.accept(8 * MIB, 10 * MIB, (2 * MIB) as usize),
+            Some(((2 * MIB) as usize, true))
+        );
+        // A read of an empty file ends at once.
+        let empty = AskedRange {
+            offset: 0,
+            length: 4 * MIB,
+            end: 0,
+            total: 0,
+        };
+        assert_eq!(empty.accept(0, 0, 0), Some((0, true)));
+        // A read that asked for less than the file ends at its own end.
+        let part = AskedRange {
+            offset: 0,
+            length: 4 * MIB,
+            end: MIB,
+            total: 10 * MIB,
+        };
+        assert_eq!(part.accept(0, 10 * MIB, full), Some((MIB as usize, true)));
+    }
 
     #[test]
     fn a_fresh_client_gets_a_snapshot_and_a_resumed_one_a_delta() {

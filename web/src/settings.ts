@@ -3,7 +3,7 @@
 // Nothing here reads the store, so every rule is tested without a browser.
 
 import type { DaemonInfo } from "./store";
-import type { AiProvider, CoreDiagnostic, Device, EnvironmentStatus, HerdrStatus, RemoteStatus } from "./snapshot";
+import type { AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, RemoteStatus } from "./snapshot";
 
 export type SettingsTab = "general" | "appearance" | "agents" | "devices" | "shortcuts";
 
@@ -80,6 +80,100 @@ export function deviceLine(device: Device, remote: RemoteStatus | undefined): { 
   return { text: "not connected", tone: "warn" };
 }
 
+/**
+ * Where every value on these pages is kept (PRD S5.5 B35): the daemon's own
+ * state on its machine, whichever device is selected in the sidebar.
+ */
+export function ownerLine(daemon: DaemonInfo | null, selected: Device | null): string {
+  const host = daemon?.host_name ? daemon.host_name : "the daemon's machine";
+  const kept = `Appearance, shortcuts, Background AI, hooks and the device list are kept by hided on ${host}.`;
+  if (!selected || selected.kind !== "remote") return kept;
+  return `${kept} ${selected.label} is selected; that changes where files, Git and panes run, not where these settings are kept.`;
+}
+
+/**
+ * The facts a device reported about itself (B36): its Herdr version and the
+ * platform its helper runs on. Nothing here is read on this machine, so a
+ * fact the device has not reported is left out rather than filled in.
+ */
+export function deviceFacts(device: Device, remote: RemoteStatus | undefined): string[] {
+  if (device.kind !== "remote") return [];
+  const facts: string[] = [];
+  if (remote?.herdr_version) facts.push(`Herdr ${remote.herdr_version}`);
+  if (device.host?.state === "ready" && device.host.platform) facts.push(`helper on ${device.host.platform}`);
+  return facts;
+}
+
+/**
+ * A refused trust or sign-in step, in the operator's words, with the one
+ * thing to do about it (B38). Hide never changes known_hosts or asks for a
+ * password; each action happens in the daemon machine's own SSH setup.
+ */
+export function deviceProblemLine(problem: string | null | undefined, alias: string | null): { headline: string; action: string } | null {
+  const target = alias ?? "the device";
+  switch (problem) {
+    case "host_key_changed":
+      return {
+        headline: "Host key changed",
+        action: `${target} answered with a different host key than known_hosts records. Verify the device before you update known_hosts; Hide will not connect until then.`,
+      };
+    case "host_key_unknown":
+      return {
+        headline: "Host key not in known_hosts",
+        action: `Run ssh ${target} once on the daemon's machine to review and record its host key, then Retry.`,
+      };
+    case "authentication":
+      return {
+        headline: "Sign-in refused",
+        action: `The host key was verified, but no key the daemon machine's ssh config names for ${target} was accepted. Check its IdentityFile or IdentityAgent, then Retry.`,
+      };
+    default:
+      return null;
+  }
+}
+
+/** The helper line a device row carries: whether file and Git work may run there, and why not. */
+export function hostLine(host: DeviceHost | undefined): { text: string; tone: "ok" | "warn" | "pending" | "muted" | "local" } {
+  if (!host || host.consent === "this_machine") return { text: "files and Git run on this daemon's machine", tone: "local" };
+  switch (host.state) {
+    case "ready":
+      return { text: `helper ready${host.platform ? ` (${host.platform})` : ""}`, tone: "ok" };
+    case "connecting":
+      return { text: "starting the helper…", tone: "pending" };
+    case "not_allowed":
+      return { text: host.consent === "outdated" ? "helper needs a new consent" : "helper not allowed", tone: "muted" };
+    case "identity_changed":
+      return { text: "device identity changed", tone: "warn" };
+    case "unsupported":
+      return { text: "helper unsupported here", tone: "warn" };
+    default:
+      return { text: "helper unavailable", tone: "warn" };
+  }
+}
+
+/**
+ * What the operator agrees to when Hide's helper is allowed on a device
+ * (PRD S5.5 B50): where it is installed, when it runs, what an update may do,
+ * and what it never does. The same words back the add form and the row's Allow.
+ */
+export function helperConsentTerms(helperRoot: string | null): string[] {
+  return [
+    `Hide copies one helper program into ${helperRoot ?? "the helper folder in the device account's home"} on the device, and replaces it there when this version of Hide needs a newer one.`,
+    "It runs only while Hide holds the SSH connection and serves file, Git and worktree work for projects registered on that device. Nothing stays resident and nothing starts at login.",
+    "It changes no hook, AI or shell settings there, and every move to the Trash or worktree removal still asks you for its target each time.",
+    "A wider permission or a different SSH identity asks again; revoking stops new work and deletes no draft or remote file.",
+  ];
+}
+
+/** A device Herdr socket must be an absolute single-line path on that device, or left empty. */
+export function socketProblem(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+  // eslint-disable-next-line no-control-regex
+  if (!trimmed.startsWith("/") || trimmed === "/" || /[\u0000-\u001f]/.test(trimmed)) return "Enter an absolute socket path on the device, such as /Users/example/.config/herdr/herdr.sock.";
+  return null;
+}
+
 /** Whether Retry is offered: a registered SSH device that is not connected and not mid-attempt. */
 export function canRetryDevice(device: Device, remote: RemoteStatus | undefined): boolean {
   return device.kind === "remote" && device.state !== "ready" && deviceLine(device, remote).tone !== "pending";
@@ -105,6 +199,67 @@ export function deviceIdFor(alias: string, existing: readonly string[]): string 
 }
 
 /** What an SSH alias must look like before it is sent: one token, no spaces or shell syntax. */
+/**
+ * What removing a device takes from Hide: its registered projects and its
+ * open file tabs; and the drafts it leaves, which stay in this browser to
+ * export or discard (PRD S5.5 B26). Nothing on the device is counted, because
+ * nothing there is touched.
+ */
+export function deviceRemovalLines(
+  deviceId: string,
+  registrations: readonly { device_id: string }[],
+  tabs: readonly { id: string; checkout_id: string; dirty: boolean }[],
+  drafts: readonly { device: string | null }[],
+  /** Tabs whose draft is not stored here and leaves only as the file the operator exported (B44). */
+  onlyExported: (tabId: string) => boolean = () => false,
+): string[] {
+  const scope = `remote:${deviceId}:`;
+  const projects = registrations.filter((row) => row.device_id === deviceId).length;
+  const own = tabs.filter((tab) => tab.checkout_id.startsWith(scope));
+  const exportedOnly = own.filter((tab) => tab.dirty && onlyExported(tab.id)).length;
+  const unsaved = own.filter((tab) => tab.dirty).length - exportedOnly + drafts.filter((draft) => draft.device === deviceId).length;
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const lines: string[] = [];
+  if (projects > 0 || own.length > 0) {
+    lines.push(`Hide forgets ${count(projects, "registered project", "registered projects")} and closes ${count(own.length, "file tab", "file tabs")} of it here.`);
+  }
+  if (unsaved > 0) {
+    lines.push(`${count(unsaved, "unsaved draft stays", "unsaved drafts stay")} in this browser under unsaved drafts, to export or discard.`);
+  }
+  if (exportedOnly > 0) {
+    lines.push(`${count(exportedOnly, "draft", "drafts")} could not be stored in this browser and ${exportedOnly === 1 ? "leaves" : "leave"} only as the file you exported.`);
+  }
+  return lines;
+}
+
+/**
+ * The device's open tabs whose draft lives only in the tab because storing it
+ * failed (B44). Removing the device closes its tabs, which would lose those
+ * drafts, so the removal waits until each is exported or saved (B26): a tab
+ * whose current draft is the text last exported is no longer held.
+ */
+export function unstoredDeviceDrafts(
+  deviceId: string,
+  tabs: readonly { id: string; checkout_id: string; path: string }[],
+  unstored: ReadonlySet<string>,
+  exported: (tabId: string) => boolean = () => false,
+): string[] {
+  const scope = `remote:${deviceId}:`;
+  return tabs.filter((tab) => tab.checkout_id.startsWith(scope) && unstored.has(tab.id) && !exported(tab.id)).map((tab) => tab.path);
+}
+
+/**
+ * Whether the tab's current draft is exactly the text the operator last
+ * exported. A tab with no draft edited in this page exported the document it
+ * holds, which only an edit (a draft) can change.
+ */
+export function draftExported(exported: ReadonlyMap<string, string>, current: (tabId: string) => string | null) {
+  return (tabId: string) => {
+    const text = exported.get(tabId);
+    return text !== undefined && (current(tabId) ?? text) === text;
+  };
+}
+
 export function aliasProblem(alias: string): string | null {
   const trimmed = alias.trim();
   if (!trimmed) return "Enter the SSH alias from the daemon machine's ~/.ssh/config.";

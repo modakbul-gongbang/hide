@@ -64,16 +64,8 @@ impl Runtime {
                 herdr_version: None,
                 session: None,
                 files: RemoteFileListSnapshot::idle(),
+                catalog: Default::default(),
             });
-        }
-        if !self.remote_enabled {
-            return self.ingest_remote_session(
-                &device_id,
-                Err(live::SessionFetchError::Unreachable(
-                    "Remote features are disabled because the SSH agent socket is unavailable"
-                        .to_owned(),
-                )),
-            );
         }
         let started = (|| {
             let home_path = self.home_path.as_ref().ok_or_else(|| {
@@ -88,8 +80,11 @@ impl Runtime {
                         error.diagnostic().reason
                     )
                 })?;
-            let client =
-                Arc::new(RusshRemoteClient::new(alias).map_err(|error| error.to_string())?);
+            let client = Arc::new(
+                RusshRemoteClient::new(alias)
+                    .map_err(|error| error.to_string())?
+                    .with_herdr_socket(registration.herdr_socket_path.clone()),
+            );
             let connector: Arc<dyn hide_herdr_client::ApiConnector> =
                 Arc::new(client.herdr_api_connector());
             Ok::<_, String>((client, connector))
@@ -157,14 +152,15 @@ impl Runtime {
             }
         };
         self.remote_connections.insert(
-            device_id,
+            device_id.clone(),
             RemoteDeviceConnection {
                 client,
                 sync,
                 test_in_flight: false,
             },
         );
-        changed || self.refresh_device_snapshots()
+        let host_changed = self.start_device_host(&device_id);
+        changed || host_changed || self.refresh_device_snapshots()
     }
 
     /// Forgets everything the core holds for a device: its coordinator,
@@ -172,6 +168,7 @@ impl Runtime {
     /// coordinator is joined later, off the lock, by whoever drains
     /// `take_retired_remote_syncs`.
     pub(super) fn disconnect_remote_device(&mut self, device_id: &str) {
+        self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)
             && let Some(sync) = connection.sync
         {
@@ -195,6 +192,7 @@ impl Runtime {
             self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
             self.snapshot.ui_state.focused_device_id = None;
             self.return_keyboard_to_local_pane();
+            self.sync_recent_closed_snapshot();
         }
     }
 
@@ -425,11 +423,54 @@ impl Runtime {
                 Some(status) => ("unavailable", status.message.clone()),
                 None => ("unavailable", None),
             };
+            let problem = message
+                .as_deref()
+                .and_then(crate::remote::connection_problem)
+                .map(str::to_owned);
             let test = tests.get(&device.id).cloned();
-            if device.state != state || device.message != message || device.test != test {
+            if device.state != state
+                || device.message != message
+                || device.problem != problem
+                || device.test != test
+            {
                 device.state = state.to_owned();
                 device.message = message;
+                device.problem = problem;
                 device.test = test;
+                changed = true;
+            }
+        }
+        let helper_root = Some(self.host_helper_root());
+        if let Some(local) = self
+            .snapshot
+            .navigator
+            .devices
+            .iter_mut()
+            .find(|device| device.kind != "remote")
+            && local.host.helper_root != helper_root
+        {
+            local.host.helper_root = helper_root;
+            changed = true;
+        }
+        let ids = self
+            .snapshot
+            .navigator
+            .devices
+            .iter()
+            .filter(|device| device.kind == "remote")
+            .map(|device| device.id.clone())
+            .collect::<Vec<_>>();
+        for id in ids {
+            let host = self.host_snapshot(&id);
+            if let Some(device) = self
+                .snapshot
+                .navigator
+                .devices
+                .iter_mut()
+                .find(|device| device.id == id)
+                && device.host != host
+            {
+                device.host = host;
                 changed = true;
             }
         }

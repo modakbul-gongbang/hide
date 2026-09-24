@@ -75,9 +75,9 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     );
     let request = runtime.changes_request().expect("local History request");
     assert_eq!(request.root_path, registered);
-    assert_eq!(request.checkout_path, repository);
-    let mut reader = crate::changes::ChangesReader::new();
-    let listed = reader.read_if_due(Some(request)).unwrap();
+    assert_eq!(request.root.path, repository.to_string_lossy());
+    let key = request.key();
+    let listed = crate::changes::read(&request);
     assert_eq!(
         listed
             .entries
@@ -110,7 +110,34 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
             .previous_relative_path
             .is_none()
     );
-    assert!(runtime.ingest_changes(listed));
+    assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
+        key: Some(key),
+        changes: listed,
+    }));
+
+    // B22: a failed read of the same checkout keeps the confirmed list,
+    // marked stale with the reason, and the next good read clears the mark.
+    let confirmed = runtime.snapshot.changes.clone();
+    let failed = crate::model::ChangesSnapshot {
+        root_path: confirmed.root_path.clone(),
+        unavailable_reason: Some("The device is busy".to_owned()),
+        ..Default::default()
+    };
+    assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
+        key: runtime.changes_key(),
+        changes: failed,
+    }));
+    assert_eq!(runtime.snapshot.changes.entries, confirmed.entries);
+    assert_eq!(runtime.snapshot.changes.unavailable_reason, None);
+    assert_eq!(
+        runtime.snapshot.changes.stale_reason.as_deref(),
+        Some("The device is busy")
+    );
+    assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
+        key: runtime.changes_key(),
+        changes: confirmed.clone(),
+    }));
+    assert_eq!(runtime.snapshot.changes.stale_reason, None);
 
     let selected = registered
         .join("incoming.txt")
@@ -118,7 +145,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
         .into_owned();
     let event = serde_json::to_vec(&serde_json::json!({"schema_version":2,"kind":"changes_select","payload":{"path":selected,"committed":true,"preview":true}})).unwrap();
     assert!(runtime.dispatch_json(&event));
-    let selected = reader.read_if_due(runtime.changes_request()).unwrap();
+    let selected = crate::changes::read(&runtime.changes_request().unwrap());
     let diff = selected.diff.expect("in-scope branch diff");
     assert!(diff.text.contains("outside source content"));
     assert!(!diff.text.contains("outside-source.txt"));
@@ -131,17 +158,20 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     let mut request = runtime.changes_request().unwrap();
     request.selected_path = Some(deleted);
     request.selected_committed = false;
-    let deleted = reader.read_if_due(Some(request)).unwrap().diff.unwrap();
+    let deleted = crate::changes::read(&request).diff.unwrap();
     assert!(deleted.text.contains("deleted content"));
 
     // A focus event publishes its new History identity in the same frame.
-    // Retain the previous snapshot to model a coordinator read still in flight.
+    // The same path on another device is another checkout: its History is
+    // read by that device's host, and the projection read here is dropped in
+    // the same frame rather than shown under the device.
     let local = runtime.snapshot.navigator.workspaces[0].clone();
     let local_id = local.id.clone();
     let local_checkout_id = local.checkouts[0].id.clone();
     let mut remote = local.clone();
     remote.id = "remote-collision".to_owned();
     remote.remote_target_id = Some("remote-device".to_owned());
+    remote.device_id = "remote-device".to_owned();
     remote.checkouts[0].id = "remote-checkout".to_owned();
     remote.checkouts[0].workspace_id = remote.id.clone();
     let mut sibling = local;
@@ -160,11 +190,20 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
         assert!(runtime.dispatch_json(&event));
     };
     focus(&mut runtime, "remote-collision", "remote-checkout");
-    assert!(runtime.snapshot.navigator.changes_root_path.is_none());
-    assert!(runtime.changes_request().is_none());
     assert_eq!(
-        runtime.snapshot.changes.root_path.as_deref(),
-        registered.to_str()
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        repository.to_str()
+    );
+    let device = runtime.changes_request().unwrap();
+    assert_eq!(device.root.device_id, "remote-device");
+    assert!(
+        device.channel.is_err(),
+        "a device without a ready helper is read by nothing on this machine"
+    );
+    assert!(crate::changes::read(&device).unavailable_reason.is_some());
+    assert_eq!(
+        runtime.snapshot.changes,
+        crate::model::ChangesSnapshot::default()
     );
     focus(&mut runtime, "sibling-local", "sibling-checkout");
     assert_eq!(
@@ -215,12 +254,17 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
         runtime.snapshot.navigator.focused_workspace_id.as_deref(),
         Some("remote-collision")
     );
-    assert!(runtime.snapshot.navigator.changes_root_path.is_none());
-    assert!(runtime.changes_request().is_none());
+    assert_eq!(
+        runtime.changes_request().unwrap().root.device_id,
+        "remote-device"
+    );
 }
 
+/// A registration on another device names a path on that machine. Even when
+/// the same path is a repository here, this machine's filesystem is not asked
+/// about it: it is not listed from here, and no local history is read for it.
 #[test]
-fn remote_checkout_with_a_local_path_collision_has_no_history_request() {
+fn remote_registration_with_a_local_path_collision_is_not_read_on_this_machine() {
     let repository = tempfile::tempdir().unwrap();
     std::process::Command::new("git")
         .arg("-C")
@@ -239,7 +283,8 @@ fn remote_checkout_with_a_local_path_collision_has_no_history_request() {
     runtime.rebuild_catalog();
     runtime.snapshot.ui_state.right_panel_visible = true;
     runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
-    assert!(runtime.snapshot.navigator.root_path.is_some());
+    assert!(runtime.snapshot.navigator.workspaces.is_empty());
+    assert!(runtime.snapshot.navigator.root_path.is_none());
     assert!(runtime.snapshot.navigator.changes_root_path.is_none());
     assert!(runtime.changes_request().is_none());
 }
@@ -2338,6 +2383,7 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
 fn a_client_cannot_claim_a_worktree_removal_finished() {
     let mut runtime = runtime();
     runtime.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+        device_id: None,
         id: 7,
         repository_root: "/tmp/hide-removal-repo".into(),
         checkout_path: "/tmp/hide-removal-repo-linked".into(),
@@ -2430,6 +2476,7 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
         }],
     });
     let closing = |id: u64| crate::model::WorktreeRemovalSnapshot {
+        device_id: None,
         id,
         repository_root: "/repo".into(),
         checkout_path: "/repo.worktrees/open".into(),

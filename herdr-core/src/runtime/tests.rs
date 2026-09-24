@@ -5,8 +5,14 @@ use crate::fake_herdr::FakeHerdr;
 
 #[path = "tests/agents_settings_remote.rs"]
 mod agents_settings_remote;
+#[path = "tests/device_catalog.rs"]
+mod device_catalog;
+#[path = "tests/device_worktrees.rs"]
+mod device_worktrees;
 #[path = "tests/devices.rs"]
 mod devices;
+#[path = "tests/documents.rs"]
+mod documents;
 #[path = "tests/editor_preview.rs"]
 mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
@@ -286,12 +292,13 @@ fn runtime() -> Runtime {
             ))
             .to_string_lossy()
             .into_owned(),
+        host_helper_dir: None,
+        host_helper_root: None,
     };
     Runtime::new(
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            remote_enabled: false,
             chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: None,
@@ -1041,8 +1048,26 @@ fn explorer_runtime() -> (Runtime, PathBuf) {
     std::fs::write(root.join("src/lib.rs"), "lib\n").expect("fixture file");
     let root = root.canonicalize().expect("a real root");
     let mut runtime = runtime();
-    runtime.snapshot.navigator.root_path = Some(root.to_string_lossy().into_owned());
+    focus_local_checkout(&mut runtime, &root);
     (runtime, root)
+}
+
+/// Registers `root` as this machine's checkout and puts it in front, the
+/// way a click on it in the sidebar leaves the navigator.
+fn focus_local_checkout(runtime: &mut Runtime, root: &Path) {
+    runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        id: "workspace:0".to_owned(),
+        label: "workspace 0".to_owned(),
+        path: root.to_string_lossy().into_owned(),
+        device_id: "local".to_owned(),
+        pinned: false,
+    }];
+    runtime.rebuild_catalog();
+    let checkout_id = workspace::checkout_id_for_path("workspace:0", root);
+    runtime.snapshot.navigator.focused_workspace_id = Some("workspace:0".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+    runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
+    runtime.snapshot.navigator.root_path = Some(root.to_string_lossy().into_owned());
 }
 
 fn explorer_event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
@@ -1057,6 +1082,7 @@ fn explorer_event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
 fn closed_file(key: &str, path: &str) -> ClosedItem {
     ClosedItem::File {
         key: key.to_owned(),
+        device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
         workspace_id: "workspace:0".to_owned(),
         checkout_id: "checkout:0".to_owned(),
         checkout_path: "/repo".to_owned(),

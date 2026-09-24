@@ -10,7 +10,6 @@ struct CoreEditorSnapshot: Decodable {
     var language: String? { document?.language }
     var documentKind: CoreDocumentKind? { document?.documentKind }
     var contentsUTF8: String? { document?.contentsUTF8 }
-    var openedModifiedAt: UInt64? { document?.openedModifiedAt }
     var dirty: Bool { document?.dirty ?? false }
     var readonlyReason: String? { document?.readonlyReason }
     var conflict: CoreEditorConflict? { document?.conflict }
@@ -156,7 +155,6 @@ struct CoreEditorDocumentSnapshot: Decodable {
     let language: String?
     let documentKind: CoreDocumentKind
     let contentsUTF8: String?
-    let openedModifiedAt: UInt64?
     let dirty: Bool
     let readonlyReason: String?
     let conflict: CoreEditorConflict?
@@ -166,19 +164,25 @@ struct CoreEditorDocumentSnapshot: Decodable {
         case language
         case documentKind = "document_kind"
         case contentsUTF8 = "contents_utf8"
-        case openedModifiedAt = "opened_modified_at_unix_ms"
         case dirty
         case readonlyReason = "readonly_reason"
         case conflict
     }
 }
 
+/// The draft's base revision and what the file holds now (`sha256:<hex>`);
+/// the disk revision is absent when the file was removed.
 struct CoreEditorConflict: Decodable {
-    let diskModifiedAt: UInt64
-    let openedModifiedAt: UInt64
+    let openedRevision: String
+    let diskRevision: String?
 
     enum CodingKeys: String, CodingKey {
-        case diskModifiedAt = "disk_modified_at_unix_ms"
-        case openedModifiedAt = "opened_modified_at_unix_ms"
+        case openedRevision = "opened_revision"
+        case diskRevision = "disk_revision"
+    }
+
+    /// A revision as the conflict banner prints it: the first hex digits.
+    static func short(_ revision: String) -> String {
+        String(revision.split(separator: ":").last?.prefix(12) ?? "")
     }
 }

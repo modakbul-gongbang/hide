@@ -2,15 +2,21 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import { deleteBuffer } from "./buffers";
+import { closeWithSaveOutcome, deleteBuffer, flushBuffer, settledBuffer, storedDraftOnClose, tabBufferKey, type BufferKey } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
+import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
-import { remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
-import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
+import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
+import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
+
+/** The `device_id` an event carries: none for this machine, which the core takes as the default. */
+function deviceField(device: string): { device_id?: string } {
+  return device === "local" ? {} : { device_id: device };
+}
 
 export type Actions = ReturnType<typeof createActions>;
 
@@ -22,6 +28,17 @@ export function createActions(dispatch: DispatchFn) {
   const current = (): { checkout: Checkout; tab: Tab | null } | null => {
     const checkout = focusedCheckout(rest());
     return checkout ? { checkout, tab: visibleTab(checkout) } : null;
+  };
+
+  /**
+   * The checkout an Explorer change is made in: the one in front on the
+   * selected device, named with that device so the core refuses the change
+   * once another device's tree is on screen (S5.5 B16, B34).
+   */
+  const explorerTarget = (): { root: string; device_id?: string } | null => {
+    const context = explorerContext(rest());
+    if (!context.checkout) return null;
+    return { root: context.checkout.path, ...deviceField(context.device) };
   };
 
   const setLeftSidebarVisible = (visible: boolean) => {
@@ -46,18 +63,6 @@ export function createActions(dispatch: DispatchFn) {
     void _workspaces;
     void _devices;
     dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
-  };
-
-  /**
-   * With an SSH device selected, a command this shell cannot run on that host
-   * is refused here with a notice, so it never acts on this machine instead
-   * (PRD S5 B19). Returns true when it refused.
-   */
-  const refusedRemotely = (command: string): boolean => {
-    const context = remoteContext(rest());
-    if (!context) return false;
-    ui().setNotice({ text: `${command} is not available for ${context.device.label} from the web shell; nothing was sent.`, refreshable: false });
-    return true;
   };
 
   /**
@@ -110,16 +115,27 @@ export function createActions(dispatch: DispatchFn) {
     });
   };
 
-  /** A project or checkout row: on a selected SSH device every checkout is one Herdr workspace there. */
+  /**
+   * A project or checkout row. On a selected SSH device a project can hold
+   * several Herdr workspaces, and the checkout names the one to focus.
+   */
   const focusCheckout = (workspaceId: string, checkoutId: string) => {
     const context = remoteContext(rest());
     if (context) {
       const host = remoteHost("Switching workspace");
       if (!host) return;
-      if (!context.session?.workspaces.some((row) => row.id === workspaceId)) {
-        return diagnostic(`focus_workspace: ${workspaceId} is not on ${context.device.label}`);
+      const project = context.session?.workspaces.find((row) => row.id === workspaceId);
+      const checkout = project?.checkouts.find((row) => row.id === checkoutId);
+      if (!checkout) {
+        return diagnostic(`focus_workspace: ${checkoutId} is not on ${context.device.label}`);
       }
-      sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId });
+      // A registered project Herdr has no workspace in yet is opened by
+      // creating one at its folder there (find-or-create, as on this machine).
+      if (checkoutId.endsWith(REGISTERED_CHECKOUT)) {
+        sendRemote(host.targetId, { action: "create_tab", workspace_id: workspaceId, checkout_id: checkoutId, cwd: checkout.path, label: checkout.next_tab_label });
+        return;
+      }
+      sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId });
       return;
     }
     dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
@@ -169,21 +185,46 @@ export function createActions(dispatch: DispatchFn) {
     // Highlighting a row needs a tree to highlight it in, so the reveal shows
     // the panel the core's own `reveal_path` would show.
     const state = rest()?.ui_state;
-    const root = rest()?.navigator?.root_path;
+    const context = explorerContext(rest());
+    const root = context.checkout?.path;
     if (!state || !root || !path.startsWith(`${root}/`)) {
       showExplorerPanel();
       return;
     }
     const parts = path.slice(root.length + 1).split("/");
     parts.pop();
-    const expanded = new Set(state.expanded_paths ?? []);
+    const expanded = new Set(context.expanded);
     for (let depth = 1; depth <= parts.length; depth += 1) {
       const ancestor = `${root}/${parts.slice(0, depth).join("/")}`;
       expanded.add(ancestor);
     }
     // ui_state_update replaces the whole core state. Two updates based on one
     // snapshot race, and the second would hide the panel again.
-    updateUiState({ right_panel_visible: true, right_panel_section: "explorer", expanded_paths: [...expanded] });
+    updateUiState({ right_panel_visible: true, right_panel_section: "explorer", ...expandedPatch(context.device, [...expanded]) });
+  };
+
+  /** The ui_state field that holds one device's expanded folders. */
+  const expandedPatch = (device: string, paths: string[]) =>
+    device === "local"
+      ? { expanded_paths: paths }
+      : { device_expanded_paths: { ...(rest()?.ui_state?.device_expanded_paths ?? {}), [device]: paths } };
+
+  /** The checkout the Explorer and the palette act on, on the selected device. */
+  const explorerHere = () => {
+    const context = explorerContext(rest());
+    return context.checkout ? { checkout: context.checkout, device: context.device } : null;
+  };
+
+  /** `file_open` for a path in the checkout in front, naming its device. */
+  const openInFront = (path: string, preview: boolean, what: string) => {
+    const here = explorerHere();
+    if (!here) return diagnostic(`${what}: no focused checkout`);
+    revealAncestors(path);
+    dispatch({
+      schema_version: 2,
+      kind: "file_open",
+      payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview, ...deviceField(here.device) },
+    });
   };
 
   /** The contents a save or a close would send for one file tab, or null. */
@@ -217,16 +258,20 @@ export function createActions(dispatch: DispatchFn) {
       diagnostic(`file_save: no contents for ${tab.path}`);
       return false;
     }
+    // A device file's path means nothing to this machine's checkout roots,
+    // so the save names the device and the daemon hands it to the core,
+    // which writes only to the place the tab was opened from.
+    const device = deviceOfCheckout(state.rest, tab.checkout_id);
     const sent = dispatch({
       schema_version: 2,
       kind: "file_save",
       payload: {
         tab_id: tab.id,
         path: tab.path,
+        // The core checks the save against the revision it read when it
+        // opened the file; the shell sends only the draft.
         contents_utf8: contents,
-        // The core falls back to the modification time it recorded when it
-        // opened the file, which is the timestamp this save compares against.
-        expected_modified_at_unix_ms: showing?.id === tab.id ? state.editor?.document?.opened_modified_at_unix_ms ?? null : null,
+        ...deviceField(device),
       },
     });
     if (sent === false) return false;
@@ -256,19 +301,43 @@ export function createActions(dispatch: DispatchFn) {
     }
     const pending =
       contents !== null
-        ? { tab_id: tab.id, path: tab.path, contents_utf8: contents, expected_modified_at_unix_ms: null }
+        ? { tab_id: tab.id, path: tab.path, contents_utf8: contents }
         : null;
-    const root = checkoutById(state.rest, tab.checkout_id)?.path ?? "";
+    const draftKey = tabBufferKey(state.daemon?.host_id, state.rest, tab);
     if (pending) {
-      // The buffer goes when the close lands, not when it is asked for: a
-      // close the core refuses keeps its recovery copy (D-14).
+      // The draft goes when the close lands, not when it is asked for: the
+      // core closes the tab only after its save landed clean, and a close it
+      // refuses, or a tab that leaves for another reason, keeps the recovery
+      // copy (D-14).
+      const watch = {
+        tabId,
+        hostId: state.daemon?.host_id,
+        device: deviceOfCheckout(state.rest, tab.checkout_id),
+        errorAt: state.rest?.status?.last_error?.occurred_at ?? null,
+      };
       const unsubscribe = useShellStore.subscribe((next) => {
-        if ((next.editor?.tabs ?? []).some((row) => row.id === tabId)) return;
+        const outcome = closeWithSaveOutcome(watch, {
+          connection: next.connection,
+          hostId: next.daemon?.host_id,
+          tabIds: (next.editor?.tabs ?? []).map((row) => row.id),
+          deviceIds: (next.rest?.navigator?.devices ?? []).map((row) => row.id),
+          error: next.rest?.status?.last_error ?? null,
+        });
+        if (outcome === "wait") return;
         unsubscribe();
-        void deleteBuffer(root, tab.path);
+        if (outcome === "landed" && draftKey) void deleteBuffer(draftKey);
       });
-    } else {
-      void deleteBuffer(root, tab.path);
+    } else if (draftKey) {
+      // Nothing rides this close, but a stored draft may still hold work this
+      // page never loaded; it goes only when it matches what the core holds.
+      // It is read once this tab's queued write has landed, so an edit
+      // typed just before the close is judged rather than left behind.
+      const known = document ? { contents_utf8: document.contents_utf8, dirty: document.dirty } : null;
+      void settledBuffer(draftKey).then((stored) => {
+        const decision = storedDraftOnClose(stored, known);
+        if (decision === "delete") void deleteBuffer(draftKey);
+        else if (decision === "keep") diagnostic(`file_close: the stored draft of ${tab.path} is kept as a recovery item`);
+      });
     }
     dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: pending } });
   };
@@ -308,8 +377,21 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "install_agent_hooks", payload: { runtime_id: runtimeId } });
     },
 
-    registerDevice(id: string, label: string, alias: string) {
-      dispatch({ schema_version: 2, kind: "register_device", payload: { id, label, ssh_alias: alias } });
+    registerDevice(id: string, label: string, alias: string, options: { hostConsent: boolean; herdrSocketPath: string | null }) {
+      dispatch({
+        schema_version: 2,
+        kind: "register_device",
+        payload: { id, label, ssh_alias: alias, host_consent: options.hostConsent, herdr_socket_path: options.herdrSocketPath },
+      });
+    },
+
+    /** Gives or withdraws the one consent for Hide's helper on a device (PRD S5.5 B50-B52). */
+    setDeviceHostConsent(deviceId: string, allow: boolean) {
+      dispatch({ schema_version: 2, kind: "device_host_consent", payload: { device_id: deviceId, allow } });
+    },
+
+    retryDeviceHost(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "device_host_retry", payload: { device_id: deviceId } });
     },
 
     testDevice(deviceId: string) {
@@ -320,8 +402,27 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "retry_connect", payload: { target_id: deviceId } });
     },
 
-    removeDevice(deviceId: string) {
+    /**
+     * The core closes the device's file tabs without saving, so every draft of
+     * them this browser is still writing lands first and stays as a recovery
+     * item (B26). A draft that could not be stored then (B44) would be lost
+     * with its tab, so nothing is sent and its path is returned instead.
+     */
+    async removeDevice(deviceId: string): Promise<string[]> {
+      const state = useShellStore.getState();
+      const keys = (state.editor?.tabs ?? [])
+        .filter((tab) => tab.checkout_id.startsWith(`remote:${deviceId}:`))
+        .map((tab) => tabBufferKey(state.daemon?.host_id, state.rest, tab))
+        .filter((key): key is BufferKey => key !== null);
+      await Promise.all(keys.map((key) => flushBuffer(key)));
+      const flushed = useShellStore.getState();
+      const unstored = unstoredDeviceDrafts(deviceId, flushed.editor?.tabs ?? [], flushed.bufferWarnings, draftExported(flushed.exportedDrafts, latestDraft));
+      if (unstored.length > 0) {
+        diagnostic(`remove_device: ${deviceId} kept because ${unstored.length} draft(s) could not be stored`);
+        return unstored;
+      }
       dispatch({ schema_version: 2, kind: "remove_device", payload: { device_id: deviceId } });
+      return [];
     },
 
     focusDevice(deviceId: string) {
@@ -332,11 +433,12 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "workspace_pin_set", payload: { workspace_id: workspaceId, pinned } });
     },
 
-    createWorktree(request: { repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {
+    createWorktree(request: { deviceId: string; repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {
       dispatch({
         schema_version: 2,
         kind: "create_worktree",
         payload: {
+          device_id: request.deviceId,
           repository_root: request.repositoryRoot,
           branch: request.branch,
           base_branch: request.baseBranch,
@@ -350,8 +452,8 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "set_checkout_purpose", payload: { checkout_id: checkoutId, text } });
     },
 
-    removeWorktree(checkoutPath: string, deleteBranch: boolean) {
-      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { checkout_path: checkoutPath, delete_branch: deleteBranch } });
+    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean) {
+      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch } });
     },
 
     retryTaskAgent(id: number) {
@@ -366,7 +468,7 @@ export function createActions(dispatch: DispatchFn) {
         if (!host) return;
         const checkout = host.view?.checkout;
         if (!checkout) return diagnostic("create_tab: the remote device has no workspace open");
-        sendRemote(host.targetId, { action: "create_tab", workspace_id: checkout.workspace_id, cwd: checkout.path, label: checkout.next_tab_label });
+        sendRemote(host.targetId, { action: "create_tab", workspace_id: checkout.workspace_id, checkout_id: checkout.id, cwd: checkout.path, label: checkout.next_tab_label });
         return;
       }
       const here = current();
@@ -394,8 +496,21 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     reorderTab(stripId: string, toIndex: number) {
-      // Herdr orders a remote host's tabs; the native shell does not move them either.
-      if (refusedRemotely("Reordering tabs")) return;
+      // A device's strip is arranged by the core as this machine's is; a
+      // Herdr tab moves on the device's own Herdr (`reorder_tab`).
+      // A file slot moves with the device offline too; the core refuses a
+      // Herdr move while the device is not connected.
+      const context = remoteContext(rest());
+      if (context) {
+        const checkout = remoteView(context.session)?.checkout;
+        if (!checkout) return diagnostic("reorder_tab: no device checkout in front");
+        dispatch({
+          schema_version: 2,
+          kind: "reorder_tab",
+          payload: { workspace_id: checkout.workspace_id, checkout_id: checkout.id, tab_id: stripId, to_index: toIndex },
+        });
+        return;
+      }
       const here = current();
       if (!here) return;
       dispatch({
@@ -466,8 +581,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     reopenClosed() {
-      // The core's reopen stack holds only closes made on this machine.
-      if (refusedRemotely("Reopen closed tab")) return;
+      // The core reopens the newest close of the device in front, and
+      // `recent_closed` already speaks for that device.
       const recent = rest()?.recent_closed;
       if (!recent?.can_reopen) {
         diagnostic(`reopen_closed: nothing to reopen${recent?.reopen_blocked_reason ? ` (${recent.reopen_blocked_reason})` : ""}`);
@@ -570,11 +685,11 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     selectChange(path: string, committed: boolean, preview: boolean) {
-      const here = current();
+      const here = explorerContext(rest()).checkout;
       const changes = useShellStore.getState().changes;
       const scope = rest()?.navigator?.changes_root_path;
       if (!here || !scope || changes?.root_path !== scope ||
-          (scope !== here.checkout.path && !scope.startsWith(`${here.checkout.path}/`))) {
+          (scope !== here.path && !scope.startsWith(`${here.path}/`))) {
         return diagnostic("changes_select: checkout is unavailable");
       }
       const group = committed ? changes.committed : changes.entries;
@@ -587,8 +702,14 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     openFind() {
-      // The core searches a pane's history through this machine's Herdr only.
-      if (refusedRemotely("Find in pane")) return;
+      // The core searches a pane's history through this machine's Herdr
+      // only, so with an SSH device selected Find is refused with a notice
+      // rather than run on this machine (PRD S5 B19).
+      const context = remoteContext(rest());
+      if (context) {
+        ui().setNotice({ text: `Find in pane is not available for ${context.device.label} from the web shell; nothing was sent.`, refreshable: false });
+        return;
+      }
       ui().openOverlay("find");
     },
 
@@ -605,8 +726,6 @@ export function createActions(dispatch: DispatchFn) {
 
     /** ⌘P: the file palette over hided's index of the focused checkout. */
     openFilePalette() {
-      // Remote files are viewed on their device (PRD S5 Non-goals).
-      if (refusedRemotely("Open file")) return;
       ui().openOverlay(ui().overlay === "file_palette" ? "none" : "file_palette");
     },
 
@@ -615,28 +734,28 @@ export function createActions(dispatch: DispatchFn) {
       ui().openOverlay(ui().overlay === "search" ? "none" : "search");
     },
 
-    requestFileIndex(root: string, query: string) {
-      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query } });
+    /** Asks for the index of `root` on `device`; a device's is walked by its helper. */
+    requestFileIndex(root: string, query: string, device: string) {
+      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query, ...deviceField(device) } });
     },
 
     /** A palette pick opens in the checkout's preview tab (B12) and closes the palette. */
     openIndexEntry(path: string) {
       ui().closeOverlay();
-      const here = current();
-      if (!here) return diagnostic("file_open: no focused checkout");
-      revealAncestors(path);
       // The core's selected_path may already be this file from an earlier
       // open, so the row is highlighted from the pick itself (B3).
       ui().setExplorerSelection(path);
-      dispatch({
-        schema_version: 2,
-        kind: "file_open",
-        payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview: true },
-      });
+      openInFront(path, true, "file_open");
     },
 
-    createWorkspace(path: string, label: string) {
-      dispatch({ schema_version: 2, kind: "create_workspace", payload: { path, label, initialize_git: false } });
+    /** Registers a folder on `deviceId`; a device's own helper judges it against that device's home. */
+    createWorkspace(path: string, label: string, deviceId = "local") {
+      dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...deviceField(deviceId), path, label, initialize_git: false } });
+    },
+
+    /** Removes a registration after its panes close (D-10); the folder is never touched. */
+    removeWorkspace(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "remove_workspace", payload: { workspace_id: workspaceId } });
     },
 
     listDirectory(path: string) {
@@ -645,24 +764,18 @@ export function createActions(dispatch: DispatchFn) {
 
     /** One checkout folder's children, answered by hided as a `directory_list`. */
     listChildren(root: string, path: string) {
-      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path } });
+      const device = explorerContext(rest()).device;
+      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path, ...deviceField(device) } });
     },
 
-    /** The core owns which folders the tree has expanded; this replaces the set. */
+    /** The core owns which folders the tree has expanded, per device; this replaces the selected device's set. */
     setExpandedPaths(paths: string[]) {
-      updateUiState({ expanded_paths: paths });
+      updateUiState(expandedPatch(explorerContext(rest()).device, paths));
     },
 
     /** A single click opens the checkout's preview slot; a double click pins it. */
     openFile(path: string, preview: boolean) {
-      const here = current();
-      if (!here) return diagnostic("file_open: no focused checkout");
-      revealAncestors(path);
-      dispatch({
-        schema_version: 2,
-        kind: "file_open",
-        payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview },
-      });
+      openInFront(path, preview, "file_open");
     },
 
     /** ⌘⇧K: the showing preview tab becomes an ordinary tab. */
@@ -675,47 +788,47 @@ export function createActions(dispatch: DispatchFn) {
 
     /** A new file or folder in `parent`; the core opens a created file (B9). */
     createEntry(parent: string, name: string, isDirectory: boolean) {
-      const here = current();
+      const here = explorerTarget();
       if (!here) return diagnostic("explorer create: no focused checkout");
       dispatch({
         schema_version: 2,
         kind: isDirectory ? "dir_create" : "file_create",
-        payload: { root: here.checkout.path, parent, name },
+        payload: { ...here, parent, name },
       });
     },
 
     renameEntry(path: string, name: string) {
-      const here = current();
+      const here = explorerTarget();
       if (!here) return diagnostic("path_rename: no focused checkout");
-      dispatch({ schema_version: 2, kind: "path_rename", payload: { root: here.checkout.path, path, name } });
+      dispatch({ schema_version: 2, kind: "path_rename", payload: { ...here, path, name } });
     },
 
     /** A drag that landed: one `path_move` into the folder it was dropped on. */
     moveEntry(path: string, destination: string) {
-      const here = current();
+      const here = explorerTarget();
       if (!here) return diagnostic("path_move: no focused checkout");
-      dispatch({ schema_version: 2, kind: "path_move", payload: { root: here.checkout.path, path, destination } });
+      dispatch({ schema_version: 2, kind: "path_move", payload: { ...here, path, destination } });
     },
 
     /** Opens the trash confirmation; nothing is dispatched until it is confirmed. */
-    requestTrash(path: string, name: string, isDirectory: boolean, selectAfter: string) {
-      ui().setPendingTrash({ path, name, isDirectory, selectAfter });
+    requestTrash(path: string, name: string, isDirectory: boolean, selectAfter: string, inode: number | null) {
+      const target = explorerTarget();
+      if (!target) return diagnostic("path_trash: no focused checkout");
+      ui().setPendingTrash({ path, name, isDirectory, selectAfter, inode, target });
     },
 
     confirmTrash() {
       const pending = ui().pendingTrash;
-      const here = current();
       ui().setPendingTrash(null);
       if (!pending) return;
-      if (!here) return diagnostic("path_trash: no focused checkout");
       dispatch({
         schema_version: 2,
         kind: "path_trash",
         payload: {
-          root: here.checkout.path,
+          ...pending.target,
           path: pending.path,
           select_after: pending.selectAfter,
-          inode: null,
+          inode: pending.inode,
         },
       });
     },

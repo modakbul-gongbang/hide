@@ -117,6 +117,8 @@ export type Workspace = {
   temporary: boolean;
   pinned: boolean;
   last_activity_unix_ms?: number | null;
+  /** What `Remove project…` would close, counted by the core (D-10). */
+  removal?: { pane_count: number; running_agent_count: number };
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
 };
@@ -222,10 +224,16 @@ export type EditorTabSnapshot = {
   preview: boolean;
 };
 
-/** The disk state that makes a save a choice rather than a write. */
+/** The disk state that makes a save a choice rather than a write: the draft's base revision and what the file holds now (null when it was removed). */
 export type EditorConflictSnapshot = {
-  disk_modified_at_unix_ms: number;
-  opened_modified_at_unix_ms: number;
+  opened_revision: string;
+  disk_revision: string | null;
+};
+
+/** A save without a landed result: `saving`, `waiting` (for the device's helper), `unknown` (the answer was lost), `checking` (being read back), `refused` (refused or never sent) or `not_applied` (read back unchanged: not reached the file yet). */
+export type EditorSaveSnapshot = {
+  state: "saving" | "waiting" | "unknown" | "checking" | "refused" | "not_applied";
+  message: string | null;
 };
 
 export type EditorDocumentSnapshot = {
@@ -233,18 +241,24 @@ export type EditorDocumentSnapshot = {
   language: string | null;
   document_kind: DocumentKind;
   contents_utf8: string | null;
-  opened_modified_at_unix_ms: number | null;
+  /** The content revision (`sha256:<hex>`) the draft is based on; present for an editable document. */
+  revision: string | null;
   dirty: boolean;
   /** Why an editable document takes no edits: its size or its permissions. */
   readonly_reason: string | null;
   conflict: EditorConflictSnapshot | null;
+  save: EditorSaveSnapshot | null;
 };
 
 /** The core's editor section: its tabs, which one shows, and that tab's document. */
+/** A file a device is still reading; its tab shows when the answer arrives. */
+export type EditorOpeningSnapshot = { workspace_id: string; checkout_id: string; path: string };
+
 export type EditorSnapshot = {
   tabs: EditorTabSnapshot[];
   active_tab_id: string | null;
   document: EditorDocumentSnapshot | null;
+  opening?: EditorOpeningSnapshot[];
 };
 
 /** The six working-tree states the core presents (ChangedFileStatus). */
@@ -275,9 +289,29 @@ export type ChangesSnapshot = {
   selected_committed: boolean;
   diff: { path: string; text: string; notice: string | null } | null;
   unavailable_reason: string | null;
+  /** Why the latest read failed while these entries, from the last good read, are still shown (S5.5 B22). */
+  stale_reason?: string | null;
 };
 
 export type DeviceTestStage = { stage: string; state: string; detail: string };
+
+/**
+ * Where a device's file and Git work runs (`DeviceHostSnapshot`). consent is
+ * `this_machine`, `none`, `granted` or `outdated`; state is `ready`,
+ * `connecting`, `not_allowed`, `identity_changed`, `unsupported` or
+ * `unavailable`, with message saying why and what to do.
+ */
+export type DeviceHost = {
+  consent: "this_machine" | "none" | "granted" | "outdated";
+  helper_root: string | null;
+  contract: number;
+  bound_identity: string | null;
+  granted_at_unix_ms: number | null;
+  state: "ready" | "connecting" | "not_allowed" | "identity_changed" | "unsupported" | "unavailable";
+  message: string | null;
+  platform: string | null;
+  helper_path: string | null;
+};
 
 export type Device = {
   id: string;
@@ -287,9 +321,17 @@ export type Device = {
   /** `local`, or for an SSH device `ready`, `unavailable` or `disabled`. */
   state: string;
   message: string | null;
+  /**
+   * Which trust or sign-in step refused the connection (S5.5 B38):
+   * `host_key_changed`, `host_key_unknown` or `authentication`; null otherwise.
+   */
+  problem?: string | null;
   ssh_alias: string | null;
+  /** The Herdr socket the registration names on the device; null reads its default server. */
+  herdr_socket_path?: string | null;
   agent_count: number;
   test: { state: string; checked_at_unix_ms: number | null; stages: DeviceTestStage[] } | null;
+  host?: DeviceHost;
 };
 
 /** One pane's rectangle in a remote tab, as fractions of the tab's area (`RemotePaneLayoutFrame`). */
@@ -329,6 +371,19 @@ export type RemoteStatus = {
   herdr_version: string | null;
   /** The last session read from that host; kept while `stale`. */
   session?: RemoteSession | null;
+  /** How far the device's helper has confirmed its projects (`device_catalog`). */
+  catalog?: DeviceCatalog;
+};
+
+/**
+ * `resolving`: the helper is being asked; `ready`: every directory is
+ * confirmed; `unavailable`: the helper cannot be asked and `message` says why.
+ * An unconfirmed directory is listed as its Herdr workspace alone.
+ */
+export type DeviceCatalog = {
+  state: "resolving" | "ready" | "unavailable";
+  message: string | null;
+  refused: { path: string; message: string }[];
 };
 
 export type HerdrStatus = {
@@ -388,6 +443,8 @@ export type AgentHooks = {
 /** The core's one task slot: a worktree creation, an agent start, a purpose write. */
 export type TaskOperation = {
   id: number;
+  /** The device the task runs on; null is the daemon's own machine. */
+  device_id?: string | null;
   kind: string;
   /** `working`, `ready` or `failed`. */
   phase: string;
@@ -406,6 +463,8 @@ export type TaskOperation = {
 /** One worktree deletion: `closing` panes, `removing` on the core's worker, then `finished` or `failed`. */
 export type WorktreeRemoval = {
   id: number;
+  /** The device the worktree is on; null is the daemon's own machine. */
+  device_id?: string | null;
   repository_root: string;
   checkout_path: string;
   branch: string | null;
@@ -444,6 +503,8 @@ export type SnapshotRest = {
     pane_text_scales?: Record<string, number>;
     editor_text_scale?: number;
     expanded_paths?: string[];
+    /** Each SSH device's expanded Explorer folders; this machine's are `expanded_paths`. */
+    device_expanded_paths?: Record<string, string[]>;
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;
@@ -488,12 +549,44 @@ export function focusedCheckout(rest: SnapshotRest | null): Checkout | null {
   return null;
 }
 
+/**
+ * Every project the core's catalog carries: this machine's and registered ones
+ * in the navigator, then each device's Herdr session. The core looks a
+ * checkout up in the same two places (`catalog_checkout`); device ids are
+ * scoped, so one id never names checkouts on two machines.
+ */
+export function catalogWorkspaces(rest: SnapshotRest | null): Workspace[] {
+  return [
+    ...(rest?.navigator?.workspaces ?? []),
+    ...(rest?.status?.remote ?? []).flatMap((remote) => remote.session?.workspaces ?? []),
+  ];
+}
+
 export function checkoutById(rest: SnapshotRest | null, id: string): Checkout | null {
-  for (const workspace of rest?.navigator?.workspaces ?? []) {
+  for (const workspace of catalogWorkspaces(rest)) {
     const checkout = workspace.checkouts.find((c) => c.id === id);
     if (checkout) return checkout;
   }
   return null;
+}
+
+/** The device a catalog checkout lives on; `local` for this machine's. */
+export function deviceOfCheckout(rest: SnapshotRest | null, id: string): string {
+  return catalogWorkspaces(rest).find((workspace) => workspace.checkouts.some((c) => c.id === id))?.device_id ?? "local";
+}
+
+/**
+ * The checkout the operator is looking at: this machine's focus while it is
+ * the selected device, otherwise that device's own Herdr focus, which the core
+ * follows (`front_checkout`).
+ */
+export function frontCheckout(rest: SnapshotRest | null): Checkout | null {
+  const device = focusedRemoteDevice(rest);
+  if (!device) return focusedCheckout(rest);
+  const session = rest?.status?.remote?.find((remote) => remote.target_id === device.id)?.session;
+  const id = session?.focused_checkout_id;
+  if (!id) return null;
+  return session?.workspaces.flatMap((workspace) => workspace.checkouts).find((c) => c.id === id) ?? null;
 }
 
 export function visibleTab(checkout: Checkout | null): Tab | null {
@@ -515,6 +608,16 @@ export function editorFor(editor: EditorSnapshot | null): EditorSnapshot | null 
   return editor?.active_tab_id ? editor : null;
 }
 
+/**
+ * The device file or diff the editor shows in `checkout`, or null when the host's
+ * terminal tab does. The core keeps one active editor tab across devices, so
+ * a tab of another checkout is not this surface's.
+ */
+export function remoteEditorTab(editor: EditorSnapshot | null, checkout: Checkout): EditorTabSnapshot | null {
+  const tab = activeEditorTab(editor);
+  return tab && (tab.kind === "file" || tab.kind === "diff") && tab.workspace_id === checkout.workspace_id && tab.checkout_id === checkout.id ? tab : null;
+}
+
 /** The editor tab the core says is showing, or null when the terminal does. */
 export function activeEditorTab(editor: EditorSnapshot | null): EditorTabSnapshot | null {
   const active = editorFor(editor);
@@ -527,9 +630,21 @@ export function editorTabFor(editor: EditorSnapshot | null, tabId: string): Edit
   return editor?.tabs.find((tab) => tab.id === tabId) ?? null;
 }
 
-/** The expanded checkout folders the core reports, as a set the tree walks. */
-export function expandedPathSet(rest: SnapshotRest | null): Set<string> {
-  return new Set(rest?.ui_state?.expanded_paths ?? []);
+const NO_PATHS: string[] = [];
+
+/**
+ * What the Explorer draws: the selected device, the checkout in front on it,
+ * and that device's expanded folders. A path is only ever read against its
+ * own device, so the same path on two machines never shares a row (S5.5 B2).
+ */
+export function explorerContext(rest: SnapshotRest | null): { device: string; checkout: Checkout | null; expanded: string[] } {
+  const device = focusedRemoteDevice(rest)?.id ?? "local";
+  const state = rest?.ui_state;
+  return {
+    device,
+    checkout: frontCheckout(rest),
+    expanded: (device === "local" ? state?.expanded_paths : state?.device_expanded_paths?.[device]) ?? NO_PATHS,
+  };
 }
 
 /** The changes of the checkout a listing belongs to, or null when they are another checkout's. */

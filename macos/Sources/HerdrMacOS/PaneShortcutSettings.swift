@@ -365,18 +365,30 @@ enum PaneKeyEventPolicy {
         event.type == .flagsChanged && !event.modifierFlags.contains(.option)
     }
 
+    /// The two fields a delayed release probe reads, copied out of the event
+    /// so the probe's timer closure does not carry a non-Sendable `NSEvent`.
+    struct ReleasedKey: Sendable {
+        let type: NSEvent.EventType
+        let keyCode: UInt16
+
+        init(_ event: NSEvent) {
+            type = event.type
+            keyCode = event.keyCode
+        }
+    }
+
     /// Some accessibility synthesizers omit flagsChanged after the Tab pair.
     /// Physical holds remain open until the corresponding global flag clears.
     static func shouldCommitTabSwitcherAfterKeyUp(
-        _ event: NSEvent, currentModifiers: NSEvent.ModifierFlags
+        _ key: ReleasedKey, currentModifiers: NSEvent.ModifierFlags
     ) -> Bool {
-        event.type == .keyUp && event.keyCode == 48 && !currentModifiers.contains(.control)
+        key.type == .keyUp && key.keyCode == 48 && !currentModifiers.contains(.control)
     }
 
     static func shouldCommitProjectSwitcherAfterKeyUp(
-        _ event: NSEvent, currentModifiers: NSEvent.ModifierFlags
+        _ key: ReleasedKey, currentModifiers: NSEvent.ModifierFlags
     ) -> Bool {
-        event.type == .keyUp && event.keyCode == 48 && !currentModifiers.contains(.option)
+        key.type == .keyUp && key.keyCode == 48 && !currentModifiers.contains(.option)
     }
 
 }

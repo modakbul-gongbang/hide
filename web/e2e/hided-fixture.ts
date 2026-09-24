@@ -8,7 +8,12 @@ import os from "node:os";
 import path from "node:path";
 import type { HerdrFixture } from "./herdr-fixture";
 
-export type Daemon = { origin: string; token: string; home: string; stop: () => void };
+/**
+ * `restart` stops the daemon and starts it again on the same state directory
+ * and port, as a daemon restart does: the core loses what it held in memory,
+ * the host keeps its id, and the browser keeps its origin and so its drafts.
+ */
+export type Daemon = { origin: string; token: string; home: string; hostId: string; stop: () => void; restart: () => Promise<Daemon> };
 
 export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string): Promise<Daemon> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `hide-e2e-${label}-`));
@@ -16,15 +21,21 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
   fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
   fs.writeFileSync(path.join(home, "projects", "notes.txt"), "x");
+  return launch(herdr, label, dir, home, "0");
+}
+
+async function launch(herdr: HerdrFixture, label: string, dir: string, home: string, port: string): Promise<Daemon> {
   const env = { ...process.env };
   for (const key of ["HERDR_SOCKET_PATH", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"]) delete env[key];
+  const statePath = path.join(dir, "hide", "hided.json");
+  fs.rmSync(statePath, { force: true });
   const child = spawn(path.resolve("..", "target", "debug", "hided"), [], {
     env: {
       ...env,
       HOME: home,
       HIDE_STATE_DIR: path.join(dir, "hide"),
       HIDE_KEEP_ALIVE: "1",
-      HIDE_PORT: "0",
+      HIDE_PORT: port,
       HIDED_UI_DIR: path.resolve("dist"),
       HERDR_SOCKET_PATH: herdr.socket,
       HERDR_BIN_PATH: herdr.bin,
@@ -39,6 +50,7 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
     child.stdout?.pipe(log);
     child.stderr?.pipe(log);
   }
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   const stop = () => {
     child.kill();
     // The daemon may still be writing its state file (and, with S3, staged
@@ -54,13 +66,20 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
     fs.rmSync(dir, { recursive: true, force: true });
   };
   for (let i = 0; i < 50; i += 1) {
-    const statePath = path.join(dir, "hide", "hided.json");
     if (fs.existsSync(statePath)) {
       try {
         // The file may be mid-write on the first read; the next tick reads it whole.
         const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as { port: number; token: string };
         const origin = `http://127.0.0.1:${state.port}`;
-        if ((await fetch(`${origin}/health`)).ok) return { origin, token: state.token, home: fs.realpathSync(home), stop };
+        if ((await fetch(`${origin}/health`)).ok) {
+          const hostId = fs.readFileSync(path.join(dir, "hide", "host-id"), "utf8").trim();
+          const restart = async () => {
+            child.kill();
+            await exited;
+            return launch(herdr, label, dir, home, String(state.port));
+          };
+          return { origin, token: state.token, home: fs.realpathSync(home), hostId, stop, restart };
+        }
       } catch {
         /* still starting */
       }

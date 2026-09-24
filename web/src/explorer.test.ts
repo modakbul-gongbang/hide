@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decorationFor,
+  explorerGitLine,
   explorerRows,
   firstChildSelection,
   gitDecorations,
@@ -243,5 +244,15 @@ describe("removal selection", () => {
     // The folder's first child is followed by its sibling.
     expect(selectionAfterRemoval(rows, `${ROOT}/src/a.ts`, ROOT)).toBe(`${ROOT}/src/nested`);
     expect(selectionAfterRemoval(rows, `${ROOT}/missing`, ROOT)).toBe(ROOT);
+  });
+});
+
+describe("the Explorer's Git status line (S5.5 B20, B22)", () => {
+  const base = { root_path: "/repo", entries: [], committed: [], selected_path: null, diff: null } as unknown as ChangesSnapshot;
+  it("says a failed read is unavailable or out of date and never draws it as current", () => {
+    expect(explorerGitLine(null)).toEqual({ state: "loading", text: "Loading Git status" });
+    expect(explorerGitLine({ ...base, unavailable_reason: "git is not installed" })?.text).toBe("Git status unavailable: git is not installed");
+    expect(explorerGitLine({ ...base, stale_reason: "git status timed out" })?.state).toBe("stale");
+    expect(explorerGitLine(base)).toBeNull();
   });
 });

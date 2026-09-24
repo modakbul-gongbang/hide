@@ -69,9 +69,6 @@ fn run_coordinator(
     // Kept for the counter sweep below, which runs on a fresh snapshot.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
     let mut usage_reader = usage_paths.map(crate::usage::ProviderUsageReader::new);
-    // Git reads describe this machine's checkouts, so only the local
-    // coordinator runs one.
-    let mut changes_reader = context.is_local().then(crate::changes::ChangesReader::new);
     // A listening port is this machine's, so only the local coordinator looks.
     let mut ports_reader = context.is_local().then(crate::ports::PortsReader::new);
     // The three project-panel readers describe this machine's repositories:
@@ -274,21 +271,6 @@ fn run_coordinator(
                 };
                 if let Some(provider_usage) = reader.read_if_due(activity)
                     && !publish_provider_usage(&context, provider_usage)
-                {
-                    stop_subscription(&mut subscription);
-                    return;
-                }
-            }
-
-            if let Some(reader) = changes_reader.as_mut() {
-                // The request is read under a brief lock; the `git` calls that
-                // answer it happen after the guard is dropped.
-                let Some(request) = read_changes_request(&context) else {
-                    stop_subscription(&mut subscription);
-                    return;
-                };
-                if let Some(changes) = reader.read_if_due(request)
-                    && !publish_changes(&context, changes)
                 {
                     stop_subscription(&mut subscription);
                     return;
@@ -1006,32 +988,6 @@ fn publish_hook_diagnosis(
     };
     let changed = match runtime.lock() {
         Ok(mut guard) => guard.ingest_hook_diagnosis(diagnosis),
-        Err(_) => return false,
-    };
-    drop(runtime);
-    if changed {
-        context.notifier.notify();
-    }
-    true
-}
-
-/// Reads what the changes view needs, holding the runtime mutex only for the
-/// read itself. `None` means the runtime is gone.
-fn read_changes_request(
-    context: &SessionSyncContext,
-) -> Option<Option<crate::changes::ChangesRequest>> {
-    let runtime = context.runtime.upgrade()?;
-    let request = runtime.lock().ok()?.changes_request();
-    drop(runtime);
-    Some(request)
-}
-
-fn publish_changes(context: &SessionSyncContext, changes: crate::model::ChangesSnapshot) -> bool {
-    let Some(runtime) = context.runtime.upgrade() else {
-        return false;
-    };
-    let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_changes(changes),
         Err(_) => return false,
     };
     drop(runtime);

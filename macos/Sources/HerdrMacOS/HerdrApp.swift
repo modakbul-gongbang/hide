@@ -233,15 +233,16 @@ final class HerdrApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuDel
                 // One replaceable release probe for synthetic chords. Repeated
                 // keyUp events cannot accumulate delayed commits.
                 self.switcherReleaseProbe?.invalidate()
+                let released = PaneKeyEventPolicy.ReleasedKey(event)
                 let probe = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
                     guard let self else { return }
                     let flags = NSEvent.ModifierFlags(
                         rawValue: UInt(CGEventSource.flagsState(.combinedSessionState).rawValue))
                     MainActor.assumeIsolated {
-                        if PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(event, currentModifiers: flags) {
+                        if PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(released, currentModifiers: flags) {
                             self.model.commitTabSwitcher()
                         }
-                        if PaneKeyEventPolicy.shouldCommitProjectSwitcherAfterKeyUp(event, currentModifiers: flags) {
+                        if PaneKeyEventPolicy.shouldCommitProjectSwitcherAfterKeyUp(released, currentModifiers: flags) {
                             self.model.commitProjectSwitcher()
                         }
                     }

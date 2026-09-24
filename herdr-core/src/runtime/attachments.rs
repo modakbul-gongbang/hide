@@ -688,11 +688,12 @@ mod tests {
                     ))
                     .to_string_lossy()
                     .into_owned(),
+                host_helper_dir: None,
+                host_helper_root: None,
             },
             environment::EnvironmentReport {
                 statuses: Vec::new(),
                 home_path: None,
-                remote_enabled: false,
                 chromux_enabled: false,
                 herdr_socket_path_override: None,
                 codex_home: None,

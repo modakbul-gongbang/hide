@@ -22,7 +22,8 @@ class CapabilityReaderGate(unittest.TestCase):
             shutil.copy2(ROOT / 'scripts/check-capability-readers-off-lock.sh', root / 'scripts')
             for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
-            requests = ('changes', 'worktrees', 'github', 'disk', 'ai')
+            (sources / 'ffi.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
+            requests = ('worktrees', 'github', 'disk', 'ai')
             (sources / 'session_sync.rs').write_text('mod coordinator;\n')
             (session_sync_modules / 'coordinator.rs').write_text(
                 '\n'.join(f'let {r}_reader = {r}::Reader::new();' for r in (*requests, 'ports', 'usage'))
@@ -47,6 +48,30 @@ class CapabilityReaderGate(unittest.TestCase):
         self.assertIn('herdr-core/src/runtime.rs', result.stderr)
         self.assertIn('driven from outside', result.stderr)
 
+    def test_changes_reader_driven_by_the_coordinator_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scripts').mkdir()
+            sources = root / 'herdr-core' / 'src'
+            (sources / 'runtime').mkdir(parents=True)
+            (sources / 'session_sync').mkdir()
+            shutil.copy2(ROOT / 'scripts/check-capability-readers-off-lock.sh', root / 'scripts')
+            for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
+                (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
+            (sources / 'ffi.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
+            (sources / 'session_sync' / 'coordinator.rs').write_text(
+                '\n'.join(f'let {r}_reader = {r}::Reader::new();'
+                          for r in ('changes', 'worktrees', 'github', 'disk', 'ai', 'ports', 'usage'))
+                + '\n' + '\n'.join(f'let Some(request) = read_{r}_request();'
+                                    for r in ('worktrees', 'github', 'disk', 'ai'))
+            )
+            (sources / 'runtime.rs').write_text('#[cfg(test)]\nmod tests {}\n')
+            (sources / 'files.rs').write_text('#[cfg(test)]\nmod tests {}\n')
+            result = subprocess.run(['bash', 'scripts/check-capability-readers-off-lock.sh'],
+                                    cwd=root, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('the changes reader is driven from outside its own pump', result.stderr)
+
     def test_runtime_submodule_subprocess_is_rejected(self):
         runtime_module = ROOT / 'scripts' / 'check-capability-readers-off-lock.sh'
         with tempfile.TemporaryDirectory() as directory:
@@ -59,7 +84,8 @@ class CapabilityReaderGate(unittest.TestCase):
             shutil.copy2(runtime_module, root / 'scripts')
             for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
-            requests = ('changes', 'worktrees', 'github', 'disk', 'ai')
+            (sources / 'ffi.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
+            requests = ('worktrees', 'github', 'disk', 'ai')
             (sources / 'session_sync.rs').write_text('mod coordinator;\n')
             (sources / 'session_sync' / 'coordinator.rs').write_text(
                 '\n'.join(f'let {r}_reader = {r}::Reader::new();' for r in (*requests, 'ports', 'usage'))

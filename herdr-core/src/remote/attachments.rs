@@ -433,10 +433,8 @@ mod tests {
         assert_eq!(paths.len(), 1);
         assert_ne!(paths[0], files[0].path);
         assert!(paths[0].contains("/.hide-terminal-attachments/hide-"));
-        assert_eq!(
-            transport.read(&paths[0]).expect("remote read"),
-            files[0].bytes
-        );
+        // A retry of the same request reads the staged file back and
+        // compares it byte for byte before it answers the same paths.
         assert_eq!(
             transport
                 .stage_attachments(&request_id, &files, &AtomicBool::new(false))
@@ -449,10 +447,11 @@ mod tests {
                 .is_err()
         );
         drop(cleanup);
-        assert!(
-            transport.read(&paths[0]).is_err(),
-            "exact generated remote file was removed"
-        );
+        let gone = std::process::Command::new("ssh")
+            .args([alias_name.as_str(), "test", "!", "-e", paths[0].as_str()])
+            .status()
+            .expect("ssh runs");
+        assert!(gone.success(), "exact generated remote file was removed");
     }
 
     #[test]

@@ -182,7 +182,7 @@ pub enum AgentActivity {
 }
 
 impl AgentActivity {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Working => "working",
             Self::Stopped => "stopped",

@@ -2,6 +2,7 @@
 members = [
     "herdr-core",
     "hide-herdr-client",
+    "hide-host",
     "hide-agent-hooks",
     "hide-ai",
     "hide-memory",

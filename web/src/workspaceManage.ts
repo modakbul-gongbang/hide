@@ -24,6 +24,17 @@ export function purposeCountLabel(text: string): string {
   return `${scalarCount(text)} / ${PURPOSE_RECOMMENDED}`;
 }
 
+/**
+ * Where a saved purpose is kept (PRD S5.5 B30). A device's purpose is its
+ * Herdr's workspace metadata only; on this machine a branch also keeps it as
+ * its Git description, which outlives the Herdr workspace.
+ */
+export function purposeScope(deviceLabel: string | null, branch: string | null): string {
+  if (deviceLabel) return `Kept in Herdr's workspace metadata on ${deviceLabel}; its Git config is not changed.`;
+  if (branch) return `Kept in Herdr's workspace metadata and as the Git description of ${branch} on this machine.`;
+  return "Kept in Herdr's workspace metadata on this machine.";
+}
+
 export function purposeIsLong(text: string): boolean {
   return scalarCount(text) > PURPOSE_RECOMMENDED;
 }
@@ -45,35 +56,47 @@ export function branchProblem(name: string): string | null {
 }
 
 export type MenuItem = {
-  id: "pin" | "unpin" | "new_worktree" | "set_purpose" | "delete_worktree";
+  id: "pin" | "unpin" | "new_worktree" | "remove_project" | "set_purpose" | "delete_worktree";
   label: string;
   /** Why the action is not offered here; the item is drawn disabled with this as its hint. */
   unavailable: string | null;
 };
 
-const REMOTE_ONLY = "Only projects on the daemon's own machine can be managed here.";
-
-export function isLocal(workspace: Workspace): boolean {
-  return !workspace.remote_target_id && workspace.device_id === "local";
+/** The device a receipt names; the daemon's own machine when it names none. */
+function receiptDevice(deviceId: string | null | undefined): string {
+  return deviceId ?? "local";
 }
 
-/** The project row's menu: Pin/Unpin for a registered local project, and New worktree for a local Git project. */
+/** The project row's menu on any device: Pin/Unpin and Remove project for a registered project, and New worktree for a Git project. */
 export function projectMenu(workspace: Workspace): MenuItem[] {
-  const local = isLocal(workspace);
   const items: MenuItem[] = [];
   if (workspace.registered) {
     items.push({
       id: workspace.pinned ? "unpin" : "pin",
       label: workspace.pinned ? "Unpin" : "Pin",
-      unavailable: local ? null : REMOTE_ONLY,
+      unavailable: null,
     });
   }
   items.push({
     id: "new_worktree",
     label: "New worktree…",
-    unavailable: !local ? REMOTE_ONLY : workspace.is_git === false ? "This project is not a Git repository." : null,
+    unavailable: workspace.is_git === false ? "This project is not a Git repository." : null,
   });
+  if (workspace.registered) items.push({ id: "remove_project", label: "Remove project…", unavailable: null });
   return items;
+}
+
+/** What removing a project's registration does, spelled out before it is confirmed (D-10). */
+export function projectRemovalConsequences(workspace: Workspace): string[] {
+  const panes = workspace.removal?.pane_count ?? 0;
+  const running = workspace.removal?.running_agent_count ?? 0;
+  const lines: string[] = [];
+  if (panes > 0) {
+    const stopping = running > 0 ? `, stopping ${running === 1 ? "1 running agent" : `${running} running agents`}` : "";
+    lines.push(`${panes === 1 ? "1 pane in this project closes" : `${panes} panes in this project close`} first${stopping}.`);
+  }
+  lines.push("Only the registration is removed: the folder, its repository and its worktrees stay on disk.");
+  return lines;
 }
 
 /**
@@ -88,19 +111,15 @@ export function remotePurposeProblem(workspace: Workspace, remote: RemoteStatus[
   return `Set purpose requires Herdr 0.9.1 or newer on the remote device${version ? `; ${version} is installed` : "; its version is unavailable"}.`;
 }
 
-/** The checkout row's menu: purpose for any checkout its host can store it for, deletion for a local linked worktree. */
-export function checkoutMenu(workspace: Workspace, checkout: Checkout, purposeProblem: string | null = null): MenuItem[] {
+/** The checkout row's menu: purpose for any checkout its host can store it for, deletion for a linked worktree on any device. */
+export function checkoutMenu(checkout: Checkout, purposeProblem: string | null = null): MenuItem[] {
   const items: MenuItem[] = [{ id: "set_purpose", label: "Set purpose…", unavailable: purposeProblem }];
   if (checkout.is_worktree) {
     const gate = checkout.worktree?.deletion_gate;
     items.push({
       id: "delete_worktree",
       label: "Delete worktree…",
-      unavailable: !isLocal(workspace)
-        ? REMOTE_ONLY
-        : !checkout.worktree
-          ? "The worktree row has not been read yet."
-          : (gate?.blocked_reason ?? null),
+      unavailable: !checkout.worktree ? "The worktree row has not been read yet." : (gate?.blocked_reason ?? null),
     });
   }
   return items;
@@ -111,7 +130,7 @@ export function deletionConsequences(checkout: Checkout, paneCount: number): str
   const row = checkout.worktree;
   const lines: string[] = [];
   lines.push(`The folder ${checkout.path} is removed from disk. This cannot be undone.`);
-  if (paneCount > 0) lines.push(`${paneCount} pane${paneCount === 1 ? "" : "s"} in this worktree close first, stopping whatever runs there.`);
+  if (paneCount > 0) lines.push(`${paneCount === 1 ? "1 pane in this worktree closes" : `${paneCount} panes in this worktree close`} first, stopping whatever runs there.`);
   if (row && row.running_agent_count > 0) lines.push(`${row.running_agent_count} running agent${row.running_agent_count === 1 ? "" : "s"} will be stopped.`);
   for (const warning of row?.deletion_gate.warnings ?? []) lines.push(warning);
   return lines;
@@ -120,18 +139,19 @@ export function deletionConsequences(checkout: Checkout, paneCount: number): str
 /** The newest task the operator asked for on this page, once it names the request's own target. */
 export function taskFor(
   operation: TaskOperation | null | undefined,
-  request: { kind: string; afterId: number; repositoryRoot?: string; branch?: string; path?: string } | null,
+  request: { kind: string; afterId: number; deviceId?: string; repositoryRoot?: string; branch?: string; path?: string } | null,
 ): TaskOperation | null {
   if (!operation || !request) return null;
   if (operation.kind !== request.kind || operation.id <= request.afterId) return null;
+  if (request.deviceId !== undefined && receiptDevice(operation.device_id) !== request.deviceId) return null;
   if (request.repositoryRoot !== undefined && operation.repository_root !== request.repositoryRoot) return null;
   if (request.branch !== undefined && operation.branch !== request.branch) return null;
   if (request.path !== undefined && operation.path !== request.path) return null;
   return operation;
 }
 
-/** The removal this page asked for, by the checkout it named; another checkout's removal is not its answer. */
-export function removalFor(removal: WorktreeRemoval | null | undefined, checkoutPath: string, afterId: number): WorktreeRemoval | null {
-  if (!removal || removal.checkout_path !== checkoutPath || removal.id <= afterId) return null;
+/** The removal this page asked for, by the device and checkout it named; another checkout's removal is not its answer. */
+export function removalFor(removal: WorktreeRemoval | null | undefined, deviceId: string, checkoutPath: string, afterId: number): WorktreeRemoval | null {
+  if (!removal || receiptDevice(removal.device_id) !== deviceId || removal.checkout_path !== checkoutPath || removal.id <= afterId) return null;
   return removal;
 }

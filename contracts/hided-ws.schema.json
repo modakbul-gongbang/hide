@@ -21,25 +21,27 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
+        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "error", "directory_list", "directory_unavailable", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
       }
     },
     "daemonInfo": {
-      "description": "Payload of the daemon frame, sent once after a valid handshake and before the first snapshot: what the Settings General tab shows about the daemon. It never carries the token or environment values other than the paths named here; herdr_bin_path and herdr_socket_path are null when the daemon has none. The daemon also owns the core's one Settings observation flag: a client's `ai_settings` event with `observing` records only that connection's demand, the flag follows the first observer in and the last one out, and a connection that closes releases its demand.",
+      "description": "Payload of the daemon frame, sent once after a valid handshake and before the first snapshot: what the Settings General tab shows about the daemon. It never carries the token or environment values other than the paths named here; herdr_bin_path and herdr_socket_path are null when the daemon has none. host_id names this daemon host across restarts (`host-` and 32 hex digits, kept in the state directory's `host-id` file); the web shell files unsaved drafts under it, so a draft written against one Hide host is never opened by another that serves the same browser origin. host_name is the name of the machine the daemon runs on, which Settings names as the owner of every value the daemon stores; null when the system does not report one. The daemon also owns the core's one Settings observation flag: a client's `ai_settings` event with `observing` records only that connection's demand, the flag follows the first observer in and the last one out, and a connection that closes releases its demand.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["version", "schema_version", "pid", "started_at_unix", "state_dir", "core_state_path", "herdr_bin_path", "herdr_socket_path", "keep_alive", "idle_secs"],
+      "required": ["version", "schema_version", "pid", "host_id", "host_name", "started_at_unix", "state_dir", "core_state_path", "herdr_bin_path", "herdr_socket_path", "keep_alive", "idle_secs"],
       "properties": {
         "version": { "type": "string" },
         "schema_version": { "type": "integer", "const": 2 },
         "pid": { "type": "integer" },
+        "host_id": { "type": "string", "pattern": "^host-[0-9a-f]{32}$" },
+        "host_name": { "type": ["string", "null"] },
         "started_at_unix": { "type": "string" },
         "state_dir": { "type": "string" },
         "core_state_path": { "type": "string" },
@@ -50,12 +52,13 @@
       }
     },
     "directoryChanged": {
-      "description": "Payload of a directory_changed frame: the watched folder whose contents changed. The daemon watches the focused checkout's root and its most recently expanded folders, at most 64 in total (the root counts); a change within 200 ms of the last one for the same folder is coalesced into the frame already sent. A client re-reads the one folder this names, which is the Explorer's live refresh without a reload.",
+      "description": "Payload of a directory_changed frame: the watched folder whose contents changed. The daemon watches the focused checkout's root and its most recently expanded folders, at most 64 in total (the root counts); a change within 200 ms of the last one for the same folder is coalesced into the frame already sent. A client re-reads the one folder this names, which is the Explorer's live refresh without a reload. device_id names the device the folder is on: `local` for the daemon's own machine, polled from opened handles every 200 ms, or an SSH device whose helper stamps the selected device's front checkout root and watched folders (the same 64) every 2 s while its Explorer is showing and its helper is ready; a client ignores a frame for a device it is not showing.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["path"],
+      "required": ["path", "device_id"],
       "properties": {
-        "path": { "type": "string" }
+        "path": { "type": "string" },
+        "device_id": { "type": "string" }
       }
     },
     "clientEvent": {
@@ -81,12 +84,13 @@
       "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "not_a_file", "invalid_path"]
     },
     "directoryList": {
-      "description": "Payload of a directory_list frame. kind names the event that asked: a `remote_file_list` for the `local` target lists the visible subdirectories of root_path under $HOME, and a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed (a request of `~` lists home and answers with its path). is_directory is what the Explorer draws and opens by; a `remote_file_list` answer carries directories only, so every entry in it is one. truncated is true past the listing cap.",
+      "description": "Payload of a directory_list frame. kind names the event that asked: a `remote_file_list` for the `local` target lists the visible subdirectories of root_path under $HOME, and a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed (a request of `~` lists home and answers with its path). is_directory is what the Explorer draws and opens by; a `remote_file_list` answer carries directories only, so every entry in it is one. truncated is true past the listing cap. device_id names the machine the listing came from: absent for this daemon's own machine, and an SSH device's id for a `file_list` that named that device, whose paths are that device's and are never read here.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "root_path", "entries", "truncated"],
       "properties": {
         "kind": { "type": "string", "enum": ["remote_file_list", "file_list"] },
+        "device_id": { "type": "string", "minLength": 1 },
         "root_path": { "type": "string" },
         "entries": {
           "type": "array",
@@ -97,11 +101,25 @@
             "properties": {
               "name": { "type": "string" },
               "path": { "type": "string" },
-              "is_directory": { "type": "boolean" }
+              "is_directory": { "type": "boolean" },
+              "inode": { "type": "integer", "minimum": 0, "description": "The entry's own inode (a link's, not its target's) in a `file_list` answer: the identity a `path_trash` of this row sends, so the host moves only the item the operator confirmed. Absent from a `remote_file_list` answer." }
             }
           }
         },
         "truncated": { "type": "boolean" }
+      }
+    },
+    "directoryUnavailable": {
+      "description": "Payload of a directory_unavailable frame: a `file_list` for a checkout on an SSH device that did not come back as a listing. code says what the Explorer offers next: `not_ready` (no helper connection: consent missing or withdrawn, or the device unreachable; nothing was sent), `busy` (the device's request queue is full; nothing was sent), `unknown` (the request was sent and no answer arrived), or `refused` (the helper answered with a refusal such as a replaced root or a missing folder). message is the sentence to show, and root_path is the folder that was asked for.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "device_id", "root_path", "code", "message"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["file_list"] },
+        "device_id": { "type": "string", "minLength": 1 },
+        "root_path": { "type": "string" },
+        "code": { "type": "string", "enum": ["not_ready", "busy", "unknown", "refused"] },
+        "message": { "type": "string" }
       }
     },
     "pathRefused": {
@@ -175,20 +193,23 @@
       }
     },
     "fileIndex": {
-      "description": "A client `file_index` event asks for the files of a registered checkout that match a query: {root, query}. The daemon walks the checkout once, honoring .gitignore (and .git/info/exclude and the global ignore file) without a git process, caps the index at 50,000 files, and answers with a file_index_result frame: {root_path, query, files: [{path, relative_path}], truncated, indexing}. `files` is ranked by the Swift fuzzy score, best first, at most 80; `path` is absolute so the client can open it, `relative_path` is what the palette shows. The first query for a root answers `indexing: true` while the walk runs; `truncated` marks a checkout whose index hit the cap. A root that is not a registered checkout is the usual path_refused frame with kind file_index.",
+      "description": "A client `file_index` event asks for the files of a registered checkout that match a query: {root, query}. The daemon walks the checkout once, honoring .gitignore (and .git/info/exclude and the global ignore file) without a git process, caps the index at 50,000 files, and answers with a file_index_result frame: {root_path, query, files: [{path, relative_path}], truncated, indexing}. `files` is ranked by the Swift fuzzy score, best first, at most 80; `path` is absolute so the client can open it, `relative_path` is what the palette shows. The first query for a root answers `indexing: true` while the walk runs; `truncated` marks a checkout whose index hit the cap. A root that is not a registered checkout is the usual path_refused frame with kind file_index. With `device_id` naming an SSH device, `root` is a checkout the core's catalog carries for that device, the walk is that device's helper's, `path` is spelled on that device, and a walk the helper could not make is answered with `unavailable` naming why; the next query walks again.",
       "type": "object",
       "required": ["root", "query"],
       "properties": {
         "root": { "type": "string" },
-        "query": { "type": "string" }
+        "query": { "type": "string" },
+        "device_id": { "type": "string" }
       }
     },
     "fileIndexResult": {
-      "description": "Payload of a file_index_result frame: the root that was searched, the query, the ranked files, whether the index is truncated, and whether the walk is still running.",
+      "description": "Payload of a file_index_result frame: the device and root that were searched, the query, the ranked files, whether the index is truncated, whether the walk is still running, and why a device walk was unavailable.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["root_path", "query", "files", "truncated", "indexing"],
+      "required": ["device_id", "root_path", "query", "files", "truncated", "indexing"],
       "properties": {
+        "device_id": { "type": "string" },
+        "unavailable": { "type": ["string", "null"] },
         "root_path": { "type": "string" },
         "query": { "type": "string" },
         "files": {
@@ -208,14 +229,16 @@
       }
     },
     "fileBytes": {
-      "description": "A client `file_bytes` event asks for a regular file's bytes under a registered checkout root: {request_id, path, offset, length}. `length` null or absent reads to the end of the file; `offset` defaults to 0. The daemon answers with one or more binary frames, each framed as a 4-byte big-endian header length, the header JSON as UTF-8, then that chunk's bytes. The header is {type: \"file_bytes\", request_id, path, offset, total, eof}: offset is where this chunk starts in the file, total is the file's whole size, and eof marks the last frame. A read past MAX_FILE_BYTES (256 MiB) or a disk failure is answered with a file_bytes_error text frame instead: {request_id, path, reason} where reason is too_large or read_failed. A path that fails the boundary is the usual path_refused frame with kind file_bytes.",
+      "description": "A client `file_bytes` event asks for a regular file's bytes under a registered checkout root: {request_id, path, offset, length}. `length` null or absent reads to the end of the file; `offset` defaults to 0. The daemon answers with one or more binary frames, each framed as a 4-byte big-endian header length, the header JSON as UTF-8, then that chunk's bytes. The header is {type: \"file_bytes\", request_id, path, offset, total, eof}: offset is where this chunk starts in the file, total is the file's whole size, and eof marks the last frame. A read past MAX_FILE_BYTES (256 MiB) or a disk failure is answered with a file_bytes_error text frame instead: {request_id, path, reason} where reason is too_large or read_failed; a device read that a newer one from the same client ended (at most two run per client) is answered with reason superseded. A path that fails the boundary is the usual path_refused frame with kind file_bytes. With `device_id` naming an SSH device and `root` a checkout the core's catalog carries for it, `path` is spelled under that root on the device and the device's helper reads it one bounded range at a time; a file that changes between ranges ends the read as read_failed.",
       "type": "object",
       "required": ["request_id", "path"],
       "properties": {
         "request_id": { "type": "string" },
         "path": { "type": "string" },
         "offset": { "type": "integer", "minimum": 0 },
-        "length": { "type": ["integer", "null"], "minimum": 0 }
+        "length": { "type": ["integer", "null"], "minimum": 0 },
+        "device_id": { "type": "string" },
+        "root": { "type": "string" }
       }
     },
     "fileBytesError": {

@@ -1164,13 +1164,15 @@ final class ShellModel: ObservableObject {
                 core.createRemoteTab(
                     targetID: targetID,
                     workspaceID: checkout.workspaceID,
+                    checkoutID: checkout.id,
                     cwd: checkout.path,
                     label: "hide \(checkout.label)"
                 )
             } else {
                 core.focusRemoteWorkspace(
                     targetID: targetID,
-                    workspaceID: checkout.workspaceID
+                    workspaceID: checkout.workspaceID,
+                    checkoutID: checkout.id
                 )
             }
             return
@@ -1313,6 +1315,11 @@ final class ShellModel: ObservableObject {
         setShortcutModifiersHeld(HideHintState.modifiers(in: NSEvent.modifierFlags))
     }
 
+    func allowRemoteFileHelper() {
+        guard let targetID = remote.navigation?.deviceID else { return }
+        core.allowDeviceHost(deviceID: targetID)
+    }
+
     func loadRemoteFiles(path: String) {
         guard isRemoteContext,
               remote.phase == .ready,
@@ -1370,7 +1377,7 @@ final class ShellModel: ObservableObject {
                 core.focusCheckout(workspaceID: project.workspace.id, checkoutID: checkout.id)
             } else {
                 remote.focus(workspaceID: project.workspace.id, checkoutID: checkout.id)
-                core.focusRemoteWorkspace(targetID: project.deviceID, workspaceID: project.workspace.id)
+                core.focusRemoteWorkspace(targetID: project.deviceID, workspaceID: project.workspace.id, checkoutID: checkout.id)
             }
             return
         }
@@ -1977,6 +1984,7 @@ final class ShellModel: ObservableObject {
             core.createRemoteTab(
                 targetID: targetID,
                 workspaceID: checkout.workspaceID,
+                checkoutID: checkout.id,
                 cwd: checkout.path,
                 label: label
             )

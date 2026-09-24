@@ -24,7 +24,7 @@ use russh::keys::{
 };
 use russh::{Channel, ChannelMsg, ChannelOpenFailure, Disconnect, Pty};
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::{FileType as SftpFileType, OpenFlags};
+use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::Value;
@@ -36,15 +36,32 @@ use tokio::runtime::{Builder, Runtime};
 use crate::domain::{
     DomainEvent, DomainProjection, DomainSnapshot, EnvironmentContract, HostScope,
 };
-use crate::remote_files::{FileEntry, FileKind, FileResult, FileServiceError, SftpTransport};
-#[cfg(test)]
-use crate::remote_files::{FileService, RemoteFileService};
 use hide_herdr_client::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 
 mod attachments;
+pub mod host;
 
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
+/// The prefixes a host-key refusal starts with, so a caller can tell a
+/// changed key from a missing one without parsing the rest of the sentence.
+pub const HOST_KEY_CHANGED: &str = "host key changed";
+pub const HOST_KEY_UNKNOWN: &str = "host key unknown";
+
+/// Which trust or sign-in step a connection failure names, read off the
+/// words this module wrote into it: a changed host key, an unknown one, or a
+/// refused authentication (PRD S5.5 B38). Any other failure is `None`.
+pub fn connection_problem(message: &str) -> Option<&'static str> {
+    if message.contains(HOST_KEY_CHANGED) {
+        Some("host_key_changed")
+    } else if message.contains(HOST_KEY_UNKNOWN) {
+        Some("host_key_unknown")
+    } else if message.contains("stage=auth ") {
+        Some("authentication")
+    } else {
+        None
+    }
+}
 const DEFAULT_REMOTE_TERM: &str = "xterm-256color";
 
 /// Environment names read by this module. Values remain in the process
@@ -1040,8 +1057,12 @@ pub enum RemoteReadCommand {
         root: String,
     },
     /// `herdr status server --json`: the host's own answer to where its
-    /// server socket is and whether the server is up.
-    HerdrServerStatus,
+    /// server socket is and whether the server is up. `socket` is the socket
+    /// the device registration names, when it names one; otherwise the host's
+    /// default server answers.
+    HerdrServerStatus {
+        socket: Option<String>,
+    },
 }
 
 /// Where a non-login SSH exec finds `herdr` on the remote host: the
@@ -1053,22 +1074,40 @@ impl RemoteReadCommand {
     fn operation_id(&self) -> &'static str {
         match self {
             Self::GitStatus { .. } => "remote-git-status",
-            Self::HerdrServerStatus => "remote-herdr-status",
+            Self::HerdrServerStatus { .. } => "remote-herdr-status",
         }
     }
 
     fn stage(&self) -> RemoteStage {
         match self {
             Self::GitStatus { .. } => RemoteStage::Git,
-            Self::HerdrServerStatus => RemoteStage::Herdr,
+            Self::HerdrServerStatus { .. } => RemoteStage::Herdr,
         }
     }
 
     fn command_line(&self) -> RemoteResult<String> {
         match self {
-            Self::HerdrServerStatus => Ok(format!(
+            Self::HerdrServerStatus { socket: None } => Ok(format!(
                 "PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json"
             )),
+            Self::HerdrServerStatus {
+                socket: Some(socket),
+            } => {
+                if !valid_remote_socket_path(socket) {
+                    return Err(remote_error(
+                        self.operation_id(),
+                        socket,
+                        self.stage(),
+                        "the device's Herdr socket must be an absolute single-line path",
+                        false,
+                        false,
+                    ));
+                }
+                Ok(format!(
+                    "HERDR_SOCKET_PATH={} PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json",
+                    shell_quote(socket)
+                ))
+            }
             Self::GitStatus { root } => {
                 if !root.starts_with('/')
                     || root
@@ -1131,7 +1170,7 @@ pub fn parse_herdr_server_status(
     host_id: &str,
     output: &RemoteCommandOutput,
 ) -> RemoteResult<RemoteHerdrServerStatus> {
-    let operation_id = RemoteReadCommand::HerdrServerStatus.operation_id();
+    let operation_id = RemoteReadCommand::HerdrServerStatus { socket: None }.operation_id();
     if output.exit_status == EXIT_COMMAND_NOT_FOUND {
         return Err(remote_error(
             operation_id,
@@ -1201,6 +1240,9 @@ pub struct RusshRemoteClient {
     /// server restarted under another path or version is found again on the
     /// next attempt instead of failing forever on the remembered one.
     herdr_status: Arc<Mutex<Option<RemoteHerdrServerStatus>>>,
+    /// The Herdr socket the device registration names, for a host whose
+    /// server does not listen at its default path.
+    herdr_socket: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1519,7 +1561,15 @@ impl RusshRemoteClient {
             host,
             runtime: Arc::new(runtime),
             herdr_status: Arc::new(Mutex::new(None)),
+            herdr_socket: None,
         })
+    }
+
+    /// Talks to the Herdr server at `socket` on the host instead of the one
+    /// at its default path.
+    pub fn with_herdr_socket(mut self, socket: Option<String>) -> Self {
+        self.herdr_socket = socket;
+        self
     }
 
     pub fn host(&self) -> &SshAlias {
@@ -1532,7 +1582,9 @@ impl RusshRemoteClient {
         if let Some(status) = lock_recover(&self.herdr_status).clone() {
             return Ok(status.socket);
         }
-        let output = self.exec_read_only(RemoteReadCommand::HerdrServerStatus)?;
+        let output = self.exec_read_only(RemoteReadCommand::HerdrServerStatus {
+            socket: self.herdr_socket.clone(),
+        })?;
         let status = parse_herdr_server_status(&self.host.host_id, &output)?;
         let socket = status.socket.clone();
         *lock_recover(&self.herdr_status) = Some(status);
@@ -1666,6 +1718,22 @@ impl RusshRemoteClient {
                     "capability probe complete",
                     "en",
                 ));
+            }
+            // Authentication runs after the handshake and the known_hosts
+            // check, so a refused sign-in is the auth stage's failure alone,
+            // never read as a host that could not be reached (B38).
+            Err(error) if error.stage() == RemoteStage::Auth => {
+                report.pass(
+                    RemoteStage::Ssh,
+                    "TCP SSH handshake and known_hosts verification passed",
+                );
+                report.fail(
+                    RemoteStage::Auth,
+                    error.to_string(),
+                    error.diagnostic().retryable,
+                    error.diagnostic().action_required,
+                );
+                return report;
             }
             Err(error) => {
                 report.fail(
@@ -2170,192 +2238,6 @@ impl RusshRemoteClient {
         Ok(session)
     }
 
-    fn sftp_read(&self, path: &str) -> RemoteResult<Vec<u8>> {
-        let mut session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let operation = self.runtime.block_on(async {
-            let sftp = open_sftp(&mut session, &self.host.host_id).await?;
-            let result = sftp.read(path).await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-read",
-                    path,
-                    RemoteStage::Sftp,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            let cleanup = sftp.close().await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-read",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            combine_cleanup("remote-sftp-read", path, Ok(result), cleanup)
-        });
-        let disconnect = self
-            .runtime
-            .block_on(session.disconnect(Disconnect::ByApplication, "SFTP read complete", "en"))
-            .map_err(|error| {
-                remote_error(
-                    "remote-sftp-read",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-        combine_cleanup("remote-sftp-read", path, operation, disconnect)
-    }
-
-    fn sftp_list(&self, path: &str) -> RemoteResult<Vec<FileEntry>> {
-        let mut session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let operation = self.runtime.block_on(async {
-            let sftp = open_sftp(&mut session, &self.host.host_id).await?;
-            let directory = sftp.read_dir(path).await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-list",
-                    path,
-                    RemoteStage::Sftp,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            let mut entries = Vec::new();
-            for entry in directory {
-                let file_type = match entry.file_type() {
-                    SftpFileType::Dir => FileKind::Directory,
-                    SftpFileType::File => FileKind::File,
-                    SftpFileType::Symlink | SftpFileType::Other => continue,
-                };
-                entries.push(FileEntry {
-                    path: entry.path(),
-                    name: entry.file_name(),
-                    kind: file_type,
-                    size_bytes: entry.metadata().len(),
-                });
-            }
-            entries.sort_by(|left, right| left.path.cmp(&right.path));
-            let cleanup = sftp.close().await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-list",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            combine_cleanup("remote-sftp-list", path, Ok(entries), cleanup)
-        });
-        let disconnect = self
-            .runtime
-            .block_on(session.disconnect(Disconnect::ByApplication, "SFTP list complete", "en"))
-            .map_err(|error| {
-                remote_error(
-                    "remote-sftp-list",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-        combine_cleanup("remote-sftp-list", path, operation, disconnect)
-    }
-
-    fn sftp_write(&self, path: &str, bytes: &[u8]) -> RemoteResult<()> {
-        let mut session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let operation = self.runtime.block_on(async {
-            let sftp = open_sftp(&mut session, &self.host.host_id).await?;
-            let mut file = sftp
-                .open_with_flags(
-                    path,
-                    OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
-                )
-                .await
-                .map_err(|error| {
-                    remote_error(
-                        "remote-sftp-write",
-                        path,
-                        RemoteStage::Sftp,
-                        error,
-                        true,
-                        false,
-                    )
-                })?;
-            let result = file.write_all(bytes).await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-write",
-                    path,
-                    RemoteStage::Sftp,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            if let Err(error) = result {
-                let cleanup = sftp.close().await.map_err(|close_error| {
-                    remote_error(
-                        "remote-sftp-write",
-                        path,
-                        RemoteStage::Cleanup,
-                        close_error,
-                        true,
-                        false,
-                    )
-                });
-                return combine_cleanup("remote-sftp-write", path, Err(error), cleanup);
-            }
-            let result = file.shutdown().await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-write",
-                    path,
-                    RemoteStage::Sftp,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            let cleanup = sftp.close().await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-write",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            combine_cleanup("remote-sftp-write", path, result, cleanup)
-        });
-        let disconnect = self
-            .runtime
-            .block_on(session.disconnect(Disconnect::ByApplication, "SFTP write complete", "en"))
-            .map_err(|error| {
-                remote_error(
-                    "remote-sftp-write",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-        combine_cleanup("remote-sftp-write", path, operation, disconnect)
-    }
-
     pub fn start_reverse_browser_bridge(
         &self,
         spec: ReverseBrowserBridgeSpec,
@@ -2845,47 +2727,6 @@ async fn execute_channel(
     })
 }
 
-async fn open_sftp(
-    session: &mut Handle<KnownHostHandler>,
-    target: &str,
-) -> RemoteResult<SftpSession> {
-    let channel = session.channel_open_session().await.map_err(|error| {
-        remote_error(
-            "remote-sftp-open",
-            target,
-            RemoteStage::Sftp,
-            error,
-            true,
-            false,
-        )
-    })?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|error| {
-            remote_error(
-                "remote-sftp-open",
-                target,
-                RemoteStage::Sftp,
-                error,
-                true,
-                false,
-            )
-        })?;
-    SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|error| {
-            remote_error(
-                "remote-sftp-open",
-                target,
-                RemoteStage::Sftp,
-                error,
-                true,
-                false,
-            )
-        })
-}
-
 #[derive(Clone, Debug)]
 struct KnownHostHandler {
     host: String,
@@ -2893,6 +2734,9 @@ struct KnownHostHandler {
     known_hosts_file: PathBuf,
     local_forward: Option<SocketAddr>,
     forward_error: Option<Arc<Mutex<Option<String>>>>,
+    /// Receives the SHA-256 fingerprint of a host key known_hosts accepted,
+    /// the identity a device's helper consent is bound to.
+    observed_key: Option<Arc<Mutex<Option<String>>>>,
 }
 
 impl KnownHostHandler {
@@ -2903,7 +2747,13 @@ impl KnownHostHandler {
             known_hosts_file: host.known_hosts_file.clone(),
             local_forward,
             forward_error: None,
+            observed_key: None,
         }
+    }
+
+    fn with_observed_key(mut self, observed_key: Arc<Mutex<Option<String>>>) -> Self {
+        self.observed_key = Some(observed_key);
+        self
     }
 
     fn with_forward_error(mut self, forward_error: Arc<Mutex<Option<String>>>) -> Self {
@@ -2920,15 +2770,38 @@ impl Handler for KnownHostHandler {
         server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         let public_key = server_public_key.public_key();
-        let trusted =
-            check_known_hosts_path(&self.host, self.port, &public_key, &self.known_hosts_file)
-                .map_err(|error| anyhow!("known_hosts verification failed: {error}"))?;
+        // A changed key and an unknown one need different actions from the
+        // operator, so they are named differently (PRD S5.5 B38); neither is
+        // ever accepted here.
+        let trusted = match check_known_hosts_path(
+            &self.host,
+            self.port,
+            &public_key,
+            &self.known_hosts_file,
+        ) {
+            Ok(trusted) => trusted,
+            Err(russh::keys::Error::KeyChanged { line }) => {
+                return Err(anyhow!(
+                    "{HOST_KEY_CHANGED}: the host key for {}:{} differs from known_hosts line {line}; verify the device before updating known_hosts",
+                    self.host,
+                    self.port
+                ));
+            }
+            Err(error) => return Err(anyhow!("known_hosts verification failed: {error}")),
+        };
         if !trusted {
             return Err(anyhow!(
-                "server key is not present in known_hosts for {}:{}",
+                "{HOST_KEY_UNKNOWN}: server key is not present in known_hosts for {}:{}; connect once with ssh to review and record it",
                 self.host,
                 self.port
             ));
+        }
+        if let Some(observed) = self.observed_key.as_ref() {
+            *lock_recover(observed) = Some(
+                public_key
+                    .fingerprint(russh::keys::HashAlg::Sha256)
+                    .to_string(),
+            );
         }
         Ok(true)
     }
@@ -3626,55 +3499,6 @@ impl RusshSftpTransport {
     pub fn client(&self) -> &Arc<RusshRemoteClient> {
         &self.client
     }
-
-    fn map_error(&self, operation: &str, error: RemoteError) -> FileServiceError {
-        FileServiceError::Remote {
-            operation: operation.to_owned(),
-            target: self.client.host().host_id.clone(),
-            reason: error.to_string(),
-        }
-    }
-}
-
-impl SftpTransport for RusshSftpTransport {
-    fn list(&self, path: &str) -> FileResult<Vec<FileEntry>> {
-        self.client
-            .sftp_list(path)
-            .map_err(|error| self.map_error("list", error))
-    }
-
-    fn read(&self, path: &str) -> FileResult<Vec<u8>> {
-        self.client
-            .sftp_read(path)
-            .map_err(|error| self.map_error("read", error))
-    }
-
-    fn write(&self, path: &str, bytes: &[u8]) -> FileResult<()> {
-        self.client
-            .sftp_write(path, bytes)
-            .map_err(|error| self.map_error("write", error))
-    }
-
-    fn git_status(&self, root: &str) -> FileResult<String> {
-        let output = self
-            .client
-            .exec_read_only(RemoteReadCommand::GitStatus {
-                root: root.to_owned(),
-            })
-            .map_err(|error| self.map_error("git status", error))?;
-        if output.exit_status != 0 && output.exit_status != 128 {
-            return Err(FileServiceError::Remote {
-                operation: "git status".to_owned(),
-                target: self.client.host().host_id.clone(),
-                reason: format!(
-                    "exit={} stderr={}",
-                    output.exit_status,
-                    redact_output(&output.stderr)
-                ),
-            });
-        }
-        Ok(output.stdout)
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -3788,6 +3612,11 @@ impl RemoteConnectionRegistry {
     }
 }
 
+/// A socket path a device registration may name: absolute, one line.
+pub fn valid_remote_socket_path(path: &str) -> bool {
+    path.starts_with('/') && path.len() > 1 && !path.bytes().any(|byte| byte.is_ascii_control())
+}
+
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -3840,6 +3669,76 @@ mod tests {
             "/tmp/known_hosts",
         )
         .unwrap()
+    }
+
+    /// A changed host key, an unknown one and a refused sign-in each need a
+    /// different action, so the device row names which one it was (B38): the
+    /// words come from the real known_hosts check, not a copy of them.
+    #[test]
+    fn a_changed_or_unknown_host_key_and_a_refused_sign_in_are_told_apart() {
+        let offered = russh::keys::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBmTEAgbvSH51RTwhPKbL+uBW92zVlMr81wfUEJlRNkr",
+        )
+        .unwrap();
+        let recorded =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHDBmiUzbqzzahLz/nn+wP/Sotw5klGvW4QbnvZKoHbG";
+        let directory = tempfile::tempdir().unwrap();
+        let answer = |known_hosts: &str| {
+            let file = directory.path().join("known_hosts");
+            std::fs::write(&file, known_hosts).unwrap();
+            let mut alias = host();
+            alias.known_hosts_file = file;
+            let mut handler = KnownHostHandler::new(&alias, None);
+            let key = PublicKeyOrCertificate::PublicKey {
+                key: offered.clone(),
+                hash_alg: None,
+            };
+            Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(handler.check_server_key(&key))
+                .map_err(|error| error.to_string())
+        };
+
+        let changed = answer(&format!("[mini.example.test]:2200 {recorded}\n")).unwrap_err();
+        assert_eq!(
+            connection_problem(&changed),
+            Some("host_key_changed"),
+            "{changed}"
+        );
+        let unknown = answer("").unwrap_err();
+        assert_eq!(
+            connection_problem(&unknown),
+            Some("host_key_unknown"),
+            "{unknown}"
+        );
+        let trusted = answer(&format!(
+            "[mini.example.test]:2200 {}\n",
+            offered.to_openssh().unwrap()
+        ));
+        assert_eq!(trusted, Ok(true));
+
+        let refused = remote_error(
+            "remote-auth",
+            "mini",
+            RemoteStage::Auth,
+            "the ssh config sets IdentityAgent none and no IdentityFile authenticated",
+            false,
+            true,
+        );
+        assert_eq!(
+            connection_problem(&refused.to_string()),
+            Some("authentication")
+        );
+        let unreachable = remote_error(
+            "remote-connect",
+            "mini",
+            RemoteStage::Ssh,
+            "Connection refused",
+            true,
+            false,
+        );
+        assert_eq!(connection_problem(&unreachable.to_string()), None);
     }
 
     #[test]
@@ -3920,13 +3819,36 @@ mod tests {
 
     #[test]
     fn herdr_server_status_command_runs_without_a_login_shell() {
-        let command = RemoteReadCommand::HerdrServerStatus
+        let command = RemoteReadCommand::HerdrServerStatus { socket: None }
             .command_line()
             .expect("status command");
         assert_eq!(
             command,
             "PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr status server --json"
         );
+    }
+
+    #[test]
+    fn a_registered_herdr_socket_is_asked_for_by_name_and_quoted() {
+        let command = RemoteReadCommand::HerdrServerStatus {
+            socket: Some("/tmp/hide verify/herdr.sock".to_owned()),
+        }
+        .command_line()
+        .expect("status command");
+        assert_eq!(
+            command,
+            "HERDR_SOCKET_PATH='/tmp/hide verify/herdr.sock' PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr status server --json"
+        );
+        for invalid in ["relative.sock", "/tmp/a\nb.sock", "/"] {
+            assert!(
+                RemoteReadCommand::HerdrServerStatus {
+                    socket: Some(invalid.to_owned())
+                }
+                .command_line()
+                .is_err(),
+                "{invalid:?}"
+            );
+        }
     }
 
     #[test]
@@ -4154,39 +4076,6 @@ mod tests {
         shutdown();
         reader_thread.join().expect("reader thread joins");
         assert_eq!(observed, (true, true, true));
-    }
-
-    #[test]
-    #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_FILES_* variables"]
-    fn remote_sftp_fixture_probe() {
-        let alias_name = std::env::var("HERDR_TEST_REMOTE_FILES_SSH_ALIAS")
-            .expect("HERDR_TEST_REMOTE_FILES_SSH_ALIAS");
-        let root =
-            std::env::var("HERDR_TEST_REMOTE_FILES_ROOT").expect("HERDR_TEST_REMOTE_FILES_ROOT");
-        assert!(
-            root.starts_with("/private/tmp/herdr-ide-verify-remote-files-")
-                || root.starts_with("/tmp/herdr-ide-verify-remote-files-"),
-            "remote SFTP probe refused a root outside the owned fixture namespace"
-        );
-        let home = std::env::var_os("HOME").expect("HOME");
-        let alias =
-            SshAlias::from_config_file(&PathBuf::from(home).join(".ssh/config"), &alias_name)
-                .expect("fixture alias");
-        let client = Arc::new(RusshRemoteClient::new(alias).expect("remote client"));
-        let service = RemoteFileService::new(root.clone(), RusshSftpTransport::new(client))
-            .expect("remote file service");
-
-        let entries = service.list("").expect("SFTP directory list");
-        let marker = entries
-            .iter()
-            .find(|entry| entry.name == "marker.txt")
-            .expect("fixture marker");
-        assert_eq!(marker.kind, FileKind::File);
-        assert_eq!(marker.path, format!("{root}/marker.txt"));
-        assert_eq!(
-            service.open("marker.txt").expect("SFTP read").content,
-            "ok\n"
-        );
     }
 
     #[test]

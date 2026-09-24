@@ -123,6 +123,7 @@ impl ChangeNotifier {
 #[repr(C)]
 pub struct HerdrCore {
     _terminal_maintenance: Option<crate::terminal_recovery::Maintenance>,
+    _changes: Option<crate::changes::ChangesPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
@@ -135,6 +136,7 @@ impl Drop for HerdrCore {
         // completing attachment must not enqueue input during destruction.
         let attachment_worker = { lock_recover(&self.runtime).take_attachment_worker() };
         self._terminal_maintenance.take();
+        self._changes.take();
         self._session_sync.take();
         // Taken under the lock, joined outside it: a coordinator's last act is
         // to lock the runtime, so a join under the lock never returns.
@@ -266,8 +268,23 @@ impl HerdrCore {
                 None
             }
         };
+        // History reads through each checkout's own host, so it runs whether
+        // or not this machine has a Herdr session.
+        let changes =
+            match crate::changes::ChangesPump::spawn(Arc::downgrade(&runtime), notifier.clone()) {
+                Ok(pump) => Some(pump),
+                Err(error) => {
+                    lock_recover(&runtime).set_error(
+                        "changes.reader_unavailable",
+                        error.to_string(),
+                        true,
+                    );
+                    None
+                }
+            };
         Some(Box::new(HerdrCore {
             _terminal_maintenance: maintenance,
+            _changes: changes,
             _session_sync: session_sync,
             runtime,
             notifier,
@@ -302,6 +319,24 @@ impl HerdrCore {
         if check_owner_thread(self, "set_file_roots") {
             lock_recover(&self.runtime).set_file_roots(roots);
         }
+    }
+
+    /// Rust-only: where a device's file work runs, for the daemon's own
+    /// requests that answer outside the snapshot (the Explorer's listing).
+    /// Asking may start the device's helper, which the snapshot announces.
+    pub fn device_channel(
+        &self,
+        device_id: &str,
+    ) -> Result<std::sync::Arc<dyn crate::host_access::HostChannel>, String> {
+        if !check_owner_thread(self, "device_channel") {
+            return Err("the core was called off its owner thread".to_owned());
+        }
+        let result = lock_recover(&self.runtime).device_channel(device_id);
+        // Only a refusal can have started a helper connection.
+        if result.is_err() {
+            notify_change(self);
+        }
+        result
     }
 
     pub fn snapshot_delta(&self, have_revision: u64, have_terminal_sequence: u64) -> Vec<u8> {

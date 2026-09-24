@@ -30,13 +30,61 @@ fn remote_purpose_unavailable_reason(version: Option<&str>) -> String {
 }
 
 impl Runtime {
-    pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
-        let changes_list_visible = self.snapshot.ui_state.right_panel_visible
-            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Changes;
-        let explorer_visible = self.snapshot.ui_state.right_panel_visible
-            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Explorer;
-        let active_diff = self
-            .snapshot
+    /// What the changes view needs read, or `None` while nothing on screen
+    /// shows it. The checkout in front may be on this machine or on a device;
+    /// either is read by its own host.
+    pub fn changes_request(&mut self) -> Option<crate::changes::ChangesRequest> {
+        let (workspace_id, checkout_id, root_path) = self.changes_target()?;
+        let root = self.document_root(&workspace_id, &checkout_id).ok()?;
+        let channel = self
+            .changes_channel(&root.device_id)
+            .map(crate::changes::ChannelRef);
+        let active_diff = self.active_diff_tab();
+        let selected_path = active_diff
+            .map(|tab| tab.path.clone())
+            .or_else(|| self.snapshot.changes.selected_path.clone());
+        let selected_committed = active_diff
+            .and_then(|tab| tab.diff_committed)
+            .unwrap_or(self.snapshot.changes.selected_committed);
+        // The base comes from the checkout row, so the committed group and
+        // the card's `↑A ↓B` are measured against the same branch; a device
+        // checkout has none, and its host uses the repository default.
+        let base_branch = self
+            .catalog_checkout(&workspace_id, &checkout_id)
+            .and_then(|(_, checkout)| checkout.base_branch.clone());
+        Some(crate::changes::ChangesRequest {
+            root,
+            channel,
+            root_path,
+            selected_path,
+            selected_committed,
+            base_branch,
+        })
+    }
+
+    /// The device and folder the changes view is about now, the fence every
+    /// answer passes.
+    pub(crate) fn changes_key(&self) -> Option<crate::changes::ChangesKey> {
+        self.changes_target()?;
+        self.front_changes_key()
+    }
+
+    /// The device and folder History describes for the checkout in front,
+    /// whether or not anything shows it now.
+    fn front_changes_key(&self) -> Option<crate::changes::ChangesKey> {
+        let (workspace_id, checkout_id) = self.front_checkout()?;
+        let (workspace, _) = self.catalog_checkout(workspace_id, checkout_id)?;
+        Some(crate::changes::ChangesKey {
+            device_id: workspace.device_id.clone(),
+            root_path: self
+                .focused_changes_root_path()?
+                .to_string_lossy()
+                .into_owned(),
+        })
+    }
+
+    fn active_diff_tab(&self) -> Option<&EditorTabSnapshot> {
+        self.snapshot
             .editor
             .active_tab_id
             .as_deref()
@@ -46,28 +94,46 @@ impl Runtime {
                     .tabs
                     .iter()
                     .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::Diff)
-            });
-        if !changes_list_visible && !explorer_visible && active_diff.is_none() {
+            })
+    }
+
+    fn changes_target(&self) -> Option<(String, String, PathBuf)> {
+        let section_visible = |section| {
+            self.snapshot.ui_state.right_panel_visible
+                && self.snapshot.ui_state.right_panel_section == section
+        };
+        if !section_visible(RightPanelSection::Changes)
+            && !section_visible(RightPanelSection::Explorer)
+            && self.active_diff_tab().is_none()
+        {
             return None;
         }
-        let (_, checkout) = self.focused_local_checkout()?;
+        let (workspace_id, checkout_id) = self.front_checkout_owned()?;
         let root_path = self.focused_changes_root_path()?;
-        let selected_path = active_diff
-            .map(|tab| tab.path.clone())
-            .or_else(|| self.snapshot.changes.selected_path.clone());
-        let selected_committed = active_diff
-            .and_then(|tab| tab.diff_committed)
-            .unwrap_or(self.snapshot.changes.selected_committed);
-        Some(crate::changes::ChangesRequest {
-            root_path,
-            file_roots: self.file_roots.clone(),
-            checkout_path: PathBuf::from(&checkout.path),
-            selected_path,
-            selected_committed,
-            // The base comes from the checkout row, so the committed group and
-            // the card's `↑A ↓B` are measured against the same branch.
-            base_branch: checkout.base_branch.clone(),
-        })
+        Some((workspace_id, checkout_id, root_path))
+    }
+
+    /// The host the changes view reads through. A device's helper is asked
+    /// for once when the view first needs it; a helper that failed is not
+    /// asked again on every refresh, and the view says why until the
+    /// operator's next action retries it.
+    fn changes_channel(
+        &mut self,
+        device_id: &str,
+    ) -> Result<Arc<dyn crate::host_access::HostChannel>, String> {
+        if device_id != workspace::LOCAL_DEVICE_ID && !self.device_hosts.contains_key(device_id) {
+            self.start_device_host(device_id);
+        }
+        match self.device_hosts.get(device_id).map(|host| &host.phase) {
+            _ if device_id == workspace::LOCAL_DEVICE_ID => Ok(Arc::clone(&self.local_host)),
+            Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
+                Ok(Arc::clone(host))
+            }
+            _ => Err(self
+                .host_snapshot(device_id)
+                .message
+                .unwrap_or_else(|| "The device helper is not ready".to_owned())),
+        }
     }
 
     /// A registration can name a folder inside its Git checkout. The
@@ -75,15 +141,17 @@ impl Runtime {
     /// root after Herdr occupies it, so use the registration's own path.
     /// Linked worktree rows use their own checkout root.
     pub(super) fn focused_changes_root_path(&self) -> Option<PathBuf> {
-        let (workspace, checkout) = self.focused_local_checkout()?;
+        let (workspace_id, checkout_id) = self.front_checkout()?;
+        let (workspace, checkout) = self.catalog_checkout(workspace_id, checkout_id)?;
         let checkout_root = PathBuf::from(&checkout.path);
-        if workspace.registered {
-            let registered = self
+        if workspace.registered
+            && let Some(registered) = self
                 .snapshot
                 .ui_state
                 .workspace_registrations
                 .iter()
-                .find(|registration| registration.id == workspace.id)?;
+                .find(|registration| registration.id == workspace.id)
+        {
             let registered = PathBuf::from(&registered.path);
             if registered.starts_with(&checkout_root) {
                 return Some(registered);
@@ -99,6 +167,14 @@ impl Runtime {
         self.snapshot.navigator.changes_root_path = self
             .focused_changes_root_path()
             .map(|path| path.to_string_lossy().into_owned());
+        // The same folder on another device is another checkout: a projection
+        // read on the one left behind is dropped in this same frame rather
+        // than shown under the new device until the next read lands (B22).
+        let front = self.front_changes_key();
+        if self.changes_published_key.is_some() && self.changes_published_key != front {
+            self.snapshot.changes = crate::model::ChangesSnapshot::default();
+            self.changes_published_key = None;
+        }
     }
 
     pub fn worktrees_request(&self) -> crate::worktrees::WorktreeRequest {
@@ -357,7 +433,6 @@ impl Runtime {
                 worktree.deletion_gate = crate::worktrees::deletion_gate(
                     worktree,
                     worktree.branch == project.base_branch && project.base_branch.is_some(),
-                    false,
                     worktree.pane_count,
                     worktree.running_agent_count,
                 );
@@ -667,6 +742,13 @@ impl Runtime {
             );
             return true;
         }
+        if let Some(device) = payload
+            .device_id
+            .clone()
+            .filter(|device| device != workspace::LOCAL_DEVICE_ID)
+        {
+            return self.remove_device_worktree(&device, payload);
+        }
         let target = self.worktree_catalog.projects.iter().find_map(|project| {
             project
                 .worktrees
@@ -708,6 +790,7 @@ impl Runtime {
         let id = self.next_worktree_removal_id;
         self.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
             id,
+            device_id: None,
             repository_root,
             checkout_path: payload.checkout_path.clone(),
             expected_head_sha: worktree.head_sha.clone(),
@@ -728,13 +811,108 @@ impl Runtime {
                 "pane_ids":pane_ids,
             })
         );
-        let Some(context) = self.live.as_ref().cloned() else {
-            return self.ingest_worktree_close_result(
-                id,
-                &[],
-                Err("Deleting a worktree needs a live Herdr connection".to_owned()),
-            );
+        let context = match self.local_worktree_target() {
+            Ok(context) => context,
+            Err(message) => {
+                return self.ingest_worktree_close_result(
+                    id,
+                    &[],
+                    Err(format!(
+                        "Deleting a worktree needs a live Herdr connection: {message}"
+                    )),
+                );
+            }
         };
+        if let Err(message) =
+            live::spawn_worktree_close(context, id, payload.checkout_path, pane_ids)
+        {
+            self.ingest_worktree_close_result(id, &[], Err(message));
+        }
+        true
+    }
+
+    /// `remove_worktree` for a device's linked worktree (PRD S5.5 B28, B29):
+    /// the same gate, receipt and phases as this machine's, with the device's
+    /// Herdr closing its panes and its helper rechecking and removing.
+    fn remove_device_worktree(&mut self, device: &str, payload: RemoveWorktreePayload) -> bool {
+        let target = self.device_worktrees.get(device).and_then(|worktrees| {
+            worktrees.projects.values().find_map(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .find(|worktree| worktree.path == payload.checkout_path)
+                    .map(|worktree| {
+                        (
+                            project.root_path.clone(),
+                            project.base_branch.clone(),
+                            worktree.clone(),
+                        )
+                    })
+            })
+        });
+        let Some((repository_root, protected_base_branch, worktree)) = target else {
+            self.set_error(
+                "worktree.remove_unknown",
+                format!("Worktree is no longer listed: {}", payload.checkout_path),
+                true,
+            );
+            self.request_device_worktrees(device, true);
+            return true;
+        };
+        if let Some(reason) = worktree.deletion_gate.blocked_reason.as_ref() {
+            self.set_error("worktree.remove_blocked", reason.clone(), true);
+            return true;
+        }
+        let context = match self.device_worktree_target(device) {
+            Ok(context) => context,
+            Err(message) => {
+                self.set_error(
+                    "worktree.remove_unavailable",
+                    format!("Deleting a worktree on this device needs its connection: {message}"),
+                    true,
+                );
+                return true;
+            }
+        };
+        // Herdr closes a device's panes by its own ids.
+        let pane_ids = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device)
+            .and_then(|status| status.session.as_ref())
+            .into_iter()
+            .flat_map(|session| &session.workspaces)
+            .flat_map(|workspace| &workspace.checkouts)
+            .filter(|checkout| checkout.path == payload.checkout_path)
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes)
+            .filter_map(|pane| super::remote_pane_source_id(device, &pane.id))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        self.next_worktree_removal_id = self.next_worktree_removal_id.wrapping_add(1).max(1);
+        let id = self.next_worktree_removal_id;
+        self.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+            id,
+            device_id: Some(device.to_owned()),
+            repository_root,
+            checkout_path: payload.checkout_path.clone(),
+            expected_head_sha: worktree.head_sha.clone(),
+            expected_branch: worktree.branch.clone(),
+            protected_base_branch,
+            branch: worktree.branch,
+            delete_branch: payload.delete_branch && worktree.deletion_gate.can_delete_branch,
+            phase: "closing".to_owned(),
+            message: None,
+        });
+        crate::diagnostic!(serde_json::json!({
+            "component": "worktree_removal",
+            "kind": "close_requested",
+            "target": device,
+            "id": id,
+            "pane_count": pane_ids.len(),
+        }));
         if let Err(message) =
             live::spawn_worktree_close(context, id, payload.checkout_path, pane_ids)
         {
@@ -768,6 +946,12 @@ impl Runtime {
             return false;
         }
         registration.pinned = payload.pinned;
+        let device = registration.device_id.clone();
+        if device != workspace::LOCAL_DEVICE_ID {
+            // A device's rows are derived from its registrations, so the row
+            // moves when its session is derived again.
+            self.refresh_device_catalog(&device);
+        }
         for workspace in self
             .snapshot
             .navigator
@@ -829,10 +1013,29 @@ impl Runtime {
             );
             return true;
         }
-        let (checkout_paths, pane_ids) = self
+        let device = self
             .snapshot
-            .navigator
-            .workspaces
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .find(|registration| registration.id == payload.workspace_id)
+            .map(|registration| registration.device_id.clone())
+            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
+        // A device's project lists its panes in that device's session, by
+        // scoped ids; Herdr there closes them by its own.
+        let rows = match device.as_deref() {
+            Some(device) => self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == device)
+                .and_then(|status| status.session.as_ref())
+                .map(|session| session.workspaces.as_slice())
+                .unwrap_or_default(),
+            None => self.snapshot.navigator.workspaces.as_slice(),
+        };
+        let (checkout_paths, pane_ids) = rows
             .iter()
             .filter(|workspace| workspace.id == payload.workspace_id)
             .flat_map(|workspace| &workspace.checkouts)
@@ -840,13 +1043,14 @@ impl Runtime {
                 (Vec::new(), Vec::new()),
                 |(mut paths, mut panes), checkout| {
                     paths.push(checkout.path.clone());
-                    panes.extend(
-                        checkout
-                            .tabs
-                            .iter()
-                            .flat_map(|tab| &tab.panes)
-                            .map(|pane| pane.id.clone()),
-                    );
+                    panes.extend(checkout.tabs.iter().flat_map(|tab| &tab.panes).filter_map(
+                        |pane| match device.as_deref() {
+                            Some(device) => {
+                                super::remote_pane_source_id(device, &pane.id).map(str::to_owned)
+                            }
+                            None => Some(pane.id.clone()),
+                        },
+                    ));
                     (paths, panes)
                 },
             );
@@ -856,14 +1060,22 @@ impl Runtime {
         crate::diagnostic!(serde_json::json!({
             "component": "registration", "kind": "remove.close_requested",
             "workspace_id": payload.workspace_id, "pane_ids": pane_ids,
+            "target": device.as_deref().unwrap_or(workspace::LOCAL_DEVICE_ID),
         }));
-        let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "workspace.remove_failed",
-                "Removing a project with open panes needs a live Herdr connection",
-                true,
-            );
-            return true;
+        let context = match device.as_deref() {
+            Some(device) => self.device_worktree_target(device),
+            None => self.local_worktree_target(),
+        };
+        let context = match context {
+            Ok(context) => context,
+            Err(message) => {
+                self.set_error(
+                    "workspace.remove_failed",
+                    format!("Removing a project with open panes needs its device's Herdr connection: {message}"),
+                    true,
+                );
+                return true;
+            }
         };
         self.workspace_removals_in_flight
             .insert(payload.workspace_id.clone());
@@ -919,6 +1131,9 @@ impl Runtime {
             .ui_state
             .workspace_registrations
             .iter()
+            // Only this machine's registrations: a device's project at the
+            // same absolute path is another folder (B2).
+            .filter(|registration| registration.device_id == workspace::LOCAL_DEVICE_ID)
             .filter(|registration| self.workspace_removals_in_flight.contains(&registration.id))
             .find(|registration| Path::new(&registration.path) == requested)
             .map(|registration| registration.id.clone())
@@ -926,7 +1141,7 @@ impl Runtime {
 
     /// Whether a creation still running names the folder `workspace_id`
     /// registers; creation is keyed by the requested path, not the id.
-    fn workspace_creation_in_flight_for(&self, workspace_id: &str) -> bool {
+    pub(super) fn workspace_creation_in_flight_for(&self, workspace_id: &str) -> bool {
         if self.workspace_creations_in_flight.is_empty() {
             return false;
         }
@@ -934,7 +1149,11 @@ impl Runtime {
             .ui_state
             .workspace_registrations
             .iter()
-            .filter(|registration| registration.id == workspace_id)
+            // Creations in flight are this machine's folders only (B2).
+            .filter(|registration| {
+                registration.id == workspace_id
+                    && registration.device_id == workspace::LOCAL_DEVICE_ID
+            })
             .any(|registration| {
                 self.workspace_creations_in_flight
                     .iter()
@@ -945,6 +1164,14 @@ impl Runtime {
     /// Drops the registration and its row. Files, worktrees and Herdr
     /// workspaces are never touched here.
     fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
+        let device = self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .find(|registration| registration.id == workspace_id)
+            .map(|registration| registration.device_id.clone())
+            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
         let before = self.snapshot.ui_state.workspace_registrations.len();
         self.snapshot
             .ui_state
@@ -952,6 +1179,9 @@ impl Runtime {
             .retain(|registration| registration.id != workspace_id);
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
+        }
+        if let Some(device) = device {
+            self.refresh_device_catalog(&device);
         }
         // The focused checkout and the selected pane leave with the project;
         // kept, they would name a checkout no catalog carries and the sync
@@ -1025,10 +1255,17 @@ impl Runtime {
         }
         let mut result = result;
         if result.is_ok() {
-            let current = self
-                .worktree_catalog
-                .projects
-                .iter()
+            let device = active.device_id.as_deref();
+            let catalog = match device {
+                Some(device) => self
+                    .device_worktrees
+                    .get(device)
+                    .map(|worktrees| worktrees.projects.values().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+                None => self.worktree_catalog.projects.iter().collect(),
+            };
+            let current = catalog
+                .into_iter()
                 .flat_map(|project| &project.worktrees)
                 .find(|worktree| worktree.path == active.checkout_path);
             let identity_changed = current.is_none_or(|worktree| {
@@ -1036,16 +1273,32 @@ impl Runtime {
                     || worktree.branch != active.expected_branch
                     || worktree.deletion_gate.blocked_reason.is_some()
             });
-            let pane_reappeared = self
-                .snapshot
-                .navigator
-                .workspaces
+            // The close worker names a device's panes by Herdr's own ids.
+            let workspaces = match device {
+                Some(device) => self
+                    .snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .find(|status| status.target_id == device)
+                    .and_then(|status| status.session.as_ref())
+                    .map(|session| session.workspaces.as_slice())
+                    .unwrap_or_default(),
+                None => self.snapshot.navigator.workspaces.as_slice(),
+            };
+            let pane_reappeared = workspaces
                 .iter()
                 .flat_map(|workspace| &workspace.checkouts)
                 .filter(|checkout| checkout.path == active.checkout_path)
                 .flat_map(|checkout| &checkout.tabs)
                 .flat_map(|tab| &tab.panes)
-                .any(|pane| !closed_pane_ids.contains(&pane.id));
+                .any(|pane| {
+                    let id = match device {
+                        Some(device) => super::remote_pane_source_id(device, &pane.id),
+                        None => Some(pane.id.as_str()),
+                    };
+                    id.is_none_or(|id| !closed_pane_ids.iter().any(|closed| closed == id))
+                });
             if identity_changed || pane_reappeared {
                 result = Err(if pane_reappeared {
                     "A pane appeared in the worktree while deletion was being confirmed".to_owned()
@@ -1109,10 +1362,10 @@ impl Runtime {
     pub(crate) fn confirmed_worktree_removal(
         &self,
         id: u64,
-    ) -> Option<crate::live::cleanup::ConfirmedRemoval> {
+    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
         let removal = self.snapshot.worktree_removal.as_ref()?;
         (removal.id == id && removal.phase == "removing").then(|| {
-            crate::live::cleanup::ConfirmedRemoval {
+            hide_host::worktrees::ConfirmedRemoval {
                 repository_root: removal.repository_root.clone(),
                 checkout_path: removal.checkout_path.clone(),
                 expected_head_sha: removal.expected_head_sha.clone(),
@@ -1154,8 +1407,37 @@ impl Runtime {
         removal.message = Some(message);
         // A refused removal re-reads too: whatever stopped it (a moved HEAD,
         // a dirty file) is news the catalog should show.
-        self.refresh_worktrees();
+        match removal.device_id.clone() {
+            Some(device) => {
+                self.request_device_worktrees(&device, true);
+            }
+            None => self.refresh_worktrees(),
+        }
         true
+    }
+
+    /// This machine's Herdr and file host, for a worktree task here.
+    pub(super) fn local_worktree_target(&self) -> Result<live::WorktreeTarget, String> {
+        self.live
+            .as_ref()
+            .map(|context| live::WorktreeTarget::local(context, Arc::clone(&self.local_host)))
+            .ok_or_else(|| "A live Herdr connection is required".to_owned())
+    }
+
+    /// A device's Herdr and file helper, for a worktree task there. Both
+    /// have to be up: Herdr creates and closes the panes, the helper checks
+    /// and removes on the device's disk.
+    pub(super) fn device_worktree_target(
+        &mut self,
+        device: &str,
+    ) -> Result<live::WorktreeTarget, String> {
+        let control = self
+            .remote_controls
+            .get(device)
+            .cloned()
+            .ok_or_else(|| "The device's Herdr connection is unavailable".to_owned())?;
+        let host = self.device_channel(device)?;
+        Ok(live::WorktreeTarget::device(&control, host))
     }
 
     pub fn disk_request(&self) -> crate::disk::DiskRequest {
@@ -1359,15 +1641,37 @@ impl Runtime {
             );
             return true;
         }
-        let has_branch = self
-            .worktree_catalog
-            .project(&payload.repository_root)
-            .is_some_and(|project| {
-                project
-                    .worktrees
-                    .iter()
-                    .any(|row| row.branch.is_some() && row.head_sha.is_some())
-            });
+        let device = payload
+            .device_id
+            .clone()
+            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
+        let listed = match device.as_deref() {
+            Some(device) => self
+                .device_worktrees
+                .get(device)
+                .and_then(|worktrees| worktrees.projects.get(&payload.repository_root)),
+            None => self.worktree_catalog.project(&payload.repository_root),
+        };
+        // A repository whose worktrees have not been read yet is not one
+        // without branches: a device's are read after its helper answers.
+        let Some(listed) = listed else {
+            self.set_error(
+                "worktree.create_unread",
+                format!(
+                    "The worktrees of {} have not been read yet; try again in a moment",
+                    payload.repository_root
+                ),
+                true,
+            );
+            if let Some(device) = device.as_deref() {
+                self.request_device_worktrees(device, false);
+            }
+            return true;
+        };
+        let has_branch = listed
+            .worktrees
+            .iter()
+            .any(|row| row.branch.is_some() && row.head_sha.is_some());
         if !has_branch {
             self.set_error(
                 "worktree.create_without_branches",
@@ -1389,6 +1693,9 @@ impl Runtime {
                 return true;
             }
         };
+        if let Some(operation) = self.snapshot.task_operation.as_mut() {
+            operation.device_id = device.clone();
+        }
         let request = live::WorktreeTaskRequest {
             id,
             repository_root: payload.repository_root,
@@ -1398,11 +1705,16 @@ impl Runtime {
             focus: true,
             purpose: payload.purpose,
         };
-        let Some(context) = self.live.as_ref().cloned() else {
-            return self.ingest_task_operation_result(
-                id,
-                Err("create worktree: a live Herdr connection is required".into()),
-            );
+        let context = match device.as_deref() {
+            Some(device) => self.device_worktree_target(device),
+            None => self.local_worktree_target(),
+        };
+        let context = match context {
+            Ok(context) => context,
+            Err(message) => {
+                return self
+                    .ingest_task_operation_result(id, Err(format!("create worktree: {message}")));
+            }
         };
         if let Err(message) = live::spawn_worktree_create(context, request) {
             return self.ingest_task_operation_result(id, Err(message));
@@ -1516,8 +1828,11 @@ impl Runtime {
                 );
             }
         }
-        let session_workspace_id = if remote_target_id.is_some() {
-            workspace.session_workspace_ids.last().cloned()
+        // A device checkout names the one Herdr workspace that holds it; its
+        // project can hold several (`device_catalog`).
+        let session_workspace_id = if let Some(target_id) = remote_target_id.as_deref() {
+            crate::device_catalog::remote_checkout_source_id(target_id, &checkout.id)
+                .map(str::to_owned)
         } else {
             workspace::authoritative_session_space(
                 &self.last_session_spaces,
@@ -1810,13 +2125,24 @@ impl Runtime {
     /// Accepts a projection only while it still describes the checkout the
     /// runtime is asking about, so a slow read against a checkout the operator
     /// has already left cannot overwrite the current one.
-    pub fn ingest_changes(&mut self, changes: crate::model::ChangesSnapshot) -> bool {
-        let expected = self
-            .changes_request()
-            .map(|request| request.root_path.to_string_lossy().into_owned());
-        if expected != changes.root_path {
+    pub fn ingest_changes(&mut self, answer: crate::changes::ChangesAnswer) -> bool {
+        if answer.key != self.changes_key() {
             return false;
         }
+        let mut changes = answer.changes;
+        // A failed read of the checkout already on screen keeps the list its
+        // last successful read confirmed, marked stale with the reason,
+        // rather than replacing it with nothing (S5.5 B22).
+        if let Some(reason) = changes.unavailable_reason.clone()
+            && self.changes_published_key == answer.key
+            && self.snapshot.changes.unavailable_reason.is_none()
+            && self.snapshot.changes.root_path == changes.root_path
+        {
+            let mut kept = self.snapshot.changes.clone();
+            kept.stale_reason = Some(reason);
+            changes = kept;
+        }
+        self.changes_published_key = answer.key;
         if self.snapshot.changes == changes {
             return false;
         }

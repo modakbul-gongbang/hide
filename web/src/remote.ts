@@ -16,6 +16,9 @@ export type RemoteContext = {
   session: RemoteSession | null;
 };
 
+/** The suffix of a registered device project's checkout while Herdr has no workspace in it (`device_catalog::REGISTERED_CHECKOUT`). */
+export const REGISTERED_CHECKOUT = "#registered";
+
 /**
  * The SSH device the operator selected, with its connection and session, or
  * null while this machine is the context.
@@ -64,7 +67,7 @@ function tabById(session: RemoteSession, tabId: string | null | undefined): { wo
 export function remoteView(session: RemoteSession | null): RemoteView | null {
   if (!session) return null;
   const activeTabId =
-    session.focused_tab_id ?? (session.focused_workspace_id ? session.active_tab_ids[session.focused_workspace_id] : undefined);
+    session.focused_tab_id ?? (session.focused_checkout_id ? session.active_tab_ids[session.focused_checkout_id] : undefined);
   const found = tabById(session, activeTabId);
   let workspace = found?.workspace ?? null;
   let checkout = found?.checkout ?? null;
@@ -128,9 +131,9 @@ export type RemoteAction =
   | { action: "split_pane"; pane_id: string; direction: "right" | "down"; cwd: string | null }
   | { action: "toggle_pane_zoom"; pane_id: string }
   | { action: "close_pane"; pane_id: string; confirmed: boolean }
-  | { action: "focus_workspace"; workspace_id: string }
+  | { action: "focus_workspace"; workspace_id: string; checkout_id: string }
   | { action: "focus_tab"; tab_id: string }
-  | { action: "create_tab"; workspace_id: string; cwd: string; label: string }
+  | { action: "create_tab"; workspace_id: string; checkout_id: string; cwd: string; label: string }
   | { action: "close_tab"; tab_id: string; confirmed: boolean };
 
 /** One `remote_control` event for `targetId` (core `RemoteControlPayload`). */
@@ -171,4 +174,50 @@ export function supportsRemotePurpose(version: string | null | undefined): boole
   if (major !== 0) return major > 0;
   if (minor !== 9) return minor > 9;
   return patch >= 1;
+}
+
+export type DeviceCatalogLine = {
+  state: "loading" | "error" | "stale" | "empty" | "resolving" | "unavailable" | "partial";
+  text: string;
+};
+
+/**
+ * What the project list of a selected device says above its rows (PRD S5.5
+ * B4): still loading, failed, disconnected with the last list kept, empty,
+ * or listed but not yet confirmed by the device's helper. Null when the list
+ * is the device's confirmed projects. A failure is never shown as an empty
+ * list, and an unconfirmed list is never shown as a confirmed one.
+ */
+export function deviceCatalogLine(context: RemoteContext): DeviceCatalogLine | null {
+  const label = context.device.label;
+  const status = context.status;
+  const session = context.session;
+  const connected = status?.state === "connected";
+  if (!session) {
+    if (!status || status.state === "not_connected" || status.state === "connecting") {
+      return { state: "loading", text: `Reading projects from ${label}…` };
+    }
+    return { state: "error", text: `${label} is ${status.state.replace(/_/g, " ")}${status.message ? `: ${status.message}` : ""}` };
+  }
+  if (!connected) {
+    return { state: "stale", text: `${label} is not connected. These are the projects it last reported.` };
+  }
+  if (session.workspaces.length === 0) {
+    return { state: "empty", text: `No Herdr workspace is open on ${label}.` };
+  }
+  const catalog = status?.catalog;
+  if (catalog?.state === "resolving") {
+    return { state: "resolving", text: `Confirming the projects on ${label}…` };
+  }
+  if (catalog?.state === "unavailable") {
+    return {
+      state: "unavailable",
+      text: `Projects on ${label} are listed by workspace until its helper can confirm them${catalog.message ? `: ${catalog.message}` : "."}`,
+    };
+  }
+  if (catalog && catalog.refused.length > 0) {
+    const count = catalog.refused.length;
+    return { state: "partial", text: `${count} folder${count === 1 ? "" : "s"} on ${label} could not be read and ${count === 1 ? "is" : "are"} listed by workspace.` };
+  }
+  return null;
 }

@@ -48,10 +48,10 @@ pub(crate) mod cleanup;
 mod worktree_control;
 pub use worktree_control::{
     CheckoutTabRequest, IssueWriteFailure, PurposeMirror, PurposeTaskOutcome, PurposeTaskRequest,
-    TaskAgentOutcome, WorktreeTaskOutcome, WorktreeTaskRequest, spawn_branch_migration,
-    spawn_checkout_tab_create, spawn_issue_write, spawn_purpose_write, spawn_remote_purpose_write,
-    spawn_task_agent_start, spawn_workspace_close, spawn_worktree_close, spawn_worktree_create,
-    spawn_worktree_open,
+    TaskAgentOutcome, WorktreeTarget, WorktreeTaskOutcome, WorktreeTaskRequest,
+    spawn_branch_migration, spawn_checkout_tab_create, spawn_issue_write, spawn_purpose_write,
+    spawn_remote_purpose_write, spawn_task_agent_start, spawn_workspace_close,
+    spawn_worktree_close, spawn_worktree_create, spawn_worktree_open,
 };
 
 /// Everything a terminal session spawn needs from the live configuration.
@@ -1045,7 +1045,7 @@ pub struct ReopenOutcome {
 
 #[derive(Debug)]
 pub enum FileReopenResult {
-    Opened(EditorDocumentSnapshot),
+    Opened(Box<(EditorDocumentSnapshot, crate::files::DocumentPlace)>),
     Missing,
     Failed(String),
 }
@@ -1076,7 +1076,8 @@ pub fn spawn_file_reopen(
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     request: ReopenRequest,
-    roots: Option<crate::files::FileRoots>,
+    root: crate::files::DocumentRoot,
+    channel: std::sync::Arc<dyn crate::host_access::HostChannel>,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-file-reopen".to_owned())
@@ -1084,7 +1085,7 @@ pub fn spawn_file_reopen(
             let ClosedItem::File { path, .. } = &request.item else {
                 return;
             };
-            let result = Ok(run_file_reopen_with_roots(path, roots.as_ref()));
+            let result = Ok(run_file_reopen(channel.as_ref(), &root, path));
             let Some(runtime) = runtime.upgrade() else {
                 return;
             };
@@ -1107,35 +1108,15 @@ pub enum FileReopenResultOrHerdr {
     Herdr(ReopenOutcome),
 }
 
-#[cfg(test)]
-fn run_file_reopen(path: &str) -> FileReopenResultOrHerdr {
-    run_file_reopen_with_roots(path, None)
-}
-
-fn run_file_reopen_with_roots(
+fn run_file_reopen(
+    channel: &dyn crate::host_access::HostChannel,
+    root: &crate::files::DocumentRoot,
     path: &str,
-    roots: Option<&crate::files::FileRoots>,
 ) -> FileReopenResultOrHerdr {
-    let path = Path::new(path);
-    let inspected = match roots {
-        Some(roots) => roots.open(path, false).and_then(|file| file.metadata()),
-        None => std::fs::metadata(path),
-    };
-    match inspected {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return FileReopenResultOrHerdr::File(FileReopenResult::Missing);
-        }
-        Err(error) => {
-            return FileReopenResultOrHerdr::File(FileReopenResult::Failed(format!(
-                "{} metadata could not be read: {error}",
-                path.display()
-            )));
-        }
-    }
-    FileReopenResultOrHerdr::File(match crate::files::open_with_roots(path, roots) {
-        Ok(document) => FileReopenResult::Opened(document),
-        Err(message) => FileReopenResult::Failed(message),
+    FileReopenResultOrHerdr::File(match crate::files::open_document(channel, root, path) {
+        Ok(opened) => FileReopenResult::Opened(Box::new(opened)),
+        Err(crate::files::OpenFailure::Missing) => FileReopenResult::Missing,
+        Err(failure) => FileReopenResult::Failed(failure.message()),
     })
 }
 
@@ -2000,15 +1981,13 @@ pub fn spawn_remote_control(
             format!("herdr-core-remote-{target_id}-tab-create")
         }
         RemoteControlAction::CreateWorkspace { .. } => {
-            return Err("a remote context cannot create a local workspace".to_owned());
+            format!("herdr-core-remote-{target_id}-workspace-create")
         }
         RemoteControlAction::CloseTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-close")
         }
-        // A remote context browses Herdr's own tab order and owns no strip
-        // slots, so there is nothing here for a reorder to move.
         RemoteControlAction::MoveTab { .. } => {
-            return Err("a remote context's tab order cannot be reordered".to_owned());
+            format!("herdr-core-remote-{target_id}-tab-move")
         }
     };
     thread::Builder::new()
@@ -3392,14 +3371,22 @@ mod tests {
         std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000))
             .expect("deny traversal");
 
-        let result = run_file_reopen(file.to_str().unwrap());
+        let result = run_file_reopen(
+            &crate::host_access::InProcessHost,
+            &crate::files::DocumentRoot {
+                device_id: "local".to_owned(),
+                path: root.to_string_lossy().into_owned(),
+                identity: None,
+            },
+            file.to_str().unwrap(),
+        );
 
         std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o700))
             .expect("restore traversal");
         std::fs::remove_dir_all(&root).expect("remove fixture");
         match result {
             FileReopenResultOrHerdr::File(FileReopenResult::Failed(message)) => {
-                assert!(message.contains("metadata could not be read"));
+                assert!(message.contains("could not be opened"), "{message}");
             }
             other => panic!("permission failure must stay retryable, got {other:?}"),
         }

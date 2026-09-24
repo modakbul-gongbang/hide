@@ -18,6 +18,9 @@ struct CoreChangesSnapshot: Decodable {
     /// Why there is nothing to list. An empty list with no reason means the
     /// checkout genuinely has no changes.
     let unavailableReason: String?
+    /// Why the list shown is the last one read rather than a fresh one: the
+    /// latest read failed and the previous list is kept with its reason.
+    let staleReason: String?
 
     enum CodingKeys: String, CodingKey {
         case rootPath = "root_path"
@@ -28,6 +31,7 @@ struct CoreChangesSnapshot: Decodable {
         case selectedCommitted = "selected_committed"
         case diff
         case unavailableReason = "unavailable_reason"
+        case staleReason = "stale_reason"
     }
 
     static let empty = CoreChangesSnapshot(
@@ -49,7 +53,8 @@ struct CoreChangesSnapshot: Decodable {
         selectedPath: String?,
         selectedCommitted: Bool = false,
         diff: CoreChangedFileDiff?,
-        unavailableReason: String?
+        unavailableReason: String?,
+        staleReason: String? = nil
     ) {
         self.rootPath = rootPath
         self.entries = entries
@@ -59,6 +64,7 @@ struct CoreChangesSnapshot: Decodable {
         self.selectedCommitted = selectedCommitted
         self.diff = diff
         self.unavailableReason = unavailableReason
+        self.staleReason = staleReason
     }
 
     init(from decoder: Decoder) throws {
@@ -71,6 +77,7 @@ struct CoreChangesSnapshot: Decodable {
         selectedCommitted = try container.decodeIfPresent(Bool.self, forKey: .selectedCommitted) ?? false
         diff = try container.decodeIfPresent(CoreChangedFileDiff.self, forKey: .diff)
         unavailableReason = try container.decodeIfPresent(String.self, forKey: .unavailableReason)
+        staleReason = try container.decodeIfPresent(String.self, forKey: .staleReason)
     }
 }
 struct CoreChangedFile: Decodable, Identifiable, Equatable {

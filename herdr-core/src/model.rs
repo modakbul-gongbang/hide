@@ -13,6 +13,15 @@ pub struct CoreOptions {
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
     pub app_state_path: String,
+    /// The folder holding `hide-host-helper` builds for devices. Absent in a
+    /// shell that serves no device files (the Swift shell until S10), which
+    /// leaves every device's host `unsupported` with that reason.
+    #[serde(default)]
+    pub host_helper_dir: Option<String>,
+    /// Where the helper is installed on devices; `~/` is the device account's
+    /// home. Absent means `remote::host::DEFAULT_HELPER_ROOT`.
+    #[serde(default)]
+    pub host_helper_root: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -270,10 +279,43 @@ pub struct DeviceSnapshot {
     /// Why an SSH device is not `ready`, in the words its remote status
     /// carries; `None` while it is.
     pub message: Option<String>,
+    /// Which trust or sign-in step refused the connection, when one did:
+    /// `host_key_changed`, `host_key_unknown` or `authentication`, each
+    /// needing a different action from the operator (PRD S5.5 B38); `None`
+    /// for any other state.
+    pub problem: Option<String>,
     pub ssh_alias: Option<String>,
+    /// The Herdr socket the registration names on the device, if any.
+    pub herdr_socket_path: Option<String>,
     pub agent_count: u32,
     /// The last connection test the operator asked for, or the one running.
     pub test: Option<DeviceTestSnapshot>,
+    /// Where file and Git work for this device runs, and whether it may.
+    pub host: DeviceHostSnapshot,
+}
+
+/// A device's file host as the operator reads it in Settings and wherever a
+/// file or Git action needs it (PRD S5.5 B36, B50-B52).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct DeviceHostSnapshot {
+    /// `this_machine` for the daemon's own machine; for a device `none`,
+    /// `granted`, or `outdated` when the consent covers an older scope.
+    pub consent: String,
+    /// The install root the consent names or would name. On this machine's
+    /// row it is the root a new device consent would name, so the add form
+    /// can say where the helper goes before the operator agrees.
+    pub helper_root: Option<String>,
+    pub contract: u32,
+    /// `user@host:port (SHA256:...)` the consent is bound to, once bound.
+    pub bound_identity: Option<String>,
+    pub granted_at_unix_ms: Option<u64>,
+    /// `ready`, `connecting`, `not_allowed`, `identity_changed`,
+    /// `unsupported` (this build cannot serve the device) or `unavailable`.
+    pub state: String,
+    pub message: Option<String>,
+    /// `macos aarch64` as the helper reported it.
+    pub platform: Option<String>,
+    pub helper_path: Option<String>,
 }
 
 /// One staged connection test of an SSH device: SSH, authentication, Herdr,
@@ -1150,6 +1192,16 @@ pub struct EditorSnapshot {
     pub active_tab_id: Option<String>,
     pub document: Option<EditorDocumentSnapshot>,
     pub archive_detail: Option<ArchiveDetailSnapshot>,
+    /// Files being read on a device before their tabs can show; one per
+    /// file, in the order they were asked for.
+    pub opening: Vec<EditorOpeningSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct EditorOpeningSnapshot {
+    pub workspace_id: String,
+    pub checkout_id: String,
+    pub path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1316,28 +1368,11 @@ pub struct MemoryNoticeSnapshot {
     pub undo_batch_id: Option<String>,
 }
 
-/// What kind of document an open file is, decided once by the core when the
-/// file is read (`files::open`) and drawn by the shell as one view per kind.
-/// Adding a kind is one variant here and one case in the shell's switch;
-/// nothing else in the shell inspects extensions or bytes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DocumentKind {
-    Text,
-    Markdown,
-    Image,
-    Pdf,
-    /// Not UTF-8 and not a kind the shell can draw on its own.
-    Binary,
-}
-
-impl DocumentKind {
-    /// Only text-backed kinds take a draft; the others never carry
-    /// `contents_utf8`, so an edit has nothing to apply to.
-    pub fn is_editable(self) -> bool {
-        matches!(self, Self::Text | Self::Markdown)
-    }
-}
+/// What kind of document an open file is, decided once by the host that
+/// read it (`hide_host::document`) and drawn by the shell as one view per
+/// kind. Adding a kind is one variant there and one case in the shell's
+/// switch; nothing else in the shell inspects extensions or bytes.
+pub use hide_host::document::DocumentKind;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorDocumentSnapshot {
@@ -1345,12 +1380,31 @@ pub struct EditorDocumentSnapshot {
     pub language: Option<String>,
     pub document_kind: DocumentKind,
     pub contents_utf8: Option<String>,
-    pub opened_modified_at_unix_ms: Option<u64>,
+    /// The content revision (`sha256:<hex>`) the draft is based on: read at
+    /// open, moved by each save, and what the next save is checked against.
+    /// Present exactly for an editable document.
+    pub revision: Option<String>,
     pub dirty: bool,
     /// Why an otherwise editable document takes no edits: its size or its
     /// permissions. The kind, not this field, says a PDF or image is read-only.
     pub readonly_reason: Option<String>,
     pub conflict: Option<EditorConflictSnapshot>,
+    /// A save that has not come to a known result yet.
+    pub save: Option<EditorSaveSnapshot>,
+}
+
+/// A save in progress, or one whose answer was lost (PRD S5.5 B14).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct EditorSaveSnapshot {
+    /// `saving` while it runs (a newer draft may wait behind it), `waiting`
+    /// while it waits for the device's helper to finish connecting, `unknown`
+    /// when the answer was lost and the file has not been read back yet, and
+    /// `checking` while it is read back. An unknown save blocks the next one.
+    /// `refused` when the last save was refused or never sent, and
+    /// `not_applied` when an unknown save was read back unchanged: it has not
+    /// reached the file yet and may still, so it is not called unsaved.
+    pub state: String,
+    pub message: Option<String>,
 }
 
 /// The right panel's four persisted sections.
@@ -1391,6 +1445,11 @@ pub struct UiStateSnapshot {
     #[serde(default)]
     pub sessions_mode_by_project: BTreeMap<String, SessionsMode>,
     pub expanded_paths: Vec<String>,
+    /// Folders expanded in each SSH device's Explorer, by device id; this
+    /// machine's are `expanded_paths`. A path means something only on its
+    /// own device, so two devices' same path never share a row (S5.5 B2).
+    #[serde(default)]
+    pub device_expanded_paths: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
     /// Sidebar workspaces (checkout paths) whose agent rows are hidden.
@@ -1539,6 +1598,7 @@ impl Default for UiStateSnapshot {
             right_panel_section: RightPanelSection::default(),
             sessions_mode_by_project: BTreeMap::new(),
             expanded_paths: Vec::new(),
+            device_expanded_paths: BTreeMap::new(),
             collapsed_workspace_ids: Vec::new(),
             collapsed_checkout_ids: Vec::new(),
             expanded_inactive_checkout_project_paths: Vec::new(),
@@ -1588,6 +1648,40 @@ pub struct DeviceRegistration {
     pub label: String,
     #[serde(default)]
     pub ssh_alias: Option<String>,
+    /// The Herdr socket on the device, for a host whose server does not
+    /// listen at its default path; absent reads the host's default server.
+    #[serde(default)]
+    pub herdr_socket_path: Option<String>,
+    /// The operator's one consent for Hide's helper on this device (PRD S5.5
+    /// D-20, D-23). Absent until given; a device registered before consent
+    /// existed asks before its first file or Git use.
+    #[serde(default)]
+    pub host_consent: Option<HostConsent>,
+}
+
+/// What the operator allowed on a device: install and update Hide's helper
+/// under `helper_root`, run it only for the life of an SSH connection, and
+/// perform file and Git work inside registered checkouts, with trash moves and
+/// worktree removals still confirmed one by one. `contract` names that scope;
+/// a build whose scope differs asks again, and so does a device that answers
+/// with another identity than the one the consent was first used on.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HostConsent {
+    pub contract: u32,
+    pub helper_root: String,
+    pub granted_at_unix_ms: u64,
+    /// The account, address and host key the helper first ran on; bound on
+    /// the first connection after consent and never rewritten by one.
+    #[serde(default)]
+    pub identity: Option<HostIdentity>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HostIdentity {
+    pub user: String,
+    pub hostname: String,
+    pub port: u16,
+    pub host_key_sha256: String,
 }
 
 pub(crate) fn default_local_device_id() -> String {
@@ -1608,8 +1702,11 @@ pub(crate) fn default_panel_visible() -> bool {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorConflictSnapshot {
-    pub disk_modified_at_unix_ms: u64,
-    pub opened_modified_at_unix_ms: u64,
+    /// The revision the draft was based on.
+    pub opened_revision: String,
+    /// What the file holds now; absent when it was removed or could not be
+    /// read.
+    pub disk_revision: Option<String>,
 }
 
 /// One checkout's Git working-tree state, plus the diff of the file the user
@@ -1640,6 +1737,10 @@ pub struct ChangesSnapshot {
     /// Why there is nothing to list. Present whenever the reader could not
     /// produce entries, so an empty list is never mistaken for "no changes".
     pub unavailable_reason: Option<String>,
+    /// Why the latest read of this checkout failed while the entries above,
+    /// from the last read that succeeded, are still shown: they may be out of
+    /// date, and the next read replaces them (S5.5 B22).
+    pub stale_reason: Option<String>,
 }
 
 /// The four working-tree states this round presents. Git's porcelain codes
@@ -1941,6 +2042,9 @@ pub struct WorktreeDeletionGateSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorktreeRemovalSnapshot {
     pub id: u64,
+    /// The device the worktree is on; `None` is this machine. Its path and
+    /// panes are that device's.
+    pub device_id: Option<String>,
     pub repository_root: String,
     pub checkout_path: String,
     pub expected_head_sha: Option<String>,
@@ -1960,6 +2064,9 @@ pub struct WorktreeRemovalSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TaskOperationSnapshot {
     pub id: u64,
+    /// The device the task runs on; `None` is this machine. Its paths and
+    /// pane are that device's.
+    pub device_id: Option<String>,
     pub kind: String,
     pub phase: String,
     pub repository_root: Option<String>,
@@ -2275,6 +2382,40 @@ pub struct RemoteStatusSnapshot {
     pub herdr_version: Option<String>,
     pub session: Option<RemoteSessionSnapshot>,
     pub files: RemoteFileListSnapshot,
+    /// Whether the session's projects are grouped from the device's own
+    /// facts (`device_catalog`).
+    pub catalog: DeviceCatalogSnapshot,
+}
+
+/// How far a device's projects are confirmed by its helper (PRD S5.5 B3,
+/// B4). `resolving`: the helper is being asked; `ready`: every directory the
+/// device's Herdr names has the helper's answer; `unavailable`: the helper
+/// cannot be asked now and `message` says why. A directory the helper has not
+/// answered for is shown as its Herdr workspace alone, never grouped by a
+/// guess and never read on this machine.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeviceCatalogSnapshot {
+    pub state: String,
+    pub message: Option<String>,
+    /// Directories the helper answered with a refusal (missing, unreadable),
+    /// each with its reason; their workspaces stay ungrouped.
+    pub refused: Vec<DeviceCatalogRefusal>,
+}
+
+impl Default for DeviceCatalogSnapshot {
+    fn default() -> Self {
+        Self {
+            state: "resolving".to_owned(),
+            message: None,
+            refused: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeviceCatalogRefusal {
+    pub path: String,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2303,7 +2444,6 @@ pub struct RemoteFileEntrySnapshot {
     pub path: String,
     pub name: String,
     pub is_directory: bool,
-    pub size_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2420,6 +2560,7 @@ impl Snapshot {
                 active_tab_id: None,
                 document: None,
                 archive_detail: None,
+                opening: Vec::new(),
             },
             sessions: SessionsSnapshot::default(),
             changes: ChangesSnapshot::default(),

@@ -2,12 +2,15 @@
 # The capabilities that shell out - the changes view's Git reader, the port
 # reader, the project panel's worktree, GitHub, and disk readers, the
 # Background AI provider probe, and the Weekly Usage reader's `claude -p
-# /usage` child - run on the session-sync coordinator thread and never under
-# the runtime mutex or on a per-event path.
+# /usage` child - never run under the runtime mutex or on a per-event path.
+# All but one are driven by the session-sync coordinator thread. The changes
+# reader is driven by its own pump (`ChangesPump` in `changes.rs`), which the
+# core starts once: History reads each checkout through that checkout's host,
+# so a device's History must not wait on this machine's Herdr session.
 #
 # Both properties are structural, so they are asserted structurally: the
 # runtime module holds the mutex, so it must fork nothing; and the readers'
-# entry points must be reachable only from the coordinator.
+# entry points must be reachable only from their one driver.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,7 +23,7 @@ readers=(changes ports worktrees github disk ai usage)
 # probe starts a `codex app-server` child and runs `claude auth status`, and
 # the usage reader runs `claude -p /usage` for seconds; run inline, any of
 # them would be that much added latency on every Herdr pane event.
-worker_readers=(worktrees github disk ai usage)
+worker_readers=(changes worktrees github disk ai usage)
 
 # 1. The module that holds the mutex, its runtime submodules, and the file
 #    module it calls synchronously while holding it, execute no subprocess at
@@ -52,8 +55,10 @@ for reader in "${readers[@]}"; do
         exit 1
     fi
 
-    # 2. Only the coordinator drives the reader. A call from anywhere else
-    #    would put a `git` fork back on an event or a snapshot pull.
+    # 2. Only the reader's one driver drives it. A call from anywhere else
+    #    would put a `git` fork back on an event or a snapshot pull. The
+    #    changes reader's driver is the pump in its own module, so nothing
+    #    outside that module may name it.
     # Inline test fixtures do not drive production readers. Apply the same
     # test-module boundary as the subprocess check above; a test name alone
     # must not be interpreted as a runtime call site.
@@ -69,9 +74,11 @@ for reader in "${readers[@]}"; do
             ' "$source"
         done < <(find herdr-core/src -name '*.rs' -type f | sort)
     )"
-    if [[ "$callers" != "herdr-core/src/session_sync/coordinator.rs" ]]; then
-        printf 'the %s reader is driven from outside the session-sync coordinator:\n%s\n' \
-            "$reader" "$callers" >&2
+    driver="herdr-core/src/session_sync/coordinator.rs"
+    [[ "$reader" == changes ]] && driver=""
+    if [[ "$callers" != "$driver" ]]; then
+        printf 'the %s reader is driven from outside %s:\n%s\n' \
+            "$reader" "${driver:-its own pump}" "$callers" >&2
         exit 1
     fi
 
@@ -94,9 +101,16 @@ for reader in "${worker_readers[@]}"; do
     fi
 done
 
-# 5. The coordinator reads each request under the lock and releases it before
+# 5. The changes pump is started by the core, once, and nowhere else.
+pump_starts="$(grep -rl 'ChangesPump::spawn' herdr-core/src --include='*.rs' | sort | tr '\n' ' ')"
+if [[ "$pump_starts" != "herdr-core/src/ffi.rs " ]]; then
+    printf 'the changes pump is started from %s, not only by the core in ffi.rs\n' "${pump_starts:-nowhere}" >&2
+    exit 1
+fi
+
+# 6. The coordinator reads each request under the lock and releases it before
 #    the reader runs.
-for request in read_changes_request read_worktrees_request read_github_request read_disk_request read_ai_request; do
+for request in read_worktrees_request read_github_request read_disk_request read_ai_request; do
     # The binding may destructure - one lock acquisition can answer for more
     # than the request - so what is asserted is that the request is read out of
     # a `let Some(...)` before the reader runs, not the exact binding shape.

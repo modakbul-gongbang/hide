@@ -5,6 +5,7 @@ import {
   disclosureMark,
   explorerRows,
   firstChildSelection,
+  explorerGitLine,
   gitBadgeColor,
   moveSelection,
   parentPath,
@@ -15,7 +16,7 @@ import {
   selectionAfterRemoval,
   type ExplorerRow,
 } from "./explorer";
-import { changesFor, focusedCheckout } from "./snapshot";
+import { changesFor, explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type ExplorerDraft } from "./ui";
 import { expandedUnderRoot, watchedFolders } from "./watch";
@@ -68,11 +69,15 @@ function baseName(path: string): string {
 }
 
 export function ExplorerTree({ actions }: { actions: Actions }) {
-  const checkout = useShellStore((s) => focusedCheckout(s.rest));
+  const checkout = useShellStore((s) => explorerContext(s.rest).checkout);
+  const device = useShellStore((s) => explorerContext(s.rest).device);
   const rootPath = checkout?.path ?? null;
-  const expandedPaths = useShellStore((s) => s.rest?.ui_state?.expanded_paths ?? EMPTY_PATHS);
+  const expandedPaths = useShellStore((s) => explorerContext(s.rest).expanded ?? EMPTY_PATHS);
   const listings = useShellStore((s) => s.listings);
+  // Git decorations come from the checkout's own host on either device; the
+  // core drops a list read for another device before this could show it.
   const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
+  const unavailable = useShellStore((s) => (s.directoryUnavailable && s.directoryUnavailable.device_id === device ? s.directoryUnavailable : null));
   const selectedPath = useShellStore((s) => s.rest?.ui_state?.selected_path ?? null);
   const pathRefusal = useShellStore((s) => s.pathRefusal);
   const operation = useShellStore((s) => s.rest?.explorer_operation ?? null);
@@ -92,6 +97,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   /** The watch-frame count already acted on, per folder. */
   const seenChanges = useRef<Record<string, number>>({});
 
+  const gitLine = explorerGitLine(changes);
   const expandedKey = expandedPaths.join("\n");
   const rows = useMemo(
     () => (rootPath ? explorerRows({ rootPath, listings, expandedPaths, changes }) : EMPTY_ROWS),
@@ -236,7 +242,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   };
 
   const requestTrash = (row: ExplorerRow) => {
-    actions.requestTrash(row.path, row.name, row.isDirectory, selectionAfterRemoval(rows, row.path, rootPath ?? row.path));
+    actions.requestTrash(row.path, row.name, row.isDirectory, selectionAfterRemoval(rows, row.path, rootPath ?? row.path), row.inode);
     setMenu(null);
   };
 
@@ -286,6 +292,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   const refused = pathRefusal?.kind === "file_list" && pathRefusal.path === rootPath ? pathRefusal.reason : null;
   const rootListing = listings[rootPath];
+  const rootUnavailable = unavailable?.root_path === rootPath ? unavailable : null;
   const failure = operation?.phase === "failed" && operation.message ? operation : null;
 
   const anchorTop = (path: string): number | null => {
@@ -318,12 +325,34 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           ↻
         </button>
       </div>
+      {gitLine ? (
+        <div className={`break-words border-b border-divider px-md py-xs text-caption ${gitLine.state === "loading" ? "text-muted" : "text-warning"}`} data-explorer-git={gitLine.state}>
+          {gitLine.text}
+        </div>
+      ) : null}
       {refused ? (
         <div className="border-b border-divider px-md py-sm text-caption text-danger" data-explorer-refusal={refused}>
           {refused}
         </div>
       ) : null}
-      {!rootListing && !refused ? (
+      {unavailable ? (
+        <div className="flex items-center gap-sm border-b border-divider px-md py-sm text-caption text-warning" data-explorer-unavailable={unavailable.code}>
+          <span className="min-w-0 flex-1 break-words">
+            {unavailable.root_path === rootPath ? "This checkout" : baseName(unavailable.root_path)} could not be listed: {unavailable.message}
+          </span>
+          <button
+            type="button"
+            className="text-secondary hover:text-primary"
+            onClick={() => {
+              pending.current.clear();
+              setRefreshTick((tick) => tick + 1);
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {!rootListing && !refused && !rootUnavailable ? (
         <div className="px-md py-sm text-caption text-muted" data-explorer-state="loading">
           Loading…
         </div>

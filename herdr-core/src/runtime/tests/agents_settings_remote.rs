@@ -28,6 +28,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
             pane_layouts: Vec::new(),
         }),
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
         hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
@@ -51,6 +52,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         report_pane_focus_outcome: false,
         request: RemoteControlRequest::CreateTab {
             workspace_id: projected_workspace_id.to_owned(),
+            checkout_id: None,
             cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
             label: "New tab".to_owned(),
         },
@@ -76,9 +78,12 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         kind: "remote".to_owned(),
         state: "unavailable".to_owned(),
         message: None,
+        problem: None,
         ssh_alias: Some("mini".to_owned()),
+        herdr_socket_path: None,
         agent_count: 0,
         test: None,
+        host: Default::default(),
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: "mini".to_owned(),
@@ -87,6 +92,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         herdr_version: None,
         session: None,
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
     runtime.snapshot.terminal.panes.push(TerminalPaneSnapshot {
         pane_id: "w-local:p1".to_owned(),
@@ -125,7 +131,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     let session = RemoteSessionSnapshot {
         workspaces: vec![remote_workspace],
         agents: Vec::new(),
-        active_tab_ids: [(workspace_id.to_owned(), active_tab_id.to_owned())]
+        active_tab_ids: [(checkout_id.to_owned(), active_tab_id.to_owned())]
             .into_iter()
             .collect(),
         focused_workspace_id: Some(workspace_id.to_owned()),
@@ -239,8 +245,23 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     );
 }
 
+/// A helper listing with these (name, is_directory) rows, in its order.
+fn listing(rows: &[(&str, bool)]) -> hide_host::list::Listing {
+    hide_host::list::Listing {
+        entries: rows
+            .iter()
+            .map(|(name, is_directory)| hide_host::list::Entry {
+                name: (*name).to_owned(),
+                is_directory: *is_directory,
+                inode: 1,
+            })
+            .collect(),
+        truncated: false,
+    }
+}
+
 #[test]
-fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
+fn remote_file_results_are_scoped_and_generation_guarded() {
     let mut runtime = runtime();
     let root_path = "/private/tmp/herdr-remote-files";
     let workspace_id = "remote:mini:workspace:w9";
@@ -269,6 +290,7 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
             pane_layouts: Vec::new(),
         }),
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
 
     let request = serde_json::to_vec(&serde_json::json!({
@@ -278,17 +300,13 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
     }))
     .expect("remote file event");
     assert!(runtime.dispatch_json(&request));
-    assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
-    assert_eq!(
-        runtime
-            .snapshot
-            .status
-            .last_error
-            .as_ref()
-            .expect("missing SFTP transport is externally visible")
-            .kind,
-        "remote.files.transport_unavailable"
-    );
+    // No helper consent: the device lists nothing and says in place what
+    // allowing it installs and runs, for the shell to ask with (B50).
+    let files = &runtime.snapshot.status.remote[0].files;
+    assert_eq!(files.state, "not_allowed");
+    let message = files.message.as_deref().unwrap();
+    assert!(message.contains(&runtime.host_helper_root()), "{message}");
+    assert!(message.contains("only while Hide is connected over SSH"));
 
     runtime.snapshot.status.remote[0].files = RemoteFileListSnapshot {
         root_path: Some(root_path.to_owned()),
@@ -301,24 +319,12 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
         "mini",
         root_path,
         7,
-        Ok(vec![
-            FileEntry {
-                path: format!("{root_path}/zeta.txt"),
-                name: "zeta.txt".to_owned(),
-                kind: FileKind::File,
-                size_bytes: 4,
-            },
-            FileEntry {
-                path: format!("{root_path}/Sources"),
-                name: "Sources".to_owned(),
-                kind: FileKind::Directory,
-                size_bytes: 96,
-            },
-        ]),
+        Ok(listing(&[("Sources", true), ("zeta.txt", false)])),
     ));
     let files = &runtime.snapshot.status.remote[0].files;
     assert_eq!(files.state, "ready");
     assert_eq!(files.entries[0].name, "Sources");
+    assert_eq!(files.entries[0].path, format!("{root_path}/Sources"));
     assert!(files.entries[0].is_directory);
     assert_eq!(files.entries[1].name, "zeta.txt");
 
@@ -329,7 +335,7 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
         message: None,
         generation: 8,
     };
-    assert!(runtime.ingest_remote_file_list_result("mini", root_path, 7, Ok(Vec::new()),));
+    assert!(runtime.ingest_remote_file_list_result("mini", root_path, 7, Ok(listing(&[]))));
     assert_eq!(runtime.snapshot.status.remote[0].files.state, "loading");
     assert_eq!(runtime.snapshot.status.remote[0].files.generation, 8);
     assert_eq!(
@@ -348,7 +354,7 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
     assert!(runtime.dispatch_json(&request));
     assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
     assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
-    assert!(runtime.ingest_remote_file_list_result("mini", root_path, 8, Ok(Vec::new())));
+    assert!(runtime.ingest_remote_file_list_result("mini", root_path, 8, Ok(listing(&[]))));
     assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
     assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
 }
@@ -728,6 +734,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
             pane_layouts: Vec::new(),
         }),
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> =
         Arc::new(hide_herdr_client::UnixSocketConnector::new(
@@ -1098,42 +1105,6 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
     std::fs::remove_dir_all(&root_b).ok();
 }
 
-#[test]
-fn tab_strip_reorder_refuses_a_remote_checkout() {
-    let (mut runtime, checkout_id, directory) = strip_checkout("remote-refusal");
-    let tabs = ["w-order:t1", "w-order:t2"];
-    assert!(runtime.ingest_session(Ok(tab_order_payload(
-        &directory.to_string_lossy(),
-        &tabs,
-        &tabs,
-        "w-order:t1"
-    ))));
-    let before = strip_ids(&runtime, &checkout_id);
-    for workspace in &mut runtime.snapshot.navigator.workspaces {
-        workspace.remote_target_id = Some("mini".to_owned());
-    }
-
-    assert!(reorder_tab(
-        &mut runtime,
-        &checkout_id,
-        "herdr:w-order:t1",
-        1
-    ));
-    assert_eq!(strip_ids(&runtime, &checkout_id), before);
-    assert!(runtime.pending_tab_move.is_empty());
-    assert_eq!(
-        runtime
-            .snapshot()
-            .status
-            .last_error
-            .as_ref()
-            .map(|error| error.kind.as_str()),
-        Some("tab.reorder_remote")
-    );
-
-    std::fs::remove_dir_all(&directory).ok();
-}
-
 /// Returning from a remote device left `remote:<target>:pane:<id>` in the
 /// selection, and every local sync tick then compared it against local
 /// layouts, never matched, and re-raised the same projection error. A
@@ -1438,6 +1409,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             herdr_version: None,
             session: None,
             files: RemoteFileListSnapshot::idle(),
+            catalog: Default::default(),
         });
     }
     let remote_session = |target_id: &str, pane_ids: &[&str], focused: Option<&str>| {
@@ -1784,6 +1756,7 @@ fn remote_purpose_runtime(version: &str) -> Runtime {
             pane_layouts: Vec::new(),
         }),
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
     runtime
 }

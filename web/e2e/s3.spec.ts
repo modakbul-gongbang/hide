@@ -63,7 +63,7 @@ type Fixture = {
 };
 
 /** Starts the isolated stack and leaves the Explorer showing `src/main.ts`. */
-async function openCheckout(page: Page): Promise<Fixture> {
+async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<void>): Promise<Fixture> {
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
@@ -99,6 +99,7 @@ async function openCheckout(page: Page): Promise<Fixture> {
     daemon = await startHided(herdr, "s3");
     const lastSent = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, lastSent);
+    await beforeLoad?.(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
     // Focus the repository checkout, then show the right panel's Explorer,
@@ -123,6 +124,59 @@ async function openCheckout(page: Page): Promise<Fixture> {
     herdr.stop();
     throw error;
   }
+}
+
+/** The id a draft is stored under (S5.5 B9): this host, the device, the checkout root and the path. */
+/**
+ * Leaves the app for a page of the same origin that runs none of it, so a
+ * test can shape the IndexedDB the app will find without the app opening it
+ * at the same time. Returns the app's URL to go back to.
+ */
+async function leaveApp(page: Page): Promise<string> {
+  const app = page.url();
+  await page.goto(new URL("/health", app).toString());
+  return app;
+}
+
+function draftId(hostId: string, root: string, file: string, device = "local"): string {
+  return [hostId, device, root, file].join("\u0000");
+}
+
+type DraftRow = { id: string; host: string | null; device: string | null; root: string; path: string; contents: string; updated_at: number };
+
+/** Writes one row into the shell's v4 draft store, as a tab or an older build left it. */
+async function seedDraft(page: Page, row: DraftRow): Promise<void> {
+  await page.evaluate(async (row) => {
+    await new Promise<void>((resolve, reject) => {
+      const opened = indexedDB.open("hide-shell", 4);
+      opened.onupgradeneeded = () => {
+        if (!opened.result.objectStoreNames.contains("drafts_v4")) opened.result.createObjectStore("drafts_v4", { keyPath: "id" });
+      };
+      opened.onerror = () => reject(opened.error);
+      opened.onsuccess = () => {
+        const database = opened.result;
+        const transaction = database.transaction("drafts_v4", "readwrite");
+        transaction.objectStore("drafts_v4").put(row);
+        transaction.oncomplete = () => { database.close(); resolve(); };
+        transaction.onerror = () => { database.close(); reject(transaction.error); };
+      };
+    });
+  }, row);
+}
+
+/** Every row of the shell's v4 draft store. */
+async function storedDrafts(page: Page): Promise<DraftRow[]> {
+  return page.evaluate(async () => new Promise<DraftRow[]>((resolve, reject) => {
+    const opened = indexedDB.open("hide-shell", 4);
+    opened.onerror = () => reject(opened.error);
+    opened.onsuccess = () => {
+      const database = opened.result;
+      if (!database.objectStoreNames.contains("drafts_v4")) { database.close(); resolve([]); return; }
+      const read = database.transaction("drafts_v4", "readonly").objectStore("drafts_v4").getAll();
+      read.onsuccess = () => { database.close(); resolve(read.result as DraftRow[]); };
+      read.onerror = () => { database.close(); reject(read.error); };
+    };
+  }));
 }
 
 function close(fixture: Fixture): void {
@@ -258,6 +312,57 @@ test("a refused save keeps the tab dirty and takes the saving mark off", async (
   }
 });
 
+test("a draft that cannot be stored stays editable and holds other documents read-only until it is saved (S5.5 B44)", async ({ page }) => {
+  // No IndexedDB behaves as a full draft store: every write is refused.
+  const fixture = await openCheckout(page, (page) =>
+    page.addInitScript(() => Object.defineProperty(window, "indexedDB", { value: undefined, configurable: true })),
+  );
+  const { repo, file, sent, lastSent } = fixture;
+  try {
+    // A refused save keeps the edit unsaved, so its only copy is this tab.
+    fs.chmodSync(file, 0o444);
+    const content = page.locator("[data-editor-body] .cm-content");
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 44;\n");
+    await expect(page.locator('[data-editor-draft-hold="unstored"]')).toBeVisible();
+    await expect(page.locator('[data-tab-kind="file"][data-tab-only="true"]')).toHaveCount(1);
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+
+    // Export hands the unstored draft to the browser's download.
+    const download = page.waitForEvent("download");
+    await page.locator('[data-editor-draft-hold="unstored"] [data-export-draft]').click();
+    const exported = await download;
+    expect(fs.readFileSync(await exported.path(), "utf8")).toBe("export const answer = 44;\n");
+    await screenshot(page, "s55-draft-unstored");
+
+    // Another document opens held read-only: typing changes nothing.
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).dblclick();
+    await expect(page.locator("[data-editor-body] .cm-content")).toContainText("# repo");
+    await expect(page.locator('[data-editor-draft-hold="held"]')).toBeVisible();
+    const draftsBefore = sent.get("file_draft") ?? 0;
+    await page.locator("[data-editor-body] .cm-content").click();
+    await page.keyboard.type("typed while held");
+    await expect(page.locator("[data-editor-body] .cm-content")).not.toContainText("typed while held");
+    expect(sent.get("file_draft") ?? 0).toBe(draftsBefore);
+    await screenshot(page, "s55-draft-held");
+
+    // Saving the unstored draft ends the hold.
+    fs.chmodSync(file, 0o644);
+    await page.locator('[data-tab-kind="file"][data-tab-only="true"]').click();
+    await expect(page.locator('[data-editor-draft-hold="unstored"]')).toBeVisible();
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 44;\n");
+    await expect(page.locator("[data-editor-draft-hold]")).toHaveCount(0);
+    await page.locator('[data-tab-kind="file"]', { hasText: "README.md" }).click();
+    await expect(page.locator("[data-editor-draft-hold]")).toHaveCount(0);
+    expect(lastSent.get("file_save")).toMatchObject({ path: file });
+  } finally {
+    fs.chmodSync(file, 0o644);
+    close(fixture);
+  }
+});
+
 test("a deleted open file reports a failed save without losing its draft", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { file, sent } = fixture;
@@ -271,6 +376,18 @@ test("a deleted open file reports a failed save without losing its draft", async
     await expect(page.locator('[data-tab-kind="file"]')).toHaveAttribute("data-saving", "false", { timeout: 10_000 });
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
     await expect(content).toContainText("export const answer = 44;");
+    expect(fs.existsSync(file)).toBe(false);
+    // The refusal is shown where the save is, with its reason, Export and
+    // Retry, and a retry is one more save that still recreates nothing
+    // (S5.5 B15, B45).
+    const bar = page.locator('[data-editor-save-state="refused"]');
+    await expect(bar).toBeVisible({ timeout: 10_000 });
+    await expect(bar).toContainText("Not saved:");
+    await expect(bar.locator("[data-export-draft]")).toBeVisible();
+    const before = sent.get("file_save") ?? 0;
+    await bar.locator("[data-save-retry]").click();
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBe(before + 1);
+    await expect(bar).toBeVisible({ timeout: 10_000 });
     expect(fs.existsSync(file)).toBe(false);
   } finally {
     close(fixture);
@@ -626,22 +743,13 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await clash.press("Enter");
     await expect(page.locator(`[data-explorer-row="${repo}/src/corrected.ts"]`)).toBeVisible();
 
-    // Rename: one path_rename, and the row takes the new name.
-    await page.evaluate(async ({ root, path }) => {
-      await new Promise<void>((resolve, reject) => {
-        const opened = indexedDB.open("hide-shell", 3);
-        opened.onerror = () => reject(opened.error);
-        opened.onsuccess = () => {
-          const database = opened.result;
-          const transaction = database.transaction("buffers_v2", "readwrite");
-          transaction.objectStore("buffers_v2").put({
-            id: `${root}\u0000${path}`, root, path, contents: "unsaved recovery copy", updated_at: Date.now(),
-          });
-          transaction.oncomplete = () => { database.close(); resolve(); };
-          transaction.onerror = () => { database.close(); reject(transaction.error); };
-        };
-      });
-    }, { root: repo, path: `${repo}/src/added.ts` });
+    // Rename: one path_rename, and the row takes the new name; the created
+    // file's stored draft follows it to the new path.
+    const addedPath = `${repo}/src/added.ts`;
+    await seedDraft(page, {
+      id: draftId(fixture.daemon.hostId, repo, addedPath), host: fixture.daemon.hostId, device: "local",
+      root: repo, path: addedPath, contents: "unsaved recovery copy", updated_at: Date.now(),
+    });
     await page.locator(`[data-explorer-row="${repo}/src/added.ts"]`).click({ button: "right" });
     await page.locator('[data-menu-item="rename"]').click();
     const rename = page.locator('[data-explorer-draft="rename"] input');
@@ -650,19 +758,7 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await expect.poll(() => sent.get("path_rename")).toBe(1);
     expect(lastSent.get("path_rename")).toMatchObject({ root: repo, path: `${repo}/src/added.ts`, name: "renamed.ts" });
     await expect(page.locator(`[data-explorer-row="${repo}/src/renamed.ts"]`)).toBeVisible();
-    await expect.poll(() => page.evaluate(async ({ root, path }) => {
-      return new Promise<boolean>((resolve, reject) => {
-        const opened = indexedDB.open("hide-shell", 3);
-        opened.onerror = () => reject(opened.error);
-        opened.onsuccess = () => {
-          const database = opened.result;
-          const transaction = database.transaction("buffers_v2", "readonly");
-          const read = transaction.objectStore("buffers_v2").get(`${root}\u0000${path}`);
-          read.onsuccess = () => { database.close(); resolve(read.result === undefined); };
-          read.onerror = () => { database.close(); reject(read.error); };
-        };
-      });
-    }, { root: repo, path: `${repo}/src/added.ts` })).toBe(true);
+    await expect.poll(async () => (await storedDrafts(page)).some((row) => row.path === addedPath)).toBe(false);
 
     // New Folder in the root, then drag the file onto it: one path_move.
     await page.locator("[data-explorer-tree]").click({ button: "right", position: { x: 20, y: 400 } });
@@ -677,6 +773,7 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     expect(lastSent.get("path_move")).toMatchObject({ root: repo, path: `${repo}/src/renamed.ts`, destination: `${repo}/dest` });
 
     // Trash behind the confirmation: nothing goes out until it is confirmed.
+    const destInode = fs.statSync(`${repo}/dest`).ino;
     await page.locator(`[data-explorer-row="${repo}/dest"]`).click({ button: "right" });
     await page.locator('[data-menu-item="trash"]').click();
     const dialog = page.locator("[data-confirm-trash]");
@@ -686,7 +783,9 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await page.locator("[data-trash-confirm]").click();
     await expect.poll(() => sent.get("path_trash")).toBe(1);
     // The tree selects the removed folder's next sibling, which is `src`.
-    expect(lastSent.get("path_trash")).toMatchObject({ root: repo, path: `${repo}/dest`, select_after: `${repo}/src` });
+    // It names the folder the operator confirmed by its inode, so the host
+    // refuses a folder that replaced it while the prompt was open (S5.5 B17).
+    expect(lastSent.get("path_trash")).toMatchObject({ root: repo, path: `${repo}/dest`, select_after: `${repo}/src`, inode: destInode });
     await expect(page.locator(`[data-explorer-row="${repo}/dest"]`)).toHaveCount(0);
   } finally {
     close(fixture);
@@ -765,36 +864,11 @@ test("a preview-only document closes without a save", async ({ page }) => {
     // A stale recovery buffer is exactly the trap: a preview-only document has
     // no draft the core would accept, so the restore must decline it rather
     // than hand it back as a close-save the core refuses (D-14).
-    const stale = `${repo}\u0000${repo}/huge.txt`;
-    await page.evaluate(
-      async ({ root, path, id }) => {
-        await new Promise<void>((resolve, reject) => {
-          const request = indexedDB.open("hide-shell", 3);
-          request.onupgradeneeded = () => {
-            const database = request.result;
-            if (!database.objectStoreNames.contains("buffers_v2")) database.createObjectStore("buffers_v2", { keyPath: "id" });
-          };
-          request.onerror = () => reject(request.error);
-          request.onsuccess = () => {
-            const database = request.result;
-            const transaction = database.transaction("buffers_v2", "readwrite");
-            transaction.objectStore("buffers_v2").put({
-              id,
-              root,
-              path,
-              contents: "stale draft\n",
-              updated_at: Date.now(),
-            });
-            transaction.oncomplete = () => {
-              database.close();
-              resolve();
-            };
-            transaction.onerror = () => reject(transaction.error);
-          };
-        });
-      },
-      { root: repo, path: `${repo}/huge.txt`, id: stale },
-    );
+    const stale = draftId(fixture.daemon.hostId, repo, `${repo}/huge.txt`);
+    await seedDraft(page, {
+      id: stale, host: fixture.daemon.hostId, device: "local", root: repo, path: `${repo}/huge.txt`,
+      contents: "stale draft\n", updated_at: Date.now(),
+    });
     await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
     await expect(page.locator("[data-editor-preview-only]")).toBeVisible();
     // The stale buffer was declined rather than planted as a draft.
@@ -968,6 +1042,7 @@ test("an existing v1 recovery draft survives the IndexedDB upgrade", async ({ pa
   const fixture = await openCheckout(page);
   const { file } = fixture;
   try {
+    const app = await leaveApp(page);
     await page.evaluate(async ({ path }) => {
       await new Promise<void>((resolve, reject) => {
         const removed = indexedDB.deleteDatabase("hide-shell");
@@ -987,7 +1062,7 @@ test("an existing v1 recovery draft survives the IndexedDB upgrade", async ({ pa
         };
       });
     }, { path: file });
-    await page.reload();
+    await page.goto(app);
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 99");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 99;\n");
   } finally {
@@ -999,6 +1074,7 @@ test("a root-keyed v2 recovery draft survives the IndexedDB upgrade", async ({ p
   const fixture = await openCheckout(page);
   const { file, repo } = fixture;
   try {
+    const app = await leaveApp(page);
     await page.evaluate(async ({ path, root }) => {
       await new Promise<void>((resolve, reject) => {
         const removed = indexedDB.deleteDatabase("hide-shell");
@@ -1018,7 +1094,7 @@ test("a root-keyed v2 recovery draft survives the IndexedDB upgrade", async ({ p
         };
       });
     }, { path: file, root: repo });
-    await page.reload();
+    await page.goto(app);
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 98");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 98;\n");
   } finally {
@@ -1026,11 +1102,191 @@ test("a root-keyed v2 recovery draft survives the IndexedDB upgrade", async ({ p
   }
 });
 
-test("an expired recovery draft is not restored before its sweep", async ({ page }) => {
+test("of two legacy drafts for one file the newer is restored, and the older is kept for recovery (S5.5 B12)", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { file, repo } = fixture;
+  try {
+    const app = await leaveApp(page);
+    await page.evaluate(async ({ path, root }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 2);
+        opened.onupgradeneeded = () => opened.result.createObjectStore("buffers", { keyPath: "id" });
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers", "readwrite");
+          const store = transaction.objectStore("buffers");
+          const now = Date.now();
+          store.put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 96;\n", updated_at: now });
+          store.put({ id: `\u0000${path}`, root: "", path, contents: "export const answer = 97;\n", updated_at: now - 60_000 });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file, root: repo });
+    await page.goto(app);
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
+    const kept = await page.evaluate(() => new Promise<string[]>((resolve, reject) => {
+      const opened = indexedDB.open("hide-shell");
+      opened.onerror = () => reject(opened.error);
+      opened.onsuccess = () => {
+        const database = opened.result;
+        const all = database.transaction("drafts_v4").objectStore("drafts_v4").getAll();
+        all.onsuccess = () => { database.close(); resolve((all.result as Array<{ contents: string }>).map((row) => row.contents)); };
+        all.onerror = () => { database.close(); reject(all.error); };
+      };
+    }));
+    expect(kept).toContain("export const answer = 97;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("one draft id in both legacy stores migrates as its newer row (S5.5 B12)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  try {
+    const app = await leaveApp(page);
+    await page.evaluate(async ({ path, root }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 3);
+        opened.onupgradeneeded = () => {
+          opened.result.createObjectStore("buffers", { keyPath: "id" });
+          opened.result.createObjectStore("buffers_v2", { keyPath: "id" });
+        };
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction(["buffers", "buffers_v2"], "readwrite");
+          const now = Date.now();
+          // The store read first holds the newer row, so a row-by-row merge
+          // would let the older one from the second store overwrite it.
+          transaction.objectStore("buffers").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 96;\n", updated_at: now });
+          transaction.objectStore("buffers_v2").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 97;\n", updated_at: now - 60_000 });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file, root: repo });
+    await page.goto(app);
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("an old draft is restored, never discarded for its age (S5.5 B12)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  try {
+    await seedDraft(page, {
+      id: draftId(fixture.daemon.hostId, repo, file), host: fixture.daemon.hostId, device: "local",
+      root: repo, path: file, contents: "export const answer = 97;\n", updated_at: Date.now() - 400 * 24 * 60 * 60 * 1000,
+    });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 97");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 97;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a draft whose tab a daemon restart lost is kept for recovery and opens where it belongs (S5.5 B10)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo, sent } = fixture;
   const original = fs.readFileSync(file, "utf8");
   try {
+    // Keep the edit from being saved: the file cannot be written, so the
+    // draft exists only in the core's memory and in the browser.
+    fs.chmodSync(file, 0o444);
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 77;\n");
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+    await expect.poll(async () => (await storedDrafts(page)).find((row) => row.path === file)?.contents, { timeout: 5_000 }).toBe("export const answer = 77;\n");
+    await expect.poll(() => sent.get("file_save") ?? 0, { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
+
+    // The daemon restarts on the same port and state: its core forgot the
+    // tab and the draft, the host kept its id.
+    const hostBefore = fixture.daemon.hostId;
+    const restarted = await fixture.daemon.restart();
+    fixture.daemon = restarted;
+    expect(restarted.hostId).toBe(hostBefore);
+    await page.goto(`${restarted.origin}/?probe=1#token=${restarted.token}`);
+    const line = page.locator("[data-draft-recovery]");
+    await expect(line).toBeVisible({ timeout: 20_000 });
+    expect((await storedDrafts(page)).find((row) => row.path === file)?.contents).toBe("export const answer = 77;\n");
+    await screenshot(page, "s55-draft-recovery-line");
+
+    // Nothing reached the disk, and a file that can be written again is where
+    // the draft goes: Review offers its checkout, Open restores it into the
+    // editor on its own document, and only the save that lands takes it out
+    // of the store.
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
+    fs.chmodSync(file, 0o644);
+    await page.locator("[data-draft-recovery-review]").click();
+    const id = encodeURIComponent(draftId(restarted.hostId, repo, file));
+    const showCheckout = page.locator(`[data-draft-show-checkout="${id}"]`);
+    if (await showCheckout.count()) await showCheckout.click();
+    await expect(page.locator(`[data-draft-open="${id}"]`)).toBeVisible({ timeout: 10_000 });
+    await screenshot(page, "s55-draft-recovery-sheet");
+    await page.locator(`[data-draft-open="${id}"]`).click();
+    await expect(content).toContainText("answer = 77", { timeout: 20_000 });
+    await expect(line).toHaveCount(0);
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 77;\n");
+    await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0, { timeout: 10_000 });
+    await expect.poll(async () => (await storedDrafts(page)).some((row) => row.path === file), { timeout: 10_000 }).toBe(false);
+  } finally {
+    fs.chmodSync(file, 0o644);
+    close(fixture);
+  }
+});
+
+test("a draft is discarded only when the operator confirms it (S5.5 B11)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo } = fixture;
+  try {
+    const elsewhere = { id: draftId("host-another", repo, `${repo}/src/main.ts`), host: "host-another", device: "local", root: repo, path: `${repo}/src/main.ts`, contents: "other host\n", updated_at: 1 };
+    const unverified = { id: ["", "", "", "/old/path.ts"].join("\u0000"), host: null, device: null, root: "", path: "/old/path.ts", contents: "v1\n", updated_at: 2 };
+    await seedDraft(page, elsewhere);
+    await seedDraft(page, unverified);
+    await page.reload();
+    await expect(page.locator("[data-draft-recovery]")).toHaveAttribute("data-draft-recovery", "2", { timeout: 20_000 });
+    await page.locator("[data-draft-recovery-review]").click();
+    // Neither can be opened here: one belongs to another host, the other
+    // does not name its checkout. Both can be exported or discarded.
+    await expect(page.locator(`[data-draft-open="${encodeURIComponent(elsewhere.id)}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-draft-open="${encodeURIComponent(unverified.id)}"]`)).toHaveCount(0);
+    const download = page.waitForEvent("download");
+    await page.locator(`[data-draft-export="${encodeURIComponent(unverified.id)}"]`).click();
+    expect((await download).suggestedFilename()).toBe("path.ts.draft");
+    await page.locator(`[data-draft-discard="${encodeURIComponent(unverified.id)}"]`).click();
+    expect((await storedDrafts(page)).some((row) => row.id === unverified.id)).toBe(true);
+    await page.locator(`[data-draft-discard-confirm="${encodeURIComponent(unverified.id)}"]`).click();
+    await expect.poll(async () => (await storedDrafts(page)).map((row) => row.id)).toEqual([elsewhere.id]);
+  } finally {
+    close(fixture);
+  }
+});
+
+test("an interrupted draft store upgrade loses nothing and completes on the next start (S5.5 B12)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  try {
+    const app = await leaveApp(page);
     await page.evaluate(async ({ path, root }) => {
       await new Promise<void>((resolve, reject) => {
         const removed = indexedDB.deleteDatabase("hide-shell");
@@ -1044,16 +1300,89 @@ test("an expired recovery draft is not restored before its sweep", async ({ page
         opened.onsuccess = () => {
           const database = opened.result;
           const transaction = database.transaction("buffers_v2", "readwrite");
-          transaction.objectStore("buffers_v2").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 97;\n", updated_at: Date.now() - 15 * 24 * 60 * 60 * 1000 });
+          transaction.objectStore("buffers_v2").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 96;\n", updated_at: Date.now() });
           transaction.oncomplete = () => { database.close(); resolve(); };
           transaction.onerror = () => { database.close(); reject(transaction.error); };
         };
       });
+      // An upgrade that dies halfway: it created the new store and then
+      // aborted, as a closed tab or a crash would.
+      await new Promise<void>((resolve) => {
+        const opened = indexedDB.open("hide-shell", 4);
+        opened.onupgradeneeded = () => {
+          opened.result.createObjectStore("drafts_v4", { keyPath: "id" });
+          opened.transaction!.abort();
+        };
+        opened.onerror = () => resolve();
+        opened.onsuccess = () => { opened.result.close(); resolve(); };
+      });
     }, { path: file, root: repo });
-    await page.reload();
-    await expect(page.locator('[data-editor-codemirror] .cm-content')).not.toContainText("answer = 97");
-    await page.waitForTimeout(800);
+    const survived = await page.evaluate(async () => new Promise<number>((resolve, reject) => {
+      const opened = indexedDB.open("hide-shell");
+      opened.onerror = () => reject(opened.error);
+      opened.onsuccess = () => {
+        const database = opened.result;
+        const version = database.version;
+        const rows = database.objectStoreNames.contains("buffers_v2") ? database.transaction("buffers_v2").objectStore("buffers_v2").count() : null;
+        if (!rows) { database.close(); resolve(-version); return; }
+        rows.onsuccess = () => { database.close(); resolve(rows.result); };
+      };
+    }));
+    expect(survived).toBe(1);
+    await page.goto(app);
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a save refused at the daemon's boundary keeps the draft unsaved, across a reload (S5.5 B13-B15)", async ({ page }) => {
+  let refusing = true;
+  let refused = 0;
+  const fixture = await openCheckout(page, async (page) => {
+    // Stands in for the daemon's boundary: a save is answered with the
+    // refusal frame hided sends and never reaches the core.
+    await page.routeWebSocket(/\/ws$/, (socket) => {
+      const server = socket.connectToServer();
+      socket.onMessage((message) => {
+        if (refusing && typeof message === "string" && message.includes('"kind":"file_save"')) {
+          refused += 1;
+          const event = JSON.parse(message) as { payload: { path: string } };
+          socket.send(JSON.stringify({ type: "path_refused", payload: { kind: "file_save", path: event.payload.path, reason: "outside_checkout" } }));
+          return;
+        }
+        server.send(message);
+      });
+      server.onMessage((message) => socket.send(message));
+    });
+  });
+  const { file } = fixture;
+  const original = fs.readFileSync(file, "utf8");
+  try {
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 55;\n");
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => refused, { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
+    // Never shown as saved: the tab stays unsaved, the file is untouched,
+    // and the draft is in the store.
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+    await expect(page.locator('[data-tab-kind="file"]')).toHaveAttribute("data-saving", "false", { timeout: 10_000 });
     expect(fs.readFileSync(file, "utf8")).toBe(original);
+    await expect.poll(async () => (await storedDrafts(page)).find((row) => row.path === file)?.contents, { timeout: 5_000 }).toBe("export const answer = 55;\n");
+
+    await page.reload();
+    await expect(content).toContainText("answer = 55", { timeout: 20_000 });
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
+
+    refusing = false;
+    await content.click();
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 55;\n");
+    await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
   } finally {
     close(fixture);
   }

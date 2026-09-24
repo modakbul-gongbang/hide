@@ -79,10 +79,21 @@ impl Error for ResolveError {
     }
 }
 
-pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveError> {
-    if device_id.trim().is_empty() {
-        return Err(ResolveError::EmptyDevice);
-    }
+/// What the machine that owns `path` knows about its project: the durable
+/// root, the checkout that contains it, its kind and the checked-out branch.
+/// It carries no id: an id also names the device, which only the caller knows
+/// (a device's helper answers these facts for the daemon that asked).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProjectFacts {
+    pub root: PathBuf,
+    pub checkout_root: PathBuf,
+    pub kind: ProjectKind,
+    pub branch: Option<String>,
+    /// The checkout is a linked worktree of the repository at `root`.
+    pub linked_worktree: bool,
+}
+
+pub fn facts(path: &Path) -> Result<ProjectFacts, ResolveError> {
     if !path.exists() {
         return Err(ResolveError::MissingPath(path.to_path_buf()));
     }
@@ -90,36 +101,51 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
         path: path.to_path_buf(),
         source,
     })?;
-    let (root, checkout_root, kind) = match git::discover_checked(&canonical)? {
-        Some(repository) => (repository.main_root(), repository.root, ProjectKind::Git),
-        None => (
-            if canonical.is_dir() {
-                canonical.clone()
-            } else {
-                canonical
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .ok_or_else(|| ResolveError::MissingPath(path.to_path_buf()))?
-            },
-            if canonical.is_dir() {
-                canonical
-            } else {
-                canonical
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .ok_or_else(|| ResolveError::MissingPath(path.to_path_buf()))?
-            },
-            ProjectKind::Folder,
-        ),
+    if let Some(repository) = git::discover_checked(&canonical)? {
+        let root = repository.main_root();
+        return Ok(ProjectFacts {
+            linked_worktree: root != repository.root,
+            branch: repository.branch(),
+            checkout_root: repository.root,
+            root,
+            kind: ProjectKind::Git,
+        });
+    }
+    let folder = if canonical.is_dir() {
+        canonical
+    } else {
+        canonical
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| ResolveError::MissingPath(path.to_path_buf()))?
     };
+    Ok(ProjectFacts {
+        root: folder.clone(),
+        checkout_root: folder,
+        kind: ProjectKind::Folder,
+        branch: None,
+        linked_worktree: false,
+    })
+}
+
+/// The durable id of the project at `root` on `device_id`: the same root on
+/// two devices is two projects (PRD S5.5 B2).
+pub fn project_id(device_id: &str, root: &Path) -> String {
     let material = format!("{}\0{}", device_id, root.to_string_lossy());
-    let digest = Sha256::digest(material.as_bytes());
+    format!("project:{:x}", Sha256::digest(material.as_bytes()))
+}
+
+pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveError> {
+    if device_id.trim().is_empty() {
+        return Err(ResolveError::EmptyDevice);
+    }
+    let facts = facts(path)?;
     Ok(ProjectIdentity {
-        id: format!("project:{:x}", digest),
-        root,
-        checkout_root,
+        id: project_id(device_id, &facts.root),
+        root: facts.root,
+        checkout_root: facts.checkout_root,
         device_id: device_id.to_owned(),
-        kind,
+        kind: facts.kind,
     })
 }
 

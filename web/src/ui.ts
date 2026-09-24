@@ -26,7 +26,8 @@ export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_pa
 export type WorkspaceDialog =
   | { kind: "new_worktree"; workspaceId: string }
   | { kind: "purpose"; workspaceId: string; checkoutId: string }
-  | { kind: "delete_worktree"; workspaceId: string; checkoutId: string };
+  | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
+  | { kind: "remove_project"; workspaceId: string };
 
 /** A held-modifier cycle over recent tabs or projects; committed when ⌥ is released. */
 export type Cycle = {
@@ -51,6 +52,14 @@ export type PendingTrash = {
   name: string;
   isDirectory: boolean;
   selectAfter: string;
+  /** The row's inode when the prompt opened: the host refuses an item that replaced it. */
+  inode: number | null;
+  /**
+   * The checkout and device the prompt was opened for. A device's front
+   * checkout follows its own Herdr focus and can move while the prompt is
+   * open, so the confirmation goes to this target, not the one in front then (B34).
+   */
+  target: { root: string; device_id?: string };
 };
 
 type UiStore = {
@@ -79,7 +88,7 @@ type UiStore = {
   watchedTask: number | null;
   /** The pane a creation made, to be focused once the snapshot lists it (B13). */
   focusWhenListed: string | null;
-  watchedRemoval: { path: string; afterId: number } | null;
+  watchedRemoval: { deviceId: string; path: string; afterId: number } | null;
   /** True while a Shortcuts row is recording: the window listener then runs no command. */
   recordingShortcut: boolean;
   /**
@@ -102,7 +111,7 @@ type UiStore = {
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
-  setWatchedRemoval: (removal: { path: string; afterId: number } | null) => void;
+  setWatchedRemoval: (removal: { deviceId: string; path: string; afterId: number } | null) => void;
   setRecordingShortcut: (recording: boolean) => void;
   /** Registers an Escape layer and returns its removal. */
   pushEscape: (handler: () => void) => () => void;

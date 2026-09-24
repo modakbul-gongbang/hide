@@ -461,11 +461,11 @@ struct PaneShortcutSettingsTests {
             modifiers: [.control]
         )
         #expect(PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
-            tabKeyUp,
+            .init(tabKeyUp),
             currentModifiers: []
         ))
         #expect(!PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
-            tabKeyUp,
+            .init(tabKeyUp),
             currentModifiers: [.control]
         ))
 
@@ -477,11 +477,11 @@ struct PaneShortcutSettingsTests {
             modifiers: []
         )
         #expect(!PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
-            tabKeyDown,
+            .init(tabKeyDown),
             currentModifiers: []
         ))
         #expect(!PaneKeyEventPolicy.shouldCommitTabSwitcherAfterKeyUp(
-            anotherKeyUp,
+            .init(anotherKeyUp),
             currentModifiers: []
         ))
     }
@@ -498,10 +498,10 @@ struct PaneShortcutSettingsTests {
 
     @Test func projectKeyUpCommitsOnlyAfterOptionRelease() {
         let event = keyEvent(type: .keyUp, characters: "\t", keyCode: 48, modifiers: [.option])
-        #expect(PaneKeyEventPolicy.shouldCommitProjectSwitcherAfterKeyUp(event, currentModifiers: [.control]))
-        #expect(!PaneKeyEventPolicy.shouldCommitProjectSwitcherAfterKeyUp(event, currentModifiers: [.option]))
+        #expect(PaneKeyEventPolicy.shouldCommitProjectSwitcherAfterKeyUp(.init(event), currentModifiers: [.control]))
+        #expect(!PaneKeyEventPolicy.shouldCommitProjectSwitcherAfterKeyUp(.init(event), currentModifiers: [.option]))
         #expect(!PaneKeyEventPolicy.shouldCommitProjectSwitcherAfterKeyUp(
-            keyEvent(characters: "\t", keyCode: 48, modifiers: [.option]), currentModifiers: []))
+            .init(keyEvent(characters: "\t", keyCode: 48, modifiers: [.option])), currentModifiers: []))
     }
 
     @Test func ordinaryScrollRoutesLocallyWhileOptionScrollKeepsTerminalMouseReporting() {

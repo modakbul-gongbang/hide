@@ -465,7 +465,7 @@ import Testing
         }]
       }],
       "agents": [],
-      "active_tab_ids": {"remote:device:mini:workspace:w1": "w1:t1"},
+      "active_tab_ids": {"remote:device:mini:checkout:w1": "w1:t1"},
       "focused_workspace_id": "remote:device:mini:workspace:w1",
       "focused_checkout_id": "remote:device:mini:checkout:w1",
       "focused_tab_id": "w1:t1",
@@ -497,7 +497,7 @@ import Testing
     #expect(selected.focusedPaneID == pane.id)
 }
 
-@Test func remoteStatusDecodesCoreOwnedSFTPFileState() throws {
+@Test func remoteStatusDecodesCoreOwnedDeviceFileState() throws {
     let data = Data("""
     {
       "target_id": "mini",
@@ -510,8 +510,7 @@ import Testing
         "entries": [{
           "path": "/private/tmp/project/Sources",
           "name": "Sources",
-          "is_directory": true,
-          "size_bytes": 96
+          "is_directory": true
         }],
         "message": null,
         "generation": 7
@@ -526,7 +525,6 @@ import Testing
     #expect(status.files.generation == 7)
     #expect(entry.name == "Sources")
     #expect(entry.isDirectory)
-    #expect(entry.sizeBytes == 96)
 }
 
 @Test func offscreenPetOriginClampsIntoPrimaryVisibleFrame() {

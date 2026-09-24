@@ -178,11 +178,12 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
+            host_helper_dir: None,
+            host_helper_root: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
-            remote_enabled: false,
             chromux_enabled: false,
             herdr_socket_path_override: None,
             codex_home: None,
@@ -481,7 +482,7 @@ fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
     assert_eq!(
         projected
             .active_tab_ids
-            .get("remote:mini:workspace:w1")
+            .get("remote:mini:checkout:w1")
             .map(String::as_str),
         Some("remote:mini:tab:w1:t1")
     );
@@ -568,11 +569,12 @@ fn official_remote_session_coordinator_probe() {
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
+            host_helper_dir: None,
+            host_helper_root: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: Some(PathBuf::from(home)),
-            remote_enabled: true,
             chromux_enabled: false,
             herdr_socket_path_override: None,
             codex_home: None,

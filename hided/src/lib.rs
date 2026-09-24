@@ -4,6 +4,7 @@ pub mod cli;
 pub mod coexist;
 pub mod core;
 pub mod demand;
+pub mod device_watch;
 pub mod env;
 pub mod index;
 pub mod opener;
@@ -29,6 +30,33 @@ use crate::server::AppState;
 use crate::state_file::{DaemonState, acquire_lock, new_token, remove_state, write_state};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The name of the machine this daemon runs on, which Settings names as the
+/// owner of every value the daemon stores (PRD S5.5 B35); `None` when the
+/// system will not say, which the page shows as unavailable rather than a guess.
+fn host_name() -> Option<String> {
+    #[cfg(unix)]
+    {
+        let mut buffer = [0u8; 256];
+        // SAFETY: the buffer outlives the call and its length is passed with it.
+        let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+        if result != 0 {
+            return None;
+        }
+        let end = buffer
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(buffer.len());
+        let name = String::from_utf8_lossy(&buffer[..end]).trim().to_owned();
+        (!name.is_empty()).then_some(name)
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::var("COMPUTERNAME")
+            .ok()
+            .filter(|name| !name.is_empty())
+    }
+}
 
 fn find_ui_dir() -> Option<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
@@ -82,6 +110,8 @@ pub async fn run_daemon(env: Env) -> Result<(), String> {
 
 pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    let host_id = state_file::host_id(&env.state_dir)
+        .map_err(|error| format!("the daemon host id could not be read or written: {error}"))?;
     let token = new_token();
     let listener = server::bind(env.bind).await?;
     let port = listener
@@ -126,10 +156,18 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .as_ref()
             .map(|path| path.display().to_string()),
         app_state_path: env.state_dir.join("core-state.json").display().to_string(),
+        // The device helper packages ship beside this binary.
+        host_helper_dir: std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
+        host_helper_root: env.host_helper_root.clone(),
     };
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
-    let core = CoreHandle::spawn(options)?;
-    let watch = Arc::new(watch::WatchService::new(Arc::clone(&boundary)));
+    let core = Arc::new(CoreHandle::spawn(options)?);
+    let watch = Arc::new(watch::WatchService::new(
+        Arc::clone(&boundary),
+        Arc::clone(&core),
+    ));
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
@@ -141,7 +179,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         supervisor_exe,
     );
     let app = AppState {
-        core: Arc::new(core),
+        core,
         boundary,
         watch: Arc::clone(&watch),
         index: Arc::clone(&index),
@@ -165,6 +203,8 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         daemon_info: Arc::new(serde_json::json!({
             "version": VERSION,
             "schema_version": SCHEMA_VERSION,
+            "host_id": host_id,
+            "host_name": host_name(),
             "pid": std::process::id(),
             "started_at_unix": state.started_at.clone(),
             "state_dir": env.state_dir.display().to_string(),
@@ -294,6 +334,7 @@ fn apply_snapshot(
 ) {
     let roots = roots_from_value(value);
     boundary.set_roots(roots.clone());
+    boundary.set_device_roots(device_roots_from_value(value));
     if let Err(error) = core.set_file_roots(boundary.opened_roots()) {
         eprintln!(
             "{}",
@@ -302,10 +343,21 @@ fn apply_snapshot(
             })
         );
     }
+    let device_roots = device_roots_from_value(value);
     index.set_roots(
         &roots
             .iter()
-            .map(|root| root.path.clone())
+            .map(|root| {
+                (
+                    herdr_core::workspace::LOCAL_DEVICE_ID.to_owned(),
+                    root.path.display().to_string(),
+                )
+            })
+            .chain(
+                device_roots
+                    .iter()
+                    .map(|root| (root.device_id.clone(), root.path.clone())),
+            )
             .collect::<Vec<_>>(),
     );
     let (root, expanded) = watch_state_from_value(value);
@@ -315,6 +367,7 @@ fn apply_snapshot(
         .filter(|path| boundary.resolve_target(path).is_ok())
         .collect();
     watch.reconcile(boundary, root, expanded);
+    watch.reconcile_device(device_watch::target_from_value(value));
 }
 
 fn refresh_roots(
@@ -422,6 +475,53 @@ fn roots_from_value(value: &Value) -> Vec<Root> {
                 checkout_id: id.to_owned(),
                 path: std::path::PathBuf::from(path),
             });
+        }
+    }
+    roots
+}
+
+/// The checkouts a snapshot carries on SSH devices: the device and the root
+/// path there, which only that device's helper reads. A device's projects
+/// are the registered ones in the navigator and its Herdr session's, the
+/// same two places the core's `catalog_checkout` looks.
+fn device_roots_from_value(value: &Value) -> Vec<boundary::DeviceRoot> {
+    let registered = value
+        .pointer("/rest/navigator/workspaces")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    let sessions = value
+        .pointer("/rest/status/remote")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|remote| {
+            remote
+                .pointer("/session/workspaces")
+                .and_then(Value::as_array)
+        })
+        .flatten();
+    let mut roots = Vec::new();
+    for workspace in registered.chain(sessions) {
+        let Some(device_id) = workspace
+            .get("device_id")
+            .and_then(Value::as_str)
+            .filter(|device| *device != herdr_core::workspace::LOCAL_DEVICE_ID)
+        else {
+            continue;
+        };
+        for checkout in workspace
+            .get("checkouts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(path) = checkout.get("path").and_then(Value::as_str) {
+                roots.push(boundary::DeviceRoot {
+                    device_id: device_id.to_owned(),
+                    path: path.to_owned(),
+                });
+            }
         }
     }
     roots

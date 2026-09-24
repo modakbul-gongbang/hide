@@ -2,7 +2,7 @@ import { memo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
 import type { RemoteView } from "./remote";
-import { editorFor, focusedCheckout, type AsyncOperation, type Checkout, type EditorSnapshot, type StripTab } from "./snapshot";
+import { editorFor, focusedCheckout, remoteEditorTab, type AsyncOperation, type Checkout, type EditorSnapshot, type EditorTabSnapshot, type StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 
 // The tab bar draws the focused checkout's strip (PRD S2 B3, S3 B3/B4). Every
@@ -22,6 +22,8 @@ export function TabBar({ actions }: { actions: Actions }) {
   return (
     <Strip
       checkout={checkout}
+      activeId={activeStripId(checkout, editor)}
+      showingEditor={editorFor(editor) !== null}
       editor={editor}
       savingTabs={savingTabs}
       bufferWarnings={bufferWarnings}
@@ -33,56 +35,83 @@ export function TabBar({ actions }: { actions: Actions }) {
 
 const NONE: AsyncOperation[] = [];
 
-const ignore = () => {};
+/**
+ * A tab drag. The drag itself lives in a ref: pointer events arrive faster
+ * than a continuous-priority render lands, so the release reads the ref and
+ * the state only drives the highlight. A drop sends one `reorder_tab` with
+ * the strip index of the tab it landed on.
+ */
+function useTabDrag(actions: Actions) {
+  const drag = useRef<{ id: string; x: number; active: boolean } | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const handlers = (entry: StripTab, index: number) => ({
+    dragging: dragging === entry.id,
+    over: over === entry.id && dragging !== entry.id,
+    onPointerDown: (x: number) => {
+      drag.current = { id: entry.id, x, active: false };
+    },
+    onPointerMove: (x: number) => {
+      const start = drag.current;
+      if (!start || start.active) return;
+      const threshold = Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue("--size-tab-drag-activation"),
+      );
+      if (Math.abs(x - start.x) >= threshold) {
+        start.active = true;
+        setDragging(start.id);
+      }
+    },
+    onPointerEnter: () => {
+      if (drag.current?.active) setOver(entry.id);
+    },
+    onPointerUp: () => {
+      const start = drag.current;
+      drag.current = null;
+      setDragging(null);
+      setOver(null);
+      if (start?.active && start.id !== entry.id) actions.reorderTab(start.id, index);
+    },
+  });
+  return handlers;
+}
 
 /**
  * A selected SSH device's strip: the Herdr tabs of the workspace its host has
- * focused. Selecting, adding and closing go to that host (`remote_control`);
- * the order is Herdr's there, so a remote tab is not dragged.
+ * focused and the device files opened in that checkout, in the order the core
+ * placed them (`place_device_strips`). A terminal tab is selected, added and
+ * closed on that host (`remote_control`); a file tab is the core's own. A drag
+ * is the same as this machine's: a Herdr tab moves on the device's Herdr.
  */
 export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Actions }) {
-  const operations = useShellStore((s) => s.rest?.status?.async_operations ?? NONE);
-  const { checkout } = view;
+  const operations = useShellStore((s) => s.rest?.status?.async_operations);
+  const editor = useShellStore((s) => s.editor);
+  const savingTabs = useShellStore((s) => s.savingTabs);
+  const bufferWarnings = useShellStore((s) => s.bufferWarnings);
+  const showing = remoteEditorTab(editor, view.checkout);
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel" role="tablist" data-tab-bar={checkout.id} data-remote-tab-bar="true">
-      {checkout.tabs.map((tab) =>
-        tab.id ? (
-          <TabButton
-            key={tab.id}
-            entry={{ id: tab.id, kind: "herdr", source_id: tab.id, label: tab.label ?? tab.id, preview: false }}
-            identity={tab.label ?? tab.id}
-            active={tab.id === view.tab?.id}
-            dirty={false}
-            saving={false}
-            tabOnly={false}
-            closing={closingSuffix(tab.id, "tab.close", operations)}
-            dragging={false}
-            over={false}
-            onSelect={() => actions.focusTab(tab.id as string)}
-            onDoubleClick={ignore}
-            onClose={() => actions.closeTab(tab.id as string)}
-            onPointerDown={ignore}
-            onPointerMove={ignore}
-            onPointerEnter={ignore}
-            onPointerUp={ignore}
-          />
-        ) : null,
-      )}
-      <button
-        type="button"
-        className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-secondary hover:bg-elevated hover:text-primary"
-        aria-label={`New tab ${checkout.next_tab_label}`}
-        title="New tab (⌥T)"
-        onClick={() => actions.createTab()}
-      >
-        +
-      </button>
-    </div>
+    <Strip
+      checkout={view.checkout}
+      activeId={showing ? showing.id : (view.tab?.id ?? null)}
+      showingEditor={showing !== null}
+      device
+      editor={editor}
+      savingTabs={savingTabs}
+      bufferWarnings={bufferWarnings}
+      operations={operations ?? NONE}
+      actions={actions}
+    />
   );
 }
 
 /** Phases of a close the core is still confirming with Herdr (`operations.rs`). */
 const IN_FLIGHT = new Set(["transmitting", "awaiting_topology", "unknown"]);
+
+/** What a file or diff tab stands for, read by assistive technology. */
+function editorIdentity(entry: StripTab, tab: EditorTabSnapshot): string {
+  const kind = entry.kind === "diff" ? `${tab.diff_committed ? "Committed on branch" : "Uncommitted"} diff` : "File";
+  return `${kind}: ${tab.path}${entry.preview ? " · Preview" : ""}`;
+}
 
 /** "closing…" while the core is still confirming a close with Herdr. */
 export function closingSuffix(targetId: string, kind: "tab.close" | "pane.close", operations: AsyncOperation[]): boolean {
@@ -99,8 +128,16 @@ export function activeStripId(checkout: Checkout, editor: EditorSnapshot | null)
   return showing ? showing.active_tab_id : checkout.active_tab_id;
 }
 
+/**
+ * One checkout's strip. `activeId` and `showingEditor` say which entry is
+ * drawn active: the editor tab when the editor owns the surface, else the
+ * Herdr tab.
+ */
 const Strip = memo(function Strip({
   checkout,
+  activeId,
+  showingEditor,
+  device = false,
   editor,
   savingTabs,
   bufferWarnings,
@@ -108,27 +145,24 @@ const Strip = memo(function Strip({
   actions,
 }: {
   checkout: Checkout;
+  activeId: string | null;
+  showingEditor: boolean;
+  device?: boolean;
   editor: EditorSnapshot | null;
   savingTabs: Set<string>;
   bufferWarnings: Set<string>;
   operations: AsyncOperation[];
   actions: Actions;
 }) {
-  const activeId = activeStripId(checkout, editor);
-  const showingEditor = editorFor(editor) !== null;
   const dirty = new Set((editor?.tabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
-  // The drag itself lives in a ref: pointer events arrive faster than a
-  // continuous-priority render lands, so the release reads the ref and the
-  // state only drives the highlight.
-  const drag = useRef<{ id: string; x: number; active: boolean } | null>(null);
-  const [dragging, setDragging] = useState<string | null>(null);
-  const [over, setOver] = useState<string | null>(null);
+  const drag = useTabDrag(actions);
 
   return (
     <div
       className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel"
       role="tablist"
       data-tab-bar={checkout.id}
+      data-remote-tab-bar={device ? "true" : undefined}
     >
       {checkout.strip.map((entry, index) => {
         // Session and Memory viewers are deferred (PRD Non-goals), so their
@@ -136,48 +170,20 @@ const Strip = memo(function Strip({
         if (entry.kind === "session" || entry.kind === "memory") return null;
         const isEditor = entry.kind === "file" || entry.kind === "diff";
         const editorTab = isEditor ? editor?.tabs.find((tab) => tab.id === entry.source_id) : null;
-        const identity = editorTab
-          ? `${entry.kind === "diff" ? `${editorTab.diff_committed ? "Committed on branch" : "Uncommitted"} diff` : "File"}: ${editorTab.path}${entry.preview ? " · Preview" : ""}`
-          : entry.label;
         return (
           <TabButton
             key={entry.id}
             entry={entry}
-            identity={identity}
+            identity={editorTab ? editorIdentity(entry, editorTab) : entry.label}
             active={showingEditor === isEditor && entry.source_id === activeId}
             dirty={dirty.has(entry.source_id)}
             saving={savingTabs.has(entry.source_id)}
             tabOnly={bufferWarnings.has(entry.source_id)}
             closing={!isEditor && closingSuffix(entry.source_id, "tab.close", operations)}
-            dragging={dragging === entry.id}
-            over={over === entry.id && dragging !== entry.id}
             onSelect={() => (isEditor ? actions.focusFileTab(entry.source_id) : actions.focusTab(entry.source_id))}
             onDoubleClick={() => { if (isEditor) actions.keepOpenFile(entry.source_id); }}
             onClose={() => (isEditor ? actions.closeFileTab(entry.source_id) : actions.closeTab(entry.source_id))}
-            onPointerDown={(x) => {
-              drag.current = { id: entry.id, x, active: false };
-            }}
-            onPointerMove={(x) => {
-              const start = drag.current;
-              if (!start || start.active) return;
-              const threshold = Number.parseFloat(
-                getComputedStyle(document.documentElement).getPropertyValue("--size-tab-drag-activation"),
-              );
-              if (Math.abs(x - start.x) >= threshold) {
-                start.active = true;
-                setDragging(start.id);
-              }
-            }}
-            onPointerEnter={() => {
-              if (drag.current?.active) setOver(entry.id);
-            }}
-            onPointerUp={() => {
-              const start = drag.current;
-              drag.current = null;
-              setDragging(null);
-              setOver(null);
-              if (start?.active && start.id !== entry.id) actions.reorderTab(start.id, index);
-            }}
+            {...drag(entry, index)}
           />
         );
       })}
@@ -242,7 +248,7 @@ export const TabButton = memo(function TabButton({
       data-saving={saving ? "true" : "false"}
       data-tab-only={tabOnly ? "true" : "false"}
       data-closing={closing ? "true" : "false"}
-      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default items-center gap-xs px-sm text-caption ${
+      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption ${
         active ? "bg-background text-primary" : "text-secondary hover:bg-elevated"
       } ${dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={(event) => {

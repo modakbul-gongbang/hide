@@ -51,7 +51,7 @@ fn registering_a_device_opens_its_remote_status_and_removing_it_closes_it() {
     assert_eq!(row.ssh_alias.as_deref(), Some("studio-host"));
     assert_eq!(
         row.message.as_deref(),
-        Some("Remote features are disabled because the SSH agent socket is unavailable")
+        Some("HOME is unavailable, so the SSH config cannot be resolved")
     );
 
     // A catalog rebuild recreates the rows; the state has to come back with them.
@@ -75,7 +75,7 @@ fn registering_a_device_opens_its_remote_status_and_removing_it_closes_it() {
 /// wrong, and the row has to say so rather than spin on "connecting".
 #[test]
 fn an_unknown_ssh_alias_is_reported_on_the_device_row() {
-    let mut runtime = runtime_with_remote_enabled();
+    let mut runtime = runtime_with_home();
     assert!(register_device(
         &mut runtime,
         "nowhere",
@@ -118,7 +118,7 @@ fn testing_an_unconnected_device_reports_the_way_out() {
     assert_eq!(error.kind, "device.unknown");
 }
 
-fn runtime_with_remote_enabled() -> Runtime {
+fn runtime_with_home() -> Runtime {
     let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
@@ -132,12 +132,13 @@ fn runtime_with_remote_enabled() -> Runtime {
             ))
             .to_string_lossy()
             .into_owned(),
+        host_helper_dir: None,
+        host_helper_root: None,
     };
     Runtime::new(
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            remote_enabled: true,
             chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: Some(std::env::temp_dir().join(format!(
@@ -154,7 +155,7 @@ fn runtime_with_remote_enabled() -> Runtime {
 /// config and retrying moves the row past the alias failure it showed.
 #[test]
 fn retrying_a_device_makes_a_new_connection_attempt() {
-    let mut runtime = runtime_with_remote_enabled();
+    let mut runtime = runtime_with_home();
     assert!(register_device(&mut runtime, "studio", "studio-host"));
     let first = device(&runtime, "studio").message.clone().expect("reason");
     assert!(
@@ -334,7 +335,10 @@ fn removing_the_selected_device_keeps_the_local_tabs_and_keyboard() {
     assert!(register_device(&mut runtime, "studio", "studio-host"));
     assert!(dispatch_device(&mut runtime, "focus_device", "studio"));
     runtime.snapshot.terminal.pane_id = Some("remote:studio:pane:w9:p1".to_owned());
+    // The rows as a session publish draws them, strips included.
+    runtime.rebuild_tab_strips();
     let before = runtime.snapshot().navigator.workspaces.clone();
+    assert!(!before[0].checkouts[0].strip.is_empty());
 
     assert!(dispatch_device(&mut runtime, "remove_device", "studio"));
 
@@ -355,4 +359,42 @@ fn removing_the_selected_device_keeps_the_local_tabs_and_keyboard() {
             .iter()
             .all(|device| device.id != "studio")
     );
+}
+
+/// B2: a device's project at the same absolute path as a folder on this
+/// machine is another folder, so neither's add or removal in flight holds up
+/// the other.
+#[test]
+fn a_device_project_at_this_machines_path_does_not_hold_up_its_add_or_removal() {
+    let mut runtime = runtime_with_home();
+    let registration = |id: &str, device: &str| crate::model::WorkspaceRegistration {
+        id: id.to_owned(),
+        label: "same".to_owned(),
+        path: "/work/same".to_owned(),
+        device_id: device.to_owned(),
+        pinned: false,
+    };
+    runtime.snapshot.ui_state.workspace_registrations =
+        vec![registration("remote:mac:workspace:1", "mac")];
+    runtime
+        .workspace_removals_in_flight
+        .insert("remote:mac:workspace:1".to_owned());
+    assert_eq!(runtime.workspace_removal_in_flight_for("/work/same"), None);
+
+    runtime.snapshot.ui_state.workspace_registrations = vec![
+        registration("local:1", workspace::LOCAL_DEVICE_ID),
+        registration("remote:mac:workspace:1", "mac"),
+    ];
+    runtime
+        .workspace_removals_in_flight
+        .insert("local:1".to_owned());
+    assert_eq!(
+        runtime.workspace_removal_in_flight_for("/work/same"),
+        Some("local:1".to_owned())
+    );
+    runtime
+        .workspace_creations_in_flight
+        .insert("/work/same".to_owned());
+    assert!(!runtime.workspace_creation_in_flight_for("remote:mac:workspace:1"));
+    assert!(runtime.workspace_creation_in_flight_for("local:1"));
 }

@@ -27,9 +27,21 @@ pub fn local_device() -> DeviceSnapshot {
         kind: "local".to_owned(),
         state: "ready".to_owned(),
         message: None,
+        problem: None,
         ssh_alias: None,
+        herdr_socket_path: None,
         agent_count: 0,
         test: None,
+        host: crate::model::DeviceHostSnapshot {
+            consent: "this_machine".to_owned(),
+            state: "ready".to_owned(),
+            platform: Some(format!(
+                "{} {}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            )),
+            ..Default::default()
+        },
     }
 }
 
@@ -49,9 +61,12 @@ pub fn devices(registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
                 kind: if remote { "remote" } else { "local" }.to_owned(),
                 state: if remote { "unavailable" } else { "available" }.to_owned(),
                 message: None,
+                problem: None,
                 ssh_alias: registration.ssh_alias.clone(),
+                herdr_socket_path: registration.herdr_socket_path.clone(),
                 agent_count: 0,
                 test: None,
+                host: crate::model::DeviceHostSnapshot::default(),
             });
         }
     }
@@ -286,7 +301,13 @@ pub fn build_catalog(
     // still start work, so it stays listed. One Herdr already occupies keeps
     // the registration's identity and label with Herdr's workspace attached,
     // so the row survives Herdr closing that workspace.
-    for registration in registrations {
+    // A registration on another device names a path on that machine; this
+    // machine's filesystem says nothing about it, so it is never inspected
+    // here (PRD S5.5 B7). That device's catalog is its helper's to answer.
+    for registration in registrations
+        .iter()
+        .filter(|registration| registration.device_id == LOCAL_DEVICE_ID)
+    {
         let comparison = normalized_for_comparison(&project_root(Path::new(&registration.path)));
         let occupied = result.iter().position(|workspace| {
             normalized_for_comparison(Path::new(&workspace.path)) == comparison
@@ -786,7 +807,7 @@ pub fn normalized_for_comparison(path: &Path) -> String {
         .to_owned()
 }
 
-fn fnv1a(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
     })

@@ -426,28 +426,36 @@ impl Runtime {
     /// Herdr reports the order it actually has, and a refusal leaves the strip
     /// on the order Herdr last reported.
     pub(super) fn reorder_tab(&mut self, payload: ReorderTabPayload) -> bool {
-        let Some(workspace) = self
+        // The checkout is this machine's or a device's; a device's strip is
+        // placed by the same rule, and its Herdr tabs move on its own Herdr.
+        let local = self
             .snapshot
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == payload.workspace_id)
-        else {
-            self.set_error(
-                "tab.unknown_workspace",
-                format!("Workspace {} is not registered", payload.workspace_id),
-                false,
-            );
-            return true;
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .find(|workspace| workspace.id == payload.workspace_id);
+        let device = self.snapshot.status.remote.iter().find_map(|remote| {
+            remote
+                .session
+                .as_ref()?
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == payload.workspace_id)
+                .map(|workspace| (remote.target_id.clone(), workspace))
+        });
+        let (device, workspace) = match (local, device) {
+            (Some(workspace), _) => (None, workspace),
+            (None, Some((target, workspace))) => (Some(target), workspace),
+            (None, None) => {
+                self.set_error(
+                    "tab.unknown_workspace",
+                    format!("Workspace {} is not registered", payload.workspace_id),
+                    false,
+                );
+                return true;
+            }
         };
-        if workspace.remote_target_id.is_some() {
-            self.set_error(
-                "tab.reorder_remote",
-                "A remote target's tab order is Herdr's alone and cannot be rearranged here",
-                false,
-            );
-            return true;
-        }
         let Some(checkout) = workspace
             .checkouts
             .iter()
@@ -544,8 +552,15 @@ impl Runtime {
         // Deciding this per checkout is what refused every drag in a checkout
         // whose tabs come from two Herdr workspaces, which is the ordinary
         // arrangement for a repository opened twice.
-        let Some((moved_workspace_id, workspace_order)) = self
-            .herdr_workspace_tab_order
+        let workspace_orders = match device.as_deref() {
+            None => self.herdr_workspace_tab_order.clone(),
+            Some(target) => self
+                .device_raw_sessions
+                .get(target)
+                .map(device_workspace_tab_order)
+                .unwrap_or_default(),
+        };
+        let Some((moved_workspace_id, workspace_order)) = workspace_orders
             .iter()
             .find(|(_, order)| order.contains(&moved.source_id))
             .map(|(workspace_id, order)| (workspace_id.clone(), order.clone()))
@@ -592,13 +607,21 @@ impl Runtime {
             );
             return true;
         };
-        let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "tab.control_unavailable",
-                "Moving a Herdr tab requires a live Herdr connection",
-                true,
-            );
-            return true;
+        let carrier = match device.as_deref() {
+            None => self
+                .live
+                .as_ref()
+                .cloned()
+                .map(|context| (TabMoveCarrier::Local(context), self.live_generation))
+                .ok_or_else(|| "Moving a Herdr tab requires a live Herdr connection".to_owned()),
+            Some(target) => self.device_tab_move_carrier(target),
+        };
+        let (carrier, connection_generation) = match carrier {
+            Ok(carrier) => carrier,
+            Err(message) => {
+                self.set_error("tab.control_unavailable", message, true);
+                return true;
+            }
         };
         let generation = self.next_tab_move_generation;
         self.next_tab_move_generation += 1;
@@ -616,7 +639,7 @@ impl Runtime {
                 herdr_order: desired_owned.clone(),
                 target_id: moved.source_id.clone(),
                 generation,
-                connection_generation: self.live_generation,
+                connection_generation,
                 phase: "transmitting".to_owned(),
                 stage: "request".to_owned(),
                 started_at_unix_ms: now,
@@ -633,25 +656,78 @@ impl Runtime {
                 moved.source_id
             ),
         );
-        if let Err(message) = live::spawn_local_control(
-            context,
-            RemoteControlAction::MoveTab {
-                checkout_id: payload.checkout_id.clone(),
-                tab_id: moved.source_id,
-                insert_index,
-                // Herdr answers with its own workspace's tabs, so the order to
-                // check the answer against is the moved tab's workspace
-                // subsequence, never the checkout's mixed order.
-                expected_order: desired_owned,
-                generation,
-                connection_generation: self.live_generation,
-            },
-        ) {
+        // Herdr answers with its own workspace's tabs, so the order to check
+        // the answer against is the moved tab's workspace subsequence, never
+        // the checkout's mixed order. A device's Herdr names its tabs without
+        // the device scope the strip carries.
+        let herdr_id = |tab_id: &str| match device.as_deref() {
+            None => Some(tab_id.to_owned()),
+            Some(target) => remote_tab_source_id(target, tab_id).map(str::to_owned),
+        };
+        let (Some(tab_id), Some(expected_order)) = (
+            herdr_id(&moved.source_id),
+            desired_owned
+                .iter()
+                .map(|tab_id| herdr_id(tab_id))
+                .collect::<Option<Vec<_>>>(),
+        ) else {
+            self.pending_tab_move.remove(&payload.checkout_id);
+            self.sync_async_operations();
+            self.set_error(
+                "tab.reorder_inconsistent",
+                format!("Tab {} is not scoped to its device", moved.source_id),
+                false,
+            );
+            return true;
+        };
+        let action = RemoteControlAction::MoveTab {
+            checkout_id: payload.checkout_id.clone(),
+            tab_id,
+            insert_index,
+            expected_order,
+            generation,
+            connection_generation,
+        };
+        let spawned = match carrier {
+            TabMoveCarrier::Local(context) => live::spawn_local_control(context, action),
+            TabMoveCarrier::Device(context) => live::spawn_remote_control(
+                context,
+                format!("tab.move:{}:{generation}", payload.checkout_id),
+                action,
+                connection_generation,
+            ),
+        };
+        if let Err(message) = spawned {
             self.pending_tab_move.remove(&payload.checkout_id);
             self.sync_async_operations();
             self.set_error("tab.move_worker_failed", message, true);
         }
         true
+    }
+
+    /// The device's Herdr control and its connection generation, when the
+    /// device can take a tab move now.
+    fn device_tab_move_carrier(&self, target: &str) -> Result<(TabMoveCarrier, u64), String> {
+        let connected = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .any(|remote| remote.target_id == target && remote.state == "connected");
+        if !connected {
+            return Err(format!("{target} is not connected; the tab was not moved"));
+        }
+        let context = self
+            .remote_controls
+            .get(target)
+            .cloned()
+            .ok_or_else(|| format!("Herdr control for {target} is unavailable"))?;
+        let generation = self
+            .remote_connection_generations
+            .get(target)
+            .copied()
+            .unwrap_or(0);
+        Ok((TabMoveCarrier::Device(context), generation))
     }
     /// Drops a held reorder and says why, so a refused move is never a strip
     /// that silently stayed where it was.
@@ -679,26 +755,15 @@ impl Runtime {
         self.rebuild_tab_strips();
         true
     }
-    /// Rewrites every local checkout's tab strip from the Herdr and editor
-    /// tabs it currently holds.
-    ///
-    /// A remote checkout keeps the strip its own projection built: the remote
-    /// context browses Herdr's tabs and has no file tabs to mix in.
+    /// Rewrites every checkout's tab strip, this machine's and each device's,
+    /// from the Herdr and editor tabs it currently holds.
     pub(super) fn rebuild_tab_strips(&mut self) {
         let editor_tabs = &self.snapshot.editor.tabs;
         let order = &mut self.checkout_tab_order;
         let pending = &mut self.pending_tab_move;
         // Which Herdr workspace each tab belongs to, so a strip slot is
         // refilled from that workspace's order rather than from a flat one.
-        let owners = &self
-            .herdr_workspace_tab_order
-            .iter()
-            .flat_map(|(workspace_id, tab_ids)| {
-                tab_ids
-                    .iter()
-                    .map(move |tab_id| (tab_id.clone(), workspace_id.clone()))
-            })
-            .collect::<BTreeMap<String, String>>();
+        let owners = &tab_owners(&self.herdr_workspace_tab_order);
         let mut live_checkouts = BTreeSet::new();
         // Checkouts whose held arrangement became unreachable. The diagnostic
         // is pushed after the loop, which is where the snapshot is free again.
@@ -709,7 +774,6 @@ impl Runtime {
             }
             for checkout in &mut workspace.checkouts {
                 live_checkouts.insert(checkout.id.clone());
-                let herdr = StripTabSnapshot::from_herdr_tabs(&checkout.tabs);
                 let editor = editor_tabs
                     .iter()
                     .filter(|tab| {
@@ -717,48 +781,96 @@ impl Runtime {
                     })
                     .map(StripTabSnapshot::editor)
                     .collect::<Vec<_>>();
-                let stored = order.entry(checkout.id.clone()).or_default();
-                // A held reorder lands the moment Herdr reports the order it
-                // asked for, whichever path carried it: the `tab_moved` event,
-                // a move Herdr had already made, or a move made from the TUI.
-                // A held reorder whose tabs are no longer the checkout's tabs
-                // can never be reported, so it is dropped rather than kept
-                // waiting for an order that cannot arrive.
-                if let Some(held) = pending.get(&checkout.id) {
-                    // Only the tabs the move was asked about: the workspace
-                    // it named, as this checkout currently holds them.
-                    let live_owned = herdr
-                        .iter()
-                        .map(|entry| &entry.source_id)
-                        .filter(|tab_id| owners.get(*tab_id) == Some(&held.workspace_id))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if live_owned.iter().cloned().collect::<BTreeSet<_>>()
-                        != held.herdr_order.iter().cloned().collect::<BTreeSet<_>>()
-                    {
-                        pending.remove(&checkout.id);
-                        dropped_moves.push(checkout.id.clone());
-                    } else if live_owned == held.herdr_order {
-                        *stored = held.desired.clone();
-                        pending.remove(&checkout.id);
-                    }
-                }
-                checkout.strip = ordered_strip(stored, &herdr, &editor, owners);
-                *stored = checkout
-                    .strip
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .collect();
+                place_checkout_strip(checkout, editor, owners, order, pending, &mut dropped_moves);
             }
         }
-        order.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
-        pending.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
+        let targets = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .filter(|remote| remote.session.is_some())
+            .map(|remote| remote.target_id.clone())
+            .collect::<Vec<_>>();
+        for target in targets {
+            let Some(mut session) = self
+                .snapshot
+                .status
+                .remote
+                .iter_mut()
+                .find(|remote| remote.target_id == target)
+                .and_then(|remote| remote.session.take())
+            else {
+                continue;
+            };
+            self.place_device_strips(&target, &mut session, &mut dropped_moves);
+            live_checkouts.extend(
+                session
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .map(|checkout| checkout.id.clone()),
+            );
+            if let Some(remote) = self
+                .snapshot
+                .status
+                .remote
+                .iter_mut()
+                .find(|remote| remote.target_id == target)
+            {
+                remote.session = Some(session);
+            }
+        }
+        self.checkout_tab_order
+            .retain(|checkout_id, _| live_checkouts.contains(checkout_id));
+        self.pending_tab_move
+            .retain(|checkout_id, _| live_checkouts.contains(checkout_id));
         // A rebuilt entry starts without its agent; name it before the strip
         // is published so a fresh tab never draws as a bare number first.
         sync_strip_agent_identity(
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        self.report_dropped_tab_moves(dropped_moves);
+    }
+
+    /// Places a device's checkout strips by the rule this machine's follow:
+    /// the device's Herdr tabs in its host's order, its file tabs in the
+    /// slots the operator put them in (`place_checkout_strip`).
+    pub(super) fn place_device_strips(
+        &mut self,
+        target: &str,
+        session: &mut RemoteSessionSnapshot,
+        dropped_moves: &mut Vec<String>,
+    ) {
+        let owners = self
+            .device_raw_sessions
+            .get(target)
+            .map(|raw| tab_owners(&device_workspace_tab_order(raw)))
+            .unwrap_or_default();
+        for workspace in &mut session.workspaces {
+            for checkout in &mut workspace.checkouts {
+                let editor = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.checkout_id == checkout.id)
+                    .map(StripTabSnapshot::editor)
+                    .collect::<Vec<_>>();
+                place_checkout_strip(
+                    checkout,
+                    editor,
+                    &owners,
+                    &mut self.checkout_tab_order,
+                    &mut self.pending_tab_move,
+                    dropped_moves,
+                );
+            }
+        }
+    }
+
+    pub(super) fn report_dropped_tab_moves(&mut self, dropped_moves: Vec<String>) {
         for checkout_id in dropped_moves {
             self.push_diagnostic(
                 "tab.move.dropped",
@@ -1204,6 +1316,19 @@ impl Runtime {
                 self.snapshot.navigator.focused_device_id.as_deref() == Some(target_id),
             )
         });
+        // Herdr's session is kept as it came; the published one groups its
+        // workspaces into the device's projects (`device_catalog`).
+        let mut dropped_moves = Vec::new();
+        let fetched = fetched.map(|raw| {
+            let mut derived = self.derive_device_session(target_id, &raw);
+            self.device_raw_sessions.insert(target_id.to_owned(), raw);
+            self.place_device_strips(target_id, &mut derived, &mut dropped_moves);
+            derived
+        });
+        if !dropped_moves.is_empty() {
+            self.report_dropped_tab_moves(dropped_moves);
+        }
+        let session_ok = fetched.is_ok();
         let Some(status_index) = self
             .snapshot
             .status
@@ -1312,6 +1437,9 @@ impl Runtime {
         changed |= self.expire_remote_operations(unix_milliseconds());
         if let Some(session) = observed_session.as_ref() {
             changed |= self.observe_remote_operations(session);
+        }
+        if session_ok {
+            changed |= self.request_device_facts(target_id);
         }
         if changed {
             self.sync_async_operations();
@@ -2443,6 +2571,8 @@ impl Runtime {
         let id = self.next_task_operation_id;
         self.snapshot.task_operation = Some(crate::model::TaskOperationSnapshot {
             id,
+            // A device task names its device after this returns.
+            device_id: None,
             kind: kind.to_owned(),
             phase: "working".into(),
             repository_root,
@@ -2470,7 +2600,10 @@ impl Runtime {
         }
         let operation_kind = operation.kind.clone();
         let repository_root = operation.repository_root.clone();
-        let should_focus = operation_kind != "branch_migrate";
+        let device = operation.device_id.clone();
+        // A device's Herdr focuses what it created, and the device's screen
+        // follows its host; this machine's focus does not move for it.
+        let should_focus = operation_kind != "branch_migrate" && device.is_none();
         match result {
             Ok(outcome) => {
                 let live::WorktreeTaskOutcome {
@@ -2479,6 +2612,10 @@ impl Runtime {
                     purpose_error,
                     unconfirmed_purpose_token,
                 } = outcome;
+                let pane_id = match device.as_deref() {
+                    Some(device) => super::operations::remote_pane_id(device, &pane_id),
+                    None => pane_id,
+                };
                 let operation = self
                     .snapshot
                     .task_operation
@@ -2555,6 +2692,9 @@ impl Runtime {
                 operation.message = Some(message);
                 self.refresh_worktrees();
             }
+        }
+        if let Some(device) = device.as_deref() {
+            self.request_device_worktrees(device, true);
         }
         true
     }
@@ -2735,17 +2875,23 @@ impl Runtime {
     /// Decides an explorer change under the lock and runs it off the lock.
     ///
     /// The decision reads nothing from disk: `plan` refuses a path outside
-    /// the focused checkout and a name that is not one component from the
+    /// the checkout in front and a name that is not one component from the
     /// strings alone, and the refusal lands in the slot as a failed
-    /// operation so the tree can say why under the row. The filesystem call
-    /// then runs on a worker with the mutex released and reports back
-    /// through `ingest_explorer_operation_result`; a runtime without a
-    /// worker context has no shared mutex and runs it in place.
+    /// operation so the tree can say why under the row. The change is made
+    /// by the host of that checkout's device, this machine's in process or a
+    /// device's helper, on a worker with the mutex released, and reports back
+    /// through `ingest_explorer_operation_result`; a runtime without a worker
+    /// context has no shared mutex and runs it in place.
+    ///
+    /// `device` is the device the tree that asked was showing. A change for
+    /// another device than the checkout in front is refused: the tree it came
+    /// from is no longer the one on screen (PRD S5.5 B34).
     pub(super) fn start_explorer_operation(
         &mut self,
         plan: impl FnOnce(&Path) -> Result<files::ExplorerOperation, String>,
         root: &str,
         started_from: &str,
+        device: Option<&str>,
     ) -> bool {
         if self
             .snapshot
@@ -2762,13 +2908,34 @@ impl Runtime {
         }
         self.next_explorer_operation_id = self.next_explorer_operation_id.wrapping_add(1).max(1);
         let id = self.next_explorer_operation_id;
-        let planned = match self.snapshot.navigator.root_path.as_deref() {
-            Some(focused_root) if focused_root == root => plan(Path::new(root)),
-            Some(focused_root) => Err(format!("{root} is not the focused checkout {focused_root}")),
-            None => Err("No local checkout is focused".to_owned()),
+        let device = device.unwrap_or(workspace::LOCAL_DEVICE_ID);
+        let target = self
+            .front_checkout_owned()
+            .and_then(|(workspace_id, checkout_id)| {
+                self.catalog_checkout(&workspace_id, &checkout_id)
+                    .map(|(workspace, checkout)| ExplorerTarget {
+                        workspace_id: workspace_id.clone(),
+                        checkout_id: checkout_id.clone(),
+                        device_id: workspace.device_id.clone(),
+                        root: checkout.path.clone(),
+                    })
+            });
+        let planned = match target {
+            Some(target) if target.device_id != device => Err(format!(
+                "{root} is not on the device in front; nothing was changed"
+            )),
+            Some(target) if target.root == root => plan(Path::new(root)).and_then(|operation| {
+                self.document_source(&target.workspace_id, &target.checkout_id)
+                    .map(|source| (operation, target, source))
+            }),
+            Some(target) => Err(format!(
+                "{root} is not the focused checkout {}",
+                target.root
+            )),
+            None => Err("No checkout is focused".to_owned()),
         };
-        let operation = match planned {
-            Ok(operation) => operation,
+        let (operation, target, (document_root, channel)) = match planned {
+            Ok(planned) => planned,
             Err(message) => {
                 self.snapshot.explorer_operation = Some(ExplorerOperationSnapshot {
                     id,
@@ -2790,24 +2957,33 @@ impl Runtime {
             destination: operation.destination.to_string_lossy().into_owned(),
             message: None,
         });
+        crate::diagnostic!(serde_json::json!({
+            "component": "explorer", "kind": "explorer.change_requested",
+            "operation": operation.kind.as_str(), "id": id, "device": target.device_id,
+        }));
         let Some(context) = self.worker_context.clone() else {
             let result =
-                files::apply_explorer_operation_with_roots(&operation, self.file_roots.as_ref());
-            return self.ingest_explorer_operation_result(id, &operation, result);
+                files::apply_explorer_operation(channel.as_ref(), &document_root, &operation);
+            return self.ingest_explorer_operation_result(id, &target, &operation, result);
         };
         let worker_operation = operation.clone();
-        let file_roots = self.file_roots.clone();
+        let worker_target = target.clone();
         match thread::Builder::new()
             .name(format!("herdr-core-explorer-{}", operation.kind.as_str()))
             .spawn(move || {
                 let operation = worker_operation;
                 let result =
-                    files::apply_explorer_operation_with_roots(&operation, file_roots.as_ref());
+                    files::apply_explorer_operation(channel.as_ref(), &document_root, &operation);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_explorer_operation_result(id, &operation, result),
+                    Ok(mut guard) => guard.ingest_explorer_operation_result(
+                        id,
+                        &worker_target,
+                        &operation,
+                        result,
+                    ),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -2818,21 +2994,38 @@ impl Runtime {
             Ok(_) => true,
             Err(error) => {
                 let message = format!("The file operation worker could not start: {error}");
-                self.ingest_explorer_operation_result(id, &operation, Err(message))
+                self.ingest_explorer_operation_result(id, &target, &operation, Err(message))
             }
         }
     }
-    /// Settles the slot with what the filesystem said. Success moves the
+    /// The folders the Explorer has expanded on `device`: this machine's in
+    /// `expanded_paths`, a device's in its own entry.
+    fn expanded_paths_on(&mut self, device: &str) -> &mut Vec<String> {
+        if device == workspace::LOCAL_DEVICE_ID {
+            &mut self.snapshot.ui_state.expanded_paths
+        } else {
+            self.snapshot
+                .ui_state
+                .device_expanded_paths
+                .entry(device.to_owned())
+                .or_default()
+        }
+    }
+    /// Settles the slot with what the checkout's host said. Success moves the
     /// selection to the operation's `selection` and carries the paths the
-    /// core owns - the tree's expanded folders and any open file tab - from
-    /// the old path to the new one, so a renamed folder stays open and a
-    /// renamed file's tab still saves to the file it shows. An item moved to
-    /// the Trash drops its expanded folders and keeps its file tabs: the tab
-    /// is the operator's draft, and saving it recreates the file (D-05).
-    /// Failure changes no core state beyond the message.
+    /// core owns in that checkout - its device's expanded folders and its
+    /// open file tabs, with the place their saves go to - from the old path
+    /// to the new one, so a renamed folder stays open and a renamed file's
+    /// tab saves to the file it shows. The same path in another checkout or
+    /// on another device is not touched. An item moved to the Trash drops
+    /// its expanded folders and keeps its file tabs with their drafts, each
+    /// marked removed: a save does not recreate a trashed file, and the
+    /// operator exports or discards the draft (B18). Failure changes no core
+    /// state beyond the message.
     pub(crate) fn ingest_explorer_operation_result(
         &mut self,
         id: u64,
+        target: &ExplorerTarget,
         operation: &files::ExplorerOperation,
         result: Result<(), String>,
     ) -> bool {
@@ -2847,39 +3040,75 @@ impl Runtime {
         match result {
             Ok(()) => {
                 slot.phase = "finished".to_owned();
+                let in_checkout: Vec<String> = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .filter(|tab| {
+                        tab.kind == EditorTabKind::File
+                            && tab.workspace_id == target.workspace_id
+                            && tab.checkout_id == target.checkout_id
+                    })
+                    .map(|tab| tab.id.clone())
+                    .collect();
                 if source != destination {
-                    for expanded in &mut self.snapshot.ui_state.expanded_paths {
-                        if let Some(moved) = retarget_path(expanded, &source, &destination) {
-                            *expanded = moved;
+                    for folder in self.expanded_paths_on(&target.device_id).iter_mut() {
+                        if let Some(moved) = retarget_path(folder, &source, &destination) {
+                            *folder = moved;
                         }
                     }
-                    let mut retargeted = Vec::new();
                     for tab in &mut self.snapshot.editor.tabs {
-                        if tab.kind != EditorTabKind::File {
+                        if !in_checkout.contains(&tab.id) {
                             continue;
                         }
-                        if let Some(moved) = retarget_path(&tab.path, &source, &destination) {
-                            tab.label = Path::new(&moved)
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .filter(|name| !name.is_empty())
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| moved.clone());
-                            tab.path = moved.clone();
-                            retargeted.push((tab.id.clone(), moved));
+                        let Some(moved) = retarget_path(&tab.path, &source, &destination) else {
+                            continue;
+                        };
+                        tab.label = Path::new(&moved)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| moved.clone());
+                        tab.path = moved.clone();
+                        if let Some(document) = self.editor_documents.get_mut(&tab.id) {
+                            document.path = moved.clone();
                         }
-                    }
-                    for (tab_id, moved) in retargeted {
-                        if let Some(document) = self.editor_documents.get_mut(&tab_id) {
-                            document.path = moved;
+                        if let Some(place) = self.document_places.get_mut(&tab.id)
+                            && let Ok(relative) = files::relative_under(&place.root.path, &moved)
+                        {
+                            place.relative = relative;
                         }
                     }
                     self.sync_active_editor_document();
                 }
                 if operation.kind == files::ExplorerOperationKind::PathTrash {
-                    self.snapshot.ui_state.expanded_paths.retain(|expanded| {
-                        expanded != &source && !expanded.starts_with(&format!("{source}/"))
+                    self.expanded_paths_on(&target.device_id).retain(|folder| {
+                        folder != &source && !folder.starts_with(&format!("{source}/"))
                     });
+                    let removed: Vec<String> = self
+                        .snapshot
+                        .editor
+                        .tabs
+                        .iter()
+                        .filter(|tab| {
+                            in_checkout.contains(&tab.id)
+                                && retarget_path(&tab.path, &source, &source).is_some()
+                        })
+                        .map(|tab| tab.id.clone())
+                        .collect();
+                    for tab_id in removed {
+                        if let Some(document) = self.editor_documents.get_mut(&tab_id)
+                            && let Some(revision) = document.revision.clone()
+                        {
+                            document.conflict = Some(crate::model::EditorConflictSnapshot {
+                                opened_revision: revision,
+                                disk_revision: None,
+                            });
+                        }
+                    }
+                    self.sync_active_editor_document();
                 }
                 self.snapshot.ui_state.selected_path =
                     Some(operation.selection.to_string_lossy().into_owned());
@@ -2887,22 +3116,23 @@ impl Runtime {
                     format!("explorer.{}", operation.kind.as_str()),
                     format!("{source} -> {destination}"),
                 );
-                // A created file opens as an editor tab in this same result,
-                // so the tree selection and the tab land in one frame with no
-                // second dispatch from the shell. New Folder, Rename and move
-                // open nothing. If the file cannot be read into a tab it still
-                // exists on disk, so the reason rides the finished slot's
-                // message and the tree keeps the created file (B10 pattern).
-                if operation.kind == files::ExplorerOperationKind::FileCreate
-                    && let Some((workspace_id, checkout_id)) = self
-                        .focused_local_checkout()
-                        .map(|(workspace, checkout)| (workspace.id.clone(), checkout.id.clone()))
-                {
-                    match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
+                // A created file opens as an editor tab from this same result,
+                // with no second dispatch from the shell; its read runs on a
+                // worker like every open, so the tab follows the selection.
+                // New Folder, Rename and move open nothing. If the checkout
+                // cannot serve the file it still exists there, so the reason
+                // rides the finished slot's message and the tree keeps the
+                // created file (B10 pattern).
+                if operation.kind == files::ExplorerOperationKind::FileCreate {
+                    match self.prepare_file_tab(
+                        &target.workspace_id,
+                        &target.checkout_id,
+                        &destination,
+                    ) {
                         Ok(prepared) => self.show_file_tab(
                             prepared,
-                            &workspace_id,
-                            &checkout_id,
+                            &target.workspace_id,
+                            &target.checkout_id,
                             &destination,
                             false,
                         ),
@@ -2924,7 +3154,10 @@ impl Runtime {
                 slot.message = Some(message.clone());
                 self.push_diagnostic(
                     format!("explorer.{}_failed", operation.kind.as_str()),
-                    format!("{source}: {message}"),
+                    format!(
+                        "operation {id} on {}: {source}: {message}",
+                        target.device_id
+                    ),
                 );
             }
         }
@@ -2940,7 +3173,13 @@ impl Runtime {
         {
             return None;
         }
-        Some((operation.pane_id.clone()?, operation.agent_kind.clone()?))
+        // Herdr knows a device's pane by its own id, not the scoped one.
+        let pane_id = operation.pane_id.as_deref()?;
+        let pane_id = match operation.device_id.as_deref() {
+            Some(device) => super::remote_pane_source_id(device, pane_id)?,
+            None => pane_id,
+        };
+        Some((pane_id.to_owned(), operation.agent_kind.clone()?))
     }
 
     pub(crate) fn ingest_task_agent_result(
@@ -2984,10 +3223,21 @@ impl Runtime {
             );
             return true;
         };
+        let device = operation.device_id.clone();
+        let workspaces = match device.as_deref() {
+            Some(device) => self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == device)
+                .and_then(|status| status.session.as_ref())
+                .map(|session| session.workspaces.as_slice())
+                .unwrap_or_default(),
+            None => self.snapshot.navigator.workspaces.as_slice(),
+        };
         let pane_listed = operation.pane_id.as_deref().is_some_and(|pane_id| {
-            self.snapshot
-                .navigator
-                .workspaces
+            workspaces
                 .iter()
                 .flat_map(|workspace| &workspace.checkouts)
                 .flat_map(|checkout| &checkout.tabs)
@@ -3002,13 +3252,16 @@ impl Runtime {
             );
             return true;
         }
-        let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "task_operation.agent_retry_offline",
-                "Starting an agent needs a live Herdr connection",
-                true,
-            );
-            return true;
+        let context = match device.as_deref() {
+            Some(device) => self.device_worktree_target(device),
+            None => self.local_worktree_target(),
+        };
+        let context = match context {
+            Ok(context) => context,
+            Err(message) => {
+                self.set_error("task_operation.agent_retry_offline", message, true);
+                return true;
+            }
         };
         let operation = self
             .snapshot
@@ -3386,20 +3639,10 @@ impl Runtime {
     /// checkout switch, then the panel appear, then the tree move, and a
     /// refusal partway would leave the screen in a state nobody asked for.
     pub(super) fn reveal_path(&mut self, payload: RevealPathPayload) -> bool {
-        let Some(checkout_path) = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .find(|workspace| workspace.id == payload.workspace_id)
-            .and_then(|workspace| {
-                workspace
-                    .checkouts
-                    .iter()
-                    .find(|checkout| checkout.id == payload.checkout_id)
-                    .map(|checkout| checkout.path.clone())
-            })
-        else {
+        if self
+            .reveal_checkout_path(&payload.workspace_id, &payload.checkout_id)
+            .is_none()
+        {
             self.set_error(
                 "reveal.unknown_checkout",
                 format!(
@@ -3409,22 +3652,86 @@ impl Runtime {
                 false,
             );
             return true;
-        };
-        // The file is read before anything moves. Reading is the only part of
-        // a reveal that can fail, and a reveal that settles the whole screen
-        // at once must not leave the checkout focused and the tree expanded
-        // around a document that never arrived.
-        let prepared = if payload.is_directory {
-            None
-        } else {
-            match self.prepare_file_tab(&payload.workspace_id, &payload.checkout_id, &payload.path)
-            {
-                Ok(prepared) => Some(prepared),
-                Err(message) => {
-                    self.set_error("file.open_failed", message, true);
-                    return true;
-                }
+        }
+        if payload.is_directory {
+            self.settle_reveal_path(&payload, None);
+            return true;
+        }
+        // Nothing moves before the file is read: a reveal settles the whole
+        // screen at once, and a file that cannot be read must not leave the
+        // checkout focused and the tree expanded around a document that never
+        // arrived. The read runs on a worker, so the moves wait for it.
+        match self.prepare_file_tab(&payload.workspace_id, &payload.checkout_id, &payload.path) {
+            Ok(super::editor::PreparedFileTab::Reading { root, channel }) => {
+                let front = self.front_checkout_owned();
+                self.start_document_open(
+                    root,
+                    channel,
+                    documents::OpenRequestFields {
+                        workspace_id: payload.workspace_id,
+                        checkout_id: payload.checkout_id,
+                        path: payload.path,
+                        preview: false,
+                        reload: false,
+                        reveal: Some(documents::PendingReveal { front }),
+                    },
+                );
             }
+            Ok(prepared) => self.settle_reveal_path(&payload, Some(prepared)),
+            Err(message) => self.set_error("file.open_failed", message, true),
+        }
+        true
+    }
+
+    fn reveal_checkout_path(&self, workspace_id: &str, checkout_id: &str) -> Option<String> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == checkout_id)
+                    .map(|checkout| checkout.path.clone())
+            })
+    }
+
+    /// A revealed file's read landed: the reveal settles now.
+    pub(super) fn settle_reveal(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        prepared: Option<super::editor::PreparedFileTab>,
+    ) {
+        let payload = RevealPathPayload {
+            path: path.to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            checkout_id: checkout_id.to_owned(),
+            is_directory: false,
+        };
+        self.settle_reveal_path(&payload, prepared);
+    }
+
+    fn settle_reveal_path(
+        &mut self,
+        payload: &RevealPathPayload,
+        prepared: Option<super::editor::PreparedFileTab>,
+    ) {
+        let Some(checkout_path) =
+            self.reveal_checkout_path(&payload.workspace_id, &payload.checkout_id)
+        else {
+            self.set_error(
+                "reveal.unknown_checkout",
+                format!(
+                    "Checkout {} is no longer registered, so {} was not revealed",
+                    payload.checkout_id, payload.path
+                ),
+                false,
+            );
+            return;
         };
         if self.snapshot.navigator.focused_checkout_id.as_deref()
             != Some(payload.checkout_id.as_str())
@@ -3465,7 +3772,6 @@ impl Runtime {
             ),
         );
         self.persist_current_ui_state();
-        true
     }
     pub(super) fn focus_checkout(&mut self, workspace_id: &str, checkout_id: &str) -> bool {
         // The checkout comes forward on the tab it was showing, with the

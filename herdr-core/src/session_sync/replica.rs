@@ -376,8 +376,8 @@ impl SessionReplica {
                         }
                     })
                     .collect::<Vec<_>>();
-                // A remote context has no file tabs, so its strip is the Herdr
-                // tab list in Herdr's order and nothing else.
+                // The Herdr half of the strip in Herdr's order; the runtime
+                // places the device's file tabs among them (`place_device_strips`).
                 let strip = StripTabSnapshot::from_herdr_tabs(&tabs);
                 let active_tab_id = Some(remote_tab_id(target_id, &workspace.active_tab_id))
                     .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));
@@ -451,12 +451,15 @@ impl SessionReplica {
         // projected panes by id, and the projection carries the remote form.
         crate::project_context::sort_projects(&mut workspaces, &agents);
 
+        // Keyed by checkout: the runtime groups a device's Herdr workspaces
+        // into projects (`device_catalog`), and a checkout is the one id that
+        // still names a single Herdr workspace after that.
         let active_tab_ids = state
             .workspaces
             .iter()
             .map(|workspace| {
                 (
-                    remote_workspace_id(target_id, &workspace.workspace_id),
+                    remote_checkout_id(target_id, &workspace.workspace_id),
                     remote_tab_id(target_id, &workspace.active_tab_id),
                 )
             })

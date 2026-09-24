@@ -96,11 +96,17 @@ export function clearPending(reason: string): void {
 }
 
 /**
+ * Where a file lives when it is not on this Hide host: the SSH device and the
+ * checkout root there. hided reads it through that device's helper.
+ */
+export type FileSource = { device: string; root: string } | null;
+
+/**
  * Reads a file under a registered checkout root. `length` absent reads to the
  * end; a range read names an offset and a length. The promise rejects with the
  * daemon's reason code (`outside_checkout`, `too_large`, `read_failed`, ...).
  */
-function requestFileBytesWithTotal(path: string, range?: { offset?: number; length?: number }): Promise<{ bytes: Uint8Array; total: number }> {
+function requestFileBytesWithTotal(path: string, range?: { offset?: number; length?: number }, source: FileSource = null): Promise<{ bytes: Uint8Array; total: number }> {
   return new Promise((resolve, reject) => {
     if (!dispatchFn) {
       reject(new Error("not_connected"));
@@ -117,6 +123,7 @@ function requestFileBytesWithTotal(path: string, range?: { offset?: number; leng
         path,
         offset: range?.offset ?? 0,
         length: range?.length ?? null,
+        ...(source ? { device_id: source.device, root: source.root } : {}),
       },
     });
     if (sent === false) {
@@ -126,8 +133,8 @@ function requestFileBytesWithTotal(path: string, range?: { offset?: number; leng
   });
 }
 
-export async function requestFileBytes(path: string, range?: { offset?: number; length?: number }): Promise<Uint8Array> {
-  return (await requestFileBytesWithTotal(path, range)).bytes;
+export async function requestFileBytes(path: string, range?: { offset?: number; length?: number }, source: FileSource = null): Promise<Uint8Array> {
+  return (await requestFileBytesWithTotal(path, range, source)).bytes;
 }
 
 /**
@@ -135,7 +142,7 @@ export async function requestFileBytes(path: string, range?: { offset?: number; 
  * A bare browser cannot prove that the daemon is on the viewer's machine,
  * so the bytes come down the same `file_bytes` stream the viewers use.
  */
-export async function downloadFile(path: string): Promise<void> {
+export async function downloadFile(path: string, source: FileSource = null): Promise<void> {
   const name = path.split("/").pop() || "download";
   // Chromium and the eventual desktop shell can write one range at a time to
   // the chosen file. Invoke the picker inside the click's user activation.
@@ -148,7 +155,7 @@ export async function downloadFile(path: string): Promise<void> {
       let offset = 0;
       let total: number | null = null;
       do {
-        const answer = await requestFileBytesWithTotal(path, { offset, length: rangeSize });
+        const answer = await requestFileBytesWithTotal(path, { offset, length: rangeSize }, source);
         if (total !== null && total !== answer.total) throw new Error("file_changed_during_download");
         total = answer.total;
         if (answer.bytes.length === 0 && offset < total) throw new Error("incomplete_download");
@@ -164,7 +171,7 @@ export async function downloadFile(path: string): Promise<void> {
   }
   // Browsers without a streaming file writer retain the existing Blob path.
   // Its protocol read cap is explicit; a failure is shown beside the button.
-  const bytes = await requestFileBytes(path).catch((error: unknown) => {
+  const bytes = await requestFileBytes(path, undefined, source).catch((error: unknown) => {
     if (error instanceof Error && error.message === "too_large") {
       throw new Error("Use a browser with a file save picker for files over 256 MiB.");
     }

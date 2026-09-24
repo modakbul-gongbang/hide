@@ -1232,6 +1232,7 @@ dependencies = [
  "hide-agent-hooks",
  "hide-ai",
  "hide-herdr-client",
+ "hide-host",
  "hide-memory",
  "hide-project",
  "hide-session",
@@ -1247,7 +1248,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
- "trash",
  "ureq",
 ]
 
@@ -1298,6 +1298,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hide-host"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "cap-std",
+ "hide-project",
+ "ignore",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "trash",
+]
+
+[[package]]
 name = "hide-memory"
 version = "0.1.0"
 dependencies = [
@@ -1345,10 +1361,10 @@ dependencies = [
  "getrandom 0.2.16",
  "herdr-core",
  "hex",
+ "hide-host",
  "http-body-util",
  "hyper",
  "hyper-util",
- "ignore",
  "libc",
  "serde",
  "serde_json",

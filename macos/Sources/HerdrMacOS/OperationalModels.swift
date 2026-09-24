@@ -415,7 +415,6 @@ struct RemoteFileNode: Identifiable, Hashable, Sendable {
     let path: String
     let name: String
     let isDirectory: Bool
-    let sizeBytes: UInt64
 
     var id: String { path }
 }
@@ -532,7 +531,7 @@ struct RemoteNavigationSnapshot {
             }
         }
 
-        if selectedTab == nil, let activeTabID = activeTabIDs[workspaceID] {
+        if selectedTab == nil, let activeTabID = activeTabIDs[checkoutID] {
             selectedTab = selectedTabs.first { tab in
                 tab.id == activeTabID
             }
@@ -598,6 +597,9 @@ final class RemoteRuntimeModel: ObservableObject {
     @Published private(set) var files: [RemoteFileNode] = []
     @Published private(set) var fileState = "idle"
     @Published private(set) var fileError: String?
+    /// What allowing Hide's helper on this device installs and runs, while
+    /// the device has no consent; the panel asks for it with this text.
+    @Published private(set) var fileConsentPrompt: String?
     @Published private(set) var checkedAt = "never"
     @Published private(set) var targetLabel = ""
     private var activeTargetID: String?
@@ -615,6 +617,7 @@ final class RemoteRuntimeModel: ObservableObject {
         files = []
         fileState = "idle"
         fileError = nil
+        fileConsentPrompt = nil
         phase = .idle
         message = "No remote device has been selected yet."
     }
@@ -636,6 +639,7 @@ final class RemoteRuntimeModel: ObservableObject {
         files = []
         fileState = "idle"
         fileError = nil
+        fileConsentPrompt = nil
         targetLabel = label
         if let status = statusesByTarget[targetID] {
             apply(status)
@@ -686,17 +690,20 @@ final class RemoteRuntimeModel: ObservableObject {
                     RemoteFileNode(
                         path: entry.path,
                         name: entry.name,
-                        isDirectory: entry.isDirectory,
-                        sizeBytes: entry.sizeBytes
+                        isDirectory: entry.isDirectory
                     )
                 }
                 fileError = status.files.state == "unavailable"
                     ? status.files.message ?? "Remote files are unavailable."
                     : nil
+                fileConsentPrompt = status.files.state == "not_allowed"
+                    ? status.files.message ?? "Allow Hide's helper on this device to read its files."
+                    : nil
             } else {
                 fileState = "idle"
                 files = []
                 fileError = nil
+                fileConsentPrompt = nil
             }
         }
 

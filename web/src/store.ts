@@ -1,3 +1,4 @@
+import type { StoredBuffer } from "./buffers";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
 import { remoteContext, remoteView } from "./remote";
@@ -24,7 +25,8 @@ export type TerminalChunk = {
   bytes_base64: string;
 };
 
-export type DirectoryEntry = { name: string; path: string; is_directory: boolean };
+/** `inode` is the entry's own identity in a checkout listing, which a trash of the row confirms. */
+export type DirectoryEntry = { name: string; path: string; is_directory: boolean; inode?: number };
 export type DirectoryList = {
   /** The event that asked: `remote_file_list` for the registration input, `file_list` for the Explorer. */
   kind: string;
@@ -32,16 +34,22 @@ export type DirectoryList = {
   entries: DirectoryEntry[];
   truncated: boolean;
 };
+/** A device folder its helper could not list now (`directory_unavailable`); the reason is the helper's. */
+export type DirectoryUnavailable = { device_id: string; root_path: string; code: string; message: string };
 export type PathRefusal = { kind: string; path: string; reason: string };
 export type DirectoryChanged = { path: string };
 export type FileIndexEntry = { path: string; relative_path: string };
 export type FileIndexResult = {
+  /** The device the root is on; `local` for this Hide host. */
+  device_id: string;
   root_path: string;
   query: string;
   /** Named `files`, not `entries`: the directory_list frame owns `entries`. */
   files: FileIndexEntry[];
   truncated: boolean;
   indexing: boolean;
+  /** Why a device's helper could not walk the root; the next query walks again. */
+  unavailable: string | null;
 };
 
 export type Frame = {
@@ -56,6 +64,7 @@ export type Frame = {
     find?: PaneFind;
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
+    Partial<DirectoryUnavailable> &
     Partial<PathRefusal> &
     Partial<DirectoryChanged> &
     Partial<FileIndexResult>;
@@ -64,6 +73,10 @@ export type Frame = {
 /** What the daemon says about itself after a handshake (hided `daemon` frame). */
 export type DaemonInfo = {
   version: string;
+  /** This daemon host's lasting identity; a draft is filed under it (S5.5 B9). */
+  host_id: string;
+  /** The machine the daemon runs on, which owns every value it stores (S5.5 B35); null when the system gives none. */
+  host_name: string | null;
   schema_version: number;
   pid: number;
   started_at_unix: string;
@@ -106,6 +119,8 @@ type Store = {
   listings: Record<string, DirectoryList>;
   /** The last path hided refused; cleared when the input changes. */
   pathRefusal: PathRefusal | null;
+  /** The last device folder that could not be listed, until a listing for it arrives. */
+  directoryUnavailable: DirectoryUnavailable | null;
   /** The ⌘P palette's last answer, keyed by the query it answered. */
   fileIndex: FileIndexResult | null;
   /** The last attachment the daemon refused, drawn as one line over its pane (B15). */
@@ -114,6 +129,11 @@ type Store = {
   savingTabs: Set<string>;
   /** Tabs whose buffer could not be stored; they say "kept in this tab only" (D-14). */
   bufferWarnings: Set<string>;
+  /** The draft text last exported per tab, which no longer needs its tab to survive (B26, B44). */
+  exportedDrafts: Map<string, string>;
+  /** Stored drafts no open tab stands for, to open, export or discard (S5.5 B10-B12). */
+  recoveryDrafts: StoredBuffer[];
+  setRecoveryDrafts: (drafts: StoredBuffer[]) => void;
   /** Watch frames per folder, counted so the Explorer re-reads even a folder
    * whose listing was in flight when the change landed. */
   folderChanges: Record<string, number>;
@@ -129,6 +149,7 @@ type Store = {
   setAttachmentRefusal: (refusal: { pane_id: string; reason: string } | null) => void;
   noteSaving: (tabId: string, saving: boolean) => void;
   noteBufferWarning: (tabId: string, warned: boolean) => void;
+  noteDraftExported: (tabId: string, contents: string) => void;
   /** Drops cached listings so the Explorer re-reads those folders. */
   invalidateListings: (paths: string[]) => void;
   applyFrame: (frame: Frame) => TerminalChunk[];
@@ -180,10 +201,14 @@ export const useShellStore = create<Store>((set, get) => ({
   directoryList: null,
   listings: {},
   pathRefusal: null,
+  directoryUnavailable: null,
   fileIndex: null,
   attachmentRefusal: null,
   savingTabs: new Set<string>(),
   bufferWarnings: new Set<string>(),
+  exportedDrafts: new Map<string, string>(),
+  recoveryDrafts: [],
+  setRecoveryDrafts: (recoveryDrafts) => set({ recoveryDrafts }),
   folderChanges: {},
   diagnostics: [],
   diagnosticsDropped: 0,
@@ -196,12 +221,24 @@ export const useShellStore = create<Store>((set, get) => ({
     if (get().pathRefusal) set({ pathRefusal: null });
   },
   setAttachmentRefusal: (attachmentRefusal) => set({ attachmentRefusal }),
+  noteDraftExported: (tabId, contents) => {
+    const next = new Map(get().exportedDrafts);
+    next.set(tabId, contents);
+    set({ exportedDrafts: next });
+  },
   noteBufferWarning: (tabId, warned) => {
     const current = get().bufferWarnings;
     if (warned === current.has(tabId)) return;
     const next = new Set(current);
     if (warned) next.add(tabId);
     else next.delete(tabId);
+    // A draft stored here again no longer needs the text it was exported as.
+    if (!warned && get().exportedDrafts.has(tabId)) {
+      const exportedDrafts = new Map(get().exportedDrafts);
+      exportedDrafts.delete(tabId);
+      set({ bufferWarnings: next, exportedDrafts });
+      return;
+    }
     set({ bufferWarnings: next });
   },
   noteSaving: (tabId, saving) => {
@@ -241,12 +278,30 @@ export const useShellStore = create<Store>((set, get) => ({
         truncated: payload.truncated ?? false,
       };
       if (listing.kind === "file_list") {
-        set({ listings: withListing(get().listings, listing) });
+        // A listing belongs to the device that answered it; one for a device
+        // no longer selected would show its rows under this device's paths.
+        if ((payload.device_id ?? "local") !== (get().rest?.navigator?.focused_device_id ?? "local")) return [];
+        const unavailable = get().directoryUnavailable;
+        set({
+          listings: withListing(get().listings, listing),
+          directoryUnavailable: unavailable?.root_path === listing.root_path ? null : unavailable,
+        });
       } else if (listing.kind === "remote_file_list") {
         set({ directoryList: listing });
       } else {
         get().noteDiagnostic(`directory_list without a known kind=${listing.kind || "none"}`);
       }
+      return [];
+    }
+    if (frame.type === "directory_unavailable") {
+      set({
+        directoryUnavailable: {
+          device_id: payload.device_id ?? "",
+          root_path: payload.root_path ?? "",
+          code: payload.code ?? "",
+          message: payload.message ?? "",
+        },
+      });
       return [];
     }
     if (frame.type === "path_refused") {
@@ -258,8 +313,11 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "directory_changed") {
       // A watched folder moved; its cached listing is dropped and the count
       // lets the Explorer re-read even a listing that was still in flight.
+      // Listings are the shown device's, so another device's frame names a
+      // path that is not the one listed here (S5.5 B2).
       const path = payload.path;
-      if (path) {
+      const shownDevice = get().rest?.navigator?.focused_device_id ?? "local";
+      if (path && (payload.device_id ?? "local") === shownDevice) {
         get().invalidateListings([path]);
         // A bounded map ordered by recency: the count is re-inserted so a
         // folder that keeps changing is the last one evicted.
@@ -281,6 +339,8 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "file_index_result") {
       set({
         fileIndex: {
+          device_id: payload.device_id ?? "local",
+          unavailable: payload.unavailable ?? null,
           root_path: payload.root_path ?? "",
           query: payload.query ?? "",
           files: payload.files ?? [],
@@ -319,9 +379,12 @@ export const useShellStore = create<Store>((set, get) => ({
       if (lastError && lastError.occurred_at !== previous?.status?.last_error?.occurred_at) {
         diagnostics.push(`${lastError.kind}: ${lastError.message}`);
       }
+      // Listings are one device's folders; switching devices starts empty.
+      const deviceChanged = (rest.navigator?.focused_device_id ?? "local") !== (previous?.navigator?.focused_device_id ?? "local");
       set({
         rest,
         agents,
+        ...(deviceChanged ? { listings: {}, directoryUnavailable: null } : {}),
         ...withDiagnostics(get().diagnostics, get().diagnosticsDropped, diagnostics),
         viewGeneration: frame.type === "snapshot" ? get().viewGeneration + 1 : get().viewGeneration,
         ...cursors,

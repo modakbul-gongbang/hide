@@ -22,6 +22,26 @@ impl Runtime {
         };
     }
 
+    /// Lists the device's file panel root again once its helper is ready, when
+    /// the last listing could not run for want of it.
+    pub(super) fn relist_remote_files(&mut self, target_id: &str) {
+        let Some(root_path) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target_id)
+            .filter(|status| matches!(status.files.state.as_str(), "unavailable" | "not_allowed"))
+            .and_then(|status| status.files.root_path.clone())
+        else {
+            return;
+        };
+        self.request_remote_file_list(RemoteFileListPayload {
+            target_id: target_id.to_owned(),
+            root_path,
+        });
+    }
+
     pub(super) fn request_remote_file_list(&mut self, payload: RemoteFileListPayload) -> bool {
         let target_id = payload.target_id;
         let root_path = payload.root_path;
@@ -93,17 +113,29 @@ impl Runtime {
         {
             return false;
         }
-        let Some(transport) = self.remote_file_transports.get(&target_id).cloned() else {
-            let message = format!("Remote target {target_id} has no configured SFTP transport");
-            let generation = self.advance_remote_file_generation();
-            self.mark_remote_files_unavailable(
-                status_index,
-                root_path,
-                message.clone(),
-                generation,
-            );
-            self.set_error("remote.files.transport_unavailable", message, true);
-            return true;
+        // The device's helper lists it, as it lists the web Explorer's
+        // folders: the same confinement to the checkout's opened root on
+        // either shell (PRD S5.5 D-05). A device without a ready helper
+        // lists nothing and says why.
+        let channel = match self.device_channel(&target_id) {
+            Ok(channel) => channel,
+            Err(message) => {
+                let generation = self.advance_remote_file_generation();
+                self.mark_remote_files_unavailable(status_index, root_path, message, generation);
+                // A device without consent says what allowing it installs
+                // and runs, so the shell can ask for it where the files are
+                // (PRD S5.5 B50).
+                let host = self.host_snapshot(&target_id);
+                if host.state == "not_allowed" {
+                    let helper_root = host.helper_root.unwrap_or_else(|| self.host_helper_root());
+                    let files = &mut self.snapshot.status.remote[status_index].files;
+                    files.state = "not_allowed".to_owned();
+                    files.message = Some(format!(
+                        "Hide reads this device's files through a small helper it installs at {helper_root} and runs only while Hide is connected over SSH. Allowing it lets Hide read and change files and Git in this device's checkouts; later updates within the same scope install without asking again."
+                    ));
+                }
+                return true;
+            }
         };
         let Some(context) = self.worker_context.clone() else {
             let message = "The remote file worker is unavailable".to_owned();
@@ -135,9 +167,9 @@ impl Runtime {
         match thread::Builder::new()
             .name(format!("herdr-core-remote-files-{target_id}"))
             .spawn(move || {
-                let result = RemoteFileService::new(worker_root_path.clone(), transport)
-                    .and_then(|service| service.list(""))
-                    .map_err(|error| error.to_string());
+                let result =
+                    crate::host_access::list_folder(channel.as_ref(), &worker_root_path, "")
+                        .map_err(|error| error.to_string());
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -170,7 +202,7 @@ impl Runtime {
         target_id: &str,
         root_path: &str,
         generation: u64,
-        result: Result<Vec<FileEntry>, String>,
+        result: Result<hide_host::list::Listing, String>,
     ) -> bool {
         let Some(status_index) = self
             .snapshot
@@ -197,19 +229,11 @@ impl Runtime {
             return true;
         }
         match result {
-            Ok(mut entries) => {
-                entries.sort_by(|left, right| {
-                    let left_is_directory = left.kind == FileKind::Directory;
-                    let right_is_directory = right.kind == FileKind::Directory;
-                    right_is_directory
-                        .cmp(&left_is_directory)
-                        .then_with(|| {
-                            left.name
-                                .to_ascii_lowercase()
-                                .cmp(&right.name.to_ascii_lowercase())
-                        })
-                        .then_with(|| left.path.cmp(&right.path))
-                });
+            Ok(listing) => {
+                // The helper's order: folders first, then the natural name
+                // order the Explorer uses.
+                let base = root_path.trim_end_matches('/');
+                let entries = listing.entries;
                 let entry_count = entries.len();
                 self.snapshot.status.remote[status_index].files = RemoteFileListSnapshot {
                     root_path: Some(root_path.to_owned()),
@@ -217,10 +241,9 @@ impl Runtime {
                     entries: entries
                         .into_iter()
                         .map(|entry| RemoteFileEntrySnapshot {
-                            path: entry.path,
+                            path: format!("{base}/{}", entry.name),
                             name: entry.name,
-                            is_directory: entry.kind == FileKind::Directory,
-                            size_bytes: entry.size_bytes,
+                            is_directory: entry.is_directory,
                         })
                         .collect(),
                     message: None,
@@ -430,14 +453,16 @@ impl Runtime {
                     pane_id: source_pane_id.expect("remote pane source id was validated"),
                 })
             }
-            RemoteControlRequest::FocusWorkspace { workspace_id } => {
-                let Some(source_id) = session
-                    .workspaces
-                    .iter()
-                    .any(|workspace| workspace.id == workspace_id)
-                    .then(|| remote_workspace_source_id(&target_id, &workspace_id))
-                    .flatten()
-                else {
+            RemoteControlRequest::FocusWorkspace {
+                workspace_id,
+                checkout_id,
+            } => {
+                let Some(source_id) = remote_herdr_workspace(
+                    &session,
+                    &target_id,
+                    &workspace_id,
+                    checkout_id.as_deref(),
+                ) else {
                     self.set_error(
                         "remote.control.workspace_not_found",
                         format!(
@@ -483,37 +508,65 @@ impl Runtime {
             }
             RemoteControlRequest::CreateTab {
                 workspace_id,
+                checkout_id,
                 cwd,
                 label,
             } => {
-                let Some(source_id) = session
-                    .workspaces
-                    .iter()
-                    .any(|workspace| workspace.id == workspace_id)
-                    .then(|| remote_workspace_source_id(&target_id, &workspace_id))
-                    .flatten()
-                else {
-                    self.set_error(
+                // A registered project Herdr has no workspace in yet is
+                // opened by creating one at its folder on the device, as
+                // this machine's `create_tab` does (B23 find-or-create).
+                let registered =
+                    checkout_id
+                        .as_deref()
+                        .filter(|checkout| {
+                            *checkout
+                                == format!(
+                                    "{workspace_id}{}",
+                                    crate::device_catalog::REGISTERED_CHECKOUT
+                                )
+                        })
+                        .and_then(|_| {
+                            self.snapshot.ui_state.workspace_registrations.iter().find(
+                                |registration| {
+                                    registration.id == workspace_id
+                                        && registration.device_id == target_id
+                                },
+                            )
+                        });
+                if let Some(registration) = registered {
+                    RemoteControlAction::CreateWorkspace {
+                        cwd: registration.path.clone(),
+                        label: registration.label.clone(),
+                    }
+                } else {
+                    let Some(source_id) = remote_herdr_workspace(
+                        &session,
+                        &target_id,
+                        &workspace_id,
+                        checkout_id.as_deref(),
+                    ) else {
+                        self.set_error(
                         "remote.control.workspace_not_found",
                         format!(
                             "Workspace {workspace_id} does not belong to remote target {target_id}"
                         ),
                         false,
                     );
-                    return true;
-                };
-                if cwd.trim().is_empty() || label.trim().is_empty() {
-                    self.set_error(
-                        "remote.control.invalid_tab",
-                        "Remote tab creation requires non-empty cwd and label",
-                        false,
-                    );
-                    return true;
-                }
-                RemoteControlAction::CreateTab {
-                    workspace_id: source_id.to_owned(),
-                    cwd,
-                    label,
+                        return true;
+                    };
+                    if cwd.trim().is_empty() || label.trim().is_empty() {
+                        self.set_error(
+                            "remote.control.invalid_tab",
+                            "Remote tab creation requires non-empty cwd and label",
+                            false,
+                        );
+                        return true;
+                    }
+                    RemoteControlAction::CreateTab {
+                        workspace_id: source_id.to_owned(),
+                        cwd,
+                        label,
+                    }
                 }
             }
             RemoteControlRequest::CloseTab { tab_id, confirmed } => {
@@ -576,6 +629,17 @@ impl Runtime {
             }
         };
 
+        // A terminal tab chosen on the device's strip takes the surface from
+        // a device file the editor shows, as a local tab does (`focus_tab`).
+        if matches!(
+            action,
+            RemoteControlAction::FocusTab { .. }
+                | RemoteControlAction::CreateTab { .. }
+                | RemoteControlAction::FocusWorkspace { .. }
+        ) && self.active_editor_tab_on_device(&target_id)
+        {
+            self.deactivate_editor_tab();
+        }
         let creation_key = remote_tab_creation_key(&target_id, &action);
         if let Some(key) = creation_key.as_ref()
             && !self.remote_tab_creations_in_flight.insert(key.clone())
@@ -1586,6 +1650,29 @@ impl Runtime {
         elapsed_ms: u128,
         connection_generation: Option<u64>,
     ) -> bool {
+        // A device's tab move is held per checkout like this machine's, and
+        // its own record already names the connection that carried it.
+        if let RemoteControlAction::MoveTab {
+            checkout_id,
+            tab_id,
+            expected_order,
+            generation,
+            connection_generation,
+            ..
+        } = &action
+        {
+            return self.ingest_tab_move_result(
+                TabMoveResultContext {
+                    checkout_id,
+                    tab_id,
+                    expected_order,
+                    generation: *generation,
+                    connection_generation: *connection_generation,
+                    elapsed_ms,
+                },
+                result,
+            );
+        }
         let action_kind = action.kind();
         let remote_operation_key = (target_id.to_owned(), request_id.to_owned());
         if let Some(generation) = connection_generation {
@@ -1673,8 +1760,7 @@ impl Runtime {
                     "duration_ms": elapsed_ms,
                 }));
             }
-            // A remote target owns its tab order; `spawn_remote_control`
-            // refuses the only action that reports one back.
+            // A tab move is settled above; no other action reports an order.
             Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
                 if tracked_remote_operation {
                     self.fail_remote_operation(
@@ -1812,5 +1898,30 @@ impl Runtime {
                 }));
             }
         }
+    }
+}
+
+/// The Herdr workspace a remote focus or new tab goes to: the one the named
+/// checkout holds, checked to be a checkout of that project in the session;
+/// or, with no checkout, the project row that is itself one Herdr workspace.
+pub(super) fn remote_herdr_workspace(
+    session: &RemoteSessionSnapshot,
+    target_id: &str,
+    workspace_id: &str,
+    checkout_id: Option<&str>,
+) -> Option<String> {
+    let workspace = session
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == workspace_id)?;
+    match checkout_id {
+        Some(checkout_id) => workspace
+            .checkouts
+            .iter()
+            .any(|checkout| checkout.id == checkout_id)
+            .then(|| crate::device_catalog::remote_checkout_source_id(target_id, checkout_id))
+            .flatten()
+            .map(str::to_owned),
+        None => remote_workspace_source_id(target_id, workspace_id).map(str::to_owned),
     }
 }

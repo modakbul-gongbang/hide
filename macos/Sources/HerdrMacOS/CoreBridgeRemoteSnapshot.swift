@@ -38,13 +38,11 @@ struct CoreRemoteFileEntry: Decodable {
     let path: String
     let name: String
     let isDirectory: Bool
-    let sizeBytes: UInt64
 
     enum CodingKeys: String, CodingKey {
         case path
         case name
         case isDirectory = "is_directory"
-        case sizeBytes = "size_bytes"
     }
 }
 

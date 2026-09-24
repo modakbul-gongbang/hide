@@ -246,7 +246,6 @@ struct RightPanelPresentationTests {
                 "language": "markdown",
                 "document_kind": "text",
                 "contents_utf8": "draft",
-                "opened_modified_at_unix_ms": 1,
                 "dirty": true,
                 "readonly_reason": null,
                 "conflict": null

@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+/// The line above the Explorer tree about the checkout's Git status: still
+/// loading, unavailable, or decorations kept from an earlier read after the
+/// latest one failed, which are never presented as current (PRD S5.5 B20,
+/// B22). Nothing when the status is current.
+enum ExplorerGitStatusLine {
+    static func of(_ changes: CoreChangesSnapshot?) -> (systemImage: String, text: String)? {
+        guard let changes else { return ("clock", "Loading Git status") }
+        if let reason = changes.unavailableReason {
+            return ("exclamationmark.triangle", "Git status unavailable: \(reason)")
+        }
+        if let stale = changes.staleReason {
+            return ("exclamationmark.triangle", "Git status may be out of date: \(stale)")
+        }
+        return nil
+    }
+}
+
 struct RightPanel: View {
     @EnvironmentObject private var model: ShellModel
 
@@ -66,16 +83,8 @@ struct RightPanel: View {
             remoteFileTree
         } else if let activeRoot {
             VStack(spacing: HideTheme.spacingNone) {
-                if explorerChanges == nil {
-                    ExplorerGitNotice(
-                        systemImage: "clock",
-                        text: "Loading Git status"
-                    )
-                } else if let reason = explorerChanges?.unavailableReason {
-                    ExplorerGitNotice(
-                        systemImage: "exclamationmark.triangle",
-                        text: "Git status unavailable: \(reason)"
-                    )
+                if let line = ExplorerGitStatusLine.of(explorerChanges) {
+                    ExplorerGitNotice(systemImage: line.systemImage, text: line.text)
                 }
                 WorkspaceOutlineView(
                     rootURL: activeRoot,
@@ -114,7 +123,21 @@ struct RightPanel: View {
 
     @ViewBuilder
     private var remoteFileTree: some View {
-        if let fileError = model.remote.fileError {
+        if let prompt = model.remote.fileConsentPrompt {
+            VStack(spacing: HideTheme.spacingMD) {
+                HideEmptyState {
+                    Label("Allow Hide's helper on \(model.remote.targetLabel)", systemImage: "lock.shield")
+                } description: {
+                    Text(prompt)
+                }
+                Button("Allow helper", action: model.allowRemoteFileHelper)
+                    .buttonStyle(HideTextButtonStyle(appearance: .prominent))
+                    .accessibilityIdentifier("remote-files-allow-helper")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(ShellMetrics.panelPadding)
+            .accessibilityIdentifier("remote-files-consent")
+        } else if let fileError = model.remote.fileError {
             HideEmptyState {
                 Label("Remote files unavailable", systemImage: "exclamationmark.triangle")
             } description: {
@@ -244,7 +267,9 @@ struct ChangesView: View {
                 systemImage: "externaldrive",
                 message: "Git is read on this Mac, so a remote checkout has no changes view."
             )
-        } else if let reason = changes.unavailableReason {
+        } else if let reason = changes.unavailableReason
+            ?? (changes.entries.isEmpty && changes.committed.isEmpty ? changes.staleReason : nil)
+        {
             ChangesNotice(
                 title: "Changes unavailable",
                 systemImage: "exclamationmark.triangle",
@@ -263,8 +288,18 @@ struct ChangesView: View {
                 message: "This checkout matches its last commit."
             )
         } else {
-            changedFileList
-            .accessibilityIdentifier("changes-view")
+            // A failed read keeps the last list on screen, said to be stale,
+            // never presented as the checkout's current state.
+            VStack(spacing: HideTheme.spacingNone) {
+                if let stale = changes.staleReason {
+                    ExplorerGitNotice(
+                        systemImage: "exclamationmark.triangle",
+                        text: "Showing the last list read. \(stale)"
+                    )
+                }
+                changedFileList
+                .accessibilityIdentifier("changes-view")
+            }
         }
     }
 

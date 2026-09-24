@@ -283,23 +283,18 @@ fn deletion_gate_blocks_before_warning_and_reports_pane_consequence() {
         upstream_state: "gone".into(),
         ..WorktreeSnapshot::default()
     };
-    let gate = deletion_gate(&row, false, false, 2, 1);
+    let gate = deletion_gate(&row, false, 2, 1);
     assert_eq!(gate.button_label, "Close 2 panes and delete");
     assert_eq!(
+        deletion_gate(&row, false, 1, 0).button_label,
+        "Close 1 pane and delete"
+    );
+    assert_eq!(
         gate.warnings,
-        ["ahead 2 unmerged", "not pushed", "1 running agents"]
+        ["ahead 2 unmerged", "not pushed", "1 running agent"]
     );
     assert!(gate.blocked_reason.is_none());
-    assert!(
-        deletion_gate(&row, false, true, 0, 0)
-            .blocked_reason
-            .is_some()
-    );
-    assert!(
-        deletion_gate(&row, true, false, 0, 0)
-            .blocked_reason
-            .is_some()
-    );
+    assert!(deletion_gate(&row, true, 0, 0).blocked_reason.is_some());
     for blocked in [
         WorktreeSnapshot {
             dirty: true,
@@ -315,7 +310,7 @@ fn deletion_gate_blocks_before_warning_and_reports_pane_consequence() {
         },
     ] {
         assert!(
-            deletion_gate(&blocked, false, false, 2, 1)
+            deletion_gate(&blocked, false, 2, 1)
                 .blocked_reason
                 .is_some()
         );

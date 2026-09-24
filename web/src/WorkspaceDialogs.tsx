@@ -15,13 +15,15 @@ import {
   branchProblem,
   deletionConsequences,
   normalizePurpose,
+  projectRemovalConsequences,
   purposeCountLabel,
   purposeIsLong,
+  purposeScope,
   removalFor,
   taskFor,
 } from "./workspaceManage";
 
-function useErrorSince(since: number | null, prefixes: readonly string[]): string | null {
+export function useErrorSince(since: number | null, prefixes: readonly string[]): string | null {
   const error = useShellStore((s) => s.rest?.status?.last_error ?? null);
   if (since === null || !error || error.occurred_at < since) return null;
   return prefixes.some((prefix) => error.kind.startsWith(prefix)) ? error.message : null;
@@ -37,21 +39,29 @@ function findTarget(workspaceId: string, checkoutId?: string): { workspace: Work
   return { workspace, checkout: checkoutId ? (workspace.checkouts.find((row) => row.id === checkoutId) ?? null) : null };
 }
 
+/** The device a workspace belongs to, by its label, or null for this machine. */
+function deviceLabel(workspace: Workspace): string | null {
+  const device = workspace.remote_target_id ?? (workspace.device_id === "local" ? null : workspace.device_id);
+  if (!device) return null;
+  return useShellStore.getState().rest?.navigator?.devices?.find((row) => row.id === device)?.label ?? device;
+}
+
 export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   const dialog = useUiStore((s) => s.workspaceDialog);
   // Re-read on every snapshot so a dialog follows its row (a purpose saved
   // elsewhere, a gate that changed) rather than a copy from when it opened.
   useShellStore((s) => s.rest?.navigator?.workspaces);
   useShellStore((s) => s.rest?.status?.remote);
-  // A deleted worktree leaves the navigator while its dialog still reports
-  // the result, so the dialog keeps the last row it saw for its checkout.
+  // A deleted worktree or a removed project leaves the catalog while its
+  // dialog still reports the result, so the dialog keeps the last row it saw.
   const lastSeen = useRef<{ key: string; target: { workspace: Workspace; checkout: Checkout | null } } | null>(null);
   const close = () => useUiStore.getState().setWorkspaceDialog(null);
   if (!dialog) return null;
   const key = JSON.stringify(dialog);
   const found = findTarget(dialog.workspaceId, "checkoutId" in dialog ? dialog.checkoutId : undefined);
   if (found && (!("checkoutId" in dialog) || found.checkout)) lastSeen.current = { key, target: found };
-  const target = found?.checkout || !("checkoutId" in dialog) ? found : dialog.kind === "delete_worktree" && lastSeen.current?.key === key ? lastSeen.current.target : found;
+  const keepsLastSeen = dialog.kind === "delete_worktree" || dialog.kind === "remove_project";
+  const target = found && (found.checkout || !("checkoutId" in dialog)) ? found : keepsLastSeen && lastSeen.current?.key === key ? lastSeen.current.target : found;
   if (!target || ("checkoutId" in dialog && !target.checkout)) {
     return (
       <Dialog label="Unavailable" onClose={close}>
@@ -65,9 +75,73 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
     );
   }
   if (dialog.kind === "new_worktree") return <NewWorktreeDialog actions={actions} workspace={target.workspace} onClose={close} />;
-  if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} onClose={close} />;
-  if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} checkout={target.checkout} onClose={close} />;
+  if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} onClose={close} />;
+  if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} deviceLabel={deviceLabel(target.workspace)} onClose={close} />;
+  if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;
   return null;
+}
+
+/**
+ * `Remove project…` on any device: the panes the core counted close first,
+ * then only the registration goes. The row leaving the registrations is the
+ * answer; a refusal or a close that failed is the core's error.
+ */
+function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
+  const [at, setAt] = useState<number | null>(null);
+  const registered = useShellStore((s) => s.rest?.ui_state?.workspace_registrations?.some((row) => row.id === workspace.id) ?? false);
+  const refused = useErrorSince(at, ["workspace.remove", "workspace.create_in_flight"]);
+  const removed = at !== null && !registered;
+  const working = at !== null && !removed && refused === null;
+  const panes = workspace.removal?.pane_count ?? 0;
+  return (
+    <Dialog label={`Remove project ${workspace.label}`} role="alertdialog" initialFocus="container" onClose={onClose} data-remove-project={workspace.id}>
+      <div className="space-y-sm p-lg">
+        <DialogHeader title={`Remove project ${workspace.label}?`} detail={workspace.path} />
+        {at === null ? (
+          <ul className="list-disc space-y-xxs pl-lg text-body text-secondary" data-remove-consequences="true">
+            {projectRemovalConsequences(workspace).map((line) => (
+              <li key={line} className="break-words">
+                {line}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {working ? (
+          <Status tone="pending" data-remove-phase="closing">
+            {panes > 0 ? "Closing the project's panes…" : "Removing the registration…"}
+          </Status>
+        ) : null}
+        {refused ? (
+          <Note tone="error" data-remove-result="failed">
+            {refused}
+          </Note>
+        ) : null}
+        {removed ? (
+          <Note tone="ok" data-remove-result="finished">
+            Project removed. Its folder is untouched.
+          </Note>
+        ) : null}
+        <div className="flex flex-wrap justify-end gap-sm pt-sm">
+          <Button onClick={onClose} data-remove-cancel="true">
+            {removed || refused ? "Close" : working ? "Hide" : "Keep project"}
+          </Button>
+          {/* A refusal is retried from the same button (S5.5 B45). */}
+          {at === null || (refused !== null && registered) ? (
+            <Button
+              appearance="danger"
+              onClick={() => {
+                setAt(Date.now());
+                actions.removeWorkspace(workspace.id);
+              }}
+              data-remove-confirm="true"
+            >
+              {refused !== null ? "Try again" : panes === 1 ? "Close 1 pane and remove" : panes > 1 ? `Close ${panes} panes and remove` : "Remove project"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </Dialog>
+  );
 }
 
 function DialogHeader({ title, detail }: { title: string; detail?: string }) {
@@ -93,7 +167,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
   const [purpose, setPurpose] = useState("");
   const [request, setRequest] = useState<{ afterId: number; branch: string; at: number } | null>(null);
   const operation = useShellStore((s) => s.rest?.task_operation);
-  const task = taskFor(operation, request ? { kind: "worktree_create", afterId: request.afterId, repositoryRoot: workspace.path, branch: request.branch } : null);
+  const task = taskFor(operation, request ? { kind: "worktree_create", afterId: request.afterId, deviceId: workspace.device_id, repositoryRoot: workspace.path, branch: request.branch } : null);
   const refused = useErrorSince(request?.at ?? null, ["worktree.create", "task_operation."]);
   const working = request !== null && refused === null && (task === null || task.phase === "working");
   const problem = branch ? branchProblem(branch) : null;
@@ -112,6 +186,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
     if (branchProblem(name) || working) return;
     setRequest({ afterId: actions.taskIdNow(), branch: name, at: Date.now() });
     actions.createWorktree({
+      deviceId: workspace.device_id,
       repositoryRoot: workspace.path,
       branch: name,
       baseBranch: base || null,
@@ -166,7 +241,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
         ) : null}
         {failure ? <Note tone="error" data-worktree-error="true">{failure}</Note> : null}
         {working ? <Status tone="pending">Creating the worktree…</Status> : null}
-        <div className="flex justify-end gap-sm pt-sm">
+        <div className="flex flex-wrap justify-end gap-sm pt-sm">
           <Button onClick={onClose}>{working ? "Hide" : "Cancel"}</Button>
           <Button appearance="prominent" type="submit" disabled={working || !branch.trim() || problem !== null} data-worktree-create="true">
             {working ? "Creating…" : "Create worktree"}
@@ -177,7 +252,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
   );
 }
 
-function PurposeDialog({ actions, checkout, onClose }: { actions: Actions; checkout: Checkout; onClose: () => void }) {
+function PurposeDialog({ actions, checkout, deviceLabel, onClose }: { actions: Actions; checkout: Checkout; deviceLabel: string | null; onClose: () => void }) {
   // Only a purpose someone wrote is the field's value; a title the row falls
   // back to is shown as the placeholder, so saving never stores a guess.
   const written = checkout.purpose && (checkout.purpose.origin === "token" || checkout.purpose.origin === "branch_description") ? checkout.purpose.text : "";
@@ -225,6 +300,9 @@ function PurposeDialog({ actions, checkout, onClose }: { actions: Actions; check
           {purposeCountLabel(text)}
           {purposeIsLong(text) ? " · longer than a sidebar row shows" : ""}
         </p>
+        <p className="text-caption text-muted" data-purpose-scope="true">
+          {purposeScope(deviceLabel, checkout.branch ?? null)}
+        </p>
         {failure ? (
           <Note tone="error" data-purpose-error="true">
             {failure} Your text is kept; Save tries again.
@@ -236,7 +314,7 @@ function PurposeDialog({ actions, checkout, onClose }: { actions: Actions; check
           </Status>
         ) : null}
         {working ? <Status tone="pending">Saving…</Status> : null}
-        <div className="flex justify-end gap-sm pt-sm">
+        <div className="flex flex-wrap justify-end gap-sm pt-sm">
           <Button onClick={onClose}>{saved !== null ? "Done" : "Cancel"}</Button>
           <Button disabled={working || (!written && !text)} onClick={() => send("")} data-purpose-clear="true">
             Clear
@@ -250,14 +328,14 @@ function PurposeDialog({ actions, checkout, onClose }: { actions: Actions; check
   );
 }
 
-function DeleteWorktreeDialog({ actions, checkout, onClose }: { actions: Actions; checkout: Checkout; onClose: () => void }) {
+function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { actions: Actions; deviceId: string; checkout: Checkout; onClose: () => void }) {
   const row = checkout.worktree;
   const gate = row?.deletion_gate;
   const paneCount = checkout.tabs.reduce((count, tab) => count + tab.panes.length, 0);
   const [deleteBranch, setDeleteBranch] = useState(false);
   const [request, setRequest] = useState<{ afterId: number; at: number } | null>(null);
   const current = useShellStore((s) => s.rest?.worktree_removal);
-  const removal = request ? removalFor(current, checkout.path, request.afterId) : null;
+  const removal = request ? removalFor(current, deviceId, checkout.path, request.afterId) : null;
   const refused = useErrorSince(request?.at ?? null, ["worktree.remove"]);
   const inFlight = request !== null && refused === null && (removal === null || removal.phase === "closing" || removal.phase === "removing");
   const settled = removal && (removal.phase === "finished" || removal.phase === "failed") ? removal : null;
@@ -265,8 +343,8 @@ function DeleteWorktreeDialog({ actions, checkout, onClose }: { actions: Actions
   const confirm = () => {
     const afterId = useShellStore.getState().rest?.worktree_removal?.id ?? 0;
     setRequest({ afterId, at: Date.now() });
-    useUiStore.getState().setWatchedRemoval({ path: checkout.path, afterId });
-    actions.removeWorktree(checkout.path, deleteBranch && !!gate?.can_delete_branch);
+    useUiStore.getState().setWatchedRemoval({ deviceId, path: checkout.path, afterId });
+    actions.removeWorktree(deviceId, checkout.path, deleteBranch && !!gate?.can_delete_branch);
   };
   const hide = () => {
     // A removal the operator stopped watching still reports its end through
@@ -315,7 +393,7 @@ function DeleteWorktreeDialog({ actions, checkout, onClose }: { actions: Actions
             {settled.message ?? (settled.phase === "finished" ? "Worktree removed." : "Worktree removal failed.")}
           </Note>
         ) : null}
-        <div className="flex justify-end gap-sm pt-sm">
+        <div className="flex flex-wrap justify-end gap-sm pt-sm">
           <Button onClick={hide} data-delete-cancel="true">
             {settled || refused ? "Close" : inFlight ? "Hide" : "Keep worktree"}
           </Button>
@@ -345,7 +423,7 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
 
   useEffect(() => {
     if (!watchedRemoval || dialogOpen) return;
-    const answer = removalFor(removal, watchedRemoval.path, watchedRemoval.afterId);
+    const answer = removalFor(removal, watchedRemoval.deviceId, watchedRemoval.path, watchedRemoval.afterId);
     if (!answer || (answer.phase !== "finished" && answer.phase !== "failed")) return;
     useUiStore.getState().setNotice({ text: answer.message ?? (answer.phase === "finished" ? "Worktree removed." : "Worktree removal failed."), refreshable: false });
     useUiStore.getState().setWatchedRemoval(null);
@@ -362,7 +440,7 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
   const focusWhenListed = useUiStore((s) => s.focusWhenListed);
   const listed = useShellStore((s) =>
     focusWhenListed !== null &&
-    (s.rest?.navigator?.workspaces ?? []).some((workspace) =>
+    [...(s.rest?.navigator?.workspaces ?? []), ...(s.rest?.status?.remote ?? []).flatMap((row) => row.session?.workspaces ?? [])].some((workspace) =>
       workspace.checkouts.some((checkout) => checkout.tabs.some((tab) => tab.panes.some((pane) => pane.id === focusWhenListed))),
     ),
   );
