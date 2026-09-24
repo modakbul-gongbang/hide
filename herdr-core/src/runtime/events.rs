@@ -1720,12 +1720,36 @@ impl Runtime {
                     return true;
                 }
                 self.disconnect_remote_device(&payload.device_id);
+                // Removing a device removes Hide's own record of it: its
+                // project registrations, expanded folders and file tabs. Its
+                // host, panes, agents and folders are not touched.
+                let scope = format!("remote:{}:", payload.device_id);
+                let registrations = self.snapshot.ui_state.workspace_registrations.len();
+                self.snapshot
+                    .ui_state
+                    .workspace_registrations
+                    .retain(|registration| registration.device_id != payload.device_id);
+                let registrations =
+                    registrations - self.snapshot.ui_state.workspace_registrations.len();
+                self.snapshot
+                    .ui_state
+                    .device_expanded_paths
+                    .remove(&payload.device_id);
+                let tabs = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.checkout_id.starts_with(&scope))
+                    .count();
+                self.retire_device_editor_tabs(&payload.device_id);
                 self.rebuild_device_rows();
+                self.rebuild_tab_strips();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.unregistered",
                     format!(
-                        "Unregistered device {} without touching its host",
+                        "Unregistered device {} without touching its host; forgot {registrations} project registrations and closed {tabs} file tabs",
                         payload.device_id
                     ),
                 );

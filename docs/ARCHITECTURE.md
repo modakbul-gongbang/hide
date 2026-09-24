@@ -281,6 +281,7 @@ Settings (`web/src/SettingsSheet.tsx`, rules in `web/src/settings.ts`) opens fro
 Every row shows what the snapshot says; an edit is pending until the snapshot carries it, and a refusal is matched to the edit by the core's `last_error` kind and time.
 Copy diagnostics carries versions, paths, states and the core's recent diagnostics, redacts anything token-shaped, and has no terminal output or pane input among its inputs.
 `retry_connect` is a new connection attempt: it retires the device's coordinator and transports and connects again from its registration, keeping the device focus, and a connected device refuses it.
+`remove_device` removes Hide's own record of a device and nothing on it (PRD S5.5 B26): its registration, its project registrations and pins, its expanded folders, its open file tabs and its closed items go, while its host, Herdr server, panes, agents and folders are left as they are; a dirty tab closed this way leaves its draft in the browser, where a draft no tab stands for is offered to export or discard, and the confirmation counts the projects, tabs and drafts before anything is removed.
 The web's `ui_state_update` echo omits `workspace_registrations` and `device_registrations`, which their own events own, so a stale echo can never undo a registration.
 The accent swatches read the `--color-accent-choice-*` tokens; the chosen value replaces `--color-accent`, and `font_size` scales the interface text tokens through `--interface-scale` while the terminal and editor sizes stay their own.
 

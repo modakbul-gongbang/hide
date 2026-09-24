@@ -342,6 +342,25 @@ impl Runtime {
         tab
     }
 
+    /// Closes every file and diff tab of a removed device without saving and
+    /// drops its closed items. A dirty tab's draft stays in the shell's own
+    /// store, where a draft no tab stands for is offered for export (B26).
+    pub(super) fn retire_device_editor_tabs(&mut self, device_id: &str) {
+        let scope = format!("remote:{device_id}:");
+        while let Some(index) = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .position(|tab| tab.checkout_id.starts_with(&scope))
+        {
+            self.retire_editor_tab(index);
+        }
+        self.recent_closed
+            .retain(|item| item.device_id() != device_id);
+        self.sync_recent_closed_snapshot();
+    }
+
     /// Makes a preview tab an ordinary tab in the same slot. Returns whether
     /// anything changed: promoting a tab that is already ordinary is a
     /// no-op, and a tab that is not open is refused with a reason.

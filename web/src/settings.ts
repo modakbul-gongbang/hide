@@ -147,6 +147,33 @@ export function deviceIdFor(alias: string, existing: readonly string[]): string 
 }
 
 /** What an SSH alias must look like before it is sent: one token, no spaces or shell syntax. */
+/**
+ * What removing a device takes from Hide: its registered projects and its
+ * open file tabs; and the drafts it leaves, which stay in this browser to
+ * export or discard (PRD S5.5 B26). Nothing on the device is counted, because
+ * nothing there is touched.
+ */
+export function deviceRemovalLines(
+  deviceId: string,
+  registrations: readonly { device_id: string }[],
+  tabs: readonly { checkout_id: string; dirty: boolean }[],
+  drafts: readonly { device: string | null }[],
+): string[] {
+  const scope = `remote:${deviceId}:`;
+  const projects = registrations.filter((row) => row.device_id === deviceId).length;
+  const own = tabs.filter((tab) => tab.checkout_id.startsWith(scope));
+  const unsaved = own.filter((tab) => tab.dirty).length + drafts.filter((draft) => draft.device === deviceId).length;
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const lines: string[] = [];
+  if (projects > 0 || own.length > 0) {
+    lines.push(`Hide forgets ${count(projects, "registered project", "registered projects")} and closes ${count(own.length, "file tab", "file tabs")} of it here.`);
+  }
+  if (unsaved > 0) {
+    lines.push(`${count(unsaved, "unsaved draft stays", "unsaved drafts stay")} in this browser under unsaved drafts, to export or discard.`);
+  }
+  return lines;
+}
+
 export function aliasProblem(alias: string): string | null {
   const trimmed = alias.trim();
   if (!trimmed) return "Enter the SSH alias from the daemon machine's ~/.ssh/config.";

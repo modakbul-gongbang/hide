@@ -805,3 +805,95 @@ fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_drop
     assert!(runtime.pending_tab_move.is_empty());
     assert_eq!(requests.lock().unwrap().len(), 1);
 }
+
+/// B26: removing a device removes Hide's record of it and nothing else. Its
+/// project registrations, expanded folders, file tabs and closed items go;
+/// this machine's stay; and the device's Herdr is not asked for anything.
+#[test]
+fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machines() {
+    let mut runtime = runtime();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: TARGET.to_owned(),
+            label: "Mini".to_owned(),
+            ssh_alias: Some(TARGET.to_owned()),
+            herdr_socket_path: None,
+            host_consent: None,
+        });
+    let registration = |id: &str, device: &str| crate::model::WorkspaceRegistration {
+        id: id.to_owned(),
+        label: id.to_owned(),
+        path: format!("/repo/{id}"),
+        device_id: device.to_owned(),
+        pinned: true,
+    };
+    runtime.snapshot.ui_state.workspace_registrations = vec![
+        registration("workspace:here", "local"),
+        registration(&format!("remote:{TARGET}:project:p1"), TARGET),
+    ];
+    runtime
+        .snapshot
+        .ui_state
+        .device_expanded_paths
+        .insert(TARGET.to_owned(), vec!["/repo/p1/src".to_owned()]);
+    let tab = |id: &str, checkout: &str| EditorTabSnapshot {
+        id: id.to_owned(),
+        workspace_id: "workspace".to_owned(),
+        checkout_id: checkout.to_owned(),
+        path: format!("/repo/{id}"),
+        label: id.to_owned(),
+        kind: EditorTabKind::File,
+        diff_committed: None,
+        markdown_live: false,
+        wrap: false,
+        dirty: true,
+        preview: false,
+    };
+    runtime.snapshot.editor.tabs = vec![
+        tab("file:here", "checkout:here"),
+        tab("file:device", &format!("remote:{TARGET}:checkout:w1")),
+    ];
+    runtime.push_recent_closed(ClosedItem::File {
+        key: "closed-device".to_owned(),
+        device_id: TARGET.to_owned(),
+        workspace_id: "workspace".to_owned(),
+        checkout_id: format!("remote:{TARGET}:checkout:w1"),
+        checkout_path: "/repo/p1".to_owned(),
+        path: "/repo/p1/gone.txt".to_owned(),
+        label: "gone.txt".to_owned(),
+    });
+
+    dispatch(
+        &mut runtime,
+        "remove_device",
+        serde_json::json!({"device_id": TARGET}),
+    );
+
+    assert!(runtime.snapshot.ui_state.device_registrations.is_empty());
+    assert_eq!(
+        runtime
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        ["workspace:here"]
+    );
+    assert!(runtime.snapshot.ui_state.device_expanded_paths.is_empty());
+    assert_eq!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .map(|tab| tab.id.as_str())
+            .collect::<Vec<_>>(),
+        ["file:here"]
+    );
+    assert!(runtime.recent_closed.is_empty());
+    assert_eq!(runtime.snapshot.status.last_error, None);
+}

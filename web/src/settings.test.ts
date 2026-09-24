@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceIdFor, deviceLine, diagnosticsText, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize } from "./settings";
+import { ACCENT_CHOICES, canRetryDevice, deviceIdFor, deviceRemovalLines, deviceLine, diagnosticsText, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize } from "./settings";
 import type { AiProvider, Device, DeviceHost } from "./snapshot";
 
 const device = (patch: Partial<Device>): Device => ({
@@ -13,6 +13,26 @@ const device = (patch: Partial<Device>): Device => ({
   agent_count: 0,
   test: null,
   ...patch,
+});
+
+describe("deviceRemovalLines", () => {
+  it("counts the device's projects, tabs and drafts and nothing of this machine's", () => {
+    const lines = deviceRemovalLines(
+      "mini",
+      [{ device_id: "mini" }, { device_id: "local" }],
+      [
+        { checkout_id: "remote:mini:checkout:w1", dirty: true },
+        { checkout_id: "remote:mini:checkout:w2", dirty: false },
+        { checkout_id: "checkout:here", dirty: true },
+      ],
+      [{ device: "mini" }, { device: "local" }, { device: null }],
+    );
+    expect(lines).toEqual([
+      "Hide forgets 1 registered project and closes 2 file tabs of it here.",
+      "2 unsaved drafts stay in this browser under unsaved drafts, to export or discard.",
+    ]);
+    expect(deviceRemovalLines("studio", [], [], [])).toEqual([]);
+  });
 });
 
 describe("settings rules", () => {

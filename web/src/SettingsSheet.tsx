@@ -14,6 +14,7 @@ import {
   SETTINGS_TABS,
   aliasProblem,
   canRetryDevice,
+  deviceRemovalLines,
   deviceIdFor,
   deviceLine,
   diagnosticsText,
@@ -494,6 +495,10 @@ function DevicesTab({ actions }: { actions: Actions }) {
   const rows = devices ?? [];
   const localRoot = rows.find((device) => device.kind !== "remote")?.host?.helper_root ?? null;
   const remoteRows = rows.filter((device) => device.kind === "remote");
+  const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations);
+  const editorTabs = useShellStore((s) => s.editor?.tabs);
+  const recoveryDrafts = useShellStore((s) => s.recoveryDrafts);
+  const removalLines = removing ? deviceRemovalLines(removing.id, registrations ?? [], editorTabs ?? [], recoveryDrafts) : [];
   return (
     <>
       <Group title="Devices" note="Hide stores only a label and an SSH alias. Authentication stays in the daemon machine's SSH environment; no password or key is asked for.">
@@ -642,6 +647,11 @@ function DevicesTab({ actions }: { actions: Actions }) {
             <p className="mb-md text-body text-secondary">
               Hide forgets this device's registration and closes its connection here. Files, the Herdr server and any agents running on {removing.ssh_alias} keep running untouched.
             </p>
+            {removalLines.map((line) => (
+              <p key={line} className="mb-md text-body text-secondary" data-device-remove-effect="true">
+                {line}
+              </p>
+            ))}
             <div className="flex justify-end gap-sm">
               <Button onClick={() => setRemoving(null)}>Keep device</Button>
               <Button
