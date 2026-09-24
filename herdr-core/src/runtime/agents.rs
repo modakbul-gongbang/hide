@@ -512,33 +512,61 @@ impl Runtime {
                 cwd,
                 label,
             } => {
-                let Some(source_id) = remote_herdr_workspace(
-                    &session,
-                    &target_id,
-                    &workspace_id,
-                    checkout_id.as_deref(),
-                ) else {
-                    self.set_error(
+                // A registered project Herdr has no workspace in yet is
+                // opened by creating one at its folder on the device, as
+                // this machine's `create_tab` does (B23 find-or-create).
+                let registered =
+                    checkout_id
+                        .as_deref()
+                        .filter(|checkout| {
+                            *checkout
+                                == format!(
+                                    "{workspace_id}{}",
+                                    crate::device_catalog::REGISTERED_CHECKOUT
+                                )
+                        })
+                        .and_then(|_| {
+                            self.snapshot.ui_state.workspace_registrations.iter().find(
+                                |registration| {
+                                    registration.id == workspace_id
+                                        && registration.device_id == target_id
+                                },
+                            )
+                        });
+                if let Some(registration) = registered {
+                    RemoteControlAction::CreateWorkspace {
+                        cwd: registration.path.clone(),
+                        label: registration.label.clone(),
+                    }
+                } else {
+                    let Some(source_id) = remote_herdr_workspace(
+                        &session,
+                        &target_id,
+                        &workspace_id,
+                        checkout_id.as_deref(),
+                    ) else {
+                        self.set_error(
                         "remote.control.workspace_not_found",
                         format!(
                             "Workspace {workspace_id} does not belong to remote target {target_id}"
                         ),
                         false,
                     );
-                    return true;
-                };
-                if cwd.trim().is_empty() || label.trim().is_empty() {
-                    self.set_error(
-                        "remote.control.invalid_tab",
-                        "Remote tab creation requires non-empty cwd and label",
-                        false,
-                    );
-                    return true;
-                }
-                RemoteControlAction::CreateTab {
-                    workspace_id: source_id.to_owned(),
-                    cwd,
-                    label,
+                        return true;
+                    };
+                    if cwd.trim().is_empty() || label.trim().is_empty() {
+                        self.set_error(
+                            "remote.control.invalid_tab",
+                            "Remote tab creation requires non-empty cwd and label",
+                            false,
+                        );
+                        return true;
+                    }
+                    RemoteControlAction::CreateTab {
+                        workspace_id: source_id.to_owned(),
+                        cwd,
+                        label,
+                    }
                 }
             }
             RemoteControlRequest::CloseTab { tab_id, confirmed } => {

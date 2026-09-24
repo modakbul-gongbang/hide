@@ -555,3 +555,88 @@ fn a_device_folder_outside_its_home_is_refused_by_its_helper() {
     );
     assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
 }
+
+/// B23: a new tab in a device project Herdr has no workspace in creates one
+/// at the registered folder on that device; a registration-only checkout
+/// id for a project that is not registered there names nothing.
+#[test]
+fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    runtime.ingest_remote_session(TARGET, Ok(session(Vec::new())));
+    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+    );
+    runtime.install_remote_control(RemoteControlContext::new(
+        TARGET,
+        connector,
+        Weak::new(),
+        ChangeNotifier::noop(),
+    ));
+    assert!(runtime.ingest_device_registration(
+        TARGET,
+        "Other".to_owned(),
+        Ok(hide_host::register::Registrable {
+            root: t.other.clone(),
+            is_git: false,
+        }),
+    ));
+    let id = device_catalog::project_id(TARGET, Path::new(&t.other));
+    let create = |runtime: &mut Runtime, workspace_id: &str, request: &str| {
+        runtime.request_remote_control(RemoteControlPayload {
+            target_id: TARGET.to_owned(),
+            request_id: request.to_owned(),
+            report_pane_focus_outcome: false,
+            request: RemoteControlRequest::CreateTab {
+                workspace_id: workspace_id.to_owned(),
+                checkout_id: Some(format!("{workspace_id}#registered")),
+                cwd: "/elsewhere".to_owned(),
+                label: "Tab 1".to_owned(),
+            },
+        })
+    };
+
+    assert!(create(&mut runtime, &id, "request-1"));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert!(
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .any(|row| row.kind == "remote.control.requested"
+                && row.message.contains("workspace.create")),
+        "the device is asked to create a workspace"
+    );
+    assert!(
+        runtime
+            .remote_tab_creations_in_flight
+            .iter()
+            .any(|key| key.2 == t.other),
+        "it is created at the registered folder, not the path the shell sent"
+    );
+
+    create(
+        &mut runtime,
+        "remote:mini:project:unregistered",
+        "request-2",
+    );
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("remote.control.workspace_not_found")
+    );
+}

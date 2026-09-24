@@ -1981,7 +1981,7 @@ pub fn spawn_remote_control(
             format!("herdr-core-remote-{target_id}-tab-create")
         }
         RemoteControlAction::CreateWorkspace { .. } => {
-            return Err("a remote context cannot create a local workspace".to_owned());
+            format!("herdr-core-remote-{target_id}-workspace-create")
         }
         RemoteControlAction::CloseTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-close")

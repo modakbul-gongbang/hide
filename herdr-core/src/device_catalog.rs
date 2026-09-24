@@ -326,6 +326,10 @@ pub(crate) fn group(
     }
 }
 
+/// The suffix of a registered project's checkout id while Herdr has no
+/// workspace in it; the id names no Herdr workspace.
+pub(crate) const REGISTERED_CHECKOUT: &str = "#registered";
+
 /// A device's registrations carried onto its grouped session (B3, B23-B25).
 ///
 /// A registered project keeps its row while Herdr has no workspace in it: its
@@ -378,7 +382,8 @@ pub(crate) fn apply_registrations(
             last_activity_unix_ms: None,
             pinned: registration.pinned,
             checkouts: vec![CheckoutSnapshot {
-                id: format!("{}#registered", registration.id),
+                id: format!("{}{REGISTERED_CHECKOUT}", registration.id),
+                next_tab_label: crate::model::next_tab_label(std::iter::empty()),
                 workspace_id: registration.id.clone(),
                 label: crate::workspace::checkout_row_label(
                     branch.as_deref(),
