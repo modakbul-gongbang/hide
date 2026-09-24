@@ -375,22 +375,17 @@ impl Runtime {
             .find(|tab| tab.id == tab_id)
             .cloned()
             .ok_or_else(|| format!("File tab {tab_id} is not open"))?;
-        let checkout = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .find(|workspace| workspace.id == tab.workspace_id)
-            .and_then(|workspace| {
-                workspace
-                    .checkouts
-                    .iter()
-                    .find(|checkout| checkout.id == tab.checkout_id)
-            })
-            .cloned()
+        let (device_id, checkout) = self
+            .catalog_checkout(&tab.workspace_id, &tab.checkout_id)
+            .map(|(workspace, checkout)| (workspace.device_id.clone(), checkout.clone()))
             .ok_or_else(|| {
                 "The editor tab's project or checkout is no longer available".to_owned()
             })?;
+        // A device's focus is its Herdr session's, which the core follows;
+        // showing one of its files moves nothing on this machine.
+        if device_id != workspace::LOCAL_DEVICE_ID {
+            return self.activate_editor_tab(tab_id);
+        }
         self.activate_editor_tab(tab_id)?;
         let pane_id = checkout.active_tab_id.as_deref().and_then(|id| {
             let first = checkout

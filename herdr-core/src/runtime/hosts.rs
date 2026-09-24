@@ -286,6 +286,7 @@ impl Runtime {
                     "generation": generation,
                     "message": message,
                 }));
+                self.release_held_saves(device_id, &message);
                 let phase = match error {
                     EstablishError::IdentityChanged { .. } => HostPhase::IdentityChanged(message),
                     EstablishError::Unsupported(_) => HostPhase::Unsupported(message),
@@ -296,6 +297,13 @@ impl Runtime {
         }
         self.refresh_device_snapshots();
         true
+    }
+
+    pub(super) fn device_host_connecting(&self, device_id: &str) -> bool {
+        matches!(
+            self.device_hosts.get(device_id).map(|host| &host.phase),
+            Some(HostPhase::Connecting)
+        )
     }
 
     fn ingest_host_closed(&mut self, device_id: &str, generation: u64, reason: String) -> bool {

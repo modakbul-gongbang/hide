@@ -34,6 +34,10 @@ pub(super) struct SaveSlot {
     recheck: bool,
     /// Why the unknown save is still unknown, for the tab to show.
     waiting: Option<String>,
+    /// The queued save was never sent because the device's helper was still
+    /// connecting; it goes out when the helper is ready, and is dropped
+    /// (draft kept) if the connection fails. The reason is what the tab shows.
+    held: Option<String>,
 }
 
 struct PendingSave {
@@ -70,16 +74,27 @@ impl Runtime {
     /// The checkout a file belongs to, as its device reaches it. This
     /// machine's checkouts resolve through the roots hided pinned when it
     /// opened them, so a replaced checkout refuses the read.
-    pub(super) fn document_root(
+    /// A checkout by its ids wherever the catalog carries it: this machine's
+    /// and registered projects in the navigator, and each device's Herdr
+    /// session. Device ids are scoped (`remote:<device>:…`), so one id never
+    /// names checkouts on two machines.
+    pub(super) fn catalog_checkout(
         &self,
         workspace_id: &str,
         checkout_id: &str,
-    ) -> Result<DocumentRoot, String> {
-        let (workspace, checkout) = self
+    ) -> Option<(&WorkspaceSnapshot, &CheckoutSnapshot)> {
+        let sessions = self
             .snapshot
+            .status
+            .remote
+            .iter()
+            .filter_map(|remote| remote.session.as_ref())
+            .flat_map(|session| session.workspaces.iter());
+        self.snapshot
             .navigator
             .workspaces
             .iter()
+            .chain(sessions)
             .find(|workspace| workspace.id == workspace_id)
             .and_then(|workspace| {
                 workspace
@@ -88,6 +103,47 @@ impl Runtime {
                     .find(|checkout| checkout.id == checkout_id)
                     .map(|checkout| (workspace, checkout))
             })
+    }
+
+    /// The checkout the operator is looking at: this machine's focus while
+    /// it is the selected device, otherwise the selected device's Herdr
+    /// session focus, which the core follows rather than keeps (B31).
+    pub(super) fn front_checkout(&self) -> Option<(&str, &str)> {
+        let device = self
+            .snapshot
+            .navigator
+            .focused_device_id
+            .as_deref()
+            .unwrap_or(workspace::LOCAL_DEVICE_ID);
+        if device == workspace::LOCAL_DEVICE_ID {
+            return self
+                .snapshot
+                .navigator
+                .focused_workspace_id
+                .as_deref()
+                .zip(self.snapshot.navigator.focused_checkout_id.as_deref());
+        }
+        let session = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|remote| remote.target_id == device)?
+            .session
+            .as_ref()?;
+        session
+            .focused_workspace_id
+            .as_deref()
+            .zip(session.focused_checkout_id.as_deref())
+    }
+
+    pub(super) fn document_root(
+        &self,
+        workspace_id: &str,
+        checkout_id: &str,
+    ) -> Result<DocumentRoot, String> {
+        let (workspace, checkout) = self
+            .catalog_checkout(workspace_id, checkout_id)
             .ok_or_else(|| "The file's project or checkout is no longer available".to_owned())?;
         let device_id = workspace.device_id.clone();
         if device_id == workspace::LOCAL_DEVICE_ID
@@ -266,10 +322,8 @@ impl Runtime {
         if open {
             return true;
         }
-        let in_front = self.snapshot.navigator.focused_workspace_id.as_deref()
-            == Some(request.workspace_id.as_str())
-            && self.snapshot.navigator.focused_checkout_id.as_deref()
-                == Some(request.checkout_id.as_str());
+        let in_front = self.front_checkout()
+            == Some((request.workspace_id.as_str(), request.checkout_id.as_str()));
         let prepared = PreparedFileTab::Read {
             tab_id: tab_id.to_owned(),
             document: Box::new(document),
@@ -403,6 +457,7 @@ impl Runtime {
         document.contents_utf8 = Some(payload.contents_utf8.clone());
         document.dirty = true;
         self.sync_file_tab_dirty(&tab_id);
+        self.sync_active_editor_document();
         let slot = self.document_saves.entry(tab_id.clone()).or_default();
         if slot.unsettled.is_some() {
             self.set_error(
@@ -414,7 +469,7 @@ impl Runtime {
             self.sync_save_snapshot(&tab_id);
             return true;
         }
-        if slot.running {
+        if slot.running || slot.held.is_some() {
             slot.queued = Some(PendingSave {
                 contents: payload.contents_utf8,
                 close_after,
@@ -449,6 +504,16 @@ impl Runtime {
         };
         let channel = match self.device_channel(&place.device_id) {
             Ok(channel) => channel,
+            Err(message) if self.device_host_connecting(&place.device_id) => {
+                let slot = self.document_saves.entry(tab_id.to_owned()).or_default();
+                slot.queued = Some(PendingSave {
+                    contents,
+                    close_after,
+                });
+                slot.held = Some(message);
+                self.sync_save_snapshot(tab_id);
+                return;
+            }
             Err(message) => {
                 self.set_error(
                     "file.save_unavailable",
@@ -752,23 +817,55 @@ impl Runtime {
     }
 
     /// A device's helper came back: every save on it whose answer was lost
-    /// is read back now.
+    /// is read back now, and every save that waited for the helper is sent.
     pub(super) fn settle_device_saves(&mut self, device_id: &str) {
-        let waiting: Vec<String> = self
-            .document_saves
-            .iter()
-            .filter(|(tab_id, slot)| {
-                slot.unsettled.is_some()
-                    && self
-                        .document_places
-                        .get(*tab_id)
-                        .is_some_and(|place| place.device_id == device_id)
-            })
-            .map(|(tab_id, _)| tab_id.clone())
-            .collect();
-        for tab_id in waiting {
-            self.start_save_settle(&tab_id);
+        for tab_id in self.device_save_tabs(device_id) {
+            let Some(slot) = self.document_saves.get_mut(&tab_id) else {
+                continue;
+            };
+            if slot.unsettled.is_some() {
+                self.start_save_settle(&tab_id);
+            } else if slot.held.take().is_some()
+                && let Some(queued) = slot.queued.take()
+            {
+                self.start_document_save(&tab_id, queued.contents, queued.close_after);
+            }
         }
+    }
+
+    /// A device's helper could not be reached: the saves that waited for it
+    /// are not sent, and each tab keeps its draft and says so.
+    pub(super) fn release_held_saves(&mut self, device_id: &str, reason: &str) {
+        let mut released = false;
+        for tab_id in self.device_save_tabs(device_id) {
+            let Some(slot) = self.document_saves.get_mut(&tab_id) else {
+                continue;
+            };
+            if slot.held.take().is_some() {
+                slot.queued = None;
+                released = true;
+                self.sync_save_snapshot(&tab_id);
+            }
+        }
+        if released {
+            self.set_error(
+                "file.save_unavailable",
+                format!("{reason}; nothing was sent and the draft was preserved"),
+                true,
+            );
+        }
+    }
+
+    fn device_save_tabs(&self, device_id: &str) -> Vec<String> {
+        self.document_saves
+            .keys()
+            .filter(|tab_id| {
+                self.document_places
+                    .get(*tab_id)
+                    .is_some_and(|place| place.device_id == device_id)
+            })
+            .cloned()
+            .collect()
     }
 
     fn sync_save_snapshot(&mut self, tab_id: &str) {
@@ -789,7 +886,12 @@ impl Runtime {
                     message: None,
                 })
             } else {
-                None
+                slot.held.as_ref().map(|reason| EditorSaveSnapshot {
+                    state: "waiting".to_owned(),
+                    message: Some(format!(
+                        "{reason}; the save goes out when the helper is ready"
+                    )),
+                })
             }
         });
         if let Some(document) = self.editor_documents.get_mut(tab_id) {

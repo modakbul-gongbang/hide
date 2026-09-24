@@ -393,7 +393,10 @@ A save is exchange-and-verify, not a compare-and-swap (`hide-host/src/save.rs` s
 A filesystem with no atomic exchange refuses the save and the draft stays, exportable from the conflict or unknown bar.
 Saves and revision reads in one folder hold an advisory lock, exclusive and shared, so Hide's own read-back waits for a save still running in a helper whose connection already ended.
 One save runs per document and only the newest draft waits behind it.
+A save asked for while the device's helper is still connecting has not been sent: it is `waiting`, goes out when the helper is ready, and is dropped with the draft kept and the reason shown if the connection fails; that is a different state from `unknown`, whose save was sent.
 A save whose answer was lost to a timeout or a dropped connection is `unknown`: it is never resent, further saves wait, and when the device's helper is ready the file is read back: the draft's revision means it saved, the base's means it did not (`file.save_not_applied`), anything else is a conflict.
+A device's checkouts are found in the same catalog lookup as this machine's (`catalog_checkout`: the navigator, then each device's Herdr session), and the checkout in front is the selected device's own focus (`front_checkout`), so a file opened on a device lands in the checkout that asked and showing it moves no focus on this machine.
+Each device authenticates as its own ssh config says: an absent `SSH_AUTH_SOCK` stops only a device whose config names no `IdentityFile` or `IdentityAgent`, and that device's row says so.
 A local path is judged inside its checkout after resolving the folder that holds it, so a shell that spells `/var` for `/private/var` still opens it, while the document keeps the path as the shell sent it.
 
 ### The shortcut registry

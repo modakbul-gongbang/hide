@@ -66,15 +66,6 @@ impl Runtime {
                 files: RemoteFileListSnapshot::idle(),
             });
         }
-        if !self.remote_enabled {
-            return self.ingest_remote_session(
-                &device_id,
-                Err(live::SessionFetchError::Unreachable(
-                    "Remote features are disabled because the SSH agent socket is unavailable"
-                        .to_owned(),
-                )),
-            );
-        }
         let started = (|| {
             let home_path = self.home_path.as_ref().ok_or_else(|| {
                 "HOME is unavailable, so the SSH config cannot be resolved".to_owned()

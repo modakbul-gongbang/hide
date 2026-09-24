@@ -186,8 +186,9 @@ function EditorBody({
       (current.document_kind === "text" || current.document_kind === "markdown") &&
       !current.readonly_reason &&
       !current.conflict &&
-      // A save whose answer was lost blocks the next one until it is read back.
-      (!current.save || current.save.state === "saving") &&
+      // A save whose answer was lost blocks the next one until it is read
+      // back; a running or waiting save takes the newest draft behind it.
+      (!current.save || current.save.state === "saving" || current.save.state === "waiting") &&
       current.dirty
     );
   };
@@ -311,7 +312,7 @@ function EditorBody({
       {document.conflict ? (
         <ConflictBar tabId={tab.id} root={root} path={tab.path} removed={document.conflict.disk_revision === null} actions={actions} />
       ) : null}
-      {document.save && document.save.state !== "saving" ? <SaveUnknownBar tabId={tab.id} path={tab.path} message={document.save.message} /> : null}
+      {document.save && document.save.state !== "saving" ? <SaveStatusBar tabId={tab.id} path={tab.path} save={document.save} /> : null}
       <CodeMirrorEditor
         key={tab.id}
         tabId={tab.id}
@@ -383,11 +384,14 @@ function ExportDraftButton({ tabId, path }: { tabId: string; path: string }) {
   );
 }
 
-/** A save whose answer was lost: nothing is resent, and the file is read back to settle it (B14). */
-function SaveUnknownBar({ tabId, path, message }: { tabId: string; path: string; message: string | null }) {
+/**
+ * A save that has no result yet: one waiting for the device's helper, or one
+ * whose answer was lost, which is never resent and is read back to settle it (B14).
+ */
+function SaveStatusBar({ tabId, path, save }: { tabId: string; path: string; save: NonNullable<EditorDocumentSnapshot["save"]> }) {
   return (
-    <div role="status" className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-save-unknown="true">
-      <span className="min-w-0 flex-1">{message ?? "The last save's result is unknown; reading the file back."} Your draft is preserved.</span>
+    <div role="status" className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-save-state={save.state}>
+      <span className="min-w-0 flex-1">{save.message ?? "The last save's result is unknown; reading the file back."} Your draft is preserved.</span>
       <ExportDraftButton tabId={tabId} path={path} />
     </div>
   );

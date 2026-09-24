@@ -51,7 +51,7 @@ fn registering_a_device_opens_its_remote_status_and_removing_it_closes_it() {
     assert_eq!(row.ssh_alias.as_deref(), Some("studio-host"));
     assert_eq!(
         row.message.as_deref(),
-        Some("Remote features are disabled because the SSH agent socket is unavailable")
+        Some("HOME is unavailable, so the SSH config cannot be resolved")
     );
 
     // A catalog rebuild recreates the rows; the state has to come back with them.
@@ -75,7 +75,7 @@ fn registering_a_device_opens_its_remote_status_and_removing_it_closes_it() {
 /// wrong, and the row has to say so rather than spin on "connecting".
 #[test]
 fn an_unknown_ssh_alias_is_reported_on_the_device_row() {
-    let mut runtime = runtime_with_remote_enabled();
+    let mut runtime = runtime_with_home();
     assert!(register_device(
         &mut runtime,
         "nowhere",
@@ -118,7 +118,7 @@ fn testing_an_unconnected_device_reports_the_way_out() {
     assert_eq!(error.kind, "device.unknown");
 }
 
-fn runtime_with_remote_enabled() -> Runtime {
+fn runtime_with_home() -> Runtime {
     let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
@@ -139,7 +139,6 @@ fn runtime_with_remote_enabled() -> Runtime {
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            remote_enabled: true,
             chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: Some(std::env::temp_dir().join(format!(
@@ -156,7 +155,7 @@ fn runtime_with_remote_enabled() -> Runtime {
 /// config and retrying moves the row past the alias failure it showed.
 #[test]
 fn retrying_a_device_makes_a_new_connection_attempt() {
-    let mut runtime = runtime_with_remote_enabled();
+    let mut runtime = runtime_with_home();
     assert!(register_device(&mut runtime, "studio", "studio-host"));
     let first = device(&runtime, "studio").message.clone().expect("reason");
     assert!(

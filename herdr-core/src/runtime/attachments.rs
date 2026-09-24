@@ -694,7 +694,6 @@ mod tests {
             environment::EnvironmentReport {
                 statuses: Vec::new(),
                 home_path: None,
-                remote_enabled: false,
                 chromux_enabled: false,
                 herdr_socket_path_override: None,
                 codex_home: None,

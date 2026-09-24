@@ -504,3 +504,102 @@ fn a_device_without_a_helper_reads_and_sends_nothing() {
     assert_eq!(error.kind, "file.open_failed");
     assert!(f.device.saves().is_empty());
 }
+
+impl Fixture {
+    fn set_phase(&self, phase: hosts::HostPhase) {
+        self.shared
+            .lock()
+            .unwrap()
+            .device_hosts
+            .get_mut(DEVICE)
+            .unwrap()
+            .phase = phase;
+    }
+
+    fn ready(&self) -> hosts::HostPhase {
+        hosts::HostPhase::Ready {
+            host: self.device.clone(),
+            platform: "macos aarch64".to_owned(),
+            helper_path: "/fake/hide-host-helper".to_owned(),
+        }
+    }
+
+    /// The document the shell draws, not the core's own copy.
+    fn shown(&self) -> EditorDocumentSnapshot {
+        self.shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .editor
+            .document
+            .clone()
+            .unwrap()
+    }
+}
+
+/// A save asked for while the helper is still connecting waits for it
+/// rather than failing, keeps only the newest draft, and goes out once the
+/// helper is ready; the tab shows the draft and why it has not saved yet.
+#[test]
+fn a_save_while_the_helper_connects_waits_and_goes_out_when_it_is_ready() {
+    let f = Fixture::new();
+    f.open_and_wait("a.txt");
+    f.set_phase(hosts::HostPhase::Connecting);
+    f.save("a.txt", "first\n");
+    f.save("a.txt", "second\n");
+    let shown = f.shown();
+    assert!(shown.dirty);
+    assert_eq!(shown.contents_utf8.as_deref(), Some("second\n"));
+    assert_eq!(
+        shown.save.map(|save| save.state).as_deref(),
+        Some("waiting")
+    );
+    assert!(
+        f.device.saves().is_empty(),
+        "nothing is sent while connecting"
+    );
+
+    f.set_phase(f.ready());
+    f.shared.lock().unwrap().settle_device_saves(DEVICE);
+    f.wait_for_document("a.txt", "the waiting save", |document| {
+        !document.dirty && document.save.is_none()
+    });
+    assert_eq!(f.device.saves(), vec!["second\n".to_owned()]);
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a.txt")).unwrap(),
+        "second\n"
+    );
+}
+
+/// The helper never came: the waiting save is dropped unsent, and the draft
+/// stays in the tab with the reason.
+#[test]
+fn a_save_waiting_for_a_helper_that_fails_is_not_sent_and_keeps_the_draft() {
+    let f = Fixture::new();
+    f.open_and_wait("a.txt");
+    f.set_phase(hosts::HostPhase::Connecting);
+    f.save("a.txt", "mine\n");
+    f.shared
+        .lock()
+        .unwrap()
+        .release_held_saves(DEVICE, "The SSH connection timed out");
+    f.set_phase(hosts::HostPhase::Unavailable("timed out".to_owned()));
+    let shown = f.shown();
+    assert!(shown.dirty);
+    assert_eq!(shown.contents_utf8.as_deref(), Some("mine\n"));
+    assert_eq!(shown.save, None);
+    assert_eq!(f.last_error().as_deref(), Some("file.save_unavailable"));
+    f.shared.lock().unwrap().settle_device_saves(DEVICE);
+
+    // A save refused outright still shows the draft it was given.
+    f.save("a.txt", "again\n");
+    let shown = f.shown();
+    assert!(shown.dirty);
+    assert_eq!(shown.contents_utf8.as_deref(), Some("again\n"));
+    assert_eq!(f.last_error().as_deref(), Some("file.save_unavailable"));
+    assert!(f.device.saves().is_empty());
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a.txt")).unwrap(),
+        "old\n"
+    );
+}

@@ -434,16 +434,28 @@ fn roots_from_value(value: &Value) -> Vec<Root> {
 }
 
 /// The checkouts a snapshot carries on SSH devices: the device and the root
-/// path there, which only that device's helper reads.
+/// path there, which only that device's helper reads. A device's projects
+/// are the registered ones in the navigator and its Herdr session's, the
+/// same two places the core's `catalog_checkout` looks.
 fn device_roots_from_value(value: &Value) -> Vec<boundary::DeviceRoot> {
-    let Some(workspaces) = value
+    let registered = value
         .pointer("/rest/navigator/workspaces")
         .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
+        .into_iter()
+        .flatten();
+    let sessions = value
+        .pointer("/rest/status/remote")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|remote| {
+            remote
+                .pointer("/session/workspaces")
+                .and_then(Value::as_array)
+        })
+        .flatten();
     let mut roots = Vec::new();
-    for workspace in workspaces {
+    for workspace in registered.chain(sessions) {
         let Some(device_id) = workspace
             .get("device_id")
             .and_then(Value::as_str)

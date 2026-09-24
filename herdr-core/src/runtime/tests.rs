@@ -295,7 +295,6 @@ fn runtime() -> Runtime {
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            remote_enabled: false,
             chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: None,

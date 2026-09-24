@@ -230,7 +230,7 @@ export type EditorConflictSnapshot = {
 
 /** A save without a known result yet: `saving`, `unknown` (the answer was lost) or `checking` (being read back). */
 export type EditorSaveSnapshot = {
-  state: "saving" | "unknown" | "checking";
+  state: "saving" | "waiting" | "unknown" | "checking";
   message: string | null;
 };
 

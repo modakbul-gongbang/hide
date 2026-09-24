@@ -28,7 +28,7 @@ pub const REGISTRY: [EnvironmentVariableSpec; 5] = [
         key: SSH_AUTH_SOCK_KEY,
         required: false,
         format: "absolute Unix-domain socket path",
-        absent_behavior: "Remote features are disabled; local features remain available",
+        absent_behavior: "A device whose ssh config names no IdentityFile or IdentityAgent cannot authenticate and says so on its row; every other device connects",
     },
     EnvironmentVariableSpec {
         key: PATH_KEY,
@@ -54,7 +54,6 @@ pub const REGISTRY: [EnvironmentVariableSpec; 5] = [
 pub struct EnvironmentReport {
     pub statuses: Vec<EnvironmentStatusSnapshot>,
     pub home_path: Option<PathBuf>,
-    pub remote_enabled: bool,
     pub chromux_enabled: bool,
     pub herdr_socket_path_override: Option<String>,
     pub codex_home: Option<PathBuf>,
@@ -79,7 +78,6 @@ fn validate_with_chromux_path(
     chromux_path: Option<&Path>,
 ) -> EnvironmentReport {
     let mut statuses = Vec::with_capacity(REGISTRY.len());
-    let mut remote_enabled = true;
     let mut chromux_enabled = true;
     let mut herdr_socket_path_override = None;
     let mut home_path = None;
@@ -102,21 +100,18 @@ fn validate_with_chromux_path(
                     ("available", "Home directory configuration is available")
                 }
             },
+            // Each device authenticates as its own ssh config says, so a
+            // missing agent only stops the devices that would use it, and
+            // those report it on their own rows.
             SSH_AUTH_SOCK_KEY => match value {
-                None => {
-                    remote_enabled = false;
-                    (
-                        "absent",
-                        "SSH agent socket is unavailable; remote features are disabled",
-                    )
-                }
-                Some(value) if value.is_empty() || !Path::new(&value).is_absolute() => {
-                    remote_enabled = false;
-                    (
-                        "invalid",
-                        "SSH agent socket configuration is invalid; remote features are disabled",
-                    )
-                }
+                None => (
+                    "absent",
+                    "SSH agent socket is unavailable; only devices whose ssh config names an IdentityFile or IdentityAgent can authenticate",
+                ),
+                Some(value) if value.is_empty() || !Path::new(&value).is_absolute() => (
+                    "invalid",
+                    "SSH agent socket configuration is invalid; only devices whose ssh config names an IdentityFile or IdentityAgent can authenticate",
+                ),
                 Some(_) => ("available", "SSH agent socket configuration is available"),
             },
             PATH_KEY => match value {
@@ -182,7 +177,6 @@ fn validate_with_chromux_path(
     EnvironmentReport {
         statuses,
         home_path,
-        remote_enabled,
         chromux_enabled,
         herdr_socket_path_override,
         codex_home,
@@ -219,20 +213,18 @@ mod tests {
             Some(chromux_path),
         );
         let encoded = serde_json::to_string(&report.statuses).unwrap();
-        assert!(report.remote_enabled);
         assert!(report.chromux_enabled);
         assert!(!encoded.contains("private-agent.sock"));
         assert!(!encoded.contains("/private/tmp/hide-environment-test/Library/pnpm"));
     }
 
     #[test]
-    fn absent_optional_socket_disables_only_remote_capability() {
+    fn an_absent_agent_socket_is_reported_without_disabling_devices() {
         let report = validate_with(|_| None);
-        assert!(!report.remote_enabled);
         assert!(!report.chromux_enabled);
         assert_eq!(report.statuses[1].state, "absent");
         assert!(!report.statuses[1].required);
-        assert!(report.statuses[1].message.contains("remote features"));
+        assert!(report.statuses[1].message.contains("IdentityFile"));
         assert_eq!(report.statuses[3].state, "default");
         assert!(report.home_path.is_none());
         assert!(report.herdr_socket_path_override.is_none());
@@ -260,7 +252,6 @@ mod tests {
             _ => None,
         });
 
-        assert!(report.remote_enabled);
         assert!(!report.chromux_enabled);
         assert_eq!(
             report.herdr_socket_path_override.as_deref(),

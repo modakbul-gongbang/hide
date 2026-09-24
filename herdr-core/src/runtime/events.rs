@@ -2046,17 +2046,11 @@ impl Runtime {
             Event::RemoteControl(payload) => self.request_remote_control(payload),
             Event::RemoteFileList(payload) => self.request_remote_file_list(payload),
             Event::FileOpen(payload) => {
-                let context_exists = self.snapshot.navigator.workspaces.iter().any(|workspace| {
-                    workspace.id == payload.workspace_id
-                        && workspace
-                            .checkouts
-                            .iter()
-                            .any(|checkout| checkout.id == payload.checkout_id)
-                });
-                let context_is_focused = self.snapshot.navigator.focused_workspace_id.as_deref()
-                    == Some(payload.workspace_id.as_str())
-                    && self.snapshot.navigator.focused_checkout_id.as_deref()
-                        == Some(payload.checkout_id.as_str());
+                let context_exists = self
+                    .catalog_checkout(&payload.workspace_id, &payload.checkout_id)
+                    .is_some();
+                let context_is_focused = self.front_checkout()
+                    == Some((payload.workspace_id.as_str(), payload.checkout_id.as_str()));
                 if !context_exists || !context_is_focused {
                     self.set_error(
                         "file.invalid_context",
@@ -2092,19 +2086,9 @@ impl Runtime {
                     );
                     return true;
                 };
-                let Some(checkout) = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .find(|workspace| workspace.id == tab.workspace_id)
-                    .and_then(|workspace| {
-                        workspace
-                            .checkouts
-                            .iter()
-                            .find(|checkout| checkout.id == tab.checkout_id)
-                    })
-                    .cloned()
+                let Some((device_id, checkout)) = self
+                    .catalog_checkout(&tab.workspace_id, &tab.checkout_id)
+                    .map(|(workspace, checkout)| (workspace.device_id.clone(), checkout.clone()))
                 else {
                     self.set_error("editor.invalid_context", "The editor tab's project or checkout is no longer available. Selection was kept.", false);
                     return true;
@@ -2114,6 +2098,11 @@ impl Runtime {
                 // visits across checkouts; no intermediate terminal frame.
                 if let Err(message) = self.activate_editor_tab(&payload.tab_id) {
                     self.set_error("editor.focus_failed", message, false);
+                    return true;
+                }
+                // A device's focus is its Herdr session's, which the core
+                // follows; showing one of its files moves nothing here.
+                if device_id != workspace::LOCAL_DEVICE_ID {
                     return true;
                 }
                 let pane_id = checkout.active_tab_id.as_deref().and_then(|id| {

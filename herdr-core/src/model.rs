@@ -1392,7 +1392,8 @@ pub struct EditorDocumentSnapshot {
 /// A save in progress, or one whose answer was lost (PRD S5.5 B14).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct EditorSaveSnapshot {
-    /// `saving` while it runs (a newer draft may wait behind it), `unknown`
+    /// `saving` while it runs (a newer draft may wait behind it), `waiting`
+    /// while it waits for the device's helper to finish connecting, `unknown`
     /// when the answer was lost and the file has not been read back yet, and
     /// `checking` while it is read back. An unknown save blocks the next one.
     pub state: String,

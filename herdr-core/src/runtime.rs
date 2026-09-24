@@ -724,9 +724,6 @@ pub struct Runtime {
     /// `None` when the process has no usable HOME, which every connect then
     /// reports rather than guessing a path.
     home_path: Option<PathBuf>,
-    /// False when the SSH agent socket is unavailable at launch, which every
-    /// registered device reports as `disabled` instead of attempting SSH.
-    remote_enabled: bool,
     /// The SSH client and coordinator of each registered device that is
     /// connected or connecting, keyed by device id. Removing a device drops
     /// its entry; the coordinator handle moves to `retired_remote_syncs`.
@@ -1049,6 +1046,16 @@ impl Runtime {
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         snapshot.ui_state = ui_state;
         snapshot.navigator.devices = workspace::devices(&snapshot.ui_state.device_registrations);
+        // This machine's row names the root a device consent would name, so
+        // the add form can show it before the first device exists.
+        if let Some(local) = snapshot
+            .navigator
+            .devices
+            .iter_mut()
+            .find(|device| device.kind != "remote")
+        {
+            local.host.helper_root = Some(host_helper_root.clone());
+        }
         snapshot.navigator.focused_device_id = Some(
             snapshot
                 .ui_state
@@ -1091,7 +1098,6 @@ impl Runtime {
             file_roots: None,
             state_path,
             home_path: environment.home_path,
-            remote_enabled: environment.remote_enabled,
             remote_connections: HashMap::new(),
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
