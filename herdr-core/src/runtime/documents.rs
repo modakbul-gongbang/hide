@@ -678,6 +678,23 @@ impl Runtime {
         };
         let mut next = None;
         let mut close = false;
+        // A save that did not land leaves one diagnostic line naming its
+        // device, tab and outcome (S5.5 B48); the reason is the host's words,
+        // which never carry the draft.
+        let failure = match &outcome {
+            SaveOutcome::Saved(_) => None,
+            SaveOutcome::Conflict { message, .. } | SaveOutcome::Refused(message) => {
+                Some(message.clone())
+            }
+            SaveOutcome::Unknown(reason) => Some(reason.clone()),
+        };
+        if let Some(reason) = failure {
+            crate::diagnostic!(serde_json::json!({
+                "component": "documents", "kind": "file.save_not_saved",
+                "outcome": outcome_word(&outcome), "device": request.place.device_id,
+                "tab": tab_id, "path": path, "reason": reason,
+            }));
+        }
         match outcome {
             SaveOutcome::Saved(saved) => {
                 document.revision = Some(saved.revision);

@@ -3154,7 +3154,10 @@ impl Runtime {
                 slot.message = Some(message.clone());
                 self.push_diagnostic(
                     format!("explorer.{}_failed", operation.kind.as_str()),
-                    format!("{source}: {message}"),
+                    format!(
+                        "operation {id} on {}: {source}: {message}",
+                        target.device_id
+                    ),
                 );
             }
         }

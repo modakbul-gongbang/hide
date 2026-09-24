@@ -870,11 +870,17 @@ fn spawn_host(
                                     let _ = sender.send(response.outcome);
                                 }
                             }
+                            // serde's own text can quote the value it could
+                            // not read, which may be file contents, so only
+                            // its class and position are logged (S5.5 B48).
                             Err(error) => crate::diagnostic!(json!({
                                 "component": "remote_host",
                                 "kind": "host.answer_unreadable",
                                 "target": inner.target,
-                                "error": error.to_string(),
+                                "class": format!("{:?}", error.classify()),
+                                "line": error.line(),
+                                "column": error.column(),
+                                "bytes": line.len(),
                             })),
                         }
                     }

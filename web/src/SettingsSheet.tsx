@@ -487,7 +487,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
             <p className="mb-md text-body text-secondary">
               Hide adds its own entries, marked hide-subagents, to this file on the daemon's machine. Every other entry and setting in it is kept as it is, and no other machine's file is written.
             </p>
-            <div className="flex justify-end gap-sm">
+            <div className="flex flex-wrap justify-end gap-sm">
               <Button onClick={() => setInstalling(null)}>Cancel</Button>
               <Button
                 appearance="prominent"
@@ -626,7 +626,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
               </p>
             ) : null}
             <HelperTerms helperRoot={allowing.host?.helper_root ?? localRoot} />
-            <div className="mt-md flex justify-end gap-sm">
+            <div className="mt-md flex flex-wrap justify-end gap-sm">
               <Button onClick={() => setAllowing(null)}>Not now</Button>
               <Button
                 appearance="prominent"
@@ -650,7 +650,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
             <p className="mb-md text-body text-secondary">
               Hide stops starting new file, Git and worktree work on {revoking.ssh_alias}. A save already sent is read back before its tab says anything; your drafts and the files on the device are not deleted, and neither is the installed helper.
             </p>
-            <div className="flex justify-end gap-sm">
+            <div className="flex flex-wrap justify-end gap-sm">
               <Button onClick={() => setRevoking(null)}>Keep allowed</Button>
               <Button
                 appearance="danger"
@@ -679,7 +679,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                 {line}
               </p>
             ))}
-            <div className="flex justify-end gap-sm">
+            <div className="flex flex-wrap justify-end gap-sm">
               <Button onClick={() => setRemoving(null)}>Keep device</Button>
               <Button
                 appearance="danger"
@@ -769,6 +769,7 @@ function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
           <span className={stage.state === "passed" ? "text-success" : stage.state === "pending" ? "text-muted" : "text-warning"} aria-hidden="true">
             {stage.state === "passed" ? "✓" : stage.state === "pending" ? "…" : "✕"}
           </span>
+          <span className="sr-only">{stage.state === "passed" ? "passed" : stage.state === "pending" ? "not run" : "failed"}</span>
           <span className="w-[var(--size-device-test-stage-col)] shrink-0 font-mono text-primary">{stage.stage}</span>
           <span className="min-w-0 break-words text-secondary">{stage.detail}</span>
         </div>

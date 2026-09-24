@@ -81,7 +81,10 @@ export function DraftRecoveryLine({ actions }: { actions: Actions }) {
   return (
     <>
       <div role="status" data-draft-recovery={count} className="flex items-center gap-md border-b border-divider bg-panel px-md py-xs text-caption text-warning">
-        <span className="min-w-0 flex-1 truncate">
+        <span
+          className="min-w-0 flex-1 truncate"
+          title={`${count === 1 ? "1 unsaved draft is" : `${count} unsaved drafts are`} not open in any tab. Nothing is discarded until you choose.`}
+        >
           {count === 1 ? "1 unsaved draft is" : `${count} unsaved drafts are`} not open in any tab. Nothing is discarded until you choose.
         </span>
         <button type="button" className="text-primary underline" data-draft-recovery-review="true" onClick={() => setOpen(true)}>
@@ -116,7 +119,7 @@ function DraftRecoverySheet({ actions, onClose }: { actions: Actions; onClose: (
                   {origin(draft, host, rest)} · {new Date(draft.updated_at).toLocaleString()}
                   {place.kind === "none" ? ` · cannot open here: ${place.reason}` : ""}
                 </span>
-                <span className="flex gap-sm">
+                <span className="flex flex-wrap gap-sm">
                   {place.kind === "front" ? (
                     <Button data-draft-open={tag} onClick={() => { actions.openFile(draft.path, false); onClose(); }}>Open</Button>
                   ) : place.kind === "device" ? (

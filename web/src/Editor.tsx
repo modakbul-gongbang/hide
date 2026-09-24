@@ -257,7 +257,12 @@ function EditorBody({
   // A refused save never reaches the clean state, so the core's failure is
   // what takes the saving mark off the tab; the document stays dirty and the
   // reason is in the diagnostic log (B5).
-  const failureAt = useShellStore((s) => s.rest?.status?.last_error?.occurred_at ?? null);
+  // Only a file error settles a save; a device or catalog error that lands
+  // while a slow device save runs leaves its mark alone (S5.5 B45).
+  const failureAt = useShellStore((s) => {
+    const error = s.rest?.status?.last_error;
+    return error && error.kind.startsWith("file.") ? error.occurred_at : null;
+  });
   useEffect(() => {
     if (failureAt !== null) useShellStore.getState().noteSaving(tab.id, false);
   }, [failureAt, tab.id]);

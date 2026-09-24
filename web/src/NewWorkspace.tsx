@@ -51,7 +51,7 @@ function DeviceNewWorkspace({ actions, device }: { actions: Actions; device: str
   return (
     <div data-new-workspace={device} className="border-t border-divider bg-panel p-sm text-caption">
       <div className="mb-xs flex items-center justify-between text-secondary">
-        <span>새 워크스페이스 · {label}</span>
+        <span className="min-w-0 break-words">새 워크스페이스 · {label}</span>
         <button type="button" className="text-muted" aria-label="Close new workspace" onClick={() => closeOverlay("new_workspace")}>
           ×
         </button>

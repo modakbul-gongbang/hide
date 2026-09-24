@@ -113,11 +113,12 @@ function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions
             Project removed. Its folder is untouched.
           </Note>
         ) : null}
-        <div className="flex justify-end gap-sm pt-sm">
+        <div className="flex flex-wrap justify-end gap-sm pt-sm">
           <Button onClick={onClose} data-remove-cancel="true">
             {removed || refused ? "Close" : working ? "Hide" : "Keep project"}
           </Button>
-          {at === null ? (
+          {/* A refusal is retried from the same button (S5.5 B45). */}
+          {at === null || (refused !== null && registered) ? (
             <Button
               appearance="danger"
               onClick={() => {
@@ -126,7 +127,7 @@ function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions
               }}
               data-remove-confirm="true"
             >
-              {panes === 1 ? "Close 1 pane and remove" : panes > 1 ? `Close ${panes} panes and remove` : "Remove project"}
+              {refused !== null ? "Try again" : panes === 1 ? "Close 1 pane and remove" : panes > 1 ? `Close ${panes} panes and remove` : "Remove project"}
             </Button>
           ) : null}
         </div>
@@ -232,7 +233,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
         ) : null}
         {failure ? <Note tone="error" data-worktree-error="true">{failure}</Note> : null}
         {working ? <Status tone="pending">Creating the worktree…</Status> : null}
-        <div className="flex justify-end gap-sm pt-sm">
+        <div className="flex flex-wrap justify-end gap-sm pt-sm">
           <Button onClick={onClose}>{working ? "Hide" : "Cancel"}</Button>
           <Button appearance="prominent" type="submit" disabled={working || !branch.trim() || problem !== null} data-worktree-create="true">
             {working ? "Creating…" : "Create worktree"}
@@ -302,7 +303,7 @@ function PurposeDialog({ actions, checkout, onClose }: { actions: Actions; check
           </Status>
         ) : null}
         {working ? <Status tone="pending">Saving…</Status> : null}
-        <div className="flex justify-end gap-sm pt-sm">
+        <div className="flex flex-wrap justify-end gap-sm pt-sm">
           <Button onClick={onClose}>{saved !== null ? "Done" : "Cancel"}</Button>
           <Button disabled={working || (!written && !text)} onClick={() => send("")} data-purpose-clear="true">
             Clear
@@ -381,7 +382,7 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
             {settled.message ?? (settled.phase === "finished" ? "Worktree removed." : "Worktree removal failed.")}
           </Note>
         ) : null}
-        <div className="flex justify-end gap-sm pt-sm">
+        <div className="flex flex-wrap justify-end gap-sm pt-sm">
           <Button onClick={hide} data-delete-cancel="true">
             {settled || refused ? "Close" : inFlight ? "Hide" : "Keep worktree"}
           </Button>
