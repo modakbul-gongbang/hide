@@ -279,6 +279,11 @@ pub struct DeviceSnapshot {
     /// Why an SSH device is not `ready`, in the words its remote status
     /// carries; `None` while it is.
     pub message: Option<String>,
+    /// Which trust or sign-in step refused the connection, when one did:
+    /// `host_key_changed`, `host_key_unknown` or `authentication`, each
+    /// needing a different action from the operator (PRD S5.5 B38); `None`
+    /// for any other state.
+    pub problem: Option<String>,
     pub ssh_alias: Option<String>,
     /// The Herdr socket the registration names on the device, if any.
     pub herdr_socket_path: Option<String>,

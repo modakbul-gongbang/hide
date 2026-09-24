@@ -14,14 +14,17 @@ import {
   SETTINGS_TABS,
   aliasProblem,
   canRetryDevice,
+  deviceFacts,
   deviceRemovalLines,
   deviceIdFor,
   deviceLine,
+  deviceProblemLine,
   diagnosticsText,
   helperConsentTerms,
   herdrLine,
   hostLine,
   offeredModels,
+  ownerLine,
   providerLine,
   environmentTone,
   shown,
@@ -63,6 +66,11 @@ function SettingsSheet({ actions }: { actions: Actions }) {
   const [tab, setTab] = useState<SettingsTab>("general");
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const subtitle = SETTINGS_TABS.find((row) => row.id === tab)?.subtitle ?? "";
+  const daemon = useShellStore((s) => s.daemon);
+  const selected = useShellStore((s) => {
+    const id = s.rest?.navigator?.focused_device_id ?? "local";
+    return s.rest?.navigator?.devices?.find((device) => device.id === id) ?? null;
+  });
   const moveTab = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
     event.preventDefault();
@@ -78,6 +86,9 @@ function SettingsSheet({ actions }: { actions: Actions }) {
         <div className="min-w-0 flex-1">
           <h2 className="text-headline font-semibold text-primary">Settings</h2>
           <p className="text-body text-secondary">{subtitle}</p>
+          <p className="mt-xxs text-caption text-muted" data-settings-owner={daemon?.host_name ?? "unknown"}>
+            {ownerLine(daemon, selected)}
+          </p>
         </div>
         <Button appearance="quiet" aria-label="Close Settings" title="Close Settings (Esc)" onClick={close} data-settings-close="true">
           ✕
@@ -318,6 +329,11 @@ function AppearanceTab({ actions }: { actions: Actions }) {
 // --- Agents --------------------------------------------------------------------
 
 function AgentsTab({ actions }: { actions: Actions }) {
+  const daemonHost = useShellStore((s) => s.daemon?.host_name ?? null);
+  const selectedDevice = useShellStore((s) => {
+    const id = s.rest?.navigator?.focused_device_id ?? "local";
+    return s.rest?.navigator?.devices?.find((device) => device.id === id && device.kind === "remote") ?? null;
+  });
   const ai = useShellStore((s) => s.rest?.status?.background_ai);
   const hooks = useShellStore((s) => s.rest?.status?.agent_hooks);
   const [changedAt, setChangedAt] = useState<number | null>(null);
@@ -349,6 +365,17 @@ function AgentsTab({ actions }: { actions: Actions }) {
 
   return (
     <>
+      {selectedDevice ? (
+        // A device's agents run under that machine's own hook files and CLIs
+        // (PRD S5.5 B37); nothing here reads or writes them.
+        <Row
+          label={
+            <Note tone="warn" data-agents-device-note={selectedDevice.id}>
+              {selectedDevice.label} is selected, but everything on this page belongs to {daemonHost ?? "the daemon's machine"}. Hooks and Background AI for agents on {selectedDevice.label} are set up on that machine, by running Hide there and pressing Install hook in its own Settings. Hide does not copy hooks or AI settings over SSH or install anything on {selectedDevice.label} for them.
+            </Note>
+          }
+        />
+      ) : null}
       <Group title="Agent CLIs" note="Asked on the daemon's machine while this tab is open: installed, signed in, or why not.">
         {(ai?.providers ?? []).length === 0 ? <Row label={<Note>Not read yet.</Note>} /> : null}
         {(ai?.providers ?? []).map((provider) => {
@@ -516,7 +543,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
               }
               detail={
                 <>
-                  {device.kind === "remote" && device.state !== "ready" && device.message ? <Note tone="warn">{device.message}</Note> : null}
+                  <DeviceConnection device={device} facts={deviceFacts(device, status)} />
                   {device.kind === "remote" ? <DeviceHelper device={device} /> : null}
                   {device.test ? <DeviceTest test={device.test} /> : null}
                 </>
@@ -668,6 +695,37 @@ function DevicesTab({ actions }: { actions: Actions }) {
             </div>
           </div>
         </Dialog>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * What the device itself reported: its Herdr version and helper platform, and
+ * when the connection failed, which step refused it and what to do (B36, B38).
+ */
+function DeviceConnection({ device, facts }: { device: Device; facts: string[] }) {
+  if (device.kind !== "remote") return null;
+  const problem = device.state !== "ready" ? deviceProblemLine(device.problem, device.ssh_alias) : null;
+  return (
+    <>
+      {facts.length > 0 ? (
+        <p className="break-words font-mono text-caption text-muted" data-device-facts={device.id}>
+          {facts.join(" · ")}
+        </p>
+      ) : null}
+      {problem ? (
+        <div className="mt-xxs space-y-xxs" data-device-problem={`${device.id}:${device.problem}`}>
+          <Status tone="warn">{problem.headline}</Status>
+          <Note tone="warn">{problem.action}</Note>
+        </div>
+      ) : null}
+      {device.state !== "ready" && device.message ? (
+        problem ? (
+          <p className="break-words font-mono text-caption text-muted">{device.message}</p>
+        ) : (
+          <Note tone="warn">{device.message}</Note>
+        )
       ) : null}
     </>
   );

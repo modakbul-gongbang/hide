@@ -75,6 +75,8 @@ export type DaemonInfo = {
   version: string;
   /** This daemon host's lasting identity; a draft is filed under it (S5.5 B9). */
   host_id: string;
+  /** The machine the daemon runs on, which owns every value it stores (S5.5 B35); null when the system gives none. */
+  host_name: string | null;
   schema_version: number;
   pid: number;
   started_at_unix: string;

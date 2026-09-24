@@ -1016,6 +1016,7 @@ fn a_closed_device_file_reopens_only_on_its_device_and_leaves_this_machines_clos
             kind: "remote".to_owned(),
             state: "connected".to_owned(),
             message: None,
+            problem: None,
             ssh_alias: Some(DEVICE.to_owned()),
             herdr_socket_path: None,
             agent_count: 0,

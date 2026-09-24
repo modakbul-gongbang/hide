@@ -47,6 +47,21 @@ const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
 /// changed key from a missing one without parsing the rest of the sentence.
 pub const HOST_KEY_CHANGED: &str = "host key changed";
 pub const HOST_KEY_UNKNOWN: &str = "host key unknown";
+
+/// Which trust or sign-in step a connection failure names, read off the
+/// words this module wrote into it: a changed host key, an unknown one, or a
+/// refused authentication (PRD S5.5 B38). Any other failure is `None`.
+pub fn connection_problem(message: &str) -> Option<&'static str> {
+    if message.contains(HOST_KEY_CHANGED) {
+        Some("host_key_changed")
+    } else if message.contains(HOST_KEY_UNKNOWN) {
+        Some("host_key_unknown")
+    } else if message.contains("stage=auth ") {
+        Some("authentication")
+    } else {
+        None
+    }
+}
 const DEFAULT_REMOTE_TERM: &str = "xterm-256color";
 
 /// Environment names read by this module. Values remain in the process
@@ -1703,6 +1718,22 @@ impl RusshRemoteClient {
                     "capability probe complete",
                     "en",
                 ));
+            }
+            // Authentication runs after the handshake and the known_hosts
+            // check, so a refused sign-in is the auth stage's failure alone,
+            // never read as a host that could not be reached (B38).
+            Err(error) if error.stage() == RemoteStage::Auth => {
+                report.pass(
+                    RemoteStage::Ssh,
+                    "TCP SSH handshake and known_hosts verification passed",
+                );
+                report.fail(
+                    RemoteStage::Auth,
+                    error.to_string(),
+                    error.diagnostic().retryable,
+                    error.diagnostic().action_required,
+                );
+                return report;
             }
             Err(error) => {
                 report.fail(
@@ -3638,6 +3669,76 @@ mod tests {
             "/tmp/known_hosts",
         )
         .unwrap()
+    }
+
+    /// A changed host key, an unknown one and a refused sign-in each need a
+    /// different action, so the device row names which one it was (B38): the
+    /// words come from the real known_hosts check, not a copy of them.
+    #[test]
+    fn a_changed_or_unknown_host_key_and_a_refused_sign_in_are_told_apart() {
+        let offered = russh::keys::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBmTEAgbvSH51RTwhPKbL+uBW92zVlMr81wfUEJlRNkr",
+        )
+        .unwrap();
+        let recorded =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHDBmiUzbqzzahLz/nn+wP/Sotw5klGvW4QbnvZKoHbG";
+        let directory = tempfile::tempdir().unwrap();
+        let answer = |known_hosts: &str| {
+            let file = directory.path().join("known_hosts");
+            std::fs::write(&file, known_hosts).unwrap();
+            let mut alias = host();
+            alias.known_hosts_file = file;
+            let mut handler = KnownHostHandler::new(&alias, None);
+            let key = PublicKeyOrCertificate::PublicKey {
+                key: offered.clone(),
+                hash_alg: None,
+            };
+            Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(handler.check_server_key(&key))
+                .map_err(|error| error.to_string())
+        };
+
+        let changed = answer(&format!("[mini.example.test]:2200 {recorded}\n")).unwrap_err();
+        assert_eq!(
+            connection_problem(&changed),
+            Some("host_key_changed"),
+            "{changed}"
+        );
+        let unknown = answer("").unwrap_err();
+        assert_eq!(
+            connection_problem(&unknown),
+            Some("host_key_unknown"),
+            "{unknown}"
+        );
+        let trusted = answer(&format!(
+            "[mini.example.test]:2200 {}\n",
+            offered.to_openssh().unwrap()
+        ));
+        assert_eq!(trusted, Ok(true));
+
+        let refused = remote_error(
+            "remote-auth",
+            "mini",
+            RemoteStage::Auth,
+            "the ssh config sets IdentityAgent none and no IdentityFile authenticated",
+            false,
+            true,
+        );
+        assert_eq!(
+            connection_problem(&refused.to_string()),
+            Some("authentication")
+        );
+        let unreachable = remote_error(
+            "remote-connect",
+            "mini",
+            RemoteStage::Ssh,
+            "Connection refused",
+            true,
+            false,
+        );
+        assert_eq!(connection_problem(&unreachable.to_string()), None);
     }
 
     #[test]

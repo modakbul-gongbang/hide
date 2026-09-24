@@ -423,10 +423,19 @@ impl Runtime {
                 Some(status) => ("unavailable", status.message.clone()),
                 None => ("unavailable", None),
             };
+            let problem = message
+                .as_deref()
+                .and_then(crate::remote::connection_problem)
+                .map(str::to_owned);
             let test = tests.get(&device.id).cloned();
-            if device.state != state || device.message != message || device.test != test {
+            if device.state != state
+                || device.message != message
+                || device.problem != problem
+                || device.test != test
+            {
                 device.state = state.to_owned();
                 device.message = message;
+                device.problem = problem;
                 device.test = test;
                 changed = true;
             }

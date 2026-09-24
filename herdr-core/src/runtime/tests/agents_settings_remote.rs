@@ -78,6 +78,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         kind: "remote".to_owned(),
         state: "unavailable".to_owned(),
         message: None,
+        problem: None,
         ssh_alias: Some("mini".to_owned()),
         herdr_socket_path: None,
         agent_count: 0,

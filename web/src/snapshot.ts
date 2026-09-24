@@ -320,6 +320,11 @@ export type Device = {
   /** `local`, or for an SSH device `ready`, `unavailable` or `disabled`. */
   state: string;
   message: string | null;
+  /**
+   * Which trust or sign-in step refused the connection (S5.5 B38):
+   * `host_key_changed`, `host_key_unknown` or `authentication`; null otherwise.
+   */
+  problem?: string | null;
   ssh_alias: string | null;
   /** The Herdr socket the registration names on the device; null reads its default server. */
   herdr_socket_path?: string | null;

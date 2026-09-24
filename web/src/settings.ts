@@ -80,6 +80,58 @@ export function deviceLine(device: Device, remote: RemoteStatus | undefined): { 
   return { text: "not connected", tone: "warn" };
 }
 
+/**
+ * Where every value on these pages is kept (PRD S5.5 B35): the daemon's own
+ * state on its machine, whichever device is selected in the sidebar.
+ */
+export function ownerLine(daemon: DaemonInfo | null, selected: Device | null): string {
+  const host = daemon?.host_name ? daemon.host_name : "the daemon's machine";
+  const kept = `Appearance, shortcuts, Background AI, hooks and the device list are kept by hided on ${host}.`;
+  if (!selected || selected.kind !== "remote") return kept;
+  return `${kept} ${selected.label} is selected; that changes where files, Git and panes run, not where these settings are kept.`;
+}
+
+/**
+ * The facts a device reported about itself (B36): its Herdr version and the
+ * platform its helper runs on. Nothing here is read on this machine, so a
+ * fact the device has not reported is left out rather than filled in.
+ */
+export function deviceFacts(device: Device, remote: RemoteStatus | undefined): string[] {
+  if (device.kind !== "remote") return [];
+  const facts: string[] = [];
+  if (remote?.herdr_version) facts.push(`Herdr ${remote.herdr_version}`);
+  if (device.host?.state === "ready" && device.host.platform) facts.push(`helper on ${device.host.platform}`);
+  return facts;
+}
+
+/**
+ * A refused trust or sign-in step, in the operator's words, with the one
+ * thing to do about it (B38). Hide never changes known_hosts or asks for a
+ * password; each action happens in the daemon machine's own SSH setup.
+ */
+export function deviceProblemLine(problem: string | null | undefined, alias: string | null): { headline: string; action: string } | null {
+  const target = alias ?? "the device";
+  switch (problem) {
+    case "host_key_changed":
+      return {
+        headline: "Host key changed",
+        action: `${target} answered with a different host key than known_hosts records. Verify the device before you update known_hosts; Hide will not connect until then.`,
+      };
+    case "host_key_unknown":
+      return {
+        headline: "Host key not in known_hosts",
+        action: `Run ssh ${target} once on the daemon's machine to review and record its host key, then Retry.`,
+      };
+    case "authentication":
+      return {
+        headline: "Sign-in refused",
+        action: `The host key was verified, but no key the daemon machine's ssh config names for ${target} was accepted. Check its IdentityFile or IdentityAgent, then Retry.`,
+      };
+    default:
+      return null;
+  }
+}
+
 /** The helper line a device row carries: whether file and Git work may run there, and why not. */
 export function hostLine(host: DeviceHost | undefined): { text: string; tone: "ok" | "warn" | "pending" | "muted" | "local" } {
   if (!host || host.consent === "this_machine") return { text: "files and Git run on this daemon's machine", tone: "local" };

@@ -30,6 +30,33 @@ use crate::state_file::{DaemonState, acquire_lock, new_token, remove_state, writ
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The name of the machine this daemon runs on, which Settings names as the
+/// owner of every value the daemon stores (PRD S5.5 B35); `None` when the
+/// system will not say, which the page shows as unavailable rather than a guess.
+fn host_name() -> Option<String> {
+    #[cfg(unix)]
+    {
+        let mut buffer = [0u8; 256];
+        // SAFETY: the buffer outlives the call and its length is passed with it.
+        let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+        if result != 0 {
+            return None;
+        }
+        let end = buffer
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(buffer.len());
+        let name = String::from_utf8_lossy(&buffer[..end]).trim().to_owned();
+        (!name.is_empty()).then_some(name)
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::var("COMPUTERNAME")
+            .ok()
+            .filter(|name| !name.is_empty())
+    }
+}
+
 fn find_ui_dir() -> Option<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
         let path = std::path::PathBuf::from(dir);
@@ -173,6 +200,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             "version": VERSION,
             "schema_version": SCHEMA_VERSION,
             "host_id": host_id,
+            "host_name": host_name(),
             "pid": std::process::id(),
             "started_at_unix": state.started_at.clone(),
             "state_dir": env.state_dir.display().to_string(),

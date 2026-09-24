@@ -335,7 +335,10 @@ fn removing_the_selected_device_keeps_the_local_tabs_and_keyboard() {
     assert!(register_device(&mut runtime, "studio", "studio-host"));
     assert!(dispatch_device(&mut runtime, "focus_device", "studio"));
     runtime.snapshot.terminal.pane_id = Some("remote:studio:pane:w9:p1".to_owned());
+    // The rows as a session publish draws them, strips included.
+    runtime.rebuild_tab_strips();
     let before = runtime.snapshot().navigator.workspaces.clone();
+    assert!(!before[0].checkouts[0].strip.is_empty());
 
     assert!(dispatch_device(&mut runtime, "remove_device", "studio"));
 

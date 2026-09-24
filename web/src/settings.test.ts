@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceIdFor, deviceRemovalLines, deviceLine, diagnosticsText, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize } from "./settings";
+import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize } from "./settings";
 import type { AiProvider, Device, DeviceHost } from "./snapshot";
 
 const device = (patch: Partial<Device>): Device => ({
@@ -13,6 +13,47 @@ const device = (patch: Partial<Device>): Device => ({
   agent_count: 0,
   test: null,
   ...patch,
+});
+
+describe("where settings live and what a device reported", () => {
+  const daemon = {
+    version: "0.1.0",
+    host_id: "host-00000000000000000000000000000000",
+    host_name: "mini",
+    schema_version: 2,
+    pid: 42,
+    started_at_unix: "1",
+    state_dir: "/s",
+    core_state_path: "/s/core-state.json",
+    herdr_bin_path: null,
+    herdr_socket_path: null,
+    keep_alive: false,
+    idle_secs: 600,
+  };
+
+  it("names the daemon's machine as the owner whichever device is selected", () => {
+    expect(ownerLine(daemon, null)).toContain("kept by hided on mini.");
+    const selected = ownerLine(daemon, device({ label: "Studio" }));
+    expect(selected).toContain("kept by hided on mini.");
+    expect(selected).toContain("Studio is selected");
+    expect(ownerLine({ ...daemon, host_name: null }, null)).toContain("the daemon's machine");
+  });
+
+  it("shows only facts the device reported", () => {
+    expect(deviceFacts(device({}), undefined)).toEqual([]);
+    const host = { state: "ready", platform: "macos aarch64" } as DeviceHost;
+    const status = { target_id: "studio", state: "connected", message: null, herdr_version: "0.9.1" };
+    expect(deviceFacts(device({ host }), status)).toEqual(["Herdr 0.9.1", "helper on macos aarch64"]);
+    expect(deviceFacts(device({ host: { ...host, state: "connecting" } }), status)).toEqual(["Herdr 0.9.1"]);
+    expect(deviceFacts(device({ kind: "local", host }), status)).toEqual([]);
+  });
+
+  it("tells a changed host key, an unknown one and a refused sign-in apart", () => {
+    expect(deviceProblemLine("host_key_changed", "studio")?.headline).toBe("Host key changed");
+    expect(deviceProblemLine("host_key_unknown", "studio")?.action).toContain("ssh studio");
+    expect(deviceProblemLine("authentication", "studio")?.headline).toBe("Sign-in refused");
+    expect(deviceProblemLine(null, "studio")).toBeNull();
+  });
 });
 
 describe("deviceRemovalLines", () => {
@@ -98,6 +139,7 @@ describe("settings rules", () => {
       daemon: {
         version: "0.1.0",
         host_id: "host-00000000000000000000000000000000",
+        host_name: "studio-host",
         schema_version: 2,
         pid: 42,
         started_at_unix: "1",
