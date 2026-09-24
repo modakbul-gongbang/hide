@@ -585,7 +585,10 @@ function DevicesTab({ actions }: { actions: Actions }) {
 
 function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
   const tone = test.state === "running" ? "pending" : test.state === "passed" ? "ok" : "warn";
-  const headline = test.state === "running" ? "Testing the connection…" : test.state === "passed" ? "Connection test passed" : "Connection test failed";
+  // A finished test names when it ran: it is that attempt's result, and it
+  // stays beside the row after the connection itself has changed.
+  const at = test.checked_at_unix_ms === null ? "" : ` at ${new Date(test.checked_at_unix_ms).toLocaleTimeString()}`;
+  const headline = test.state === "running" ? "Testing the connection…" : `Connection test ${test.state === "passed" ? "passed" : "failed"}${at}`;
   return (
     <div className="mt-xs space-y-xxs" data-device-test-state={test.state}>
       <Status tone={tone}>{headline}</Status>
