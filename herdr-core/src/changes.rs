@@ -4,30 +4,41 @@
 //! The read is `hide_host::git` behind the checkout's `HostChannel`: this
 //! machine's in process, a device's through its helper, so a local and a
 //! device checkout answer one contract. It runs on a reader thread, never
-//! under the runtime mutex and never on the coordinator: [`ChangesReader`]
-//! recomputes only when the request changes or the refresh window lapses, and
-//! reads nothing at all while neither Changes nor Explorer is visible and no
-//! diff tab needs it. Each answer names the device and folder it describes,
-//! so the runtime drops one that arrives after the operator moved on.
+//! under the runtime mutex and never on a Herdr session's coordinator: a
+//! device's History does not depend on this machine running Herdr.
+//! [`ChangesPump`] drives [`ChangesReader`], which recomputes only when the
+//! request changes or the refresh window lapses, and reads nothing at all
+//! while neither Changes nor Explorer is visible and no diff tab needs it.
+//! Each answer names the device and folder it describes, so the runtime drops
+//! one that arrives after the operator moved on.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak, mpsc};
+use std::thread;
 use std::time::Duration;
 
 use hide_host::git::{ChangedFile, Changes, FileStatus};
 use hide_host::protocol::Call;
 
+use crate::ffi::ChangeNotifier;
 use crate::files::DocumentRoot;
 use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::model::{
     ChangedFileDiffSnapshot, ChangedFileSnapshot, ChangedFileStatus, ChangesSnapshot,
 };
 use crate::reader::BackgroundRead;
+use crate::runtime::Runtime;
 
 /// How stale the list may be while the view is open. Short enough that an edit
 /// made in a terminal pane shows up by the time the operator looks over, long
 /// enough that it is nowhere near a per-tick fork.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How often the pump asks the runtime what History needs and collects a
+/// finished read: the latency between selecting a row and its read starting,
+/// and between a read finishing and the screen showing it. One brief lock per
+/// wake; the read itself runs on the reader's thread.
+const PUMP_TICK: Duration = Duration::from_millis(250);
 
 /// How long one read may take on the checkout's host before it is reported
 /// as unavailable. A device's Git runs over its SSH connection.
@@ -138,6 +149,63 @@ impl ChangesReader {
 impl Default for ChangesReader {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The one thread that keeps History current for the checkout in front,
+/// whichever device holds it. It lives with the core, not with a Herdr
+/// session, so a hided that serves only devices still reads their History.
+pub(crate) struct ChangesPump {
+    stop: mpsc::Sender<()>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl ChangesPump {
+    pub fn spawn(runtime: Weak<Mutex<Runtime>>, notifier: ChangeNotifier) -> std::io::Result<Self> {
+        let (stop, receiver) = mpsc::channel();
+        let worker = thread::Builder::new()
+            .name("changes-pump".into())
+            .spawn(move || {
+                let mut reader = ChangesReader::new();
+                while matches!(
+                    receiver.recv_timeout(PUMP_TICK),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    let Some(runtime) = runtime.upgrade() else {
+                        break;
+                    };
+                    let Ok(request) = runtime.lock().map(|mut runtime| runtime.changes_request())
+                    else {
+                        break;
+                    };
+                    let Some(answer) = reader.read_if_due(request) else {
+                        continue;
+                    };
+                    let Ok(changed) = runtime
+                        .lock()
+                        .map(|mut runtime| runtime.ingest_changes(answer))
+                    else {
+                        break;
+                    };
+                    drop(runtime);
+                    if changed {
+                        notifier.notify();
+                    }
+                }
+            })?;
+        Ok(Self {
+            stop,
+            worker: Some(worker),
+        })
+    }
+}
+
+impl Drop for ChangesPump {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

@@ -123,6 +123,7 @@ impl ChangeNotifier {
 #[repr(C)]
 pub struct HerdrCore {
     _terminal_maintenance: Option<crate::terminal_recovery::Maintenance>,
+    _changes: Option<crate::changes::ChangesPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
@@ -135,6 +136,7 @@ impl Drop for HerdrCore {
         // completing attachment must not enqueue input during destruction.
         let attachment_worker = { lock_recover(&self.runtime).take_attachment_worker() };
         self._terminal_maintenance.take();
+        self._changes.take();
         self._session_sync.take();
         // Taken under the lock, joined outside it: a coordinator's last act is
         // to lock the runtime, so a join under the lock never returns.
@@ -266,8 +268,23 @@ impl HerdrCore {
                 None
             }
         };
+        // History reads through each checkout's own host, so it runs whether
+        // or not this machine has a Herdr session.
+        let changes =
+            match crate::changes::ChangesPump::spawn(Arc::downgrade(&runtime), notifier.clone()) {
+                Ok(pump) => Some(pump),
+                Err(error) => {
+                    lock_recover(&runtime).set_error(
+                        "changes.reader_unavailable",
+                        error.to_string(),
+                        true,
+                    );
+                    None
+                }
+            };
         Some(Box::new(HerdrCore {
             _terminal_maintenance: maintenance,
+            _changes: changes,
             _session_sync: session_sync,
             runtime,
             notifier,

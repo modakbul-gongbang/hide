@@ -2,7 +2,7 @@ import { memo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
 import type { RemoteView } from "./remote";
-import { editorFor, focusedCheckout, remoteEditorTab, type AsyncOperation, type Checkout, type EditorSnapshot, type StripTab } from "./snapshot";
+import { editorFor, focusedCheckout, remoteEditorTab, type AsyncOperation, type Checkout, type EditorSnapshot, type EditorTabSnapshot, type StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 
 // The tab bar draws the focused checkout's strip (PRD S2 B3, S3 B3/B4). Every
@@ -53,15 +53,15 @@ export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Act
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel" role="tablist" data-tab-bar={checkout.id} data-remote-tab-bar="true">
       {checkout.strip.map((entry) => {
-        if (entry.kind !== "herdr" && entry.kind !== "file") return null;
-        const isFile = entry.kind === "file";
+        if (entry.kind === "session" || entry.kind === "memory") return null;
+        const isFile = entry.kind === "file" || entry.kind === "diff";
         const fileTab = isFile ? editor?.tabs.find((tab) => tab.id === entry.source_id) : null;
         const active = isFile ? showing?.id === entry.source_id : !showing && entry.source_id === view.tab?.id;
         return (
           <TabButton
             key={entry.id}
             entry={entry}
-            identity={fileTab ? `File: ${fileTab.path}${entry.preview ? " · Preview" : ""}` : entry.label}
+            identity={fileTab ? editorIdentity(entry, fileTab) : entry.label}
             active={active}
             dirty={dirty.has(entry.source_id)}
             saving={savingTabs.has(entry.source_id)}
@@ -96,6 +96,12 @@ export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Act
 const IN_FLIGHT = new Set(["transmitting", "awaiting_topology", "unknown"]);
 
 /** "closing…" while the core is still confirming a close with Herdr. */
+/** What a file or diff tab stands for, read by assistive technology. */
+function editorIdentity(entry: StripTab, tab: EditorTabSnapshot): string {
+  const kind = entry.kind === "diff" ? `${tab.diff_committed ? "Committed on branch" : "Uncommitted"} diff` : "File";
+  return `${kind}: ${tab.path}${entry.preview ? " · Preview" : ""}`;
+}
+
 export function closingSuffix(targetId: string, kind: "tab.close" | "pane.close", operations: AsyncOperation[]): boolean {
   return operations.some((op) => op.kind === kind && op.target_id === targetId && IN_FLIGHT.has(op.phase));
 }
@@ -147,14 +153,11 @@ const Strip = memo(function Strip({
         if (entry.kind === "session" || entry.kind === "memory") return null;
         const isEditor = entry.kind === "file" || entry.kind === "diff";
         const editorTab = isEditor ? editor?.tabs.find((tab) => tab.id === entry.source_id) : null;
-        const identity = editorTab
-          ? `${entry.kind === "diff" ? `${editorTab.diff_committed ? "Committed on branch" : "Uncommitted"} diff` : "File"}: ${editorTab.path}${entry.preview ? " · Preview" : ""}`
-          : entry.label;
         return (
           <TabButton
             key={entry.id}
             entry={entry}
-            identity={identity}
+            identity={editorTab ? editorIdentity(entry, editorTab) : entry.label}
             active={showingEditor === isEditor && entry.source_id === activeId}
             dirty={dirty.has(entry.source_id)}
             saving={savingTabs.has(entry.source_id)}

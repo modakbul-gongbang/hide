@@ -597,13 +597,13 @@ export function editorFor(editor: EditorSnapshot | null): EditorSnapshot | null 
 }
 
 /**
- * The device file the editor shows in `checkout`, or null when the host's
+ * The device file or diff the editor shows in `checkout`, or null when the host's
  * terminal tab does. The core keeps one active editor tab across devices, so
  * a tab of another checkout is not this surface's.
  */
 export function remoteEditorTab(editor: EditorSnapshot | null, checkout: Checkout): EditorTabSnapshot | null {
   const tab = activeEditorTab(editor);
-  return tab && tab.kind === "file" && tab.workspace_id === checkout.workspace_id && tab.checkout_id === checkout.id ? tab : null;
+  return tab && (tab.kind === "file" || tab.kind === "diff") && tab.workspace_id === checkout.workspace_id && tab.checkout_id === checkout.id ? tab : null;
 }
 
 /** The editor tab the core says is showing, or null when the terminal does. */

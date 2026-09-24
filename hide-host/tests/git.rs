@@ -144,7 +144,13 @@ fn a_registered_subfolder_keeps_its_history_without_exposing_siblings() {
         assert!(!diff.text.contains("outside-outgoing.txt"), "{name}");
     }
     let untracked = read(&root, &query("registered", Some("new.txt"), false, None)).unwrap();
-    assert!(untracked.diff.unwrap().text.contains("untracked inside"));
+    let untracked_text = untracked.diff.unwrap().text;
+    assert!(untracked_text.contains("untracked inside"));
+    assert!(
+        untracked_text.starts_with("diff --git a/registered/new.txt b/registered/new.txt\n")
+            && untracked_text.contains("\n+++ b/registered/new.txt\n"),
+        "{untracked_text}"
+    );
     // No base and no `origin/HEAD`: the committed group is absent, not empty.
     assert_eq!(untracked.committed, None);
     assert_eq!(untracked.base, None);

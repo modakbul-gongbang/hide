@@ -526,6 +526,7 @@ fn working_diff(git: GitDirectory<'_>, root: &Root, scope: &Path, entry: &Change
                     true,
                     Some(file),
                 )
+                .map(|(text, truncated)| (name_untracked(text, &current), truncated))
             }),
         _ => git_diff_text(
             git,
@@ -535,6 +536,31 @@ fn working_diff(git: GitDirectory<'_>, root: &Root, scope: &Path, entry: &Change
         ),
     };
     bounded(entry.path.clone(), text)
+}
+
+/// `git diff --no-index` names the file it read from stdin `-`; the header
+/// names the checkout path instead, as Git does for every other diff.
+fn name_untracked(text: String, path: &str) -> String {
+    let mut named = String::with_capacity(text.len() + 3 * path.len());
+    let mut header = true;
+    for line in text.split_inclusive('\n') {
+        let (body, end) = match line.strip_suffix('\n') {
+            Some(body) => (body, "\n"),
+            None => (line, ""),
+        };
+        header &= !body.starts_with("@@");
+        match body {
+            "diff --git a/- b/-" if header => {
+                named.push_str(&format!("diff --git a/{path} b/{path}{end}"));
+            }
+            "+++ b/-" if header => named.push_str(&format!("+++ b/{path}{end}")),
+            "Binary files /dev/null and b/- differ" if header => {
+                named.push_str(&format!("Binary files /dev/null and b/{path} differ{end}"));
+            }
+            _ => named.push_str(line),
+        }
+    }
+    named
 }
 
 /// A committed file's diff is against the base, not the index: the group is
