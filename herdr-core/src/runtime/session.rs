@@ -2781,15 +2781,18 @@ impl Runtime {
             message: None,
         });
         let Some(context) = self.worker_context.clone() else {
-            let result = files::apply_explorer_operation(&operation);
+            let result =
+                files::apply_explorer_operation_with_roots(&operation, self.file_roots.as_ref());
             return self.ingest_explorer_operation_result(id, &operation, result);
         };
         let worker_operation = operation.clone();
+        let file_roots = self.file_roots.clone();
         match thread::Builder::new()
             .name(format!("herdr-core-explorer-{}", operation.kind.as_str()))
             .spawn(move || {
                 let operation = worker_operation;
-                let result = files::apply_explorer_operation(&operation);
+                let result =
+                    files::apply_explorer_operation_with_roots(&operation, file_roots.as_ref());
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };

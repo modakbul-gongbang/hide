@@ -234,14 +234,16 @@ impl Runtime {
             .get(&tab_id)
             .cloned()
             .expect("the close-save document was validated");
+        let file_roots = self.file_roots.clone();
         match thread::Builder::new()
             .name("herdr-core-file-save-close".to_owned())
             .spawn(move || {
-                let result = files::save(
+                let result = files::save_with_roots(
                     &mut editor,
                     Path::new(&path),
                     contents.clone(),
                     expected_modified_at,
+                    file_roots.as_ref(),
                 );
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
@@ -285,9 +287,11 @@ impl Runtime {
         }) {
             return Ok(PreparedFileTab::Open(tab_id));
         }
-        files::open(Path::new(path)).map(|document| PreparedFileTab::Read {
-            tab_id: Self::file_tab_id(workspace_id, checkout_id, path),
-            document,
+        files::open_with_roots(Path::new(path), self.file_roots.as_ref()).map(|document| {
+            PreparedFileTab::Read {
+                tab_id: Self::file_tab_id(workspace_id, checkout_id, path),
+                document,
+            }
         })
     }
 
@@ -2141,7 +2145,12 @@ impl Runtime {
                 .cloned()
                 .ok_or_else(|| "the file worker is unavailable".to_owned())
                 .and_then(|worker| {
-                    live::spawn_file_reopen(worker.runtime, worker.notifier, request)
+                    live::spawn_file_reopen(
+                        worker.runtime,
+                        worker.notifier,
+                        request,
+                        self.file_roots.clone(),
+                    )
                 })
         } else {
             self.live

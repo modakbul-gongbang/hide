@@ -50,6 +50,8 @@ export function refusalText(reason: string): string {
       return "이미 등록된 경로입니다.";
     case "outside_home":
       return "홈 디렉터리 아래의 경로만 등록할 수 있습니다.";
+    case "outside_checkout":
+      return "등록된 체크아웃 안의 경로만 열 수 있습니다.";
     case "not_in_listing":
     case "not_found":
       return "존재하지 않는 경로입니다.";

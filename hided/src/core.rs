@@ -12,6 +12,10 @@ pub struct SnapshotReply {
 }
 
 enum Command {
+    SetFileRoots {
+        roots: Vec<(std::path::PathBuf, std::fs::File)>,
+        reply: Sender<Result<(), String>>,
+    },
     Dispatch {
         event: Vec<u8>,
         reply: Sender<Result<(), String>>,
@@ -31,6 +35,18 @@ pub struct CoreHandle {
 }
 
 impl CoreHandle {
+    pub fn set_file_roots(
+        &self,
+        roots: Vec<(std::path::PathBuf, std::fs::File)>,
+    ) -> Result<(), String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::SetFileRoots { roots, reply })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped file-root reply".to_owned())?
+    }
+
     pub fn spawn(options: CoreOptions) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel::<Command>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
@@ -110,6 +126,10 @@ fn owner_loop(
     let _ = ready.send(Ok(()));
     while let Ok(command) = commands.recv() {
         match command {
+            Command::SetFileRoots { roots, reply } => {
+                core.set_file_roots(herdr_core::FileRoots::from_opened(roots));
+                let _ = reply.send(Ok(()));
+            }
             Command::Dispatch { event, reply } => {
                 let _ = core.dispatch_bytes(&event);
                 let _ = reply.send(Ok(()));

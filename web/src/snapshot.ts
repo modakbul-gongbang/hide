@@ -144,6 +144,16 @@ export type RecentClosed = {
   reopen_blocked_reason: string | null;
 };
 
+/** The explorer's most recent filesystem change and how far it got. */
+export type ExplorerOperation = {
+  id: number;
+  kind: string;
+  phase: string;
+  path: string;
+  destination: string;
+  message: string | null;
+};
+
 export type WorkspaceRegistration = {
   id: string;
   label: string;
@@ -161,10 +171,88 @@ export type PaneFind = {
   unavailable_reason: string | null;
 };
 
+/** What kind of document the core decided an open file is (`files::open`). */
+export type DocumentKind = "text" | "markdown" | "image" | "pdf" | "binary";
+
+export type EditorTabKind = "file" | "diff" | "session" | "memory";
+
+/** One editor tab the core holds. Its id is the strip entry's `source_id`. */
+export type EditorTabSnapshot = {
+  id: string;
+  workspace_id: string;
+  checkout_id: string;
+  path: string;
+  label: string;
+  kind: EditorTabKind;
+  /** Which Changes group a diff tab shows; present only for diff tabs. */
+  diff_committed: boolean | null;
+  markdown_live: boolean;
+  wrap: boolean;
+  dirty: boolean;
+  /** The checkout's one replaceable tab: a single click opens it, a double click promotes it. */
+  preview: boolean;
+};
+
+/** The disk state that makes a save a choice rather than a write. */
+export type EditorConflictSnapshot = {
+  disk_modified_at_unix_ms: number;
+  opened_modified_at_unix_ms: number;
+};
+
+export type EditorDocumentSnapshot = {
+  path: string;
+  language: string | null;
+  document_kind: DocumentKind;
+  contents_utf8: string | null;
+  opened_modified_at_unix_ms: number | null;
+  dirty: boolean;
+  /** Why an editable document takes no edits: its size or its permissions. */
+  readonly_reason: string | null;
+  conflict: EditorConflictSnapshot | null;
+};
+
+/** The core's editor section: its tabs, which one shows, and that tab's document. */
+export type EditorSnapshot = {
+  tabs: EditorTabSnapshot[];
+  active_tab_id: string | null;
+  document: EditorDocumentSnapshot | null;
+};
+
+/** The six working-tree states the core presents (ChangedFileStatus). */
+export type ChangedFileStatus = "modified" | "added" | "deleted" | "untracked" | "renamed" | "conflict";
+
+export type ChangedFileSnapshot = {
+  /** Absolute, so a row needs no second join against the root. */
+  path: string;
+  /** Relative to the checkout root, which is what the row shows. */
+  relative_path: string;
+  previous_relative_path: string | null;
+  status: ChangedFileStatus;
+  added_lines: number | null;
+  removed_lines: number | null;
+};
+
+/**
+ * One checkout's Git state. The core computes this only while the Changes or
+ * Explorer surface is visible, so the web asks for it by sending that ui state
+ * rather than by opening a second read path (PRD B1).
+ */
+export type ChangesSnapshot = {
+  root_path: string | null;
+  entries: ChangedFileSnapshot[];
+  committed: ChangedFileSnapshot[];
+  base_branch: string | null;
+  selected_path: string | null;
+  selected_committed: boolean;
+  unavailable_reason: string | null;
+};
+
 export type SnapshotRest = {
   navigator?: {
     focused_workspace_id?: string | null;
     focused_checkout_id?: string | null;
+    /** The focused checkout's root, which the Explorer reveals under. */
+    root_path?: string | null;
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
@@ -176,16 +264,24 @@ export type SnapshotRest = {
   terminal?: { pane_id?: string | null; panes?: TerminalPane[] };
   ui_state?: {
     left_sidebar_visible?: boolean;
+    right_panel_visible?: boolean;
+    right_panel_section?: string;
     workspace_registrations?: WorkspaceRegistration[];
     pane_text_scales?: Record<string, number>;
+    editor_text_scale?: number;
     expanded_paths?: string[];
+    selected_path?: string | null;
+    selected_pane_id?: string | null;
     [key: string]: unknown;
   };
   status?: {
     herdr?: { state?: string; message?: string | null };
     async_operations?: AsyncOperation[];
+    /** The core's most recent failure; the shell logs its detail (B5). */
+    last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number } | null;
   };
   recent_closed?: RecentClosed;
+  explorer_operation?: ExplorerOperation | null;
 };
 
 export function focusedCheckout(rest: SnapshotRest | null): Checkout | null {
@@ -214,6 +310,39 @@ export function visibleTab(checkout: Checkout | null): Tab | null {
 export function layoutForTab(rest: SnapshotRest | null, tabId: string | null): PaneLayout | null {
   if (!tabId) return null;
   return rest?.pane_layouts?.find((layout) => layout.tab_id === tabId) ?? null;
+}
+
+/**
+ * The core's editor section when it holds a showing tab, else null. The canvas
+ * reads null as "the terminal owns the surface": the core keeps the editor's
+ * tabs while a terminal tab shows, so the tabs alone do not say what is drawn.
+ */
+export function editorFor(editor: EditorSnapshot | null): EditorSnapshot | null {
+  return editor?.active_tab_id ? editor : null;
+}
+
+/** The editor tab the core says is showing, or null when the terminal does. */
+export function activeEditorTab(editor: EditorSnapshot | null): EditorTabSnapshot | null {
+  const active = editorFor(editor);
+  if (!active) return null;
+  return active.tabs.find((tab) => tab.id === active.active_tab_id) ?? null;
+}
+
+/** The editor tab a strip entry stands behind, or null for a Herdr entry. */
+export function editorTabFor(editor: EditorSnapshot | null, tabId: string): EditorTabSnapshot | null {
+  return editor?.tabs.find((tab) => tab.id === tabId) ?? null;
+}
+
+/** The expanded checkout folders the core reports, as a set the tree walks. */
+export function expandedPathSet(rest: SnapshotRest | null): Set<string> {
+  return new Set(rest?.ui_state?.expanded_paths ?? []);
+}
+
+/** The changes of the checkout a listing belongs to, or null when they are another checkout's. */
+export function changesFor(changes: ChangesSnapshot | null, rootPath: string | null): ChangesSnapshot | null {
+  if (!changes || !rootPath) return null;
+  if (changes.root_path && changes.root_path !== rootPath) return null;
+  return changes;
 }
 
 export function paneIds(node: LayoutNode): string[] {

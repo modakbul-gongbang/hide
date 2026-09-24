@@ -171,6 +171,16 @@ enum HideTheme {
     /// These two are DESIGN.md's `file-icon-neutral` and `file-icon-document` colors.
     static let fileIconNeutralHex = "#9C9C9D"
     static let fileIconDocumentHex = "#D3D3D4"
+    /// Seti's own accent palette, the five hues its file-type glyphs are drawn
+    /// in. Unlike the two neutrals above these are Seti's own values: a glyph
+    /// is category illustration, and recolouring it would cost the reader the
+    /// recognition the set exists for. The catalog in `SetiFileIcon.swift` and
+    /// the web shell's file rows both read them from here.
+    static let fileIconBlueHex = "#519ABA"
+    static let fileIconGreenHex = "#8DC149"
+    static let fileIconOrangeHex = "#E37933"
+    static let fileIconYellowHex = "#CBCB41"
+    static let fileIconPurpleHex = "#A074C4"
     /// Monospaced content sizes at a pane's default scale. The per-pane zoom
     /// chords multiply these; they are tokens rather than call-site literals so
     /// the two content surfaces cannot drift apart.

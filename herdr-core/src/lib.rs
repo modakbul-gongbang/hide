@@ -10,6 +10,7 @@ mod environment;
 mod fake_herdr;
 mod ffi;
 mod files;
+pub use files::FileRoots;
 pub mod find;
 pub mod fixture;
 mod fork;

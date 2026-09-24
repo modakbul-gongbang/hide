@@ -4,6 +4,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * The Seti glyph subset the file rows draw, the same bytes the macOS shell
+ * bundles (macos/Sources/HerdrMacOS/Resources/seti-subset.woff, MIT, notice
+ * at macos/Resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt) and the same
+ * codepoints SetiFileIconCatalog resolves. block rather than swap: the glyphs
+ * are private-use codepoints, so a fallback face would draw tofu for every row
+ * until the font landed.
+ */
+@font-face {
+  font-family: "seti";
+  src: url("./assets/seti-subset.woff") format("woff");
+  font-display: block;
+}
+
 :root {
   /* Font stacks are not numeric tokens; the terminal reads this one at mount. */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;

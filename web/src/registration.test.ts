@@ -4,10 +4,11 @@ import { listingRootFor, localRefusal, readRecent, rememberRecent, suggestions }
 const home = "/home/me";
 const registrations = [{ id: "w1", label: "hide", path: "/home/me/hide", device_id: "local", pinned: false }];
 const listing = {
+  kind: "remote_file_list",
   root_path: "/home/me/projects",
   entries: [
-    { name: "alpha", path: "/home/me/projects/alpha" },
-    { name: "Beta", path: "/home/me/projects/Beta" },
+    { name: "alpha", path: "/home/me/projects/alpha", is_directory: true },
+    { name: "Beta", path: "/home/me/projects/Beta", is_directory: true },
   ],
   truncated: false,
 };

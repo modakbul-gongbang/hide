@@ -2157,14 +2157,16 @@ impl Runtime {
                     .get(&tab_id)
                     .cloned()
                     .expect("the save document was validated");
+                let file_roots = self.file_roots.clone();
                 match thread::Builder::new()
                     .name("herdr-core-file-save".to_owned())
                     .spawn(move || {
-                        let result = files::save(
+                        let result = files::save_with_roots(
                             &mut editor,
                             Path::new(&path),
                             contents.clone(),
                             expected_modified_at,
+                            file_roots.as_ref(),
                         );
                         let Some(runtime) = context.runtime.upgrade() else {
                             return;
@@ -2209,13 +2211,15 @@ impl Runtime {
                     return true;
                 };
                 match payload.action.as_str() {
-                    "reload" => match files::reload(document) {
-                        Ok(()) => {
-                            self.sync_file_tab_dirty(&tab_id);
-                            self.sync_active_editor_document();
+                    "reload" => {
+                        match files::reload_with_roots(document, self.file_roots.as_ref()) {
+                            Ok(()) => {
+                                self.sync_file_tab_dirty(&tab_id);
+                                self.sync_active_editor_document();
+                            }
+                            Err(message) => self.set_error("file.reload_failed", message, true),
                         }
-                        Err(message) => self.set_error("file.reload_failed", message, true),
-                    },
+                    }
                     "keep_editing" => {
                         if let Some(conflict) = document.conflict.as_ref() {
                             document.opened_modified_at_unix_ms =
