@@ -675,22 +675,39 @@ async fn ensure_private_dirs(
     owner: u32,
 ) -> Result<(), EstablishError> {
     // Components below home are created private; home itself is not touched.
-    let relative = root
-        .strip_prefix(home.trim_end_matches('/'))
-        .unwrap_or(root);
-    let mut current = if relative.len() == root.len() {
-        String::new()
-    } else {
-        home.trim_end_matches('/').to_owned()
+    // The prefix is compared by path component, so `/home/al` is not a
+    // prefix of `/home/alice`.
+    let (mut current, relative) = match Path::new(root).strip_prefix(home) {
+        Ok(below) => (
+            home.trim_end_matches('/').to_owned(),
+            below.to_string_lossy().into_owned(),
+        ),
+        Err(_) => (String::new(), root.to_owned()),
     };
     for part in relative.split('/').filter(|part| !part.is_empty()) {
         current.push('/');
         current.push_str(part);
-        // An ancestor may be a link the account does not own (`/tmp` on
-        // macOS); it only has to lead to a folder. The root itself is checked
-        // without following links below.
+        // An existing ancestor may be a link (`/tmp` on macOS), but the link
+        // and the folder it leads to must both be ones no other account can
+        // change, or that account could swap the helper between its digest
+        // check and its launch (OpenSSH's rule for key files). The root
+        // itself is checked without following links below.
+        match raw.lstat(&current).await {
+            Ok(link) if link.attrs.is_symlink() && !owned_by(&link.attrs, owner) => {
+                return Err(EstablishError::Install(format!(
+                    "{current} is a link another account owns, so the helper was not installed"
+                )));
+            }
+            Ok(_) | Err(SftpError::Status(_)) => {}
+            Err(error) => {
+                return Err(sftp_failure(
+                    "The helper folder could not be inspected",
+                    error,
+                ));
+            }
+        }
         match raw.stat(&current).await {
-            Ok(attrs) if attrs.attrs.is_dir() => {}
+            Ok(attrs) if attrs.attrs.is_dir() => validate_ancestor(&attrs.attrs, owner, &current)?,
             Ok(_) => {
                 return Err(EstablishError::Install(format!(
                     "{current} exists and is not a folder, so the helper was not installed"
@@ -751,6 +768,25 @@ async fn ensure_private_dir(
             error,
         )),
     }
+}
+
+fn owned_by(attrs: &FileAttributes, owner: u32) -> bool {
+    attrs.uid == Some(owner) || attrs.uid == Some(0)
+}
+
+/// A folder on the way to the helper root: owned by the account or by root,
+/// and writable by no other account unless it is a root-owned sticky folder
+/// such as `/tmp`, where others cannot rename what the account made.
+fn validate_ancestor(attrs: &FileAttributes, owner: u32, path: &str) -> Result<(), EstablishError> {
+    let mode = attrs.permissions.unwrap_or(0o7777);
+    let shared = mode & 0o022 != 0;
+    let root_sticky = attrs.uid == Some(0) && mode & 0o1000 != 0;
+    if owned_by(attrs, owner) && (!shared || root_sticky) {
+        return Ok(());
+    }
+    Err(EstablishError::Install(format!(
+        "{path} can be changed by another account, so the helper was not installed under it"
+    )))
 }
 
 fn validate_private(attrs: &FileAttributes, owner: u32, path: &str) -> Result<(), EstablishError> {
@@ -943,6 +979,30 @@ fn spawn_host(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn folder(uid: u32, mode: u32) -> FileAttributes {
+        FileAttributes {
+            uid: Some(uid),
+            permissions: Some(0o040000 | mode),
+            ..FileAttributes::empty()
+        }
+    }
+
+    /// The folders on the way to the helper root follow OpenSSH's rule: the
+    /// account's or root's, and shared-writable only as a root sticky folder.
+    #[test]
+    fn a_helper_root_ancestor_another_account_can_change_is_refused() {
+        let me = 501;
+        assert!(validate_ancestor(&folder(me, 0o700), me, "/tmp/mine").is_ok());
+        assert!(validate_ancestor(&folder(0, 0o755), me, "/usr").is_ok());
+        assert!(validate_ancestor(&folder(0, 0o1777), me, "/private/tmp").is_ok());
+        assert!(validate_ancestor(&folder(502, 0o755), me, "/tmp/theirs").is_err());
+        assert!(validate_ancestor(&folder(me, 0o777), me, "/tmp/open").is_err());
+        assert!(validate_ancestor(&folder(0, 0o777), me, "/shared").is_err());
+        assert!(owned_by(&folder(0, 0o755), me) && !owned_by(&folder(502, 0o755), me));
+        // Component-wise: `/home/al` is not a prefix of `/home/alice`.
+        assert!(Path::new("/home/alice/x").strip_prefix("/home/al").is_err());
+    }
 
     #[test]
     fn device_platforms_map_to_package_names() {
