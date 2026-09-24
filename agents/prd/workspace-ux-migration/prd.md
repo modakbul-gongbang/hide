@@ -54,7 +54,7 @@ S5.5 관련 추가 문안은 이전 인터뷰의 승인·검증을 승계하지 
 | D-17 | S6 전에 로컬/원격을 동일한 인터페이스로 제공할 기반과 관련 리팩토링을 정리한다. 기기를 바꾸면 대상 호스트만 바뀌며 파일·프로젝트·작업 상태를 다른 기기의 동일 경로와 섞지 않는다. 기존 S5 완료를 전체 원격 기능 동등성의 완료로 해석하지 않는다. | user: "난 local, remote 다 동일한 인터페이스에서 동작하는게 가장 중요한것같은데"; "그거 먼저 진행하자 S6전에"; "리팩토링 할 거있으면 싹다 미리 하자" |
 | D-18 | 작성자 구조 제안은 기기별 대상/catalog, 상태 identity, 파일/Git 경계, 공통 명령/비동기 수명, capability/설정 범위, 전환 경로 정리의 여섯 축이다. 기존 core/Herdr/hide-project 책임을 재사용하고 아래 A~D는 구현 순서의 제안이지 승인된 PR 개수나 새 런타임 도입 결정이 아니다. | 가정: engineering 3·5·7·8; 위 사용자 방향을 상세 PRD로 구체화할 담당자의 검토 대상 |
 | D-19 | 현재 인계는 S5.5 PRD 작성만 허용한다. 기존 기능의 원격 확대에 필요한 삭제·hook/설정 쓰기·호스트 신뢰·전송 보조 프로세스의 권한과 안전성은 기존 계약을 먼저 대조하고 미해결이면 차단 사항으로 남긴다. 기기 간 Memory 자동 동기화나 새 원격 daemon 설치를 묵시적으로 승인하지 않는다. | user: "이것들 남기고 handoff시켜서"; "5.5 PRD 정리하게 해주라"; 가정: 이번 요청의 작업 경계 |
-| D-20 | 사용자 결정(2026-09-24 후속): S8의 Project Memory 웹 구현은 명시적 후속 TODO로 미루고 Sessions/archive는 S8에 남긴다. 기능·데이터 제거가 아니라 구현 연기이며 기존 Memory backend·데이터·hook·macOS 표면을 보존한다. D-10의 Memory 부분과 B14는 그 TODO의 계약으로 남는다. S10은 Memory 웹 구현 또는 그에 대한 별도 사용자 결정 전에는 시작하지 않는다(Memory 관리 표면 보존). | 사용자: "어 근데 s8에 메모리는 그냥 아예 나중 구현으로 TODO로 적용해보면 어떨까 싶네? 그 observer에서하고잇는거" |
+| D-20 | 사용자 결정(2026-09-24 후속): S8의 Project Memory 웹 구현은 명시적 후속 TODO로 미루고 Sessions/archive는 S8에 남긴다. 기능·데이터 제거가 아니라 구현 연기이며 기존 Memory backend·데이터·hook·macOS 표면을 보존한다. D-10의 Memory 부분과 B14는 그 TODO의 계약으로 남는다. 가정(작성자): macOS 앱이 유일한 Memory 관리 표면이므로 S10은 Memory 웹 구현 또는 그에 대한 별도 사용자 결정 전에는 시작하지 않는다. | 사용자: "어 근데 s8에 메모리는 그냥 아예 나중 구현으로 TODO로 적용해보면 어떨까 싶네? 그 observer에서하고잇는거" |
 
 ## Behaviors
 
@@ -104,7 +104,7 @@ Project Memory/Sessions backend를 재사용하고 Browser plugin 자원 소유�
 | S6 | Main/Project/Workspace 탐색, All Agents·직접 자식 이동, 모드/독립 Tools, 종류별 탭 identity. 기존 editor/diff를 기본 View 영역에서 사용하고 새 상태는 처음부터 버전·Workspace 범위를 갖춘다. | S3~S5 및 S5.5 PASS |
 | S7 | View 영역별 preview/고정·공유 buffer, 반복 split·drag preview·resize·빈 영역 정리, 좁은 창 대응과 전체 재시작/충돌 복원 | S6 PASS |
 | S8 | Project Sessions의 기존 기능을 Project 범위 웹 표면에서 완료. Project Memory 웹 구현은 D-20에 따라 후속 TODO; Memory 옆에서 보기 없음 | S6 PASS; S7과 독립 검증 가능 |
-| S9 | S6~S8 전체 여정(Project Memory 웹 표면 제외, macOS Memory 표면·데이터·hook 불변 확인), Pen/제품/library 일치, 키보드·한글·성능·복원·rollback 통합 검증 및 사용자 전환 검토 | S7·S8 PASS |
+| S9 | S8 다음에 반드시 이어서 수행(사용자 "그럼 S9도 근데 돌리는거맞지?"). S6~S8 전체 여정(Project Memory 웹 표면 제외, macOS Memory 표면·데이터·hook 불변 확인), Pen/제품/library 일치, 키보드·한글·성능·복원·rollback 통합 검증 및 사용자 전환 검토 | S7·S8 PASS |
 | S10 | 구 S6 Swift 제거: macos/vendor/build·sign/Swift CI·생성기 정리, 공유 자산·Herdr pin의 후속 소유자 확정, 미룸 항목의 Electron 인계 | S5.5를 포함한 S1~S9 PASS + Project Memory 웹 구현 완료 또는 그에 대한 별도 사용자 결정(D-20) + 별도 삭제 PRD 사용자 승인 |
 
 S5.5 구조 제안은 다음과 같으며 공개 API 이름이나 새 저장소를 지금 확정하지 않는다.
