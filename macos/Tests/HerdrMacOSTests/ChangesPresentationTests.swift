@@ -123,6 +123,21 @@ struct ChangesPresentationTests {
         #expect(decoded.staleReason == "git status timed out")
     }
 
+    @Test func theExplorerSaysItsGitDecorationsMayBeOutOfDateAfterAFailedRead() throws {
+        let stale = try JSONDecoder().decode(CoreChangesSnapshot.self, from: Data("""
+        {"root_path": "/repo", "entries": [], "selected_path": null, "diff": null,
+         "unavailable_reason": null, "stale_reason": "git status timed out"}
+        """.utf8))
+        #expect(ExplorerGitStatusLine.of(stale)?.text == "Git status may be out of date: git status timed out")
+
+        let current = try JSONDecoder().decode(CoreChangesSnapshot.self, from: Data("""
+        {"root_path": "/repo", "entries": [], "selected_path": null, "diff": null,
+         "unavailable_reason": null}
+        """.utf8))
+        #expect(ExplorerGitStatusLine.of(current) == nil)
+        #expect(ExplorerGitStatusLine.of(nil)?.text == "Loading Git status")
+    }
+
     @Test func diffLinesAreClassifiedByPrefixWithHeadersReadBeforeTheSingleCharacterForms() {
         #expect(DiffLineKind.of("+added") == .added)
         #expect(DiffLineKind.of("-removed") == .removed)

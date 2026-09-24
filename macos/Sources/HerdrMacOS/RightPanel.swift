@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+/// The line above the Explorer tree about the checkout's Git status: still
+/// loading, unavailable, or decorations kept from an earlier read after the
+/// latest one failed, which are never presented as current (PRD S5.5 B20,
+/// B22). Nothing when the status is current.
+enum ExplorerGitStatusLine {
+    static func of(_ changes: CoreChangesSnapshot?) -> (systemImage: String, text: String)? {
+        guard let changes else { return ("clock", "Loading Git status") }
+        if let reason = changes.unavailableReason {
+            return ("exclamationmark.triangle", "Git status unavailable: \(reason)")
+        }
+        if let stale = changes.staleReason {
+            return ("exclamationmark.triangle", "Git status may be out of date: \(stale)")
+        }
+        return nil
+    }
+}
+
 struct RightPanel: View {
     @EnvironmentObject private var model: ShellModel
 
@@ -66,16 +83,8 @@ struct RightPanel: View {
             remoteFileTree
         } else if let activeRoot {
             VStack(spacing: HideTheme.spacingNone) {
-                if explorerChanges == nil {
-                    ExplorerGitNotice(
-                        systemImage: "clock",
-                        text: "Loading Git status"
-                    )
-                } else if let reason = explorerChanges?.unavailableReason {
-                    ExplorerGitNotice(
-                        systemImage: "exclamationmark.triangle",
-                        text: "Git status unavailable: \(reason)"
-                    )
+                if let line = ExplorerGitStatusLine.of(explorerChanges) {
+                    ExplorerGitNotice(systemImage: line.systemImage, text: line.text)
                 }
                 WorkspaceOutlineView(
                     rootURL: activeRoot,
