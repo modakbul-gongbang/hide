@@ -1,6 +1,6 @@
 ---
 topic: "workspace-foundation-parity"
-status: "draft"
+status: "ready"
 human_approval: "pending"
 review_profile: "high-risk"
 review_rationale: "기기별 파일 쓰기·삭제, Git worktree 수명, 초안 마이그레이션과 원격 실행 권한을 하나의 경계로 통합한다."
@@ -21,7 +21,7 @@ S6의 화면 재구성 전에 대상 기기·프로젝트·checkout·문서·작
 - S6의 탐색·All Agents·세 모드·도구 재배치, S7의 split/preview·복수 문서 표시·앱 재시작 복원, S8의 Project Memory·보관 Sessions, S9의 통합 UX 검수, S10의 Swift 삭제는 부모 roadmap의 후속 범위다.
 - S7을 위한 문서와 표시 위치의 식별 분리는 이번 범위지만 새 split UI는 제공하지 않는다.
 - Git stage/discard/commit, 자동 push, Git URL을 통한 Memory·설정 동기화는 추가하지 않는다.
-- 운영 기기의 앱 교체, 서비스·SSH 신뢰 설정 변경, 무인 설치, 기존 작업 종료는 구현 검증에 포함하지 않는다.
+- 운영 기기의 앱 교체, 서비스·SSH 신뢰 설정 변경, 사전 동의 없는 설치, 기존 작업 종료는 구현 검증에 포함하지 않는다.
 - 원격 agent hook 설치와 원격 AI 설정 복제는 기존 금지를 유지한다.
   사용자는 소유 호스트의 설정과 대상 기기의 상태를 구별해서 보며, 원격 설정 쓰기는 별도 권한 계약에서 다시 다룬다.
 - Swift 병행 경로는 S10까지 유지한다.
@@ -37,7 +37,7 @@ S6의 화면 재구성 전에 대상 기기·프로젝트·checkout·문서·작
 | D-04 | 기기·checkout·문서마다 하나의 편집 버퍼와 초안이 있고 탭은 그 버퍼의 표시 위치다. | `web/src/buffers.ts`, `herdr-core/src/runtime/editor.rs`; 가정: 기기 없는 기존 초안은 출처 확인 전 별도 복구 항목으로 보존한다. |
 | D-05 | 파일 기능은 하나의 안전 계약을 로컬·원격 adapter가 구현하고 Git 변경 계산은 별도 소유자가 담당한다. | `hided/src/boundary.rs`, `herdr-core/src/files.rs`, `changes.rs`, `remote_files.rs`; 사용자: “관련 구조 정리”, “안전한 파일/Git/Workspace/설정 경계를 구체화”. |
 | D-06 | 경로·권한·revision 검증 실패 시 쓰기를 거절하고 초안을 보존한다. | 현행 열린 root handle·regular-file·크기·revision 검사; 원격 read 후 write와 로컬 검사 후 truncate 모두 원자적 CAS라는 근거는 없다. |
-| D-07 | 파일 생성·이동·이름 변경·휴지통 및 worktree 관리의 기존 안전 조건을 원격에도 적용한다. | S3·S5 계약과 `files.rs`, `runtime/projects.rs`, `worktree_cleanup.rs`; 신규 원격 실행 권한은 D-20의 차단 결정이며 아직 승인되지 않았다. |
+| D-07 | 파일 생성·이동·이름 변경·휴지통 및 worktree 관리의 기존 안전 조건을 원격에도 적용한다. | S3·S5 계약과 `files.rs`, `runtime/projects.rs`, `worktree_cleanup.rs`; 원격 실행 및 대상 확인 후 삭제 범위는 D-20의 사용자 승인에 한정한다. |
 | D-08 | 명령은 대상·충돌 범위·generation·operation ID를 가진 하나의 의도이며 timeout은 결과 불명으로 다룬다. | `runtime/operations.rs`, `runtime/agents.rs`; ACK는 결과 확정이 아니고 유한 중복 캐시는 영속 exactly-once 보장이 아니다. |
 | D-09 | Herdr가 pane·PTY·분할·zoom·cwd·agent 생명주기를 소유하고 core가 표시 탭·포커스·패널을 소유한다. | `docs/ARCHITECTURE.md`; [CLI](https://herdr.dev/docs/cli-reference/)·[Socket API](https://herdr.dev/docs/socket-api/), 실제 pin/schema가 API 판단 기준이다. |
 | D-10 | 등록 해제, 기기 연결 해제, pane 닫기, worktree 삭제를 서로 다른 명령으로 유지한다. | `runtime/projects.rs`; 등록 해제는 확인한 pane을 닫고 등록만 제거하며 디렉터리·worktree·Herdr session을 삭제하지 않는다. |
@@ -49,10 +49,11 @@ S6의 화면 재구성 전에 대상 기기·프로젝트·checkout·문서·작
 | D-16 | 기존 UI 패턴·디자인 토큰·접근성 동작을 유지하고 실패는 사용자가 행동할 위치에만 표시한다. | `DESIGN.md`, `design/tokens.json`; design 원칙 5·9·12·13, engineering 원칙 4·10. |
 | D-17 | 대상과 읽기 → 문서와 저장 → Git·Workspace 명령 → 설정·재접속·중복 제거 순서로 수직 기능을 완성한다. | 인계의 제안 A–D를 가역적 작성자 가정으로 채택하며 PR 개수나 확정 작업 목록으로 해석하지 않는다. |
 | D-18 | 완료는 양방향 기기 선택과 실패·복구를 실제 격리 환경에서 확인한 결과로 판단한다. | 인계와 `docs/PERFORMANCE_TESTING.md`; 코드 읽기나 연결 성공만으로 parity 완료를 주장하지 않는다. |
-| D-19 | PRD 작성 후 Mac mini의 Opus 5.5 pane에 implement를 위임하되 문서 승인은 pending으로 남기고 차단 결정 해소 후 시작한다. | 최신 사용자: “ㅇㅇ 정리 다 되 implement로 mac mini에 opus5.5 로 pane 띄워서 작업하게 해줘!!”; 최초 요청의 push/PR/merge·앱 교체·운영 설정/서비스 변경 금지는 유지하며 `agents/config.json`의 PR 기본값보다 우선한다. |
-| D-20 | **차단·미결정:** 안전한 원격 파일·worktree 기능에 필요한 대상 호스트 실행 및 설치 권한은 사용자가 결정한다. | 제안: 기기별 명시적 opt-in으로 버전 확인한 최소 helper를 설치·갱신하고 SSH 수명 안에서만 실행하며, UI에서 확인한 휴지통 이동·비강제 worktree 삭제만 허용한다; 무인 설치·상주 서비스·영구 삭제 fallback·원격 hook/AI 설정 쓰기는 금지한다; 제안은 승인이 아니다. |
+| D-19 | PRD 준비 완료 후 Mac mini의 Opus 5.5 pane에 implement를 위임하되 문서 승인은 pending으로 남긴다. | 사용자: “ㅇㅇ 정리 다 되 implement로 mac mini에 opus5.5 로 pane 띄워서 작업하게 해줘!!”, “이 범위로 허용하고 구현 진행”; 최초 요청의 push/PR/merge·앱 교체·운영 설정/서비스 변경 금지는 유지하며 `agents/config.json`의 PR 기본값보다 우선한다. |
+| D-20 | 기기별 명시적 동의 후 최소 helper 설치·갱신과 SSH 수명 내 실행, 실행마다 대상을 확인한 휴지통 이동·비강제 worktree 삭제를 허용한다. | “제품에서 기기별 명시적 동의를 받은 뒤 최소 helper를 설치/갱신하고 SSH 연결 동안 실행”, 삭제는 “실행마다 대상을 확인”하고 상주 서비스·자동 설치·영구 삭제 우회·원격 hook/AI 설정 변경을 제외한다는 질문에 사용자: “이 범위로 허용하고 구현 진행”; 최초 동의 없는 자동 설치를 금지하며 운영 기기에 지금 배포하라는 승인은 아니다. |
 | D-21 | 기술 상세와 UI 상태 배치는 거부 가능한 작성자 가정이며 동등 기능 전체를 미지원 처리해 완료하지 않는다. | 사용자: “가역적 기술 세부는 작성자 가정으로 정하고 진짜 미결정만 한 번에 보고”; 예외는 이유·사용자 결과·재검토 조건을 명시한다. |
 | D-22 | 현행 계약과 원칙을 기준으로 관련 구조만 정리한다. | `docs/README.md`, `ARCHITECTURE.md`, `PERFORMANCE_TESTING.md`, `DESIGN.md`; 원칙 저장소 `654485f96b7764c759662d2c3e9e386ebc221cf6`의 engineering·design 전문과 env/test/process practices를 읽었다; engineering 1–15는 경계·실패·수명·자원·중복 제거에, design 1–13은 기존 흐름과 상태에 적용하며 새 레이아웃 선택은 S6로 유보한다. |
+| D-23 | 등록 시 helper 설치·실행·동일 범위 갱신 동의를 한 번 받고 저장하며, 범위 확대나 대상 신원 변경에는 다시 동의받는다. | 사용자 후속 질문: “한번 device 등록할때 동의받아두면 되는거야?”; D-20의 기기별 동의를 등록 흐름에 배치하는 작성자 가정이며 삭제 대상별 확인을 대체하지 않는다; 동의 철회와 재등록 시 승계 금지도 작성자 가정이다. |
 
 ## Behaviors
 
@@ -107,6 +108,9 @@ S6의 화면 재구성 전에 대상 기기·프로젝트·checkout·문서·작
 | B47 | 원격 I/O가 느려도 로컬 타이핑·탭 선택을 막지 않으며 동일 부하의 idle/driven 관측에서 기존 반응성 계약을 유지하고 고빈도 tick/tab마다 Git 프로세스를 만들지 않는다. | D-09, D-15, D-18 |
 | B48 | 진단은 기기·작업 ID·실패 단계로 추적 가능하지만 파일 내용·초안·토큰·자격 증명을 기록하지 않으며 사용자가 조치할 수 없는 세부 오류는 화면 알림을 만들지 않는다. | D-08, D-16 |
 | B49 | 양방향 호스트 선택, 동일 경로 격리, 저장 중 단절, 재접속 중복 의도, dirty 초안 복구까지 같은 사용자 흐름이 성립해야 하며 원격 기능 전체 비활성은 완료가 아니다. | D-01, D-18, D-21 |
+| B50 | 기기 등록에서 helper의 설치 위치·실행 범위·동일 범위 업데이트를 설명하고 명시적 동의를 한 번 받은 뒤, 평소 연결·파일 작업마다 같은 설치 동의를 반복하지 않는다. | D-20, D-23 |
+| B51 | 동의는 기기와 SSH 대상 신원·계정 및 허용 범위에 묶이고 기존 등록 기기는 첫 사용 전에 동의를 받으며, 권한·설치 범위 확대나 대상 신원 변경 시 기존 동의로 진행하지 않는다. | D-12, D-20, D-23 |
+| B52 | 설정에서 동의 상태와 범위를 확인하고 철회할 수 있으며, 철회 뒤 새 helper 작업을 막고 진행 중 작업은 실제 결과를 확인해 정리하며 초안·원격 파일을 지우지 않는다. | D-04, D-08, D-20, D-23 |
 
 ## Technical structure
 
@@ -114,8 +118,8 @@ S6의 화면 재구성 전에 대상 기기·프로젝트·checkout·문서·작
 Project 식별은 기존 resolver의 저장소/worktree 규칙을 유지하되 대상 호스트가 확인한 사실을 입력받고, UI의 이름과 경로는 권한이나 식별의 대체물이 되지 않는다.
 문서 식별에는 기기·checkout·정규화된 문서 경로를 포함하고, 버퍼·초안 저장 키를 버전 migration하며 기존 root/path 키의 미확인 출처를 보존한다.
 파일 서비스는 열린 root에 대한 confinement·revision·권한·제한된 전송·mutation 결과 계약을 소유하고, Git 서비스는 같은 root를 바탕으로 상태·base·diff를 소유한다.
-현재 원격 SFTP 구현만으로 안전한 root-relative mutation과 저장 경합 방지가 증명되지는 않으므로 D-20 해소와 대상 측 안전 프로토콜 검증 전에는 쓰기 capability를 광고하지 않는다.
-작성자 제안은 대상 측 최소 helper와 SSH 요청 수명이며, 설치·업데이트 정책은 미승인이고 새 상주 daemon이나 공개 파일 HTTP API를 도입하지 않는다.
+현재 원격 SFTP 구현만으로 안전한 root-relative mutation과 저장 경합 방지가 증명되지는 않으므로 기기별 동의와 대상 측 안전 프로토콜 검증 전에는 쓰기 capability를 광고하지 않는다.
+대상 측 최소 helper는 SSH 요청 수명에 묶이며, 기기별 동의에는 대상 신원·권한 범위·동의 계약 버전을 기록하고 새 상주 daemon이나 공개 파일 HTTP API를 도입하지 않는다.
 원자적 파일 교체만으로 임의 외부 편집기에 대한 CAS를 주장하지 않으며, 지원 가능한 revision 경합 보장과 중단 복구를 명시하고 증명하지 못하는 경우 B13–B15대로 실패시킨다.
 모든 명령은 공통 operation 수명과 authoritative 결과 확인을 통과하고 I/O·Git·직렬화는 Runtime lock 밖에서 수행하며 알림은 실제 상태 전이에만 발행한다.
 Settings는 UI/daemon 소유 값, 선택 기기 진단, 명시적으로 허가된 대상 작업을 분리하고 연결 능력을 쓰기 권한으로 해석하지 않는다.
@@ -123,8 +127,8 @@ Settings는 UI/daemon 소유 값, 선택 기기 진단, 명시적으로 허가�
 
 ## Risks
 
-- **차단 결정, 사용자 소유:** D-20의 대상 호스트 helper 설치·갱신·실행과 확인된 원격 휴지통/worktree 삭제 허용 여부를 한 번에 결정해야 한다.
-  이 결정 전 문서는 draft이며 implement를 시작하지 않고, 원격 읽기 성공을 쓰기 권한의 승인으로 해석하지 않는다.
+- **권한 결정 해소:** 사용자가 D-20의 제품 동의 범위를 허용하고 구현 진행을 요청했다.
+  추가 선행 사용자 결정은 없으며 실제 운영 기기의 등록 동의나 배포 권한을 대신 부여한 것으로 해석하지 않는다.
 - **기술 검증, 구현자 소유:** 외부 writer와의 경합·symlink/root 교체·연결 중단에 안전한 원격 저장 계약이 필요하다.
   단순 SFTP read-check-write나 atomic rename만으로 해결됐다고 주장하지 않으며 검증 실패는 parity 미완료로 보고한다.
 - **이관 위험:** 기존 초안의 소유 기기는 경로만으로 복원할 수 없다.
