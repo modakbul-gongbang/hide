@@ -82,7 +82,7 @@ function AgentList({ actions }: { actions: Actions }) {
   return (
     <ul className="min-h-0 flex-1 overflow-auto">
       {agents.map((agent) => (
-        <AgentRowView key={agent.id} agent={agent} selected={agent.pane_id === focusedPaneId} onSelect={() => actions.focusPane(agent.pane_id)} />
+        <AgentRowView key={agent.id} agent={agent} selected={agent.pane_id === focusedPaneId} onSelect={() => actions.openAgent(agent.pane_id)} />
       ))}
     </ul>
   );
@@ -237,7 +237,7 @@ function WorkspaceRows({
           type="button"
           data-project-row={workspace.id}
           className="flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated"
-          onClick={() => actions.focusProject(workspace.id)}
+          onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
         >
           <span className="flex w-full items-baseline gap-xs text-body text-primary">
             <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
@@ -306,7 +306,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           className={`flex w-full flex-col items-start px-md py-xs pl-[var(--size-lineage-indent)] text-left ${
             focused ? "bg-elevated text-primary" : "text-secondary hover:bg-elevated"
           }`}
-          onClick={() => actions.focusCheckout(checkout.workspace_id, checkout.id)}
+          onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id)}
         >
           <span className="flex w-full items-baseline gap-xs text-body">
             <span className="w-[var(--size-checkout-icon)] font-mono text-caption text-muted" aria-hidden="true">

@@ -5,16 +5,19 @@
 
 import { contextAgents, contextWorkspaces } from "./remote";
 import type { SnapshotRest } from "./snapshot";
+import { LAYOUTS, workspaceViewOf, type ViewMode } from "./workspace";
 
 export type SearchEntry = {
   id: string;
   title: string;
   subtitle: string;
-  kind: "agent" | "project" | "checkout";
+  kind: "agent" | "project" | "checkout" | "command";
   /** The ids the entry activates: a pane, or a workspace/checkout pair. */
   paneId?: string;
   workspaceId?: string;
   checkoutId?: string;
+  /** What a command entry changes on the Workspace in front. */
+  command?: { layout: ViewMode } | { tool: "explorer" | "changes"; visible: boolean };
 };
 
 /** The fuzzy score of `query` against `candidate`, mirroring the Swift scorer
@@ -40,13 +43,46 @@ export function fuzzyScore(candidate: string, query: string): number | null {
 }
 
 /**
- * The snapshot rows ⌘K searches: agents, projects and checkouts of the
- * context on screen, so a pick on a selected SSH device focuses that host's
- * row rather than one on this machine behind it.
+ * The Workspace commands ⌘K offers while a Workspace is on screen: the three
+ * layouts by the names the layout menu uses (S6 B5), and each tool shown or
+ * hidden by what it would do.
  */
-export function searchEntries(rest: SnapshotRest | null): SearchEntry[] {
+export function workspaceCommands(rest: SnapshotRest | null): SearchEntry[] {
+  const view = workspaceViewOf(rest);
+  if (!view) return [];
+  const entries: SearchEntry[] = LAYOUTS.filter((layout) => layout.mode !== view.mode).map((layout) => ({
+    id: `command:layout:${layout.mode}`,
+    title: `Layout: ${layout.label}`,
+    subtitle: "Workspace layout",
+    kind: "command",
+    command: { layout: layout.mode },
+  }));
+  entries.push({
+    id: "command:tool:explorer",
+    title: view.explorer ? "Hide Explorer" : "Show Explorer",
+    subtitle: "Workspace tool",
+    kind: "command",
+    command: { tool: "explorer", visible: !view.explorer },
+  });
+  entries.push({
+    id: "command:tool:changes",
+    title: view.changes ? "Hide History" : "Show History",
+    subtitle: "Workspace tool",
+    kind: "command",
+    command: { tool: "changes", visible: !view.changes },
+  });
+  return entries;
+}
+
+/**
+ * The snapshot rows ⌘K searches: Workspace commands when a Workspace is on
+ * screen, then agents, projects and checkouts of the context on screen, so a
+ * pick on a selected SSH device focuses that host's row rather than one on
+ * this machine behind it.
+ */
+export function searchEntries(rest: SnapshotRest | null, workspaceOnScreen = false): SearchEntry[] {
   if (!rest) return [];
-  const entries: SearchEntry[] = [];
+  const entries: SearchEntry[] = workspaceOnScreen ? workspaceCommands(rest) : [];
   for (const agent of contextAgents(rest, rest.navigator?.agents ?? [])) {
     entries.push({
       id: `agent:${agent.pane_id}`,

@@ -20,6 +20,15 @@ export type PendingClose = {
   affected: string[];
 };
 
+/**
+ * Where the center stands (PRD S6 D-02): Main lists every Project, Overview
+ * one Project's Workspaces and agents, Workspace the front checkout. It is
+ * this page's own navigation, like the sidebar's mode: every value it shows
+ * is the core's, and the Workspace it shows is the core's front checkout.
+ * `null` until the first snapshot decides where the page starts (D-11).
+ */
+export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "workspace" };
+
 export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "search" | "settings";
 
 /** A project or checkout management dialog, named by the row that opened it. */
@@ -63,6 +72,7 @@ export type PendingTrash = {
 };
 
 type UiStore = {
+  screen: Screen | null;
   sidebarMode: SidebarMode;
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
@@ -97,6 +107,7 @@ type UiStore = {
    * confirmation closes before the sheet behind it.
    */
   escapeLayers: (() => void)[];
+  setScreen: (screen: Screen) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
@@ -118,6 +129,7 @@ type UiStore = {
 };
 
 export const useUiStore = create<UiStore>((set, get) => ({
+  screen: null,
   sidebarMode: "agents",
   explorerSelection: null,
   editorFindRequest: 0,
@@ -133,6 +145,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   watchedRemoval: null,
   recordingShortcut: false,
   escapeLayers: [],
+  setScreen: (screen) => set({ screen }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);

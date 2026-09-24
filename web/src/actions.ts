@@ -12,6 +12,8 @@ import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedC
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
+import { viewAreaInUse } from "./viewFocus";
+import { workspaceViewOf, type ViewMode } from "./workspace";
 
 /** The `device_id` an event carries: none for this machine, which the core takes as the default. */
 function deviceField(device: string): { device_id?: string } {
@@ -161,19 +163,24 @@ export function createActions(dispatch: DispatchFn) {
     ui().setSidebarMode(mode);
   };
 
-  /** The core owns the right panel's section and visibility. */
-  const showExplorerPanel = () => {
-    updateUiState({ right_panel_visible: true, right_panel_section: "explorer" });
+  /**
+   * The front Workspace's layout and tools (S6 D-03, D-05): one
+   * `workspace_view` event naming only what changes. The core keeps them per
+   * Workspace, so another Workspace is never touched.
+   */
+  const setWorkspaceView = (patch: { mode?: ViewMode; explorer?: boolean; changes?: boolean; agent_share?: number }) => {
+    if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
+    dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
 
+  const showExplorerPanel = () => setWorkspaceView({ explorer: true });
+
+  /** ⌘⇧B: hides the Workspace tools when any shows, else shows the Explorer. */
   const toggleRightPanel = () => {
-    const state = rest()?.ui_state;
-    if (!state) return;
-    const supported = state.right_panel_section === "explorer" || state.right_panel_section === "changes";
-    updateUiState({
-      right_panel_visible: supported ? !state.right_panel_visible : true,
-      right_panel_section: supported ? state.right_panel_section : "explorer",
-    });
+    const view = workspaceViewOf(rest());
+    if (!view) return diagnostic("toggle tools: no Workspace in front");
+    if (view.explorer || view.changes) setWorkspaceView({ explorer: false, changes: false });
+    else setWorkspaceView({ explorer: true });
   };
 
   /**
@@ -182,15 +189,13 @@ export function createActions(dispatch: DispatchFn) {
    * which would open a pinned tab (B3).
    */
   const revealAncestors = (path: string) => {
-    // Highlighting a row needs a tree to highlight it in, so the reveal shows
-    // the panel the core's own `reveal_path` would show.
+    // The Explorer tool is the Workspace's to show or hide (B10); opening a
+    // file only unfolds its folders, so the row is highlighted whenever the
+    // tool is open.
     const state = rest()?.ui_state;
     const context = explorerContext(rest());
     const root = context.checkout?.path;
-    if (!state || !root || !path.startsWith(`${root}/`)) {
-      showExplorerPanel();
-      return;
-    }
+    if (!state || !root || !path.startsWith(`${root}/`)) return;
     const parts = path.slice(root.length + 1).split("/");
     parts.pop();
     const expanded = new Set(context.expanded);
@@ -198,9 +203,7 @@ export function createActions(dispatch: DispatchFn) {
       const ancestor = `${root}/${parts.slice(0, depth).join("/")}`;
       expanded.add(ancestor);
     }
-    // ui_state_update replaces the whole core state. Two updates based on one
-    // snapshot race, and the second would hide the panel again.
-    updateUiState({ right_panel_visible: true, right_panel_section: "explorer", ...expandedPatch(context.device, [...expanded]) });
+    updateUiState(expandedPatch(context.device, [...expanded]));
   };
 
   /** The ui_state field that holds one device's expanded folders. */
@@ -429,6 +432,42 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
     },
 
+    /**
+     * A Workspace chosen on Main or an Overview, on any device (S6 B2, B21).
+     * A Workspace on another device than the one in front first makes that
+     * device the context, then asks its own Herdr or this machine's core for
+     * the checkout: two events, each of which the core checks on its own.
+     */
+    openWorkspace(deviceId: string, workspaceId: string, checkoutId: string) {
+      ui().setScreen({ kind: "workspace" });
+      const front = rest()?.navigator?.focused_device_id ?? "local";
+      if (front === deviceId) return focusCheckout(workspaceId, checkoutId);
+      dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
+      if (deviceId === "local") {
+        dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
+        return;
+      }
+      // A registered device project Herdr has no workspace in yet is opened
+      // by creating one at its folder there, as its sidebar row does.
+      if (checkoutId.endsWith(REGISTERED_CHECKOUT)) {
+        const checkout = rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces.flatMap((row) => row.checkouts).find((row) => row.id === checkoutId);
+        if (!checkout) return diagnostic(`open workspace: ${checkoutId} is not on ${deviceId}`);
+        return sendRemote(deviceId, { action: "create_tab", workspace_id: workspaceId, checkout_id: checkoutId, cwd: checkout.path, label: checkout.next_tab_label });
+      }
+      const request: RemoteAction = { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId };
+      sendRemote(deviceId, request);
+    },
+
+    /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
+    openAgent(paneId: string) {
+      ui().setScreen({ kind: "workspace" });
+      const target = remoteTargetOfPane(rest(), paneId) ?? "local";
+      const front = rest()?.navigator?.focused_device_id ?? "local";
+      if (front !== target) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: target } });
+      if (target !== "local") return sendRemote(target, { action: "focus_pane", pane_id: paneId });
+      dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
+    },
+
     setPinned(workspaceId: string, pinned: boolean) {
       dispatch({ schema_version: 2, kind: "workspace_pin_set", payload: { workspace_id: workspaceId, pinned } });
     },
@@ -529,10 +568,10 @@ export function createActions(dispatch: DispatchFn) {
         requestClose("tab", tab.id, tab.panes, host.targetId, host.agents);
         return;
       }
-      // The strip shows a file tab while the editor is up, so the close chord
-      // closes what the operator sees rather than the terminal tab behind it.
+      // The close chord closes the View tab when the View area holds the
+      // keyboard or is all that shows, and the Agent tab otherwise.
       const fileTab = activeEditorTab(useShellStore.getState().editor);
-      if (!tabId && fileTab && editorFor(useShellStore.getState().editor)) return closeFileTab(fileTab.id);
+      if (!tabId && fileTab && viewAreaInUse(rest())) return closeFileTab(fileTab.id);
       const here = current();
       const id = tabId ?? here?.tab?.id;
       if (!here || !id) return diagnostic("close_tab: no visible tab");
@@ -631,7 +670,7 @@ export function createActions(dispatch: DispatchFn) {
       // A pane's text size is this page's drawing, stored in the core's ui
       // state by pane id; a remote pane is sized the same way and nothing is
       // sent to its host.
-      if (editorFor(useShellStore.getState().editor)) {
+      if (editorFor(useShellStore.getState().editor) && viewAreaInUse(rest())) {
         dispatch({ schema_version: 2, kind: "editor_text_scale", payload: { direction } });
         return;
       }
@@ -680,8 +719,22 @@ export function createActions(dispatch: DispatchFn) {
     showExplorerPanel,
     toggleRightPanel,
 
-    showRightPanelSection(section: "explorer" | "changes") {
-      updateUiState({ right_panel_visible: true, right_panel_section: section });
+    setWorkspaceView,
+
+    setLayout(mode: ViewMode) {
+      setWorkspaceView({ mode });
+    },
+
+    /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
+    revealInExplorer(path: string) {
+      setWorkspaceView({ explorer: true });
+      revealAncestors(path);
+      ui().setExplorerSelection(path);
+    },
+
+    /** Explorer and Changes open and close independently (B10). */
+    setTool(tool: "explorer" | "changes", visible: boolean) {
+      setWorkspaceView(tool === "explorer" ? { explorer: visible } : { changes: visible });
     },
 
     selectChange(path: string, committed: boolean, preview: boolean) {

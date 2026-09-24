@@ -52,3 +52,15 @@ describe("search entries", () => {
     expect(filterEntries(entries, "").map((entry) => entry.id)).toEqual(["1", "2"]);
   });
 });
+
+describe("workspace commands", () => {
+  const rest = { workspace_view: { device_id: "local", path: "/repo", mode: "together", explorer: true, changes: false, agent_share: 0.5 } } as unknown as SnapshotRest;
+
+  it("offers the other layouts by the menu's names and each tool by what it would do", () => {
+    expect(searchEntries(rest, true).map((entry) => entry.title)).toEqual(["Layout: Agents only", "Layout: Views only", "Hide Explorer", "Show History"]);
+  });
+
+  it("offers no Workspace command when no Workspace is on screen", () => {
+    expect(searchEntries(rest, false)).toEqual([]);
+  });
+});

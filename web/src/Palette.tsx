@@ -198,17 +198,22 @@ function FilePalette({ actions }: { actions: Actions }) {
 function SearchPalette({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const [query, setQuery] = useState("");
-  const entries = filterEntries(searchEntries(rest), query);
+  const workspaceOnScreen = useUiStore((s) => s.screen?.kind === "workspace");
+  const entries = filterEntries(searchEntries(rest, workspaceOnScreen), query);
   const navigation = usePaletteNavigation(entries.length, (index) => activate(entries[index]));
 
   const activate = (entry: SearchEntry | undefined) => {
     if (!entry) return;
     useUiStore.getState().closeOverlay();
-    if (entry.kind === "agent" && entry.paneId) {
-      actions.focusPane(entry.paneId);
+    if (entry.command) {
+      if ("layout" in entry.command) actions.setLayout(entry.command.layout);
+      else actions.setTool(entry.command.tool, entry.command.visible);
+    } else if (entry.kind === "agent" && entry.paneId) {
+      actions.openAgent(entry.paneId);
     } else if (entry.kind === "project" && entry.workspaceId) {
-      actions.focusProject(entry.workspaceId);
+      useUiStore.getState().setScreen({ kind: "overview", projectId: entry.workspaceId });
     } else if (entry.workspaceId && entry.checkoutId) {
+      useUiStore.getState().setScreen({ kind: "workspace" });
       actions.focusCheckout(entry.workspaceId, entry.checkoutId);
     }
   };
@@ -216,7 +221,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
   return (
     <PaletteShell
       label="Search"
-      placeholder="Search agents and workspaces"
+      placeholder="Search agents, workspaces and commands"
       query={query}
       onQuery={setQuery}
       onKeyDown={navigation.onKeyDown}

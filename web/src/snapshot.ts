@@ -222,6 +222,8 @@ export type EditorTabSnapshot = {
   dirty: boolean;
   /** The checkout's one replaceable tab: a single click opens it, a double click promotes it. */
   preview: boolean;
+  /** Why a View tab restored after a restart has no document (file gone, device unreachable); it only offers Close (S6 B20). */
+  unavailable_reason?: string | null;
 };
 
 /** The disk state that makes a save a choice rather than a write: the draft's base revision and what the file holds now (null when it was removed). */
@@ -525,6 +527,8 @@ export type SnapshotRest = {
   };
   recent_closed?: RecentClosed;
   explorer_operation?: ExplorerOperation | null;
+  /** The front Workspace's layout and tools (S6 D-10); absent when no Workspace is in front. */
+  workspace_view?: import("./workspace").WorkspaceView;
 };
 
 /**
