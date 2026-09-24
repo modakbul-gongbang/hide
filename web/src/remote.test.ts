@@ -97,7 +97,7 @@ function rest(focusedDevice: string, state = "connected"): SnapshotRest {
         {
           id: "p-local",
           label: "local",
-          path: "/Users/me/app",
+          path: "/Users/example/app",
           device_id: "local",
           registered: true,
           temporary: false,
@@ -108,7 +108,7 @@ function rest(focusedDevice: string, state = "connected"): SnapshotRest {
               id: "c-local",
               workspace_id: "p-local",
               label: "app",
-              path: "/Users/me/app",
+              path: "/Users/example/app",
               branch: "main",
               purpose: null,
               is_worktree: false,
