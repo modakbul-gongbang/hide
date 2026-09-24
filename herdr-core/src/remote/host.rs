@@ -1288,14 +1288,14 @@ mod tests {
         assert!(refusal.contains("chmod go-w /home/me/.local"), "{refusal}");
         // The resolved path is checked from `/`, home and its parents too.
         assert_eq!(
-            ancestors("/Users/me/.local/share/hide/host-helper").unwrap(),
+            ancestors("/Users/example/.local/share/hide/host-helper").unwrap(),
             [
                 "/",
                 "/Users",
-                "/Users/me",
-                "/Users/me/.local",
-                "/Users/me/.local/share",
-                "/Users/me/.local/share/hide"
+                "/Users/example",
+                "/Users/example/.local",
+                "/Users/example/.local/share",
+                "/Users/example/.local/share/hide"
             ]
         );
         assert_eq!(ancestors("/helper").unwrap(), ["/"]);
