@@ -222,7 +222,7 @@ impl Runtime {
             .status
             .remote
             .iter()
-            .any(|status| status.target_id == device_id && status.state == "ready")
+            .any(|status| status.target_id == device_id && status.state == "connected")
         {
             self.set_error(
                 "remote.retry_connected",

@@ -473,9 +473,9 @@ fn handle_ai_settings(
         .and_then(|payload| payload.remove("observing"));
     match observing {
         Some(Value::Bool(observing)) => {
-            if let Some(aggregate) = state.demand.set(connection, observing) {
-                dispatch_observation(state, connection, aggregate);
-            }
+            state.demand.set(connection, observing, |aggregate| {
+                dispatch_observation(state, connection, aggregate)
+            });
         }
         Some(Value::Null) | None => {}
         Some(_) => return Err("ai_settings.observing must be a boolean".to_owned()),
@@ -491,6 +491,8 @@ fn handle_ai_settings(
     Ok(ClientAction::Replies(Vec::new()))
 }
 
+/// Runs under the demand lock (`ObservationDemand::set`), so it only logs
+/// and hands the event to the core's channel.
 fn dispatch_observation(state: &AppState, connection: u64, observing: bool) {
     eprintln!(
         "{}",
@@ -499,7 +501,6 @@ fn dispatch_observation(state: &AppState, connection: u64, observing: bool) {
             "kind": "settings.observation",
             "connection": connection,
             "observing": observing,
-            "observers": state.demand.observers(),
         })
     );
     let event = json!({
@@ -1389,9 +1390,9 @@ async fn send_snapshot(
 
 fn client_gone(state: &AppState, connection: u64) {
     state.attachments.release(connection);
-    if let Some(observing) = state.demand.release(connection) {
-        dispatch_observation(state, connection, observing);
-    }
+    state.demand.release(connection, |observing| {
+        dispatch_observation(state, connection, observing)
+    });
     let remaining = state
         .clients
         .fetch_sub(1, Ordering::SeqCst)

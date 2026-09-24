@@ -2432,7 +2432,10 @@ impl Runtime {
             .snapshot
             .task_operation
             .as_ref()
-            .is_some_and(|operation| operation.phase == "working")
+            .is_some_and(|operation| {
+                // A created pane's agent answer still lands in this slot.
+                operation.phase == "working" || operation.agent_phase.as_deref() == Some("starting")
+            })
         {
             return Err("Another task operation is still running".into());
         }

@@ -2280,6 +2280,12 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
     // An acknowledgement while the agent is still starting keeps the slot.
     runtime.acknowledge_task_operation(id);
     assert!(runtime.snapshot().task_operation.is_some());
+    // Nor can another task take the slot while the agent's answer is due.
+    assert!(
+        runtime
+            .begin_task_operation("checkout_purpose", None, None, None, None)
+            .is_err()
+    );
 
     assert!(runtime.ingest_task_agent_result(
         id,
@@ -2454,4 +2460,29 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
     assert_eq!(removal.phase, "failed");
     assert!(removal.message.unwrap().contains("A pane appeared"));
     assert!(runtime.confirmed_worktree_removal(2).is_none());
+}
+
+/// The kind reaches `agent.start`, which runs it in the new pane's shell, so
+/// a creation that names anything but a provider Hide starts is refused
+/// before any worktree exists.
+#[test]
+fn a_worktree_creation_naming_an_unknown_agent_is_refused() {
+    let mut runtime = runtime();
+    let create = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "create_worktree",
+        "payload": { "repository_root": "/repo", "branch": "feature", "agent_kind": "/tmp/run.sh" }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&create));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("worktree.create_unknown_agent")
+    );
+    assert!(runtime.snapshot().task_operation.is_none());
 }

@@ -325,7 +325,11 @@ function AgentsTab({ actions }: { actions: Actions }) {
   // The provider probe and the hook diagnosis run only while a page shows
   // this tab (B8). A hidden browser tab is not looking either; the daemon
   // releases this page's demand if the socket drops.
+  // A reconnect is a new connection whose demand starts empty, so the
+  // demand is declared again each time the page is live.
+  const live = useShellStore((s) => s.connection === "live");
   useEffect(() => {
+    if (!live) return;
     const report = () => actions.observeAgents(document.visibilityState === "visible");
     report();
     document.addEventListener("visibilitychange", report);
@@ -333,7 +337,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
       document.removeEventListener("visibilitychange", report);
       actions.observeAgents(false);
     };
-  }, [actions]);
+  }, [actions, live]);
 
   const selected = ai?.providers.find((provider) => provider.id === ai.provider) ?? null;
   const pendingRow = pressed ? hooks?.runtimes.find((row) => row.id === pressed.id) : null;

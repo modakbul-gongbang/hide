@@ -17,9 +17,16 @@ pub struct ObservationDemand {
 }
 
 impl ObservationDemand {
-    /// Records one connection's demand. Returns the flag the core should now
-    /// hold when this changed it, and `None` when the aggregate is unchanged.
-    pub fn set(&self, connection: u64, observing: bool) -> Option<bool> {
+    /// Records one connection's demand. When that changes the aggregate,
+    /// `announce` receives the flag the core should now hold, called while the
+    /// demand is still locked, so two transitions reach the core in the order
+    /// they happened. Returns the flag it announced, if any.
+    pub fn set(
+        &self,
+        connection: u64,
+        observing: bool,
+        announce: impl FnOnce(bool),
+    ) -> Option<bool> {
         let mut observers = self.observers.lock().expect("observation demand");
         let before = !observers.is_empty();
         if observing {
@@ -28,15 +35,20 @@ impl ObservationDemand {
             observers.remove(&connection);
         }
         let after = !observers.is_empty();
-        (before != after).then_some(after)
+        let changed = (before != after).then_some(after);
+        if let Some(flag) = changed {
+            announce(flag);
+        }
+        changed
     }
 
     /// Drops whatever demand a closed connection held.
-    pub fn release(&self, connection: u64) -> Option<bool> {
-        self.set(connection, false)
+    pub fn release(&self, connection: u64, announce: impl FnOnce(bool)) -> Option<bool> {
+        self.set(connection, false, announce)
     }
 
-    pub fn observers(&self) -> usize {
+    #[cfg(test)]
+    fn observers(&self) -> usize {
         self.observers.lock().expect("observation demand").len()
     }
 }
@@ -48,18 +60,36 @@ mod tests {
     #[test]
     fn the_flag_follows_the_first_observer_in_and_the_last_one_out() {
         let demand = ObservationDemand::default();
-        assert_eq!(demand.set(1, true), Some(true));
-        assert_eq!(demand.set(2, true), None);
-        assert_eq!(demand.set(1, true), None, "a repeated open is one demand");
-        assert_eq!(demand.set(1, false), None, "another tab is still looking");
-        assert_eq!(demand.release(2), Some(false));
+        let announced = std::cell::RefCell::new(Vec::new());
+        let note = |flag| announced.borrow_mut().push(flag);
+        assert_eq!(demand.set(1, true, note), Some(true));
+        assert_eq!(demand.set(2, true, note), None);
+        assert_eq!(
+            demand.set(1, true, note),
+            None,
+            "a repeated open is one demand"
+        );
+        assert_eq!(
+            demand.set(1, false, note),
+            None,
+            "another tab is still looking"
+        );
+        assert_eq!(demand.release(2, note), Some(false));
         assert_eq!(demand.observers(), 0);
+        assert_eq!(
+            *announced.borrow(),
+            [true, false],
+            "only transitions are announced"
+        );
     }
 
     #[test]
     fn a_connection_that_never_observed_releases_nothing() {
         let demand = ObservationDemand::default();
-        assert_eq!(demand.release(7), None);
-        assert_eq!(demand.set(3, false), None);
+        assert_eq!(demand.release(7, |_| panic!("nothing to announce")), None);
+        assert_eq!(
+            demand.set(3, false, |_| panic!("nothing to announce")),
+            None
+        );
     }
 }

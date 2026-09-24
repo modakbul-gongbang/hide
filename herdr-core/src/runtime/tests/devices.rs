@@ -231,3 +231,29 @@ fn a_split_with_a_remote_device_selected_is_refused_not_run_locally() {
     );
     assert!(runtime.snapshot().status.async_operations.is_empty());
 }
+
+/// A connected device keeps its connection: a retry from a stale screen is
+/// refused rather than tearing down live remote panes.
+#[test]
+fn retrying_a_connected_device_is_refused() {
+    let mut runtime = runtime();
+    assert!(register_device(&mut runtime, "studio", "studio-host"));
+    runtime.snapshot.status.remote[0].state = "connected".to_owned();
+    let retry = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "retry_connect",
+        "payload": { "target_id": "studio" }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&retry));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("remote.retry_connected")
+    );
+    assert_eq!(diagnostic_count(&runtime, "device.retry"), 0);
+}

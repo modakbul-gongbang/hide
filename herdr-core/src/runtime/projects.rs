@@ -1338,6 +1338,18 @@ impl Runtime {
     }
 
     pub(super) fn create_project_worktree(&mut self, payload: CreateWorktreePayload) -> bool {
+        // The kind reaches `agent.start`, which runs it in the new pane's
+        // shell, so only the providers Hide can start are accepted.
+        if let Some(kind) = payload.agent_kind.as_deref()
+            && !matches!(kind, "claude" | "codex")
+        {
+            self.set_error(
+                "worktree.create_unknown_agent",
+                format!("No agent provider named {kind}"),
+                false,
+            );
+            return true;
+        }
         let branch = payload.branch.trim().to_owned();
         if branch.is_empty() {
             self.set_error(
