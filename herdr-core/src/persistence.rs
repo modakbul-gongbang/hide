@@ -50,6 +50,8 @@ struct StoredUiState {
     selected_pane_id: Option<String>,
     #[serde(default)]
     shortcut_bindings: BTreeMap<String, String>,
+    #[serde(default)]
+    browser_shortcut_bindings: BTreeMap<String, String>,
     #[serde(default = "default_pet_visible")]
     pet_visible: bool,
     #[serde(default)]
@@ -156,6 +158,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
             shortcut_bindings: stored.shortcut_bindings,
+            browser_shortcut_bindings: stored.browser_shortcut_bindings,
             pet_visible: stored.pet_visible,
             pet_origin: stored.pet_origin,
             pet_shortcut: stored.pet_shortcut,
@@ -204,6 +207,7 @@ pub fn save(
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
         shortcut_bindings: state.shortcut_bindings.clone(),
+        browser_shortcut_bindings: state.browser_shortcut_bindings.clone(),
         pet_visible: state.pet_visible,
         pet_origin: state.pet_origin,
         pet_shortcut: state.pet_shortcut.clone(),
@@ -467,6 +471,9 @@ mod tests {
         state
             .shortcut_bindings
             .insert("split_right".to_owned(), "command+option+r".to_owned());
+        state
+            .browser_shortcut_bindings
+            .insert("split_right".to_owned(), "alt+KeyR".to_owned());
 
         save(&path, &state, &PaneTerminalSizes::new()).expect("persist shortcut binding");
         let (restored, _sizes, disposition) = load(&path);
@@ -478,6 +485,13 @@ mod tests {
                 .get("split_right")
                 .map(String::as_str),
             Some("command+option+r")
+        );
+        assert_eq!(
+            restored
+                .browser_shortcut_bindings
+                .get("split_right")
+                .map(String::as_str),
+            Some("alt+KeyR")
         );
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);

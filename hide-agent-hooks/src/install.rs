@@ -69,7 +69,8 @@ impl InstallFailure {
                 format!("the installed hook points at {helper}, which is missing")
             }
             Self::HelperNotBundled { executable } => format!(
-                "{executable} is not inside an application bundle, so Hide has no lasting path                  for the hook to run; install hooks from the installed app"
+                "{executable} is not inside an application bundle, so Hide has no lasting path \
+                 for the hook to run; install hooks from the installed app"
             ),
         }
     }

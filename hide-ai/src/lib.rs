@@ -14,7 +14,7 @@ mod schema;
 pub mod settings;
 
 pub use claude::{ClaudeCliBackend, ClaudeConfig, USAGE_ENVIRONMENT, UsageError};
-pub use codex::{CodexAppServerBackend, CodexConfig};
+pub use codex::{CodexAppServerBackend, CodexConfig, resolve_binary};
 pub use log::{AiLogEvent, AiLogSink, NoopLogSink};
 pub use process::ProcessMeasurement;
 pub use router::{AiRouter, Degraded, ProviderState, RouterConfig};

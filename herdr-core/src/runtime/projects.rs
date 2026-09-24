@@ -652,7 +652,7 @@ impl Runtime {
 
     pub(super) fn remove_git_worktree(&mut self, payload: RemoveWorktreePayload) -> bool {
         if let Some(removal) = self.snapshot.worktree_removal.as_ref()
-            && matches!(removal.phase.as_str(), "closing" | "ready")
+            && matches!(removal.phase.as_str(), "closing" | "removing")
         {
             if removal.checkout_path == payload.checkout_path {
                 return false;
@@ -731,13 +731,14 @@ impl Runtime {
         let Some(context) = self.live.as_ref().cloned() else {
             return self.ingest_worktree_close_result(
                 id,
+                &[],
                 Err("Deleting a worktree needs a live Herdr connection".to_owned()),
             );
         };
         if let Err(message) =
             live::spawn_worktree_close(context, id, payload.checkout_path, pane_ids)
         {
-            self.ingest_worktree_close_result(id, Err(message));
+            self.ingest_worktree_close_result(id, &[], Err(message));
         }
         true
     }
@@ -1007,7 +1008,15 @@ impl Runtime {
         true
     }
 
-    pub fn ingest_worktree_close_result(&mut self, id: u64, result: Result<(), String>) -> bool {
+    /// `closed_pane_ids` are the panes Herdr confirmed gone; the navigator can
+    /// still list them until Herdr's close events are applied, so only a pane
+    /// outside that set counts as one that appeared during the confirmation.
+    pub fn ingest_worktree_close_result(
+        &mut self,
+        id: u64,
+        closed_pane_ids: &[String],
+        result: Result<(), String>,
+    ) -> bool {
         let Some(active) = self.snapshot.worktree_removal.as_ref() else {
             return false;
         };
@@ -1033,7 +1042,10 @@ impl Runtime {
                 .workspaces
                 .iter()
                 .flat_map(|workspace| &workspace.checkouts)
-                .any(|checkout| checkout.path == active.checkout_path && checkout.has_panes);
+                .filter(|checkout| checkout.path == active.checkout_path)
+                .flat_map(|checkout| &checkout.tabs)
+                .flat_map(|tab| &tab.panes)
+                .any(|pane| !closed_pane_ids.contains(&pane.id));
             if identity_changed || pane_reappeared {
                 result = Err(if pane_reappeared {
                     "A pane appeared in the worktree while deletion was being confirmed".to_owned()
@@ -1046,7 +1058,7 @@ impl Runtime {
         let removal = self.snapshot.worktree_removal.as_mut().unwrap();
         match result {
             Ok(()) => {
-                removal.phase = "ready".to_owned();
+                removal.phase = "removing".to_owned();
                 removal.message = None;
             }
             Err(message) => {
@@ -1092,39 +1104,57 @@ impl Runtime {
         changed
     }
 
-    pub(super) fn finish_worktree_removal(
+    /// The removal the close worker may now execute: the active request, once
+    /// every pane is confirmed gone and the identity still matched.
+    pub(crate) fn confirmed_worktree_removal(
+        &self,
+        id: u64,
+    ) -> Option<crate::live::cleanup::ConfirmedRemoval> {
+        let removal = self.snapshot.worktree_removal.as_ref()?;
+        (removal.id == id && removal.phase == "removing").then(|| {
+            crate::live::cleanup::ConfirmedRemoval {
+                repository_root: removal.repository_root.clone(),
+                checkout_path: removal.checkout_path.clone(),
+                expected_head_sha: removal.expected_head_sha.clone(),
+                expected_branch: removal.expected_branch.clone(),
+                protected_base_branch: removal.protected_base_branch.clone(),
+                delete_branch: removal
+                    .delete_branch
+                    .then(|| removal.branch.clone())
+                    .flatten(),
+            }
+        })
+    }
+
+    /// Settles the active removal with what Git did. Only the worker that ran
+    /// the removal calls this, so a result can never name another request.
+    pub(crate) fn ingest_worktree_removal_result(
         &mut self,
-        payload: WorktreeRemovalFinishedPayload,
+        id: u64,
+        result: Result<String, String>,
     ) -> bool {
-        let Some(removal) = self.snapshot.worktree_removal.as_mut() else {
-            self.set_error(
-                "worktree.remove_result_without_request",
-                "A worktree removal result arrived without an active request",
-                false,
-            );
-            return true;
+        let Some(removal) = self
+            .snapshot
+            .worktree_removal
+            .as_mut()
+            .filter(|removal| removal.id == id && removal.phase == "removing")
+        else {
+            crate::diagnostic!(serde_json::json!({
+                "component": "worktree_removal",
+                "kind": "result_without_request",
+                "id": id,
+            }));
+            return false;
         };
-        if removal.id != payload.id || removal.phase != "ready" {
-            self.set_error(
-                "worktree.remove_result_stale",
-                format!(
-                    "Worktree removal result {} is not the active ready request",
-                    payload.id
-                ),
-                false,
-            );
-            return true;
-        }
-        removal.phase = if payload.removed {
-            "finished"
-        } else {
-            "failed"
-        }
-        .to_owned();
-        removal.message = Some(payload.message);
-        if payload.removed {
-            self.refresh_worktrees();
-        }
+        let (phase, message) = match result {
+            Ok(message) => ("finished", message),
+            Err(message) => ("failed", message),
+        };
+        removal.phase = phase.to_owned();
+        removal.message = Some(message);
+        // A refused removal re-reads too: whatever stopped it (a moved HEAD,
+        // a dirty file) is news the catalog should show.
+        self.refresh_worktrees();
         true
     }
 

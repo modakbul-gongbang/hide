@@ -197,6 +197,54 @@ impl Runtime {
         }
     }
 
+    /// A fresh connection attempt for a registered device that is not
+    /// connected: the old coordinator and transports are retired and a new
+    /// one starts, so the row reports this attempt rather than a cached one.
+    /// Nothing on the host is touched, and the operator's device focus stays.
+    pub(super) fn retry_remote_device(&mut self, device_id: &str) -> bool {
+        let Some(registration) = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .find(|registration| registration.id == device_id)
+            .cloned()
+        else {
+            self.set_error(
+                "remote.unknown_target",
+                format!("Device {device_id} is not registered"),
+                false,
+            );
+            return true;
+        };
+        if self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .any(|status| status.target_id == device_id && status.state == "ready")
+        {
+            self.set_error(
+                "remote.retry_connected",
+                format!("Device {device_id} is already connected"),
+                false,
+            );
+            return true;
+        }
+        let focused_device = self.snapshot.navigator.focused_device_id.clone();
+        let persisted_focus = self.snapshot.ui_state.focused_device_id.clone();
+        self.disconnect_remote_device(device_id);
+        self.snapshot.navigator.focused_device_id = focused_device;
+        self.snapshot.ui_state.focused_device_id = persisted_focus;
+        self.push_diagnostic(
+            "device.retry",
+            format!("Reconnecting SSH device {device_id}"),
+        );
+        self.connect_remote_device(&registration);
+        self.refresh_device_snapshots();
+        true
+    }
+
     pub(crate) fn take_retired_remote_syncs(&mut self) -> Vec<session_sync::SessionSyncHandle> {
         std::mem::take(&mut self.retired_remote_syncs)
     }

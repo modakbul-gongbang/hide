@@ -305,6 +305,96 @@ fn remove_worktree(repository_root: &Path, checkout: &Path) -> Result<String, St
     Ok("Worktree folder and its build output removed. Branch and Git history kept.".into())
 }
 
+/// One operator-confirmed worktree deletion, as the runtime recorded it when
+/// the operator confirmed and Herdr then confirmed every pane was gone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfirmedRemoval {
+    pub repository_root: String,
+    pub checkout_path: String,
+    pub expected_head_sha: Option<String>,
+    pub expected_branch: Option<String>,
+    pub protected_base_branch: Option<String>,
+    /// The branch to delete with `git branch -d` after the folder is gone;
+    /// `None` keeps it.
+    pub delete_branch: Option<String>,
+}
+
+/// Rechecks the confirmed target against Git's registration and removes it
+/// without force. The recheck is the last line between a confirmation the
+/// operator gave minutes ago and the folder as it is now: a moved HEAD, a
+/// branch that became the protected base, a nested worktree or a new dirty
+/// file each stop the removal and leave the folder where it is.
+///
+/// The branch is deleted only with `-d`, so an unmerged branch survives and
+/// the reason is reported; the folder's removal still stands.
+pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
+    let root = Path::new(&request.repository_root);
+    let target = Path::new(&request.checkout_path);
+    let stopped = |detail: String| {
+        format!(
+            "Worktree removal stopped: {detail}. The worktree remains; panes already closed stay closed."
+        )
+    };
+    let rows = listed(root).map_err(|error| {
+        stopped(format!(
+            "could not re-read the worktree registration: {error}"
+        ))
+    })?;
+    let Some(index) = rows.iter().position(|row| Path::new(&row.path) == target) else {
+        return Err(stopped(
+            "the worktree is no longer registered at this path".into(),
+        ));
+    };
+    if index == 0 {
+        return Err(stopped("the main worktree cannot be deleted".into()));
+    }
+    let current = &rows[index];
+    if current.head != request.expected_head_sha || current.branch != request.expected_branch {
+        return Err(stopped(
+            "the worktree identity changed after confirmation".into(),
+        ));
+    }
+    if current.branch.is_some() && current.branch == request.protected_base_branch {
+        return Err(stopped(
+            "the worktree now holds the protected base branch".into(),
+        ));
+    }
+    if rows
+        .iter()
+        .any(|row| Path::new(&row.path) != target && Path::new(&row.path).starts_with(target))
+    {
+        return Err(stopped(
+            "the worktree now contains a nested worktree".into(),
+        ));
+    }
+    if target
+        .try_exists()
+        .map_err(|error| stopped(error.to_string()))?
+    {
+        let status = git(
+            target,
+            &["status", "--porcelain=v1", "--untracked-files=all"],
+        )
+        .map_err(|error| stopped(format!("could not recheck the worktree state: {error}")))?;
+        if !status.trim().is_empty() {
+            return Err(stopped(
+                "the worktree became dirty after confirmation".into(),
+            ));
+        }
+    }
+    remove_worktree(root, target).map_err(|error| {
+        format!("git worktree remove failed: {error}. The worktree remains; panes already closed stay closed.")
+    })?;
+    let path = target.display();
+    let Some(branch) = request.delete_branch.as_deref() else {
+        return Ok(format!("Deleted {path}. Its local branch was kept."));
+    };
+    match git(root, &["branch", "-d", "--", branch]) {
+        Ok(_) => Ok(format!("Deleted {path} and local branch {branch}.")),
+        Err(detail) => Ok(format!("Deleted {path}; branch {branch} remains: {detail}")),
+    }
+}
+
 pub fn spawn(
     context: LiveContext,
     review: CleanupSnapshot,
@@ -457,6 +547,156 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    fn commit(path: &Path, message: &str) {
+        git(
+            path,
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                message,
+            ],
+        )
+        .unwrap();
+    }
+
+    fn confirmed(f: &Fixture, worktree: &Path, delete_branch: bool) -> ConfirmedRemoval {
+        ConfirmedRemoval {
+            repository_root: f.main.to_string_lossy().into_owned(),
+            checkout_path: worktree.to_string_lossy().into_owned(),
+            expected_head_sha: Some(
+                git(worktree, &["rev-parse", "HEAD"])
+                    .unwrap()
+                    .trim()
+                    .to_owned(),
+            ),
+            expected_branch: worktree
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+            protected_base_branch: Some("main".into()),
+            delete_branch: delete_branch
+                .then(|| worktree.file_name().unwrap().to_string_lossy().into_owned()),
+        }
+    }
+
+    fn branch_exists(f: &Fixture, branch: &str) -> bool {
+        !git(&f.main, &["branch", "--list", branch])
+            .unwrap()
+            .trim()
+            .is_empty()
+    }
+
+    #[test]
+    fn a_confirmed_removal_keeps_a_dirty_worktree_and_removes_it_once_clean() {
+        let f = Fixture::new();
+        let worktree = f.add("linked");
+        let request = confirmed(&f, &worktree, false);
+        std::fs::write(worktree.join("tracked"), "dirty").unwrap();
+
+        let refused = remove_confirmed(&request).unwrap_err();
+        assert!(refused.contains("became dirty"), "{refused}");
+        assert!(worktree.exists());
+
+        std::fs::write(worktree.join("tracked"), "keep").unwrap();
+        let removed = remove_confirmed(&request).unwrap();
+        assert!(removed.contains("local branch was kept"), "{removed}");
+        assert!(!worktree.exists());
+        assert!(branch_exists(&f, "linked"));
+    }
+
+    #[test]
+    fn a_confirmed_removal_of_a_missing_folder_clears_the_registration_and_keeps_the_branch() {
+        let f = Fixture::new();
+        let worktree = f.add("linked");
+        let request = confirmed(&f, &worktree, false);
+        std::fs::remove_dir_all(&worktree).unwrap();
+
+        remove_confirmed(&request).unwrap();
+        assert!(
+            !git(&f.main, &["worktree", "list", "--porcelain"])
+                .unwrap()
+                .contains(&*worktree.to_string_lossy())
+        );
+        assert!(branch_exists(&f, "linked"));
+    }
+
+    #[test]
+    fn a_confirmed_removal_deletes_a_merged_branch_only_with_safe_deletion() {
+        let f = Fixture::new();
+        let merged = f.add("merged");
+        assert!(
+            remove_confirmed(&confirmed(&f, &merged, true))
+                .unwrap()
+                .contains("and local branch merged")
+        );
+        assert!(!branch_exists(&f, "merged"));
+
+        let ahead = f.add("ahead");
+        commit(&ahead, "not merged anywhere");
+        let message = remove_confirmed(&confirmed(&f, &ahead, true)).unwrap();
+        assert!(message.contains("branch ahead remains"), "{message}");
+        assert!(!ahead.exists());
+        assert!(branch_exists(&f, "ahead"));
+    }
+
+    #[test]
+    fn a_confirmed_removal_stops_when_the_worktree_changed_after_confirmation() {
+        let f = Fixture::new();
+        let worktree = f.add("linked");
+        let request = confirmed(&f, &worktree, true);
+        commit(&worktree, "moved after confirmation");
+
+        let refused = remove_confirmed(&request).unwrap_err();
+        assert!(refused.contains("identity changed"), "{refused}");
+        assert!(worktree.exists());
+        assert!(branch_exists(&f, "linked"));
+    }
+
+    #[test]
+    fn a_confirmed_removal_refuses_the_main_checkout_and_the_protected_base() {
+        let f = Fixture::new();
+        let mut main = confirmed(&f, &f.main, false);
+        main.expected_branch = Some("main".into());
+        assert!(
+            remove_confirmed(&main)
+                .unwrap_err()
+                .contains("main worktree")
+        );
+
+        let worktree = f.add("base");
+        let mut base = confirmed(&f, &worktree, false);
+        base.protected_base_branch = Some("base".into());
+        assert!(
+            remove_confirmed(&base)
+                .unwrap_err()
+                .contains("protected base")
+        );
+        assert!(worktree.exists());
+
+        let nested = f.root.join("base").join("inner");
+        git(
+            &f.main,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "inner",
+                nested.to_str().unwrap(),
+                "main",
+            ],
+        )
+        .unwrap();
+        let refused = remove_confirmed(&confirmed(&f, &worktree, false)).unwrap_err();
+        assert!(refused.contains("nested worktree"), "{refused}");
+        assert!(nested.exists());
     }
 
     #[test]

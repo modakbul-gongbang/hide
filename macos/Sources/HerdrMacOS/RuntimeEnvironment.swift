@@ -444,30 +444,10 @@ struct HerdrCommandResult: Sendable {
     let error: Data
 }
 
-/// How the chat launcher reaches Herdr.
-///
-/// A closure rather than a hard-wired `Process` so a failure at any of the
-/// four steps can be injected in a test. The failure paths are the ones worth
-/// proving: a step that fails silently and reads as success is exactly the
-/// defect the step names exist to prevent, and it cannot be reached by running
-/// a real server successfully.
-typealias HerdrCommandRunner = @Sendable (_ arguments: [String]) -> HerdrCommandResult
-
 /// The two agent CLIs Hide can start.
 enum AgentProvider: String, CaseIterable, Equatable, Sendable {
     case claude
     case codex
-}
-
-enum AgentLaunchArguments {
-    static func build(provider: AgentProvider, paneID: String) -> [String] {
-        let agent = provider.rawValue
-        return [
-            "agent", "start", "hide-\(agent)",
-            "--kind", agent,
-            "--pane", paneID,
-        ]
-    }
 }
 
 enum HerdrLiveWorkspaceIdentity {
@@ -524,90 +504,6 @@ enum HerdrErrorEnvelope {
 
     static func message(in text: String) -> String? {
         error(in: text)?.message
-    }
-}
-
-/// What a launch did.
-///
-/// `paneID` is always the pane the launch was asked to start in: on failure
-/// the pane stays as a shell prompt the operator can use, and the shell
-/// needs its id to focus it.
-struct AgentLaunchResult: Equatable, Sendable {
-    let succeeded: Bool
-    let message: String
-    let paneID: String
-}
-
-/// Starts an agent in a pane another owner has already created.
-///
-/// The core creates the worktree's pane and reports it back; this is the
-/// agent-owned half that follows. A failure leaves the pane alive as a shell
-/// prompt rather than tidying away work the operator can still use.
-///
-/// hide supplies non-secret routing arguments only; authentication stays with
-/// the selected CLI and the Herdr server.
-enum HerdrAgentLauncher {
-    static func startInPane(
-        paneID: String,
-        path: String,
-        provider: AgentProvider,
-        agentIsInstalled: Bool,
-        run: HerdrCommandRunner
-    ) -> AgentLaunchResult {
-        guard agentIsInstalled else {
-            return AgentLaunchResult(
-                succeeded: false,
-                message: "\(provider.rawValue) is not installed on this Mac. Install it, then try again.",
-                paneID: paneID
-            )
-        }
-        let result = run(AgentLaunchArguments.build(provider: provider, paneID: paneID))
-        let succeeded = result.status == 0
-        HideLaunchTrace.mark(
-            succeeded ? "agent.launch.started" : "agent.launch.failed",
-            detail: "kind=\(provider.rawValue) pane=\(paneID)"
-        )
-        guard succeeded else {
-            let text = String(decoding: result.error, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let detail = HerdrErrorEnvelope.message(in: text) ?? text
-            return AgentLaunchResult(
-                succeeded: false,
-                message: "Agent could not start: \(detail.isEmpty ? "Herdr refused the agent start." : detail)",
-                paneID: paneID
-            )
-        }
-        return AgentLaunchResult(
-            succeeded: true,
-            message: "Started \(provider.rawValue) in \(URL(fileURLWithPath: path).lastPathComponent).",
-            paneID: paneID
-        )
-    }
-
-    static func run(herdrPath: String, arguments: [String]) -> HerdrCommandResult {
-        let process = Process()
-        let output = Pipe()
-        let error = Pipe()
-        process.executableURL = URL(fileURLWithPath: herdrPath)
-        process.arguments = arguments
-        process.environment = HideRuntimeEnvironment.childEnvironment()
-        process.standardOutput = output
-        process.standardError = error
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return HerdrCommandResult(
-                status: 127,
-                output: Data(),
-                error: Data(error.localizedDescription.utf8)
-            )
-        }
-        return HerdrCommandResult(
-            status: process.terminationStatus,
-            output: output.fileHandleForReading.readDataToEndOfFile(),
-            error: error.fileHandleForReading.readDataToEndOfFile()
-        )
     }
 }
 

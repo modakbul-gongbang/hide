@@ -1417,6 +1417,11 @@ pub struct UiStateSnapshot {
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
+    /// The web shell's own pane chords, command id to chord. They live apart
+    /// from `shortcut_bindings` because the two hosts reserve different keys
+    /// (Chrome keeps ⌘W), so one host's rebind must never become the other's.
+    #[serde(default)]
+    pub browser_shortcut_bindings: BTreeMap<String, String>,
     pub pet_visible: bool,
     pub pet_origin: Option<PetOriginSnapshot>,
     pub pet_shortcut: Option<String>,
@@ -1543,6 +1548,7 @@ impl Default for UiStateSnapshot {
             selected_path: None,
             selected_pane_id: None,
             shortcut_bindings: BTreeMap::new(),
+            browser_shortcut_bindings: BTreeMap::new(),
             // The pet shows itself on a first run; hiding it is a choice the
             // user makes and the store then remembers (D-09).
             pet_visible: true,
@@ -1963,6 +1969,12 @@ pub struct TaskOperationSnapshot {
     pub pane_id: Option<String>,
     pub agent_kind: Option<String>,
     pub message: Option<String>,
+    /// How starting `agent_kind` in the created pane went, kept apart from
+    /// the creation itself: `starting`, `started`, `failed`, or `unknown`
+    /// when Herdr did not answer and the pane has to be looked at. `None`
+    /// when the task started no agent.
+    pub agent_phase: Option<String>,
+    pub agent_message: Option<String>,
 }
 
 /// The explorer's most recent filesystem change and how far it got.
