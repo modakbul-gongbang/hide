@@ -891,6 +891,7 @@ Switching Workspaces replaces the decoration root, and no per-row, hover, select
 The web shell's Workspace screen follows the approved S6 proposal (candidate A), and the native shell is unchanged until its own stage.
 Its toolbar reads left to right: the path back (`Main / Project / Workspace`, with the device named when it is not this Mac), the layout switch, then the two tool toggles.
 The layout switch is three adjacent icons in one segmented group, Agents only, Agents and Views, and Views only, with the chosen one on `{colors.elevated}` and the others muted; the same three names appear in its menu and as palette commands, and each icon's tooltip is its accessible name.
+Its library master is `Component / Layout switch` in `design/hide-ui.lib.pen`.
 Explorer and History are toggles that open and close independently, drawn pressed while shown; with both shown they share the tool column, Explorer above History, and each has its own close.
 A right-click or the menu key on the toolbar offers the layouts, each tool, Copy Workspace path and Open Project Overview.
 
@@ -904,6 +905,7 @@ A View tab carries the file-type mark, and a diff tab the comparison mark; a fil
 Closing a View is always called Close view, distinct from moving a file to the Trash and from closing a pane or tab.
 
 A pane whose agent delegated work shows every direct child on one row under its header, each chip a status mark, the provider mark and a title capped at `--size-pane-child-chip-max`; the row scrolls sideways instead of growing, and a pane with no children has no row.
+Its library masters are `Component / Pane child chip` and `Component / Pane child row`; the native pane header keeps its first child and `+N` until the native shell changes.
 A chip opens the existing child at once; while that move is in flight the chip shows `…` and repeats of it are ignored, and a failure shows the core's reason under the header with Retry, when the core says it can be retried, and Dismiss.
 A child pane has a compact Return mark in its identity row, named with the parent in its tooltip and accessible name.
 The pane menu, from its `⋯` or a right-click on the header, lists the parent, the other siblings and the children as explicit Open items, then Copy pane name and Close pane; opening it moves no focus and marks nothing read.
