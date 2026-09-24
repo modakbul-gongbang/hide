@@ -1148,6 +1148,45 @@ test("of two legacy drafts for one file the newer is restored, and the older is 
   }
 });
 
+test("one draft id in both legacy stores migrates as its newer row (S5.5 B12)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  try {
+    const app = await leaveApp(page);
+    await page.evaluate(async ({ path, root }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 3);
+        opened.onupgradeneeded = () => {
+          opened.result.createObjectStore("buffers", { keyPath: "id" });
+          opened.result.createObjectStore("buffers_v2", { keyPath: "id" });
+        };
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction(["buffers", "buffers_v2"], "readwrite");
+          const now = Date.now();
+          // The store read first holds the newer row, so a row-by-row merge
+          // would let the older one from the second store overwrite it.
+          transaction.objectStore("buffers").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 96;\n", updated_at: now });
+          transaction.objectStore("buffers_v2").put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 97;\n", updated_at: now - 60_000 });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file, root: repo });
+    await page.goto(app);
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
 test("an old draft is restored, never discarded for its age (S5.5 B12)", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { file, repo } = fixture;
