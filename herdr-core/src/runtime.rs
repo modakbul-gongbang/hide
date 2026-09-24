@@ -780,6 +780,9 @@ pub struct Runtime {
     /// are grouped from the helper's facts (`device_catalog`).
     device_raw_sessions: HashMap<String, RemoteSessionSnapshot>,
     device_facts: HashMap<String, crate::device_catalog::DeviceFacts>,
+    /// Each device's repositories' worktrees, read through its helper
+    /// (`hide_host::worktrees`); the device's rows carry them.
+    device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
     /// This machine's file host: the helper's dispatch, run in place.
     local_host: Arc<dyn crate::host_access::HostChannel>,
     /// Where each open file tab's saves go.
@@ -1149,6 +1152,7 @@ impl Runtime {
             changes_published_key: None,
             device_raw_sessions: HashMap::new(),
             device_facts: HashMap::new(),
+            device_worktrees: HashMap::new(),
             local_host: Arc::new(crate::host_access::InProcessHost),
             document_places: HashMap::new(),
             document_saves: HashMap::new(),

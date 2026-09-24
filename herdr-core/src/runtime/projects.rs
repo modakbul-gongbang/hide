@@ -433,7 +433,6 @@ impl Runtime {
                 worktree.deletion_gate = crate::worktrees::deletion_gate(
                     worktree,
                     worktree.branch == project.base_branch && project.base_branch.is_some(),
-                    false,
                     worktree.pane_count,
                     worktree.running_agent_count,
                 );
@@ -743,6 +742,13 @@ impl Runtime {
             );
             return true;
         }
+        if let Some(device) = payload
+            .device_id
+            .clone()
+            .filter(|device| device != workspace::LOCAL_DEVICE_ID)
+        {
+            return self.remove_device_worktree(&device, payload);
+        }
         let target = self.worktree_catalog.projects.iter().find_map(|project| {
             project
                 .worktrees
@@ -784,6 +790,7 @@ impl Runtime {
         let id = self.next_worktree_removal_id;
         self.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
             id,
+            device_id: None,
             repository_root,
             checkout_path: payload.checkout_path.clone(),
             expected_head_sha: worktree.head_sha.clone(),
@@ -804,13 +811,108 @@ impl Runtime {
                 "pane_ids":pane_ids,
             })
         );
-        let Some(context) = self.live.as_ref().cloned() else {
-            return self.ingest_worktree_close_result(
-                id,
-                &[],
-                Err("Deleting a worktree needs a live Herdr connection".to_owned()),
-            );
+        let context = match self.local_worktree_target() {
+            Ok(context) => context,
+            Err(message) => {
+                return self.ingest_worktree_close_result(
+                    id,
+                    &[],
+                    Err(format!(
+                        "Deleting a worktree needs a live Herdr connection: {message}"
+                    )),
+                );
+            }
         };
+        if let Err(message) =
+            live::spawn_worktree_close(context, id, payload.checkout_path, pane_ids)
+        {
+            self.ingest_worktree_close_result(id, &[], Err(message));
+        }
+        true
+    }
+
+    /// `remove_worktree` for a device's linked worktree (PRD S5.5 B28, B29):
+    /// the same gate, receipt and phases as this machine's, with the device's
+    /// Herdr closing its panes and its helper rechecking and removing.
+    fn remove_device_worktree(&mut self, device: &str, payload: RemoveWorktreePayload) -> bool {
+        let target = self.device_worktrees.get(device).and_then(|worktrees| {
+            worktrees.projects.values().find_map(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .find(|worktree| worktree.path == payload.checkout_path)
+                    .map(|worktree| {
+                        (
+                            project.root_path.clone(),
+                            project.base_branch.clone(),
+                            worktree.clone(),
+                        )
+                    })
+            })
+        });
+        let Some((repository_root, protected_base_branch, worktree)) = target else {
+            self.set_error(
+                "worktree.remove_unknown",
+                format!("Worktree is no longer listed: {}", payload.checkout_path),
+                true,
+            );
+            self.request_device_worktrees(device, true);
+            return true;
+        };
+        if let Some(reason) = worktree.deletion_gate.blocked_reason.as_ref() {
+            self.set_error("worktree.remove_blocked", reason.clone(), true);
+            return true;
+        }
+        let context = match self.device_worktree_target(device) {
+            Ok(context) => context,
+            Err(message) => {
+                self.set_error(
+                    "worktree.remove_unavailable",
+                    format!("Deleting a worktree on this device needs its connection: {message}"),
+                    true,
+                );
+                return true;
+            }
+        };
+        // Herdr closes a device's panes by its own ids.
+        let pane_ids = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device)
+            .and_then(|status| status.session.as_ref())
+            .into_iter()
+            .flat_map(|session| &session.workspaces)
+            .flat_map(|workspace| &workspace.checkouts)
+            .filter(|checkout| checkout.path == payload.checkout_path)
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes)
+            .filter_map(|pane| super::remote_pane_source_id(device, &pane.id))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        self.next_worktree_removal_id = self.next_worktree_removal_id.wrapping_add(1).max(1);
+        let id = self.next_worktree_removal_id;
+        self.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+            id,
+            device_id: Some(device.to_owned()),
+            repository_root,
+            checkout_path: payload.checkout_path.clone(),
+            expected_head_sha: worktree.head_sha.clone(),
+            expected_branch: worktree.branch.clone(),
+            protected_base_branch,
+            branch: worktree.branch,
+            delete_branch: payload.delete_branch && worktree.deletion_gate.can_delete_branch,
+            phase: "closing".to_owned(),
+            message: None,
+        });
+        crate::diagnostic!(serde_json::json!({
+            "component": "worktree_removal",
+            "kind": "close_requested",
+            "target": device,
+            "id": id,
+            "pane_count": pane_ids.len(),
+        }));
         if let Err(message) =
             live::spawn_worktree_close(context, id, payload.checkout_path, pane_ids)
         {
@@ -1101,10 +1203,17 @@ impl Runtime {
         }
         let mut result = result;
         if result.is_ok() {
-            let current = self
-                .worktree_catalog
-                .projects
-                .iter()
+            let device = active.device_id.as_deref();
+            let catalog = match device {
+                Some(device) => self
+                    .device_worktrees
+                    .get(device)
+                    .map(|worktrees| worktrees.projects.values().collect::<Vec<_>>())
+                    .unwrap_or_default(),
+                None => self.worktree_catalog.projects.iter().collect(),
+            };
+            let current = catalog
+                .into_iter()
                 .flat_map(|project| &project.worktrees)
                 .find(|worktree| worktree.path == active.checkout_path);
             let identity_changed = current.is_none_or(|worktree| {
@@ -1112,16 +1221,32 @@ impl Runtime {
                     || worktree.branch != active.expected_branch
                     || worktree.deletion_gate.blocked_reason.is_some()
             });
-            let pane_reappeared = self
-                .snapshot
-                .navigator
-                .workspaces
+            // The close worker names a device's panes by Herdr's own ids.
+            let workspaces = match device {
+                Some(device) => self
+                    .snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .find(|status| status.target_id == device)
+                    .and_then(|status| status.session.as_ref())
+                    .map(|session| session.workspaces.as_slice())
+                    .unwrap_or_default(),
+                None => self.snapshot.navigator.workspaces.as_slice(),
+            };
+            let pane_reappeared = workspaces
                 .iter()
                 .flat_map(|workspace| &workspace.checkouts)
                 .filter(|checkout| checkout.path == active.checkout_path)
                 .flat_map(|checkout| &checkout.tabs)
                 .flat_map(|tab| &tab.panes)
-                .any(|pane| !closed_pane_ids.contains(&pane.id));
+                .any(|pane| {
+                    let id = match device {
+                        Some(device) => super::remote_pane_source_id(device, &pane.id),
+                        None => Some(pane.id.as_str()),
+                    };
+                    id.is_none_or(|id| !closed_pane_ids.iter().any(|closed| closed == id))
+                });
             if identity_changed || pane_reappeared {
                 result = Err(if pane_reappeared {
                     "A pane appeared in the worktree while deletion was being confirmed".to_owned()
@@ -1185,10 +1310,10 @@ impl Runtime {
     pub(crate) fn confirmed_worktree_removal(
         &self,
         id: u64,
-    ) -> Option<crate::live::cleanup::ConfirmedRemoval> {
+    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
         let removal = self.snapshot.worktree_removal.as_ref()?;
         (removal.id == id && removal.phase == "removing").then(|| {
-            crate::live::cleanup::ConfirmedRemoval {
+            hide_host::worktrees::ConfirmedRemoval {
                 repository_root: removal.repository_root.clone(),
                 checkout_path: removal.checkout_path.clone(),
                 expected_head_sha: removal.expected_head_sha.clone(),
@@ -1230,8 +1355,37 @@ impl Runtime {
         removal.message = Some(message);
         // A refused removal re-reads too: whatever stopped it (a moved HEAD,
         // a dirty file) is news the catalog should show.
-        self.refresh_worktrees();
+        match removal.device_id.clone() {
+            Some(device) => {
+                self.request_device_worktrees(&device, true);
+            }
+            None => self.refresh_worktrees(),
+        }
         true
+    }
+
+    /// This machine's Herdr and file host, for a worktree task here.
+    pub(super) fn local_worktree_target(&self) -> Result<live::WorktreeTarget, String> {
+        self.live
+            .as_ref()
+            .map(|context| live::WorktreeTarget::local(context, Arc::clone(&self.local_host)))
+            .ok_or_else(|| "A live Herdr connection is required".to_owned())
+    }
+
+    /// A device's Herdr and file helper, for a worktree task there. Both
+    /// have to be up: Herdr creates and closes the panes, the helper checks
+    /// and removes on the device's disk.
+    pub(super) fn device_worktree_target(
+        &mut self,
+        device: &str,
+    ) -> Result<live::WorktreeTarget, String> {
+        let control = self
+            .remote_controls
+            .get(device)
+            .cloned()
+            .ok_or_else(|| "The device's Herdr connection is unavailable".to_owned())?;
+        let host = self.device_channel(device)?;
+        Ok(live::WorktreeTarget::device(&control, host))
     }
 
     pub fn disk_request(&self) -> crate::disk::DiskRequest {
@@ -1435,15 +1589,37 @@ impl Runtime {
             );
             return true;
         }
-        let has_branch = self
-            .worktree_catalog
-            .project(&payload.repository_root)
-            .is_some_and(|project| {
-                project
-                    .worktrees
-                    .iter()
-                    .any(|row| row.branch.is_some() && row.head_sha.is_some())
-            });
+        let device = payload
+            .device_id
+            .clone()
+            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
+        let listed = match device.as_deref() {
+            Some(device) => self
+                .device_worktrees
+                .get(device)
+                .and_then(|worktrees| worktrees.projects.get(&payload.repository_root)),
+            None => self.worktree_catalog.project(&payload.repository_root),
+        };
+        // A repository whose worktrees have not been read yet is not one
+        // without branches: a device's are read after its helper answers.
+        let Some(listed) = listed else {
+            self.set_error(
+                "worktree.create_unread",
+                format!(
+                    "The worktrees of {} have not been read yet; try again in a moment",
+                    payload.repository_root
+                ),
+                true,
+            );
+            if let Some(device) = device.as_deref() {
+                self.request_device_worktrees(device, false);
+            }
+            return true;
+        };
+        let has_branch = listed
+            .worktrees
+            .iter()
+            .any(|row| row.branch.is_some() && row.head_sha.is_some());
         if !has_branch {
             self.set_error(
                 "worktree.create_without_branches",
@@ -1465,6 +1641,9 @@ impl Runtime {
                 return true;
             }
         };
+        if let Some(operation) = self.snapshot.task_operation.as_mut() {
+            operation.device_id = device.clone();
+        }
         let request = live::WorktreeTaskRequest {
             id,
             repository_root: payload.repository_root,
@@ -1474,11 +1653,16 @@ impl Runtime {
             focus: true,
             purpose: payload.purpose,
         };
-        let Some(context) = self.live.as_ref().cloned() else {
-            return self.ingest_task_operation_result(
-                id,
-                Err("create worktree: a live Herdr connection is required".into()),
-            );
+        let context = match device.as_deref() {
+            Some(device) => self.device_worktree_target(device),
+            None => self.local_worktree_target(),
+        };
+        let context = match context {
+            Ok(context) => context,
+            Err(message) => {
+                return self
+                    .ingest_task_operation_result(id, Err(format!("create worktree: {message}")));
+            }
         };
         if let Err(message) = live::spawn_worktree_create(context, request) {
             return self.ingest_task_operation_result(id, Err(message));

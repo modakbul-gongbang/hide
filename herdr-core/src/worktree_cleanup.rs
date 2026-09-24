@@ -26,46 +26,28 @@ pub struct CleanupRow {
     pub message: Option<String>,
 }
 
-/// Git's NUL porcelain avoids interpreting newlines or quoting in folder names.
+/// The review's rows: Git's registration with the reason each one is not a
+/// candidate.
 fn listed(root: &Path) -> Result<Vec<CleanupRow>, String> {
-    let text = git(root, &["worktree", "list", "--porcelain", "-z"])?;
-    let mut rows = Vec::new();
-    for record in text.split("\0\0").filter(|v| !v.is_empty()) {
-        let fields: Vec<_> = record.split('\0').collect();
-        let path = fields
-            .iter()
-            .find_map(|v| v.strip_prefix("worktree "))
-            .ok_or("Git returned an invalid worktree record. Refresh the review.")?;
-        let mut row = CleanupRow {
-            path: path.into(),
+    Ok(hide_host::worktrees::registered(root)?
+        .into_iter()
+        .enumerate()
+        .map(|(index, registered)| CleanupRow {
+            exclusion: if index == 0 {
+                Some("Main checkout".into())
+            } else if registered.locked {
+                Some("Worktree is locked. Unlock it separately before reviewing again.".into())
+            } else if registered.unavailable {
+                Some("Worktree is unavailable".into())
+            } else {
+                None
+            },
+            path: registered.path,
+            branch: registered.branch,
+            head: registered.head,
             ..Default::default()
-        };
-        row.branch = fields
-            .iter()
-            .find_map(|v| v.strip_prefix("branch refs/heads/"))
-            .map(str::to_owned);
-        row.head = fields
-            .iter()
-            .find_map(|v| v.strip_prefix("HEAD "))
-            .map(str::to_owned);
-        row.exclusion = if rows.is_empty() {
-            Some("Main checkout".into())
-        } else if fields.iter().any(|v| v.starts_with("locked")) {
-            Some("Worktree is locked. Unlock it separately before reviewing again.".into())
-        } else if fields
-            .iter()
-            .any(|v| v.starts_with("prunable") || *v == "bare")
-        {
-            Some("Worktree is unavailable".into())
-        } else {
-            None
-        };
-        rows.push(row);
-    }
-    if rows.is_empty() {
-        return Err("Git returned no main checkout. Refresh the review.".into());
-    }
-    Ok(rows)
+        })
+        .collect())
 }
 
 fn pane_paths(context: &LiveContext) -> Result<Vec<PathBuf>, String> {
@@ -284,116 +266,7 @@ fn confirm(
     result
 }
 
-/// Removes the worktree folder and its registration, keeping the branch.
-///
-/// Every build cache the checkout owns lives inside it (`target/`,
-/// `macos/.build/`), so this one Git command is the whole cleanup.
-fn remove_worktree(repository_root: &Path, checkout: &Path) -> Result<String, String> {
-    git(
-        repository_root,
-        &["worktree", "remove", "--", &checkout.to_string_lossy()],
-    )?;
-    if listed(repository_root)?
-        .iter()
-        .any(|row| Path::new(&row.path) == checkout)
-        || checkout.try_exists().map_err(|error| error.to_string())?
-    {
-        return Err(
-            "Git acknowledged removal but the folder or registration remains. Review again.".into(),
-        );
-    }
-    Ok("Worktree folder and its build output removed. Branch and Git history kept.".into())
-}
-
-/// One operator-confirmed worktree deletion, as the runtime recorded it when
-/// the operator confirmed and Herdr then confirmed every pane was gone.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConfirmedRemoval {
-    pub repository_root: String,
-    pub checkout_path: String,
-    pub expected_head_sha: Option<String>,
-    pub expected_branch: Option<String>,
-    pub protected_base_branch: Option<String>,
-    /// The branch to delete with `git branch -d` after the folder is gone;
-    /// `None` keeps it.
-    pub delete_branch: Option<String>,
-}
-
-/// Rechecks the confirmed target against Git's registration and removes it
-/// without force. The recheck is the last line between a confirmation the
-/// operator gave minutes ago and the folder as it is now: a moved HEAD, a
-/// branch that became the protected base, a nested worktree or a new dirty
-/// file each stop the removal and leave the folder where it is.
-///
-/// The branch is deleted only with `-d`, so an unmerged branch survives and
-/// the reason is reported; the folder's removal still stands.
-pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
-    let root = Path::new(&request.repository_root);
-    let target = Path::new(&request.checkout_path);
-    let stopped = |detail: String| {
-        format!(
-            "Worktree removal stopped: {detail}. The worktree remains; panes already closed stay closed."
-        )
-    };
-    let rows = listed(root).map_err(|error| {
-        stopped(format!(
-            "could not re-read the worktree registration: {error}"
-        ))
-    })?;
-    let Some(index) = rows.iter().position(|row| Path::new(&row.path) == target) else {
-        return Err(stopped(
-            "the worktree is no longer registered at this path".into(),
-        ));
-    };
-    if index == 0 {
-        return Err(stopped("the main worktree cannot be deleted".into()));
-    }
-    let current = &rows[index];
-    if current.head != request.expected_head_sha || current.branch != request.expected_branch {
-        return Err(stopped(
-            "the worktree identity changed after confirmation".into(),
-        ));
-    }
-    if current.branch.is_some() && current.branch == request.protected_base_branch {
-        return Err(stopped(
-            "the worktree now holds the protected base branch".into(),
-        ));
-    }
-    if rows
-        .iter()
-        .any(|row| Path::new(&row.path) != target && Path::new(&row.path).starts_with(target))
-    {
-        return Err(stopped(
-            "the worktree now contains a nested worktree".into(),
-        ));
-    }
-    if target
-        .try_exists()
-        .map_err(|error| stopped(error.to_string()))?
-    {
-        let status = git(
-            target,
-            &["status", "--porcelain=v1", "--untracked-files=all"],
-        )
-        .map_err(|error| stopped(format!("could not recheck the worktree state: {error}")))?;
-        if !status.trim().is_empty() {
-            return Err(stopped(
-                "the worktree became dirty after confirmation".into(),
-            ));
-        }
-    }
-    remove_worktree(root, target).map_err(|error| {
-        format!("git worktree remove failed: {error}. The worktree remains; panes already closed stay closed.")
-    })?;
-    let path = target.display();
-    let Some(branch) = request.delete_branch.as_deref() else {
-        return Ok(format!("Deleted {path}. Its local branch was kept."));
-    };
-    match git(root, &["branch", "-d", "--", branch]) {
-        Ok(_) => Ok(format!("Deleted {path} and local branch {branch}.")),
-        Err(detail) => Ok(format!("Deleted {path}; branch {branch} remains: {detail}")),
-    }
-}
+use hide_host::worktrees::remove_worktree;
 
 pub fn spawn(
     context: LiveContext,
@@ -470,6 +343,7 @@ pub fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hide_host::worktrees::{ConfirmedRemoval, remove_confirmed};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);

@@ -10,7 +10,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use crate::model::{
@@ -65,12 +64,6 @@ type ObservedRequest = (u64, Vec<ProjectObservation>);
 type ProjectAnswer = (PathBuf, Option<ProjectWorktreesSnapshot>, Vec<PathBuf>);
 
 const FILE_STATS_PER_WAKE: usize = 32;
-
-/// The most one `git` invocation may take. A repository that cannot answer in
-/// this time reports its status unavailable rather than holding every other
-/// project's answer behind it; a status over evicted iCloud files ran for
-/// minutes before this bound existed.
-const GIT_DEADLINE: Duration = Duration::from_secs(15);
 
 pub struct WorktreeReader {
     inner: BackgroundRead<ObservedRequest, Vec<ProjectAnswer>>,
@@ -304,13 +297,10 @@ fn stat_tree(path: &Path, stamps: &mut Vec<(PathBuf, Option<std::time::SystemTim
 pub fn deletion_gate(
     worktree: &WorktreeSnapshot,
     is_base: bool,
-    remote: bool,
     pane_count: usize,
     running_agent_count: usize,
 ) -> WorktreeDeletionGateSnapshot {
-    let blocked_reason = if remote {
-        Some("Worktree deletion is available for local repositories only")
-    } else if worktree.is_main {
+    let blocked_reason = if worktree.is_main {
         Some("The main worktree cannot be deleted")
     } else if is_base {
         Some("The current base branch worktree cannot be deleted")
@@ -334,12 +324,18 @@ pub fn deletion_gate(
         }
     }
     if running_agent_count > 0 {
-        warnings.push(format!("{running_agent_count} running agents"));
+        warnings.push(if running_agent_count == 1 {
+            "1 running agent".to_owned()
+        } else {
+            format!("{running_agent_count} running agents")
+        });
     }
     WorktreeDeletionGateSnapshot {
         blocked_reason,
         warnings,
-        button_label: if pane_count > 0 {
+        button_label: if pane_count == 1 {
+            "Close 1 pane and delete".to_owned()
+        } else if pane_count > 0 {
             format!("Close {pane_count} panes and delete")
         } else {
             "Delete worktree…".to_owned()
@@ -350,565 +346,118 @@ pub fn deletion_gate(
     }
 }
 
+/// One project's rows: the host's Git facts with this machine's policy and
+/// decoration slots on them. The facts come from `hide_host::worktrees`, the
+/// same code a device's helper runs for a device's repository.
 fn read(project: &WorktreeProjectRequest) -> Option<ProjectWorktreesSnapshot> {
-    if !project.root_path.exists() {
-        return Some(ProjectWorktreesSnapshot {
-            root_path: project.root_path.to_string_lossy().into_owned(),
-            unavailable_reason: Some(format!(
-                "Repository unavailable: {}",
-                project.root_path.display()
-            )),
-            ..ProjectWorktreesSnapshot::default()
-        });
-    }
-    // A folder that is not a repository has no worktrees and is not a
-    // failure; the card and the tree both present it as a plain folder, so
-    // it contributes no project entry at all.
-    let root = main_worktree(&project.root_path)?;
-    let root_path = root.to_string_lossy().into_owned();
-    Some(read_project(
-        &root,
-        root_path,
+    let facts = hide_host::worktrees::read(
+        &project.root_path,
         &project.bases,
         project.base_override.as_deref(),
-    ))
+    )?;
+    Some(project_snapshot(facts))
 }
 
+#[cfg(test)]
 fn read_project(
     root: &Path,
     root_path: String,
     bases: &BTreeMap<String, String>,
     base_override: Option<&str>,
 ) -> ProjectWorktreesSnapshot {
-    let default_branch = default_branch(root);
-    let branches = local_branches(root);
-    let valid_override = base_override.filter(|base| resolvable_base(root, base).is_some());
-    let base_branch = valid_override
-        .map(str::to_owned)
-        .or_else(|| default_branch.clone());
-    let base_branch_fallback = base_override
-        .filter(|_| valid_override.is_none())
-        .map(|base| {
-            if default_branch.is_some() {
-                format!("Base branch {base} is unavailable; using repository default")
-            } else {
-                format!("Base branch {base} is unavailable; repository base is unknown")
-            }
-        });
-    let base_source = if valid_override.is_some() {
-        "specified"
-    } else if default_branch.is_some() {
-        "origin_head"
-    } else {
-        "unknown"
-    }
-    .to_owned();
-    let listed = match git(root, &["worktree", "list", "--porcelain"]) {
-        Ok(output) => output,
-        Err(reason) => {
-            crate::diagnostic!(serde_json::json!({
-                "component": "worktrees",
-                "kind": "worktree_list.failed",
-                "project": root_path,
-                "message": reason,
-            }));
-            return ProjectWorktreesSnapshot {
-                root_path,
-                default_branch,
-                worktrees: Vec::new(),
-                unavailable_reason: Some(reason),
-                ..ProjectWorktreesSnapshot::default()
-            };
-        }
-    };
-
-    let mut worktrees: Vec<WorktreeSnapshot> = parse_worktree_list(&listed, root)
-        .into_iter()
-        .filter(|listed| !listed.bare)
-        .map(|listed| {
-            describe(
-                listed,
-                bases,
-                base_branch.as_deref(),
-                if base_override.is_some() {
-                    base_branch.as_deref()
-                } else {
-                    None
-                },
-            )
-        })
-        .collect();
-    let paths: Vec<PathBuf> = worktrees.iter().map(|w| PathBuf::from(&w.path)).collect();
-    for worktree in &mut worktrees {
-        worktree.nested = paths
-            .iter()
-            .any(|p| p != Path::new(&worktree.path) && p.starts_with(&worktree.path));
-        worktree.deletion_gate = deletion_gate(
-            worktree,
-            worktree.branch == base_branch && base_branch.is_some(),
-            false,
-            0,
-            0,
-        );
-    }
-    // The main worktree leads so the project path and the first row agree.
-    if let Some(index) = worktrees.iter().position(|worktree| worktree.is_main)
-        && index != 0
-    {
-        let main = worktrees.remove(index);
-        worktrees.insert(0, main);
-    }
-    ProjectWorktreesSnapshot {
-        shared_git_path: git(
-            root,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )
-        .ok()
-        .map(|value| value.trim().to_owned()),
+    project_snapshot(hide_host::worktrees::read_project(
+        root,
         root_path,
-        default_branch,
-        branches,
-        worktrees,
-        unavailable_reason: None,
-        base_branch,
-        base_branch_fallback,
-        base_source,
+        bases,
+        base_override,
+    ))
+}
+
+/// A repository's host facts as the snapshot's project entry, each row
+/// carrying the deletion gate its facts decide. The gate's pane and agent
+/// counts are filled when the catalog places the row.
+pub fn project_snapshot(
+    facts: hide_host::worktrees::RepositoryWorktrees,
+) -> ProjectWorktreesSnapshot {
+    if let Some(reason) = facts.unavailable_reason.as_deref() {
+        crate::diagnostic!(serde_json::json!({
+            "component": "worktrees",
+            "kind": "worktree_list.failed",
+            "project": facts.root_path,
+            "message": reason,
+        }));
+    }
+    let base_branch = facts.base_branch.clone();
+    ProjectWorktreesSnapshot {
+        shared_git_path: facts.shared_git_path,
+        root_path: facts.root_path,
+        default_branch: facts.default_branch,
+        branches: facts.branches,
+        worktrees: facts
+            .worktrees
+            .into_iter()
+            .map(|row| {
+                let mut worktree = worktree_snapshot(row);
+                worktree.deletion_gate = deletion_gate(
+                    &worktree,
+                    worktree.branch == base_branch && base_branch.is_some(),
+                    0,
+                    0,
+                );
+                worktree
+            })
+            .collect(),
+        unavailable_reason: facts.unavailable_reason,
+        base_branch: facts.base_branch,
+        base_branch_fallback: facts.base_branch_fallback,
+        base_source: facts.base_source,
         ..Default::default()
     }
 }
 
-fn local_branches(root: &Path) -> Vec<String> {
-    git(
-        root,
-        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
-    )
-    .map(|output| {
-        let mut branches = output
-            .lines()
-            .map(str::trim)
-            .filter(|branch| !branch.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        branches.sort();
-        branches.dedup();
-        branches
-    })
-    .unwrap_or_default()
-}
-
-/// One record of `git worktree list --porcelain`, before any counting.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ListedWorktree {
-    pub path: PathBuf,
-    pub branch: Option<String>,
-    pub is_main: bool,
-    pub bare: bool,
-    pub head_sha: Option<String>,
-}
-
-/// Splits porcelain worktree records. Records are separated by a blank line
-/// and each begins with `worktree <path>`; `branch refs/heads/<name>` names
-/// the checked-out branch, and a detached head has no such line.
-///
-/// The first record is the main worktree, which is git's documented order and
-/// what tells a linked worktree apart without a second `rev-parse`.
-pub fn parse_worktree_list(output: &str, _root: &Path) -> Vec<ListedWorktree> {
-    output
-        .split("\n\n")
-        .filter_map(|record| {
-            let path = record
-                .lines()
-                .find_map(|line| line.strip_prefix("worktree "))?;
-            Some(ListedWorktree {
-                path: PathBuf::from(path),
-                branch: record
-                    .lines()
-                    .find_map(|line| line.strip_prefix("branch refs/heads/"))
-                    .map(str::to_owned),
-                head_sha: record
-                    .lines()
-                    .find_map(|line| line.strip_prefix("HEAD "))
-                    .filter(|sha| sha.chars().any(|character| character != '0'))
-                    .map(str::to_owned),
-                bare: record.lines().any(|line| line == "bare"),
-                is_main: false,
-            })
-        })
-        .enumerate()
-        .map(|(index, mut row)| {
-            row.is_main = index == 0;
-            row
-        })
-        .collect()
-}
-
-fn describe(
-    listed: ListedWorktree,
-    bases: &BTreeMap<String, String>,
-    default_branch: Option<&str>,
-    base_override: Option<&str>,
-) -> WorktreeSnapshot {
-    let path = listed.path.to_string_lossy().into_owned();
-    if !listed.path.exists() {
-        // Nothing can be counted against a path that is not there, and
-        // reporting zeros would read as a clean checkout rather than a gone
-        // one. The row shows `missing` and stops.
-        return WorktreeSnapshot {
-            path,
-            branch: listed.branch,
-            missing: true,
-            is_main: listed.is_main,
-            head_sha: listed.head_sha,
-            ..WorktreeSnapshot::default()
-        };
+fn worktree_snapshot(facts: hide_host::worktrees::WorktreeFacts) -> WorktreeSnapshot {
+    if let Some(reason) = facts.unavailable_reason.as_deref() {
+        crate::diagnostic!(serde_json::json!({
+            "component": "worktrees",
+            "kind": "worktree_status.unavailable",
+            "path": facts.path,
+            "message": reason,
+        }));
     }
-
-    let mut unavailable_reason = None;
-    let (dirty, changed_file_count) = record_failure(
-        working_tree_state(&listed.path),
-        &mut unavailable_reason,
-        (false, 0),
-    );
-    let base_branch = base_override
-        .map(str::to_owned)
-        .or_else(|| resolve_base(listed.branch.as_deref(), bases, default_branch));
-    let (ahead, behind) = base_branch
-        .as_deref()
-        .map(|base| ahead_behind(&listed.path, base))
-        .map(|result| record_failure(result, &mut unavailable_reason, (0, 0)))
-        .unwrap_or((0, 0));
-    let (added_lines, removed_lines) = base_branch
-        .as_deref()
-        .map(|base| committed_line_delta(&listed.path, base))
-        .map(|result| record_failure(result, &mut unavailable_reason, (0, 0)))
-        .unwrap_or((0, 0));
-
-    let merged = base_branch
-        .as_deref()
-        .and_then(|base| resolvable_base(&listed.path, base))
-        .and_then(|base| {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(&listed.path)
-                .args(["merge-base", "--is-ancestor", "HEAD", &base])
-                .output()
-                .ok()?;
-            match output.status.code() {
-                Some(0) => Some(true),
-                Some(1) => Some(false),
-                _ => None,
-            }
-        });
-    let (upstream_state, unpushed, behind_upstream) = record_failure(
-        upstream(&listed.path, listed.branch.as_deref()),
-        &mut unavailable_reason,
-        ("unavailable".into(), None, None),
-    );
-    // A linked worktree is as old as its `.git/worktrees/<name>` entry, which
-    // git writes once at `worktree add` and never touches again. It is read
-    // off the gitfile, not asked of git, so the pass forks nothing extra for
-    // it; the main worktree has no such entry and carries no time.
-    let created_at_unix_ms = if listed.is_main {
-        None
-    } else {
-        crate::git_dir::discover(&listed.path)
-            .and_then(|repository| std::fs::metadata(repository.git_dir).ok())
-            .and_then(|metadata| metadata.created().ok())
-            .and_then(|created| created.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|elapsed| elapsed.as_millis() as u64)
-    };
-    let last_commit = git(&listed.path, &["log", "-1", "--format=%ct%x00%s"]).ok();
-    let commit_fields = last_commit
-        .as_deref()
-        .and_then(|value| value.trim_end().split_once('\0'));
-    let last_commit_unix_seconds = commit_fields.and_then(|(time, _)| time.parse().ok());
-    let last_commit_subject = commit_fields.map(|(_, subject)| subject.to_owned());
-    let last_fetch_at_unix_ms = git(
-        &listed.path,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .ok()
-    .and_then(|s| std::fs::metadata(Path::new(s.trim()).join("FETCH_HEAD")).ok())
-    .and_then(|m| m.modified().ok())
-    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-    .map(|d| d.as_millis() as u64);
     WorktreeSnapshot {
-        path,
-        branch: listed.branch,
-        missing: false,
-        is_main: listed.is_main,
-        dirty,
-        changed_file_count,
-        base_branch,
-        ahead,
-        behind,
-        added_lines,
-        removed_lines,
-        unpushed,
-        upstream_state,
-        behind_upstream,
-        created_at_unix_ms,
-        merged,
-        head_sha: listed.head_sha,
-        last_commit_unix_seconds,
-        last_commit_subject,
-        last_fetch_at_unix_ms,
-        measured_at_unix_ms: Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
-        ),
-        unavailable_reason,
+        path: facts.path,
+        branch: facts.branch,
+        head_sha: facts.head_sha,
+        missing: facts.missing,
+        is_main: facts.is_main,
+        nested: facts.nested,
+        dirty: facts.dirty,
+        changed_file_count: facts.changed_file_count,
+        base_branch: facts.base_branch,
+        ahead: facts.ahead,
+        behind: facts.behind,
+        added_lines: facts.added_lines,
+        removed_lines: facts.removed_lines,
+        merged: facts.merged,
+        upstream_state: facts.upstream_state,
+        unpushed: facts.unpushed.map(|unpushed| UnpushedSnapshot {
+            remote: unpushed.remote,
+            count: unpushed.count,
+        }),
+        behind_upstream: facts.behind_upstream,
+        created_at_unix_ms: facts.created_at_unix_ms,
+        last_commit_unix_seconds: facts.last_commit_unix_seconds,
+        last_commit_subject: facts.last_commit_subject,
+        last_fetch_at_unix_ms: facts.last_fetch_at_unix_ms,
+        measured_at_unix_ms: facts.measured_at_unix_ms,
+        unavailable_reason: facts.unavailable_reason,
         ..WorktreeSnapshot::default()
     }
 }
 
-fn record_failure<T>(
-    result: Result<T, String>,
-    unavailable_reason: &mut Option<String>,
-    default: T,
-) -> T {
-    match result {
-        Ok(value) => value,
-        Err(reason) => {
-            *unavailable_reason = Some(reason);
-            default
-        }
-    }
-}
-
-/// What a branch is measured against: its pull request's base when `gh` has
-/// named one, the repository default branch otherwise.
-///
-/// The branch a base names is not compared with itself - the default branch's
-/// own worktree shows no base row - and a branch with neither a pull request
-/// nor a known default gets no comparison rather than a misleading zero.
-pub fn resolve_base(
-    branch: Option<&str>,
-    bases: &BTreeMap<String, String>,
-    default_branch: Option<&str>,
-) -> Option<String> {
-    branch
-        .and_then(|branch| bases.get(branch).cloned())
-        .or_else(|| default_branch.map(str::to_owned))
-        .filter(|base| branch != Some(base.as_str()))
-}
-
-/// Whether anything is uncommitted, and how many files that is.
-fn working_tree_state(path: &Path) -> Result<(bool, u32), String> {
-    let output = git(
-        path,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--no-renames",
-            "--untracked-files=all",
-        ],
-    )?;
-    let count = output
-        .split('\0')
-        .filter(|record| record.len() > 3)
-        .count()
-        .try_into()
-        .unwrap_or(u32::MAX);
-    Ok((count > 0, count))
-}
-
-/// Commits on this branch since the base, and commits on the base this branch
-/// does not have. `base...HEAD` is the merge-base comparison the card's
-/// `↑A ↓B` states, not a raw two-dot range.
-fn ahead_behind(path: &Path, base: &str) -> Result<(u32, u32), String> {
-    let base_ref =
-        resolvable_base(path, base).ok_or_else(|| format!("Base branch {base} is unavailable"))?;
-    let output = git(
-        path,
-        &[
-            "rev-list",
-            "--left-right",
-            "--count",
-            &format!("{base_ref}...HEAD"),
-        ],
-    )?;
-    Ok(parse_ahead_behind(&output))
-}
-
-/// `--left-right --count` prints `<behind>\t<ahead>`: the left side is the
-/// base, so its count is what this branch is missing.
-pub fn parse_ahead_behind(output: &str) -> (u32, u32) {
-    let mut fields = output.split_whitespace();
-    let behind = fields
-        .next()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0);
-    let ahead = fields
-        .next()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(0);
-    (ahead, behind)
-}
-
-fn committed_line_delta(path: &Path, base: &str) -> Result<(u32, u32), String> {
-    let base_ref =
-        resolvable_base(path, base).ok_or_else(|| format!("Base branch {base} is unavailable"))?;
-    let output = git(
-        path,
-        &["diff", "--shortstat", &format!("{base_ref}...HEAD")],
-    )?;
-    Ok(parse_shortstat(&output))
-}
-
-/// `git diff --shortstat` prints, for example,
-/// ` 3 files changed, 42 insertions(+), 7 deletions(-)`. Either half may be
-/// missing when a change is all additions or all removals.
-pub fn parse_shortstat(output: &str) -> (u32, u32) {
-    let mut added = 0;
-    let mut removed = 0;
-    for part in output.split(',') {
-        let part = part.trim();
-        let Some(count) = part
-            .split_whitespace()
-            .next()
-            .and_then(|value| value.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        if part.contains("insertion") {
-            added = count;
-        } else if part.contains("deletion") {
-            removed = count;
-        }
-    }
-    (added, removed)
-}
-
-/// The base branch as a ref this worktree can actually resolve.
-///
-/// A base is a branch name from a pull request or a repository default, so it
-/// may exist only as a remote-tracking ref in this clone. The local branch is
-/// preferred, the remote-tracking ref is the fallback, and a base that
-/// resolves as neither yields no comparison rather than a silent zero.
-fn resolvable_base(path: &Path, base: &str) -> Option<String> {
-    for candidate in [base.to_owned(), format!("origin/{base}")] {
-        if git(
-            path,
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("{candidate}^{{commit}}"),
-            ],
-        )
-        .is_ok()
-        {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-/// Commits this branch has that its upstream does not, with the remote's
-/// name, and the commits the upstream has that this branch does not.
-///
-/// A branch with no upstream returns `None` for both: it has nowhere to push
-/// and nothing to be behind, which the card states by omitting the row rather
-/// than by showing a zero that would read as "fully pushed" or "up to date".
-/// One `rev-list --left-right --count @{u}...HEAD` answers both directions,
-/// the same shape `ahead_behind` already reads against the base, so the
-/// second number costs no second process.
-fn upstream(
-    path: &Path,
-    branch: Option<&str>,
-) -> Result<(String, Option<UnpushedSnapshot>, Option<u32>), String> {
-    let Some(branch) = branch else {
-        return Ok(("no_upstream".into(), None, None));
-    };
-    let configured = git(
-        path,
-        &[
-            "for-each-ref",
-            "--format=%(upstream)",
-            &format!("refs/heads/{branch}"),
-        ],
-    )?;
-    if configured.trim().is_empty() {
-        return Ok(("no_upstream".into(), None, None));
-    }
-    if git(path, &["rev-parse", "--verify", "@{u}"]).is_err() {
-        return Ok(("gone".into(), None, None));
-    }
-    let counts = git(
-        path,
-        &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
-    )
-    .ok()
-    .and_then(|output| parse_left_right(&output));
-    let Some((behind, count)) = counts else {
-        return Err("git rev-list could not determine upstream commit count".into());
-    };
-    let remote = configured
-        .trim()
-        .trim_start_matches("refs/remotes/")
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .to_owned();
-    Ok((
-        if count == 0 { "pushed" } else { "unpushed" }.into(),
-        Some(UnpushedSnapshot { remote, count }),
-        Some(behind),
-    ))
-}
-
-/// `--left-right --count` prints `<left>\t<right>`; both fields have to be
-/// there and numeric, or the answer is no answer rather than a pair of zeros.
-fn parse_left_right(output: &str) -> Option<(u32, u32)> {
-    let mut fields = output.split_whitespace();
-    let left = fields.next()?.parse().ok()?;
-    let right = fields.next()?.parse().ok()?;
-    Some((left, right))
-}
-
-/// The repository's default branch is only what `origin/HEAD` names.
-///
-/// The main worktree's current branch is deliberately excluded: using it as
-/// a base would make a feature branch look like project policy and hide the
-/// very mismatch the migration action exists to explain.
-fn default_branch(root: &Path) -> Option<String> {
-    if let Ok(output) = git(
-        root,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    ) {
-        let branch = output.trim().trim_start_matches("origin/").to_owned();
-        if !branch.is_empty() {
-            return Some(branch);
-        }
-    }
-    None
-}
-
-/// The repository's main working tree, which is what identifies a project.
-fn main_worktree(path: &Path) -> Option<PathBuf> {
-    let common = git(
-        path,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .ok()?
-    .trim()
-    .to_owned();
-    if common.is_empty() {
-        return None;
-    }
-    PathBuf::from(common).parent().map(Path::to_path_buf)
-}
-
-#[cfg(test)]
-static GIT_CALL_COUNTS: std::sync::Mutex<Vec<(PathBuf, String)>> =
-    std::sync::Mutex::new(Vec::new());
 #[cfg(test)]
 fn git_call_count(root: &Path, command: &str) -> usize {
-    GIT_CALL_COUNTS
+    hide_host::worktrees::GIT_CALLS
         .lock()
         .unwrap()
         .iter()
@@ -916,113 +465,23 @@ fn git_call_count(root: &Path, command: &str) -> usize {
         .count()
 }
 
-pub(crate) fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
-    #[cfg(test)]
-    GIT_CALL_COUNTS
-        .lock()
-        .unwrap()
-        .push((cwd.to_owned(), arguments.first().unwrap_or(&"").to_string()));
-    let output = output_within(
-        Command::new("git")
-            .arg("--no-optional-locks")
-            .arg("-C")
-            .arg(cwd)
-            .args(arguments),
-        GIT_DEADLINE,
-    )
-    .map_err(|error| format!("git could not be run: {error}"))?;
-    let Some(output) = output else {
-        crate::diagnostic!(serde_json::json!({
-            "component": "worktrees",
-            "kind": "git.deadline_exceeded",
-            "path": cwd.to_string_lossy(),
-            "command": arguments[0],
-            "deadline_ms": GIT_DEADLINE.as_millis() as u64,
-        }));
-        return Err(format!(
-            "git {} exceeded {} s",
-            arguments[0],
-            GIT_DEADLINE.as_secs()
-        ));
-    };
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if stderr.is_empty() {
-            format!("git {} exited with {}", arguments[0], output.status)
-        } else {
-            format!("git {}: {stderr}", arguments[0])
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-/// Runs `command` to completion, or kills it at `deadline` and answers
-/// `None`. Both pipes are drained on their own threads the whole time, so a
-/// child whose output outgrows the pipe buffer is never left blocked on a
-/// write nobody reads.
-fn output_within(
-    command: &mut Command,
-    deadline: Duration,
-) -> std::io::Result<Option<std::process::Output>> {
-    use std::io::Read;
-    use std::process::Stdio;
-
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let drain = |pipe: Option<_>| {
-        std::thread::spawn(move || {
-            let mut buffer = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _: std::io::Result<usize> = std::io::Read::read_to_end(&mut pipe, &mut buffer);
-            }
-            buffer
-        })
-    };
-    let stdout = drain(
-        child
-            .stdout
-            .take()
-            .map(|p| Box::new(p) as Box<dyn Read + Send>),
-    );
-    let stderr = drain(
-        child
-            .stderr
-            .take()
-            .map(|p| Box::new(p) as Box<dyn Read + Send>),
-    );
-    let started = std::time::Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break Some(status);
-        }
-        if started.elapsed() >= deadline {
-            child.kill()?;
-            child.wait()?;
-            break None;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    let stdout = stdout.join().unwrap_or_default();
-    let stderr = stderr.join().unwrap_or_default();
-    Ok(status.map(|status| std::process::Output {
-        status,
-        stdout,
-        stderr,
-    }))
-}
+pub(crate) use hide_host::worktrees::git;
+#[cfg(test)]
+use hide_host::worktrees::output_within;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hide_host::worktrees::{
+        ListedWorktree, describe, parse_ahead_behind, parse_shortstat, parse_worktree_list,
+        resolve_base,
+    };
 
     #[test]
     fn porcelain_records_name_the_main_worktree_and_each_branch() {
         let output = "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\n\
                       worktree /repo.worktrees/feature\nHEAD def\nbranch refs/heads/feature\n\n";
-        let listed = parse_worktree_list(output, Path::new("/repo"));
+        let listed = parse_worktree_list(output);
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].path, PathBuf::from("/repo"));
         assert_eq!(listed[0].branch.as_deref(), Some("main"));
@@ -1038,7 +497,7 @@ mod tests {
     fn a_detached_worktree_is_listed_without_a_branch() {
         let output = "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\n\
                       worktree /repo.worktrees/detached\nHEAD def\ndetached\n\n";
-        let listed = parse_worktree_list(output, Path::new("/repo"));
+        let listed = parse_worktree_list(output);
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[1].branch, None);
         assert_eq!(listed[1].path, PathBuf::from("/repo.worktrees/detached"));
@@ -1051,7 +510,7 @@ mod tests {
         let output = "worktree /repo\nbranch refs/heads/main\n\n\
                       worktree /a\ndetached\n\n\
                       worktree /b\nbranch refs/heads/second\n\n";
-        let listed = parse_worktree_list(output, Path::new("/repo"));
+        let listed = parse_worktree_list(output);
         assert_eq!(
             listed
                 .iter()

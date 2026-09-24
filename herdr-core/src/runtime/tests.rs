@@ -7,6 +7,8 @@ use crate::fake_herdr::FakeHerdr;
 mod agents_settings_remote;
 #[path = "tests/device_catalog.rs"]
 mod device_catalog;
+#[path = "tests/device_worktrees.rs"]
+mod device_worktrees;
 #[path = "tests/devices.rs"]
 mod devices;
 #[path = "tests/documents.rs"]

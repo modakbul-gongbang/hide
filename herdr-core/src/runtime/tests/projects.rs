@@ -2359,6 +2359,7 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
 fn a_client_cannot_claim_a_worktree_removal_finished() {
     let mut runtime = runtime();
     runtime.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+        device_id: None,
         id: 7,
         repository_root: "/tmp/hide-removal-repo".into(),
         checkout_path: "/tmp/hide-removal-repo-linked".into(),
@@ -2451,6 +2452,7 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
         }],
     });
     let closing = |id: u64| crate::model::WorktreeRemovalSnapshot {
+        device_id: None,
         id,
         repository_root: "/repo".into(),
         checkout_path: "/repo.worktrees/open".into(),

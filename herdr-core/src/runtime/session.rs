@@ -2463,6 +2463,8 @@ impl Runtime {
         let id = self.next_task_operation_id;
         self.snapshot.task_operation = Some(crate::model::TaskOperationSnapshot {
             id,
+            // A device task names its device after this returns.
+            device_id: None,
             kind: kind.to_owned(),
             phase: "working".into(),
             repository_root,
@@ -2490,7 +2492,10 @@ impl Runtime {
         }
         let operation_kind = operation.kind.clone();
         let repository_root = operation.repository_root.clone();
-        let should_focus = operation_kind != "branch_migrate";
+        let device = operation.device_id.clone();
+        // A device's Herdr focuses what it created, and the device's screen
+        // follows its host; this machine's focus does not move for it.
+        let should_focus = operation_kind != "branch_migrate" && device.is_none();
         match result {
             Ok(outcome) => {
                 let live::WorktreeTaskOutcome {
@@ -2499,6 +2504,10 @@ impl Runtime {
                     purpose_error,
                     unconfirmed_purpose_token,
                 } = outcome;
+                let pane_id = match device.as_deref() {
+                    Some(device) => super::operations::remote_pane_id(device, &pane_id),
+                    None => pane_id,
+                };
                 let operation = self
                     .snapshot
                     .task_operation
@@ -2575,6 +2584,9 @@ impl Runtime {
                 operation.message = Some(message);
                 self.refresh_worktrees();
             }
+        }
+        if let Some(device) = device.as_deref() {
+            self.request_device_worktrees(device, true);
         }
         true
     }
@@ -3050,7 +3062,13 @@ impl Runtime {
         {
             return None;
         }
-        Some((operation.pane_id.clone()?, operation.agent_kind.clone()?))
+        // Herdr knows a device's pane by its own id, not the scoped one.
+        let pane_id = operation.pane_id.as_deref()?;
+        let pane_id = match operation.device_id.as_deref() {
+            Some(device) => super::remote_pane_source_id(device, pane_id)?,
+            None => pane_id,
+        };
+        Some((pane_id.to_owned(), operation.agent_kind.clone()?))
     }
 
     pub(crate) fn ingest_task_agent_result(
@@ -3094,10 +3112,21 @@ impl Runtime {
             );
             return true;
         };
+        let device = operation.device_id.clone();
+        let workspaces = match device.as_deref() {
+            Some(device) => self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == device)
+                .and_then(|status| status.session.as_ref())
+                .map(|session| session.workspaces.as_slice())
+                .unwrap_or_default(),
+            None => self.snapshot.navigator.workspaces.as_slice(),
+        };
         let pane_listed = operation.pane_id.as_deref().is_some_and(|pane_id| {
-            self.snapshot
-                .navigator
-                .workspaces
+            workspaces
                 .iter()
                 .flat_map(|workspace| &workspace.checkouts)
                 .flat_map(|checkout| &checkout.tabs)
@@ -3112,13 +3141,16 @@ impl Runtime {
             );
             return true;
         }
-        let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "task_operation.agent_retry_offline",
-                "Starting an agent needs a live Herdr connection",
-                true,
-            );
-            return true;
+        let context = match device.as_deref() {
+            Some(device) => self.device_worktree_target(device),
+            None => self.local_worktree_target(),
+        };
+        let context = match context {
+            Ok(context) => context,
+            Err(message) => {
+                self.set_error("task_operation.agent_retry_offline", message, true);
+                return true;
+            }
         };
         let operation = self
             .snapshot

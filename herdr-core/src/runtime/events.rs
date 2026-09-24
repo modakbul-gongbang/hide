@@ -623,6 +623,9 @@ pub(super) struct GitWorktreeSetBasePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateWorktreePayload {
+    /// The device that holds the repository; this machine when absent.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
     pub(super) repository_root: String,
     pub(super) branch: String,
     #[serde(default)]
@@ -657,6 +660,9 @@ pub(super) struct TaskAgentRetryPayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct RemoveWorktreePayload {
+    /// The device that holds the worktree; this machine when absent.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
     pub(super) checkout_path: String,
     #[serde(default)]
     pub(super) delete_branch: bool,

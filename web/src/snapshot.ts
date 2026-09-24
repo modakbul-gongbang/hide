@@ -435,6 +435,8 @@ export type AgentHooks = {
 /** The core's one task slot: a worktree creation, an agent start, a purpose write. */
 export type TaskOperation = {
   id: number;
+  /** The device the task runs on; null is the daemon's own machine. */
+  device_id?: string | null;
   kind: string;
   /** `working`, `ready` or `failed`. */
   phase: string;
@@ -453,6 +455,8 @@ export type TaskOperation = {
 /** One worktree deletion: `closing` panes, `removing` on the core's worker, then `finished` or `failed`. */
 export type WorktreeRemoval = {
   id: number;
+  /** The device the worktree is on; null is the daemon's own machine. */
+  device_id?: string | null;
   repository_root: string;
   checkout_path: string;
   branch: string | null;

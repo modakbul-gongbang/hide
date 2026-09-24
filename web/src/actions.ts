@@ -390,11 +390,12 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "workspace_pin_set", payload: { workspace_id: workspaceId, pinned } });
     },
 
-    createWorktree(request: { repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {
+    createWorktree(request: { deviceId: string; repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {
       dispatch({
         schema_version: 2,
         kind: "create_worktree",
         payload: {
+          device_id: request.deviceId,
           repository_root: request.repositoryRoot,
           branch: request.branch,
           base_branch: request.baseBranch,
@@ -408,8 +409,8 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "set_checkout_purpose", payload: { checkout_id: checkoutId, text } });
     },
 
-    removeWorktree(checkoutPath: string, deleteBranch: boolean) {
-      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { checkout_path: checkoutPath, delete_branch: deleteBranch } });
+    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean) {
+      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch } });
     },
 
     retryTaskAgent(id: number) {

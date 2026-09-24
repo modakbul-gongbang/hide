@@ -7,18 +7,65 @@ use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const CONFIRM_POLL: Duration = Duration::from_millis(100);
+/// A host's Git checks answer in seconds; a removal deletes a whole folder.
+const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+const HOST_REMOVE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Where a worktree task runs: the Herdr that creates or closes the
+/// checkout's panes and the file host that answers its Git checks and runs
+/// its removal, both of the device that holds the repository (PRD S5.5
+/// B27-B29). This machine is the in-process host and its own Herdr.
+#[derive(Clone)]
+pub struct WorktreeTarget {
+    connector: Arc<dyn ApiConnector>,
+    host: Arc<dyn crate::host_access::HostChannel>,
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+    /// This machine: a purpose is mirrored into the branch description, and
+    /// a provider missing from this PATH is refused before Herdr is asked.
+    local: bool,
+}
+
+impl WorktreeTarget {
+    pub(crate) fn local(
+        context: &LiveContext,
+        host: Arc<dyn crate::host_access::HostChannel>,
+    ) -> Self {
+        Self {
+            connector: Arc::clone(&context.api_connector),
+            host,
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+            local: true,
+        }
+    }
+
+    pub(crate) fn device(
+        context: &RemoteControlContext,
+        host: Arc<dyn crate::host_access::HostChannel>,
+    ) -> Self {
+        Self {
+            connector: Arc::clone(&context.api_connector),
+            host,
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+            local: false,
+        }
+    }
+}
 
 pub fn spawn_worktree_close(
-    context: LiveContext,
+    target: WorktreeTarget,
     id: u64,
     checkout_path: String,
     pane_ids: Vec<String>,
 ) -> Result<(), String> {
+    let context = target.clone();
     thread::Builder::new()
         .name("herdr-core-worktree-close".into())
         .spawn(move || {
             let result = close_checkout_panes(
-                context.api_connector.as_ref(),
+                context.connector.as_ref(),
                 std::slice::from_ref(&checkout_path),
                 &pane_ids,
                 CONFIRM_TIMEOUT,
@@ -49,7 +96,7 @@ pub fn spawn_worktree_close(
                 return;
             };
             trace(&checkout_path, &pane_ids, "remove_started", None);
-            let outcome = cleanup::remove_confirmed(&request);
+            let outcome = remove_on_host(context.host.as_ref(), request);
             trace(
                 &checkout_path,
                 &pane_ids,
@@ -78,6 +125,60 @@ pub fn spawn_worktree_close(
         })
         .map(|_| ())
         .map_err(|error| format!("worktree close worker could not be started: {error}"))
+}
+
+/// Runs the confirmed removal on the repository's own host. An answer that
+/// never came leaves the removal's effect unknown, which is not a success.
+fn remove_on_host(
+    host: &dyn crate::host_access::HostChannel,
+    removal: hide_host::worktrees::ConfirmedRemoval,
+) -> Result<String, String> {
+    let path = removal.checkout_path.clone();
+    match crate::host_access::call_as::<hide_host::worktrees::RemovalOutcome>(
+        host,
+        hide_host::protocol::Call::WorktreeRemove { removal },
+        HOST_REMOVE_TIMEOUT,
+    ) {
+        Ok(outcome) if outcome.removed => Ok(outcome.message),
+        Ok(outcome) => Err(outcome.message),
+        Err(crate::host_access::HostCallError::Unknown(reason)) => Err(format!(
+            "The removal of {path} was sent but its result is unknown ({reason}). Review the worktree again before retrying."
+        )),
+        Err(error) => Err(format!(
+            "Worktree removal stopped: {error}. The worktree remains; panes already closed stay closed."
+        )),
+    }
+}
+
+/// Asks the repository's host whether `branch` may be created; nothing is
+/// created by the question.
+fn check_new_branch(
+    host: &dyn crate::host_access::HostChannel,
+    repository_root: &str,
+    branch: &str,
+) -> Result<(), String> {
+    crate::host_access::call_as::<()>(
+        host,
+        hide_host::protocol::Call::BranchCheck {
+            path: repository_root.to_owned(),
+            branch: branch.to_owned(),
+        },
+        HOST_CHECK_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// The real path of an existing directory on the repository's host.
+fn host_directory(host: &dyn crate::host_access::HostChannel, path: &str) -> Option<String> {
+    crate::host_access::call_as::<Option<String>>(
+        host,
+        hide_host::protocol::Call::Directory {
+            path: path.to_owned(),
+        },
+        HOST_CHECK_TIMEOUT,
+    )
+    .ok()
+    .flatten()
 }
 
 /// `Remove project…`: closes every pane in the project's checkouts and waits
@@ -447,29 +548,32 @@ impl Drop for PurposeMirror {
 }
 
 pub fn spawn_worktree_create(
-    context: LiveContext,
+    context: WorktreeTarget,
     request: WorktreeTaskRequest,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-worktree-create".into())
         .spawn(move || {
-            let result = valid_branch_name(&request.repository_root, &request.branch)
-                .and_then(|()| {
-                    reject_existing_unchecked_out_branch(&request.repository_root, &request.branch)
-                })
-                .and_then(|()| {
-                    create_worktree_observing_purpose(
-                        context.api_connector.as_ref(),
-                        &request,
-                        |path, purpose| {
-                            if let Some(runtime) = context.runtime.upgrade()
-                                && let Ok(mut guard) = runtime.lock()
-                            {
-                                guard.begin_created_purpose_write(path, purpose);
-                            }
-                        },
-                    )
-                });
+            let result = check_new_branch(
+                context.host.as_ref(),
+                &request.repository_root,
+                &request.branch,
+            )
+            .and_then(|()| {
+                create_worktree_observing_purpose(
+                    context.connector.as_ref(),
+                    context.host.as_ref(),
+                    context.local,
+                    &request,
+                    |path, purpose| {
+                        if let Some(runtime) = context.runtime.upgrade()
+                            && let Ok(mut guard) = runtime.lock()
+                        {
+                            guard.begin_created_purpose_write(path, purpose);
+                        }
+                    },
+                )
+            });
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
                     guard.ingest_task_operation_result(request.id, result);
@@ -478,7 +582,13 @@ pub fn spawn_worktree_create(
                 }
                 context.notifier.notify();
             }
-            start_task_agent(&context, request.id);
+            start_task_agent(
+                context.connector.as_ref(),
+                &context.runtime,
+                &context.notifier,
+                context.local,
+                request.id,
+            );
         })
         .map(|_| ())
         .map_err(|error| format!("worktree create worker could not be started: {error}"))
@@ -646,8 +756,14 @@ const AGENT_START_TIMEOUT_MS: u64 = 120_000;
 /// Starts the agent the task chose, in the pane the task created, and hands
 /// the answer back on its own axis. The creation was already published, so a
 /// failure here never hides the worktree or the pane.
-fn start_task_agent(context: &LiveContext, id: u64) {
-    let Some(runtime) = context.runtime.upgrade() else {
+fn start_task_agent(
+    connector: &dyn ApiConnector,
+    runtime: &Weak<Mutex<Runtime>>,
+    notifier: &ChangeNotifier,
+    local: bool,
+    id: u64,
+) {
+    let Some(runtime) = runtime.upgrade() else {
         return;
     };
     let pending = match runtime.lock() {
@@ -657,32 +773,42 @@ fn start_task_agent(context: &LiveContext, id: u64) {
     let Some((pane_id, kind)) = pending else {
         return;
     };
-    let outcome = launch_agent(context.api_connector.as_ref(), id, &pane_id, &kind);
+    let outcome = launch_agent(connector, local, id, &pane_id, &kind);
     if let Ok(mut guard) = runtime.lock() {
         guard.ingest_task_agent_result(id, outcome);
     } else {
         return;
     }
-    context.notifier.notify();
+    notifier.notify();
 }
 
-pub fn spawn_task_agent_start(context: LiveContext, id: u64) -> Result<(), String> {
+pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-task-agent-start".into())
-        .spawn(move || start_task_agent(&context, id))
+        .spawn(move || {
+            start_task_agent(
+                context.connector.as_ref(),
+                &context.runtime,
+                &context.notifier,
+                context.local,
+                id,
+            )
+        })
         .map(|_| ())
         .map_err(|error| format!("agent start worker could not be started: {error}"))
 }
 
 fn launch_agent(
     connector: &dyn ApiConnector,
+    local: bool,
     id: u64,
     pane_id: &str,
     kind: &str,
 ) -> TaskAgentOutcome {
     // Herdr would type the command into the pane's shell and wait for an
-    // agent that can never appear; say so before asking it.
-    if hide_ai::resolve_binary(Path::new(kind)).is_none() {
+    // agent that can never appear; say so before asking it. A device's PATH
+    // is not this machine's, so there its Herdr answers for it.
+    if local && hide_ai::resolve_binary(Path::new(kind)).is_none() {
         return TaskAgentOutcome::Failed(format!(
             "{kind} is not installed on the daemon's PATH. Install it, then retry."
         ));
@@ -730,7 +856,13 @@ pub fn spawn_checkout_tab_create(
                 }
                 context.notifier.notify();
             }
-            start_task_agent(&context, request.id);
+            start_task_agent(
+                context.api_connector.as_ref(),
+                &context.runtime,
+                &context.notifier,
+                true,
+                request.id,
+            );
         })
         .map(|_| ())
         .map_err(|error| format!("checkout tab worker could not be started: {error}"))
@@ -790,13 +922,17 @@ pub fn spawn_branch_migration(
 
 fn create_worktree(
     connector: &dyn ApiConnector,
+    host: &dyn crate::host_access::HostChannel,
+    local: bool,
     request: &WorktreeTaskRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
-    create_worktree_observing_purpose(connector, request, |_, _| {})
+    create_worktree_observing_purpose(connector, host, local, request, |_, _| {})
 }
 
 fn create_worktree_observing_purpose(
     connector: &dyn ApiConnector,
+    host: &dyn crate::host_access::HostChannel,
+    local: bool,
     request: &WorktreeTaskRequest,
     on_purpose_write: impl FnOnce(&str, &str),
 ) -> Result<WorktreeTaskOutcome, String> {
@@ -809,7 +945,9 @@ fn create_worktree_observing_purpose(
     let result = control_request(connector, "worktree.create", params)
         .map_err(|error| format!("create worktree: {error}"))?;
     let created = wire::created_worktree(result)?;
-    let path_exists = Path::new(&created.path).is_dir();
+    // The folder is on the repository's host, which answers for it.
+    let created_real = host_directory(host, &created.path);
+    let path_exists = created_real.is_some();
     let listed = control_request(
         connector,
         "worktree.list",
@@ -822,7 +960,9 @@ fn create_worktree_observing_purpose(
             .as_ref()
             .ok()
             .and_then(|path| path.as_deref())
-            .is_some_and(|path| same_checkout_path(path, &created.path));
+            .is_some_and(|path| {
+                created_real.is_some() && host_directory(host, path) == created_real
+            });
     if identity_matches {
         let purpose_failure = request.purpose.as_ref().and_then(|purpose| {
             on_purpose_write(&created.path, purpose);
@@ -831,7 +971,9 @@ fn create_worktree_observing_purpose(
                 id: request.id,
                 checkout_id: String::new(),
                 repository_root: request.repository_root.clone(),
-                branch: Some(request.branch.clone()),
+                // A device's purpose lives in its Herdr metadata only; the
+                // branch description mirror is this machine's (B30).
+                branch: local.then(|| request.branch.clone()),
                 session_workspace_id: Some(created.workspace_id.clone()),
                 purpose: purpose.clone(),
             };
@@ -883,95 +1025,13 @@ fn create_worktree_observing_purpose(
     .and_then(|result| wire::listed_worktree_path(result, &request.branch))
     .map(|path| path.is_some())
     .unwrap_or(true);
-    if Path::new(&created.path).exists() || still_listed {
+    if host_directory(host, &created.path).is_some() || still_listed {
         return Err(format!(
             "{reason}; rollback left residue at {} or in Herdr's worktree list",
             created.path
         ));
     }
     Err(format!("{reason}; the created worktree was rolled back"))
-}
-
-fn same_checkout_path(left: &str, right: &str) -> bool {
-    let left = std::fs::canonicalize(left).unwrap_or_else(|_| Path::new(left).to_path_buf());
-    let right = std::fs::canonicalize(right).unwrap_or_else(|_| Path::new(right).to_path_buf());
-    left == right
-}
-
-/// Git's own rule for a new branch name, asked before anything is created so
-/// an invalid name leaves the repository untouched. A leading `-` is refused
-/// first because Git would read it as an option.
-fn valid_branch_name(repository_root: &str, branch: &str) -> Result<(), String> {
-    if branch.starts_with('-') {
-        return Err(format!("{branch} is not a valid branch name"));
-    }
-    let checked = Command::new("git")
-        .arg("--no-optional-locks")
-        .arg("-C")
-        .arg(repository_root)
-        .args(["check-ref-format", "--branch", branch])
-        .output()
-        .map_err(|error| format!("git could not be run: {error}"))?;
-    if checked.status.success() {
-        Ok(())
-    } else {
-        Err(format!("{branch} is not a valid branch name"))
-    }
-}
-
-fn reject_existing_unchecked_out_branch(repository_root: &str, branch: &str) -> Result<(), String> {
-    let reference = format!("refs/heads/{branch}");
-    let exists = Command::new("git")
-        .arg("--no-optional-locks")
-        .arg("-C")
-        .arg(repository_root)
-        .args(["show-ref", "--verify", "--quiet", &reference])
-        .output()
-        .map_err(|error| format!("git could not be run: {error}"))?;
-    if !exists.status.success() {
-        return match exists.status.code() {
-            Some(1) => Ok(()),
-            _ => Err(String::from_utf8_lossy(&exists.stderr).trim().to_owned()),
-        };
-    }
-
-    let worktrees = Command::new("git")
-        .arg("--no-optional-locks")
-        .arg("-C")
-        .arg(repository_root)
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .map_err(|error| format!("git could not be run: {error}"))?;
-    if !worktrees.status.success() {
-        return Err(String::from_utf8_lossy(&worktrees.stderr).trim().to_owned());
-    }
-    let checked_out = String::from_utf8_lossy(&worktrees.stdout)
-        .lines()
-        .any(|line| line == format!("branch {reference}"));
-    if checked_out {
-        // Herdr owns this case and returns Git's worktree-specific
-        // "already used by worktree at ..." refusal.
-        return Ok(());
-    }
-
-    // Ask Git itself for the branch-exists diagnostic. This command is
-    // side-effect free because the branch was proven to exist above.
-    let refusal = Command::new("git")
-        .arg("--no-optional-locks")
-        .arg("-C")
-        .arg(repository_root)
-        .args(["branch", "--", branch])
-        .output()
-        .map_err(|error| format!("git could not be run: {error}"))?;
-    if refusal.status.success() {
-        return Err("git branch existence check unexpectedly succeeded".into());
-    }
-    let detail = String::from_utf8_lossy(&refusal.stderr).trim().to_owned();
-    Err(if detail.is_empty() {
-        format!("git branch exited with {}", refusal.status)
-    } else {
-        detail
-    })
 }
 
 trait GitCommands {
@@ -1183,7 +1243,12 @@ fn migrate_branch(
         purpose: None,
         ..request.clone()
     };
-    match create_worktree(connector, &create_request) {
+    match create_worktree(
+        connector,
+        &crate::host_access::InProcessHost,
+        true,
+        &create_request,
+    ) {
         Ok(outcome) => Ok(outcome),
         Err(create_error) => match git.run(
             &request.repository_root,
@@ -2090,7 +2155,13 @@ mod tests {
             json!({"result":{"type":"ok"}}),
             worktree_list(missing, "other"),
         ]);
-        let error = create_worktree(&server, &task("feature")).unwrap_err();
+        let error = create_worktree(
+            &server,
+            &crate::host_access::InProcessHost,
+            true,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("rolled back"));
         assert!(!Path::new(missing).exists());
         let methods = server
@@ -2127,7 +2198,13 @@ mod tests {
             worktree_list(&listed_path, "feature"),
         ]);
 
-        let outcome = create_worktree(&server, &task("feature")).unwrap();
+        let outcome = create_worktree(
+            &server,
+            &crate::host_access::InProcessHost,
+            true,
+            &task("feature"),
+        )
+        .unwrap();
         assert_eq!(outcome.path, response_path);
         assert_eq!(
             server
@@ -2139,39 +2216,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["worktree.create", "worktree.list"]
         );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn existing_unchecked_out_branch_is_rejected_with_gits_message() {
-        let root =
-            std::env::temp_dir().join(format!("hide-existing-branch-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        let run = |args: &[&str]| {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(&root)
-                .args(args)
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "git command failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        };
-        run(&["init", "-b", "main"]);
-        run(&["config", "user.name", "Fixture"]);
-        run(&["config", "user.email", "fixture@example.invalid"]);
-        run(&["config", "commit.gpgsign", "false"]);
-        run(&["commit", "--allow-empty", "-m", "seed"]);
-        run(&["branch", "existing"]);
-
-        let error =
-            reject_existing_unchecked_out_branch(root.to_str().unwrap(), "existing").unwrap_err();
-        assert_eq!(error, "fatal: a branch named 'existing' already exists");
-        assert!(reject_existing_unchecked_out_branch(root.to_str().unwrap(), "main").is_ok());
         std::fs::remove_dir_all(root).unwrap();
     }
 

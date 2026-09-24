@@ -14,7 +14,7 @@ use crate::protocol::{
     Call, Hello, Outcome, PROTOCOL_VERSION, Request, Response, RevisionNow, RootOpened, RootRef,
 };
 use crate::root::{Root, relative_path};
-use crate::{document, git, list, mutate, save};
+use crate::{document, git, list, mutate, save, worktrees};
 
 /// Requests the helper works on at once; the core also admits at most this
 /// many per device, so the helper never queues behind itself.
@@ -122,6 +122,19 @@ fn to_value(value: impl serde::Serialize) -> HostResult<Value> {
     })
 }
 
+/// A repository path from the core. Only an absolute path names a folder on
+/// this machine; anything else is refused before Git sees it.
+fn absolute(path: &str) -> HostResult<std::path::PathBuf> {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err(HostError::new(
+            ErrorCode::InvalidPath,
+            "A repository path must be absolute",
+        ));
+    }
+    Ok(path.to_path_buf())
+}
+
 fn project_facts(path: &str) -> HostResult<hide_project::ProjectFacts> {
     let path = Path::new(path);
     if !path.is_absolute() {
@@ -176,6 +189,27 @@ pub fn handle(call: Call) -> HostResult<Value> {
             })
         }
         Call::Project { path } => to_value(project_facts(&path)?),
+        Call::Worktrees {
+            path,
+            bases,
+            base_override,
+        } => to_value(worktrees::read(
+            &absolute(&path)?,
+            &bases,
+            base_override.as_deref(),
+        )),
+        Call::BranchCheck { path, branch } => {
+            worktrees::check_new_branch(&absolute(&path)?, &branch)?;
+            to_value(())
+        }
+        Call::Directory { path } => to_value(worktrees::directory(&absolute(&path)?)),
+        Call::WorktreeRemove { removal } => {
+            absolute(&removal.repository_root)?;
+            absolute(&removal.checkout_path)?;
+            to_value(worktrees::RemovalOutcome::from(
+                worktrees::remove_confirmed(&removal),
+            ))
+        }
         Call::Changes {
             root,
             scope,

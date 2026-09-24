@@ -66,7 +66,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   }
   if (dialog.kind === "new_worktree") return <NewWorktreeDialog actions={actions} workspace={target.workspace} onClose={close} />;
   if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} onClose={close} />;
-  if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} checkout={target.checkout} onClose={close} />;
+  if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;
   return null;
 }
 
@@ -93,7 +93,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
   const [purpose, setPurpose] = useState("");
   const [request, setRequest] = useState<{ afterId: number; branch: string; at: number } | null>(null);
   const operation = useShellStore((s) => s.rest?.task_operation);
-  const task = taskFor(operation, request ? { kind: "worktree_create", afterId: request.afterId, repositoryRoot: workspace.path, branch: request.branch } : null);
+  const task = taskFor(operation, request ? { kind: "worktree_create", afterId: request.afterId, deviceId: workspace.device_id, repositoryRoot: workspace.path, branch: request.branch } : null);
   const refused = useErrorSince(request?.at ?? null, ["worktree.create", "task_operation."]);
   const working = request !== null && refused === null && (task === null || task.phase === "working");
   const problem = branch ? branchProblem(branch) : null;
@@ -112,6 +112,7 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
     if (branchProblem(name) || working) return;
     setRequest({ afterId: actions.taskIdNow(), branch: name, at: Date.now() });
     actions.createWorktree({
+      deviceId: workspace.device_id,
       repositoryRoot: workspace.path,
       branch: name,
       baseBranch: base || null,
@@ -250,14 +251,14 @@ function PurposeDialog({ actions, checkout, onClose }: { actions: Actions; check
   );
 }
 
-function DeleteWorktreeDialog({ actions, checkout, onClose }: { actions: Actions; checkout: Checkout; onClose: () => void }) {
+function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { actions: Actions; deviceId: string; checkout: Checkout; onClose: () => void }) {
   const row = checkout.worktree;
   const gate = row?.deletion_gate;
   const paneCount = checkout.tabs.reduce((count, tab) => count + tab.panes.length, 0);
   const [deleteBranch, setDeleteBranch] = useState(false);
   const [request, setRequest] = useState<{ afterId: number; at: number } | null>(null);
   const current = useShellStore((s) => s.rest?.worktree_removal);
-  const removal = request ? removalFor(current, checkout.path, request.afterId) : null;
+  const removal = request ? removalFor(current, deviceId, checkout.path, request.afterId) : null;
   const refused = useErrorSince(request?.at ?? null, ["worktree.remove"]);
   const inFlight = request !== null && refused === null && (removal === null || removal.phase === "closing" || removal.phase === "removing");
   const settled = removal && (removal.phase === "finished" || removal.phase === "failed") ? removal : null;
@@ -265,8 +266,8 @@ function DeleteWorktreeDialog({ actions, checkout, onClose }: { actions: Actions
   const confirm = () => {
     const afterId = useShellStore.getState().rest?.worktree_removal?.id ?? 0;
     setRequest({ afterId, at: Date.now() });
-    useUiStore.getState().setWatchedRemoval({ path: checkout.path, afterId });
-    actions.removeWorktree(checkout.path, deleteBranch && !!gate?.can_delete_branch);
+    useUiStore.getState().setWatchedRemoval({ deviceId, path: checkout.path, afterId });
+    actions.removeWorktree(deviceId, checkout.path, deleteBranch && !!gate?.can_delete_branch);
   };
   const hide = () => {
     // A removal the operator stopped watching still reports its end through
@@ -345,7 +346,7 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
 
   useEffect(() => {
     if (!watchedRemoval || dialogOpen) return;
-    const answer = removalFor(removal, watchedRemoval.path, watchedRemoval.afterId);
+    const answer = removalFor(removal, watchedRemoval.deviceId, watchedRemoval.path, watchedRemoval.afterId);
     if (!answer || (answer.phase !== "finished" && answer.phase !== "failed")) return;
     useUiStore.getState().setNotice({ text: answer.message ?? (answer.phase === "finished" ? "Worktree removed." : "Worktree removal failed."), refreshable: false });
     useUiStore.getState().setWatchedRemoval(null);
@@ -362,7 +363,7 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
   const focusWhenListed = useUiStore((s) => s.focusWhenListed);
   const listed = useShellStore((s) =>
     focusWhenListed !== null &&
-    (s.rest?.navigator?.workspaces ?? []).some((workspace) =>
+    [...(s.rest?.navigator?.workspaces ?? []), ...(s.rest?.status?.remote ?? []).flatMap((row) => row.session?.workspaces ?? [])].some((workspace) =>
       workspace.checkouts.some((checkout) => checkout.tabs.some((tab) => tab.panes.some((pane) => pane.id === focusWhenListed))),
     ),
   );

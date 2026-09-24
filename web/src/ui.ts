@@ -81,7 +81,7 @@ type UiStore = {
   watchedTask: number | null;
   /** The pane a creation made, to be focused once the snapshot lists it (B13). */
   focusWhenListed: string | null;
-  watchedRemoval: { path: string; afterId: number } | null;
+  watchedRemoval: { deviceId: string; path: string; afterId: number } | null;
   /** True while a Shortcuts row is recording: the window listener then runs no command. */
   recordingShortcut: boolean;
   /**
@@ -104,7 +104,7 @@ type UiStore = {
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
-  setWatchedRemoval: (removal: { path: string; afterId: number } | null) => void;
+  setWatchedRemoval: (removal: { deviceId: string; path: string; afterId: number } | null) => void;
   setRecordingShortcut: (recording: boolean) => void;
   /** Registers an Escape layer and returns its removal. */
   pushEscape: (handler: () => void) => () => void;

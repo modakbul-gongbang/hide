@@ -23,3 +23,7 @@ serde_json = "=1.0.151"
 sha2 = "=0.10.9"
 tempfile = "=3.27.0"
 trash = { version = "=5.2.8", default-features = false }
+
+[features]
+# Records every Git call the worktree read makes, for the core's tests.
+call-log = []

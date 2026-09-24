@@ -27,6 +27,13 @@ impl Runtime {
         let empty = DeviceFacts::default();
         let facts = self.device_facts.get(target).unwrap_or(&empty);
         let mut session = device_catalog::group(target, raw, facts);
+        if let Some(worktrees) = self.device_worktrees.get(target) {
+            for project in &mut session.workspaces {
+                if let Some(listed) = worktrees.projects.get(&project.path) {
+                    device_catalog::apply_worktrees(project, listed);
+                }
+            }
+        }
         join_device_editor_tabs(&mut session, &self.snapshot.editor.tabs);
         session
     }
@@ -208,6 +215,117 @@ impl Runtime {
         // The session may have named new directories while this ran.
         if failure.is_none() {
             changed |= self.request_device_facts(target);
+            changed |= self.request_device_worktrees(target, false);
+        }
+        changed
+    }
+
+    /// Reads the worktrees of the device's Git repositories through its
+    /// helper: every repository when `all` (after a worktree was created or
+    /// removed there, or a new connection), otherwise the ones not read yet.
+    /// One read at a time; a request during it runs one more after it.
+    pub(super) fn request_device_worktrees(&mut self, target: &str, all: bool) -> bool {
+        let Some(session) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target)
+            .and_then(|status| status.session.as_ref())
+        else {
+            return false;
+        };
+        let roots = device_catalog::git_roots(session);
+        let entry = self.device_worktrees.entry(target.to_owned()).or_default();
+        if entry.in_flight.is_some() {
+            entry.again |= all || roots.iter().any(|root| !entry.projects.contains_key(root));
+            return false;
+        }
+        let wanted = roots
+            .into_iter()
+            .filter(|root| all || !entry.projects.contains_key(root))
+            .collect::<Vec<_>>();
+        if wanted.is_empty() {
+            return false;
+        }
+        let Ok(channel) = self.device_channel(target) else {
+            return false;
+        };
+        let generation = self.device_host_generation(target);
+        let entry = self.device_worktrees.entry(target.to_owned()).or_default();
+        entry.in_flight = Some(generation);
+        entry.again = false;
+        let Some(context) = self.worker_context.clone() else {
+            let (answers, failure) = ask_worktrees(channel.as_ref(), &wanted);
+            return self.ingest_device_worktrees(target, generation, answers, failure);
+        };
+        let device = target.to_owned();
+        let spawned = thread::Builder::new()
+            .name("herdr-core-device-worktrees".to_owned())
+            .spawn(move || {
+                let (answers, failure) = ask_worktrees(channel.as_ref(), &wanted);
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => {
+                        guard.ingest_device_worktrees(&device, generation, answers, failure)
+                    }
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+            });
+        if let Err(error) = spawned {
+            let entry = self.device_worktrees.entry(target.to_owned()).or_default();
+            entry.in_flight = None;
+            entry.unavailable = Some(format!("The worktree reader could not start: {error}"));
+        }
+        false
+    }
+
+    /// The helper answered for the device's repositories. An answer from a
+    /// connection that has since been replaced is dropped.
+    pub(super) fn ingest_device_worktrees(
+        &mut self,
+        target: &str,
+        generation: u64,
+        answers: Vec<(String, Option<crate::model::ProjectWorktreesSnapshot>)>,
+        failure: Option<String>,
+    ) -> bool {
+        let Some(entry) = self.device_worktrees.get_mut(target) else {
+            return false;
+        };
+        if entry.in_flight != Some(generation) {
+            return false;
+        }
+        entry.in_flight = None;
+        for (root, project) in answers {
+            match project {
+                Some(project) => {
+                    entry.projects.insert(root, project);
+                }
+                None => {
+                    entry.projects.remove(&root);
+                }
+            }
+        }
+        if let Some(reason) = failure.as_deref() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "device_worktrees",
+                "kind": "worktrees.read_failed",
+                "target": target,
+                "generation": generation,
+                "message": reason,
+            }));
+        }
+        entry.unavailable = failure;
+        let again = std::mem::take(&mut entry.again);
+        let mut changed = self.refresh_device_catalog(target);
+        if again {
+            changed |= self.request_device_worktrees(target, true);
         }
         changed
     }
@@ -216,13 +334,56 @@ impl Runtime {
     /// have moved while none was connected.
     pub(super) fn reset_device_facts(&mut self, target: &str) -> bool {
         self.device_facts.remove(target);
+        self.device_worktrees.remove(target);
         self.request_device_facts(target)
     }
 
     pub(super) fn forget_device_catalog(&mut self, target: &str) {
         self.device_raw_sessions.remove(target);
         self.device_facts.remove(target);
+        self.device_worktrees.remove(target);
     }
+}
+
+const WORKTREES_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Reads each repository in turn; a refusal is that repository's answer (no
+/// rows), a connection failure stops the batch with the reason.
+fn ask_worktrees(
+    channel: &dyn crate::host_access::HostChannel,
+    roots: &[String],
+) -> (
+    Vec<(String, Option<crate::model::ProjectWorktreesSnapshot>)>,
+    Option<String>,
+) {
+    let mut answers = Vec::new();
+    for root in roots {
+        match call_as::<Option<hide_host::worktrees::RepositoryWorktrees>>(
+            channel,
+            hide_host::protocol::Call::Worktrees {
+                path: root.clone(),
+                bases: Default::default(),
+                base_override: None,
+            },
+            WORKTREES_TIMEOUT,
+        ) {
+            Ok(facts) => {
+                answers.push((root.clone(), facts.map(crate::worktrees::project_snapshot)))
+            }
+            Err(HostCallError::Refused(error)) => {
+                answers.push((
+                    root.clone(),
+                    Some(crate::model::ProjectWorktreesSnapshot {
+                        root_path: root.clone(),
+                        unavailable_reason: Some(error.message),
+                        ..Default::default()
+                    }),
+                ));
+            }
+            Err(error) => return (answers, Some(error.to_string())),
+        }
+    }
+    (answers, None)
 }
 
 /// Asks for each directory in turn. A refusal is that directory's answer; a

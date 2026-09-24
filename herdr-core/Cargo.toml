@@ -33,5 +33,8 @@ tokio = { version = "=1.53.1", features = ["io-util", "net", "rt-multi-thread", 
 tempfile = "=3.27.0"
 ureq = { version = "=3.4.1", default-features = false, features = ["rustls"] }
 
+[dev-dependencies]
+hide-host = { path = "../hide-host", features = ["call-log"] }
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

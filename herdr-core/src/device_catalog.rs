@@ -325,3 +325,67 @@ pub(crate) fn group(
         pane_layouts: raw.pane_layouts.clone(),
     }
 }
+
+/// A device's repositories' worktrees as its helper last answered, keyed by
+/// main worktree path, and the read in flight.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DeviceWorktrees {
+    pub projects: BTreeMap<String, crate::model::ProjectWorktreesSnapshot>,
+    /// The helper connection the running read belongs to.
+    pub in_flight: Option<u64>,
+    /// Asked again while a read ran; one more read follows it.
+    pub again: bool,
+    pub unavailable: Option<String>,
+}
+
+/// The Git repositories a device's grouped session shows, by main worktree.
+pub(crate) fn git_roots(session: &RemoteSessionSnapshot) -> BTreeSet<String> {
+    session
+        .workspaces
+        .iter()
+        .filter(|workspace| workspace.is_git)
+        .map(|workspace| workspace.path.clone())
+        .collect()
+}
+
+/// Carries a device repository's worktree facts onto the rows its session
+/// already has. Paths are compared as the device's helper reported them;
+/// nothing is resolved on this machine's filesystem, where the same path may
+/// name another repository (B2, B7).
+pub(crate) fn apply_worktrees(
+    project: &mut WorkspaceSnapshot,
+    listed: &crate::model::ProjectWorktreesSnapshot,
+) {
+    let same = |left: &str, right: &str| left.trim_end_matches('/') == right.trim_end_matches('/');
+    project.default_branch = listed.default_branch.clone();
+    project.branches = listed.branches.clone();
+    for row in &mut project.checkouts {
+        let Some(worktree) = listed
+            .worktrees
+            .iter()
+            .find(|worktree| same(&worktree.path, &row.path))
+        else {
+            continue;
+        };
+        let mut worktree = worktree.clone();
+        worktree.pane_count = row.tabs.iter().map(|tab| tab.panes.len()).sum();
+        worktree.deletion_gate = crate::worktrees::deletion_gate(
+            &worktree,
+            worktree.branch == listed.base_branch && listed.base_branch.is_some(),
+            worktree.pane_count,
+            0,
+        );
+        row.is_worktree = !worktree.is_main;
+        row.exists = !worktree.missing;
+        row.dirty = worktree.dirty;
+        row.changed_file_count = worktree.changed_file_count;
+        row.base_branch = worktree.base_branch.clone();
+        row.ahead = worktree.ahead;
+        row.behind = worktree.behind;
+        row.added_lines = worktree.added_lines;
+        row.removed_lines = worktree.removed_lines;
+        row.unpushed = worktree.unpushed.clone();
+        row.branch = worktree.branch.clone();
+        row.worktree = Some(worktree);
+    }
+}

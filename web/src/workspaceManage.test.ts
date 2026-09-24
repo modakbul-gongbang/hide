@@ -83,25 +83,28 @@ describe("branch names", () => {
 });
 
 describe("row menus", () => {
-  it("offers pin and new worktree only for local projects, and says why otherwise", () => {
+  it("offers pin for local registrations and new worktree for a Git project on any device", () => {
     expect(projectMenu(workspace()).map((item) => [item.id, item.unavailable])).toEqual([
       ["pin", null],
       ["new_worktree", null],
     ]);
     expect(projectMenu(workspace({ pinned: true }))[0]?.id).toBe("unpin");
     const remote = projectMenu(workspace({ device_id: "studio", remote_target_id: "studio" }));
-    expect(remote.every((item) => item.unavailable !== null)).toBe(true);
+    expect(remote.map((item) => [item.id, item.unavailable === null])).toEqual([
+      ["pin", false],
+      ["new_worktree", true],
+    ]);
     expect(projectMenu(workspace({ registered: false })).map((item) => item.id)).toEqual(["new_worktree"]);
     expect(projectMenu(workspace({ is_git: false }))[1]?.unavailable).toMatch(/not a Git/);
   });
 
-  it("offers deletion only for a local linked worktree whose gate allows it", () => {
-    expect(checkoutMenu(workspace(), checkout()).map((item) => item.id)).toEqual(["set_purpose", "delete_worktree"]);
-    expect(checkoutMenu(workspace(), checkout({ is_worktree: false })).map((item) => item.id)).toEqual(["set_purpose"]);
+  it("offers deletion for a linked worktree on any device whose gate allows it", () => {
+    expect(checkoutMenu(checkout()).map((item) => item.id)).toEqual(["set_purpose", "delete_worktree"]);
+    expect(checkoutMenu(checkout({ is_worktree: false })).map((item) => item.id)).toEqual(["set_purpose"]);
     const blocked = checkout();
     if (blocked.worktree) blocked.worktree.deletion_gate.blocked_reason = "The main worktree cannot be deleted";
-    expect(checkoutMenu(workspace(), blocked)[1]?.unavailable).toBe("The main worktree cannot be deleted");
-    expect(checkoutMenu(workspace({ remote_target_id: "studio", device_id: "studio" }), checkout())[1]?.unavailable).not.toBeNull();
+    expect(checkoutMenu(blocked)[1]?.unavailable).toBe("The main worktree cannot be deleted");
+    expect(checkoutMenu(checkout({ worktree: null }))[1]?.unavailable).toMatch(/not been read/);
   });
 });
 
@@ -113,12 +116,19 @@ describe("receipts", () => {
     expect(taskFor(task({ branch: "other" }), request)).toBeNull();
     expect(taskFor(task({ kind: "checkout_purpose" }), request)).toBeNull();
     expect(taskFor(task({}), null)).toBeNull();
+    // The same repository path on another device is another task.
+    expect(taskFor(task({}), { ...request, deviceId: "local" })?.id).toBe(5);
+    expect(taskFor(task({ device_id: "studio" }), { ...request, deviceId: "local" })).toBeNull();
+    expect(taskFor(task({ device_id: "studio" }), { ...request, deviceId: "studio" })?.id).toBe(5);
   });
 
   it("reads only the removal of the checkout this page asked to delete", () => {
     const removal = { id: 3, repository_root: "/r", checkout_path: "/r-feature", branch: "feature", delete_branch: false, phase: "removing", message: null };
-    expect(removalFor(removal, "/r-feature", 2)?.id).toBe(3);
-    expect(removalFor(removal, "/r-other", 2)).toBeNull();
-    expect(removalFor(removal, "/r-feature", 3)).toBeNull();
+    expect(removalFor(removal, "local", "/r-feature", 2)?.id).toBe(3);
+    expect(removalFor(removal, "local", "/r-other", 2)).toBeNull();
+    expect(removalFor(removal, "local", "/r-feature", 3)).toBeNull();
+    // The same path on another device is not this page's removal.
+    expect(removalFor(removal, "studio", "/r-feature", 2)).toBeNull();
+    expect(removalFor({ ...removal, device_id: "studio" }, "studio", "/r-feature", 2)?.id).toBe(3);
   });
 });

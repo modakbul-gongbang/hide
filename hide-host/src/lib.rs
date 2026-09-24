@@ -19,6 +19,7 @@ pub mod protocol;
 pub mod root;
 pub mod save;
 pub mod serve;
+pub mod worktrees;
 
 pub use error::{ErrorCode, HostError, HostResult};
 pub use root::{Root, RootIdentity, relative_path};

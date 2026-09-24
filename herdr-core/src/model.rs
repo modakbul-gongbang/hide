@@ -2031,6 +2031,9 @@ pub struct WorktreeDeletionGateSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorktreeRemovalSnapshot {
     pub id: u64,
+    /// The device the worktree is on; `None` is this machine. Its path and
+    /// panes are that device's.
+    pub device_id: Option<String>,
     pub repository_root: String,
     pub checkout_path: String,
     pub expected_head_sha: Option<String>,
@@ -2050,6 +2053,9 @@ pub struct WorktreeRemovalSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TaskOperationSnapshot {
     pub id: u64,
+    /// The device the task runs on; `None` is this machine. Its paths and
+    /// pane are that device's.
+    pub device_id: Option<String>,
     pub kind: String,
     pub phase: String,
     pub repository_root: Option<String>,

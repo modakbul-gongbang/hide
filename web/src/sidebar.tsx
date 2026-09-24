@@ -295,7 +295,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
     <li>
       <RowMenu
         label={`${checkout.branch ?? checkout.label} actions`}
-        items={checkoutMenu(workspace, checkout, purposeProblem)}
+        items={checkoutMenu(checkout, purposeProblem)}
         onSelect={(item) => runCheckoutItem(workspace, checkout, item)}
         data-checkout-menu={checkout.id}
       >

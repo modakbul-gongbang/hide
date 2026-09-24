@@ -14,7 +14,7 @@ use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -98,6 +98,30 @@ pub enum Call {
     /// facts are answered, never contents.
     Project {
         path: String,
+    },
+    /// The worktrees of the repository that holds `path`
+    /// (`hide_host::worktrees::read`), measured against `bases` or the
+    /// operator's `base_override`. `null` for a folder that is not a
+    /// repository.
+    Worktrees {
+        path: String,
+        bases: std::collections::BTreeMap<String, String>,
+        base_override: Option<String>,
+    },
+    /// Whether `branch` may be created in the repository at `path`
+    /// (`hide_host::worktrees::check_new_branch`); nothing is created.
+    BranchCheck {
+        path: String,
+        branch: String,
+    },
+    /// The real path of an existing directory, or `null`.
+    Directory {
+        path: String,
+    },
+    /// Rechecks and removes one operator-confirmed linked worktree without
+    /// force (`hide_host::worktrees::remove_confirmed`).
+    WorktreeRemove {
+        removal: crate::worktrees::ConfirmedRemoval,
     },
 }
 
