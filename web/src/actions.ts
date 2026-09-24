@@ -7,7 +7,7 @@ import { closeDecision, statusUnknownNotice } from "./close";
 import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { latestDraft, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
-import { lastCheckoutOf } from "./recent";
+import type { OpenTarget } from "./navigation";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
@@ -27,6 +27,11 @@ export function createActions(dispatch: DispatchFn) {
   const rest = () => useShellStore.getState().rest;
   const diagnostic = (message: string) => useShellStore.getState().noteDiagnostic(message);
   const ui = () => useUiStore.getState();
+
+  /** Remembers what was asked to come forward; `CenterScreen` shows it once it is in front. */
+  const beginOpening = (target: OpenTarget) => {
+    ui().setOpening({ target, errorBefore: rest()?.status?.last_error?.occurred_at ?? null, failure: null });
+  };
 
   const current = (): { checkout: Checkout; tab: Tab | null } | null => {
     const checkout = focusedCheckout(rest());
@@ -466,10 +471,15 @@ export function createActions(dispatch: DispatchFn) {
     /**
      * A Workspace chosen on Main or an Overview, on any device (S6 B2, B21).
      * A Workspace on another device than the one in front is one event that
-     * also brings its device forward, so a refusal moves neither.
+     * also brings its device forward, so a refusal moves neither. The screen
+     * follows once the core has moved there (`opening`).
      */
     openWorkspace(deviceId: string, workspaceId: string, checkoutId: string) {
-      ui().setScreen({ kind: "workspace" });
+      const path =
+        (deviceId === "local" ? rest()?.navigator?.workspaces : rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces)
+          ?.flatMap((row) => row.checkouts)
+          .find((row) => row.id === checkoutId)?.path ?? null;
+      beginOpening({ checkoutId, deviceId, path });
       const front = rest()?.navigator?.focused_device_id ?? "local";
       if (front === deviceId) return focusCheckout(workspaceId, checkoutId);
       if (deviceId === "local") {
@@ -498,9 +508,13 @@ export function createActions(dispatch: DispatchFn) {
       ui().setRelation(null);
     },
 
+    dismissOpening() {
+      ui().setOpening(null);
+    },
+
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     openAgent(paneId: string) {
-      ui().setScreen({ kind: "workspace" });
+      beginOpening({ paneId });
       const target = remoteTargetOfPane(rest(), paneId) ?? "local";
       const forward = (rest()?.navigator?.focused_device_id ?? "local") !== target;
       if (target !== "local") {
@@ -722,20 +736,6 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     focusCheckout,
-
-    /** A project row: the checkout the operator was last in, else the first row (PRD S2 D-07). */
-    focusProject(workspaceId: string) {
-      if (remoteContext(rest())) {
-        const checkout = remoteContext(rest())?.session?.workspaces.find((row) => row.id === workspaceId)?.checkouts[0];
-        return focusCheckout(workspaceId, checkout?.id ?? "");
-      }
-      const workspace = rest()?.navigator?.workspaces?.find((row) => row.id === workspaceId);
-      if (!workspace) return;
-      const ids = workspace.checkouts.map((row) => row.id);
-      const checkoutId = lastCheckoutOf(ids) ?? ids[0];
-      if (!checkoutId) return diagnostic(`focus_checkout: project ${workspace.label} has no checkout`);
-      focusCheckout(workspaceId, checkoutId);
-    },
 
     toggleInactiveCheckouts(projectPath: string) {
       dispatch({ schema_version: 2, kind: "inactive_checkouts_toggle", payload: { project_path: projectPath } });

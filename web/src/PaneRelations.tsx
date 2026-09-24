@@ -11,8 +11,9 @@ import { useUiStore } from "./ui";
 // child pane's header returns to its parent, a parent's header lists every
 // direct child on one scrolling row, and the pane menu lists parent,
 // siblings and children, each moved to only by its explicit Open. Every move
-// is one tracked focus; its pending and failed states show on the pane the
-// operator asked from, and a failure never splits the parent or makes a pane.
+// is one tracked focus; its pending and failed states show in the Agent area,
+// which stays on screen while the core moves the visible tab to the target,
+// and a failure never splits the parent or makes a pane.
 
 /**
  * The compact Return control in a child pane's identity row (B16): one mark,
@@ -89,11 +90,17 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
   );
 }
 
-/** The request asked from this pane, while it is in flight or after it failed (B15). */
-export function RelationStatus({ pane, actions }: { pane: PaneRow; actions: Actions }) {
+/**
+ * The relationship focus the operator asked for, while it is in flight or
+ * after it failed (B15). It is drawn once in the Agent area rather than under
+ * the pane it was asked from: the core moves the visible tab to the target in
+ * the same event and keeps it there on a refusal, so the asking pane is often
+ * no longer on screen when the answer comes.
+ */
+export function RelationStatus({ actions }: { actions: Actions }) {
   const relation = useUiStore((s) => s.relation);
   const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);
-  if (!relation || relation.sourcePaneId !== pane.id) return null;
+  if (!relation) return null;
   const state = relationState(relation, outcome);
   if (!state) return null;
   if (state.phase === "pending") {

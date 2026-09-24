@@ -1,7 +1,8 @@
 // Shared e2e helpers: the client-event counter both flow specs assert with,
-// and the screenshot that writes only when a run directory was named.
+// the screenshot that writes only when a run directory was named, and the
+// way into a Workspace from the Main a first run opens on.
 
-import type { Page, WebSocket } from "@playwright/test";
+import { expect, type Page, type WebSocket } from "@playwright/test";
 import path from "node:path";
 
 /**
@@ -37,6 +38,22 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
     });
   });
   return counts;
+}
+
+/**
+ * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
+ * through its Project's Overview (the one named `project`, else the first)
+ * to that Project's first Workspace. A page that already shows a Workspace
+ * is left where it is.
+ */
+export async function enterWorkspace(page: Page, project?: string): Promise<void> {
+  const main = page.locator("[data-main-screen]");
+  const workspace = page.locator("[data-workspace-screen]");
+  await expect(main.or(workspace)).toBeVisible({ timeout: 20_000 });
+  if ((await workspace.count()) > 0) return;
+  await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
+  await page.locator("[data-overview-workspace]").first().click();
+  await expect(workspace).toBeVisible();
 }
 
 export function screenshot(page: Page, name: string): Promise<unknown> {

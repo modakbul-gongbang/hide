@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { lastCheckoutOf, recentCheckoutOrder, recentTabOrder, rememberCheckout, rememberTab, resetRecent } from "./recent";
+import { recentCheckoutOrder, recentTabOrder, rememberCheckout, rememberTab, resetRecent } from "./recent";
 
 describe("recent order", () => {
   beforeEach(() => resetRecent());
@@ -18,11 +18,9 @@ describe("recent order", () => {
     expect(recentTabOrder("c1", ["t1"])).toEqual(["t1"]);
   });
 
-  it("answers a project row with its last focused checkout", () => {
+  it("orders checkouts by when they were last focused", () => {
     rememberCheckout("a");
     rememberCheckout("b");
-    expect(lastCheckoutOf(["a", "c"])).toBe("a");
-    expect(lastCheckoutOf(["c"])).toBeNull();
     expect(recentCheckoutOrder(["a", "b", "c"])).toEqual(["b", "a", "c"]);
   });
 });

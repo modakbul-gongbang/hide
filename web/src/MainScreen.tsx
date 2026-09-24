@@ -2,9 +2,9 @@ import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { Button } from "./components/ui/controls";
-import { AGENT_GROUPS, checkoutAgents, groupCounts, mainSections, overviewProject, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
+import { AGENT_GROUPS, agentSections, checkoutAgents, groupCounts, mainSections, overviewProject, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { pullRequestBadge } from "./projects";
-import type { AgentRow, Checkout, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, Device, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
@@ -27,6 +27,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           Add project <span className="text-muted">⌥⇧N</span>
         </Button>
       </header>
+      <OpeningStatus actions={actions} />
       {total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted" data-main-empty="true">
           <p>No project is registered yet.</p>
@@ -57,16 +58,7 @@ function DeviceProjects({ section, actions }: { section: DeviceSection; actions:
           </span>
         ) : null}
       </h2>
-      {availability.state === "unavailable" ? (
-        <div role="status" className="mb-xs flex items-center gap-sm rounded-sm bg-panel px-sm py-xs text-caption text-warning" data-device-unavailable={device.id}>
-          <span className="min-w-0 flex-1 break-words">{availability.text}</span>
-          {availability.retry ? (
-            <Button onClick={() => actions.retryDevice(device.id)} data-device-retry={device.id}>
-              Retry
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      <UnavailableNotice device={device} availability={availability} actions={actions} />
       {section.projects.length === 0 ? (
         <p className="px-sm py-xs text-caption text-muted">{availability.state === "ready" ? "No projects on this device." : "Its projects show once it answers."}</p>
       ) : (
@@ -77,6 +69,47 @@ function DeviceProjects({ section, actions }: { section: DeviceSection; actions:
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * A Workspace or agent asked for from here that is not in front yet: a quiet
+ * line while it is on its way, and the refusal with Dismiss when it was not
+ * brought forward, so the operator stays where they were (B2, B21).
+ */
+function OpeningStatus({ actions }: { actions: Actions }) {
+  const opening = useUiStore((s) => s.opening);
+  if (!opening) return null;
+  if (!opening.failure) {
+    return (
+      <p role="status" className="shrink-0 px-md pt-sm text-caption text-muted" data-opening="pending">
+        Opening…
+      </p>
+    );
+  }
+  return (
+    <div role="alert" className="mx-md mt-sm flex shrink-0 items-center gap-sm rounded-sm bg-panel px-sm py-xs text-caption text-warning" data-opening="failed">
+      <span className="min-w-0 flex-1 break-words">Not opened: {opening.failure}</span>
+      <Button onClick={() => actions.dismissOpening()} data-opening-dismiss="true">
+        Dismiss
+      </Button>
+    </div>
+  );
+}
+
+/** Why a device cannot answer, with Retry where retrying can help (B3). */
+function UnavailableNotice({ device, availability, actions }: { device: Device; availability: DeviceAvailability; actions: Actions }) {
+  if (availability.state !== "unavailable") return null;
+  const retry = availability.retry;
+  return (
+    <div role="status" className="mb-xs flex items-center gap-sm rounded-sm bg-panel px-sm py-xs text-caption text-warning" data-device-unavailable={device.id}>
+      <span className="min-w-0 flex-1 break-words">{availability.text}</span>
+      {retry ? (
+        <Button onClick={() => (retry === "helper" ? actions.retryDeviceHost(device.id) : actions.retryDevice(device.id))} data-device-retry={device.id}>
+          Retry
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -138,7 +171,7 @@ export function OverviewScreen({ projectId, actions }: { projectId: string; acti
       </section>
     );
   }
-  const { workspace, device } = found;
+  const { workspace, device, availability } = found;
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-background" aria-label={`Project ${workspace.label}`} data-overview-screen={workspace.id}>
       <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xs border-b border-divider bg-sidebar px-sm text-caption">
@@ -157,7 +190,14 @@ export function OverviewScreen({ projectId, actions }: { projectId: string; acti
           </Button>
         ) : null}
       </header>
+      <OpeningStatus actions={actions} />
       <div className="flex flex-col gap-lg p-md">
+        {device ? <UnavailableNotice device={device} availability={availability} actions={actions} /> : null}
+        {availability.state === "loading" ? (
+          <p role="status" className="px-sm text-caption text-muted" data-device-loading="true">
+            {availability.text}
+          </p>
+        ) : null}
         <WorkspaceList workspace={workspace} agents={found.agents} actions={actions} />
         <ProjectAgents agents={found.agents} workspace={workspace} actions={actions} />
       </div>
@@ -165,7 +205,7 @@ export function OverviewScreen({ projectId, actions }: { projectId: string; acti
   );
 }
 
-function WorkspaceList({ workspace, agents, actions }: { workspace: Workspace; agents: AgentRow[]; actions: Actions }) {
+function WorkspaceList({ workspace, agents, actions }: { workspace: Workspace; agents: AgentRow[] | null; actions: Actions }) {
   return (
     <section aria-label="Workspaces" data-overview-workspaces="true">
       <h2 className="pb-xs text-micro uppercase text-muted">Workspaces · {workspace.checkouts.length}</h2>
@@ -179,7 +219,7 @@ function WorkspaceList({ workspace, agents, actions }: { workspace: Workspace; a
       ) : (
         <ul role="list">
           {workspace.checkouts.map((checkout) => (
-            <WorkspaceRow key={checkout.id} workspace={workspace} checkout={checkout} counts={groupCounts(checkoutAgents(checkout, agents))} actions={actions} />
+            <WorkspaceRow key={checkout.id} workspace={workspace} checkout={checkout} counts={agents ? groupCounts(checkoutAgents(checkout, agents)) : null} actions={actions} />
           ))}
         </ul>
       )}
@@ -187,7 +227,7 @@ function WorkspaceList({ workspace, agents, actions }: { workspace: Workspace; a
   );
 }
 
-function WorkspaceRow({ workspace, checkout, counts, actions }: { workspace: Workspace; checkout: Checkout; counts: GroupCounts; actions: Actions }) {
+function WorkspaceRow({ workspace, checkout, counts, actions }: { workspace: Workspace; checkout: Checkout; counts: GroupCounts | null; actions: Actions }) {
   const name = checkout.branch ?? checkout.label;
   const badge = checkout.pull_request ? pullRequestBadge(checkout.pull_request) : null;
   return (
@@ -220,18 +260,24 @@ function WorkspaceRow({ workspace, checkout, counts, actions }: { workspace: Wor
   );
 }
 
-function ProjectAgents({ agents, workspace, actions }: { agents: AgentRow[]; workspace: Workspace; actions: Actions }) {
+function ProjectAgents({ agents, workspace, actions }: { agents: AgentRow[] | null; workspace: Workspace; actions: Actions }) {
   const byPane = new Map<string, Checkout>();
   for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) byPane.set(pane.id, checkout);
+  if (!agents) {
+    return (
+      <section aria-label="Agents in this project" data-overview-agents="unknown">
+        <h2 className="pb-xs text-micro uppercase text-muted">Agents · …</h2>
+        <p className="px-sm py-xs text-caption text-muted">Its agents show once the device answers.</p>
+      </section>
+    );
+  }
   return (
     <section aria-label="Agents in this project" data-overview-agents="true">
       <h2 className="pb-xs text-micro uppercase text-muted">Agents · {agents.length}</h2>
       {agents.length === 0 ? (
         <p className="px-sm py-xs text-caption text-muted">No agent is running in this project.</p>
       ) : (
-        AGENT_GROUPS.map(({ group, label }) => {
-          const rows = agents.filter((agent) => agent.group === group);
-          if (rows.length === 0) return null;
+        agentSections(agents).map(({ group, label, agents: rows }) => {
           return (
             <div key={group} data-overview-agent-group={group}>
               <h3 className="px-sm pt-xs text-micro uppercase text-muted">

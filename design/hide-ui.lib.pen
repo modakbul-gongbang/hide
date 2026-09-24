@@ -14568,7 +14568,7 @@
     },
     "--size-workspace-area-min": {
       "type": "number",
-      "value": 320
+      "value": 224
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

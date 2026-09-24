@@ -362,7 +362,12 @@ export const useShellStore = create<Store>((set, get) => ({
     };
     if (frame.type === "snapshot" || payload.rest) {
       const previous = get().rest;
-      const incoming = frame.type === "snapshot" ? payload.rest ?? {} : { ...previous, ...payload.rest };
+      // The core leaves `workspace_view` out of the frame when no Workspace
+      // is in front, so a delta that carries rest without it clears it.
+      const incoming =
+        frame.type === "snapshot"
+          ? payload.rest ?? {}
+          : { ...previous, ...payload.rest, workspace_view: payload.rest?.workspace_view };
       const rest = share(previous, incoming);
       const diagnostics: string[] = [];
       const agents =

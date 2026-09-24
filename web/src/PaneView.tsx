@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
-import { ChildChipRow, RelationStatus, ReturnToParent, usePaneMenu } from "./PaneRelations";
+import { ChildChipRow, ReturnToParent, usePaneMenu } from "./PaneRelations";
 import type { PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
 import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale } from "./terminals";
@@ -192,7 +192,6 @@ export const PaneView = memo(function PaneView({
         {paneMenu.menu}
       </header>
       <ChildChipRow pane={pane} actions={actions} />
-      <RelationStatus pane={pane} actions={actions} />
       <div className="h-[var(--size-hairline)] shrink-0 bg-divider" />
       <div className="relative min-h-0 flex-1">
         <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} />

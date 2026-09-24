@@ -896,7 +896,7 @@ Explorer and History are toggles that open and close independently, drawn presse
 A right-click or the menu key on the toolbar offers the layouts, each tool, Copy Workspace path and Open Project Overview.
 
 Agents and Views sit side by side, each with its own tab row, and a boundary between them drags with a guide line and lands once on release.
-Neither area narrows below `--size-workspace-area-min` (`HideTheme.Layout.workspaceAreaMinWidth`); when both minimums cannot fit, the two split evenly.
+Neither area narrows below `--size-workspace-area-min` (`HideTheme.Layout.workspaceAreaMinWidth`) at the supported 1024-wide window: the tool column gives way first, down to `--size-panel-min`, and only when both minimums still cannot fit do the two split evenly.
 An empty Agent area offers New tab; an empty View area says no file or diff is open and offers Show Explorer when the Explorer is hidden, and Open file.
 Changing the layout only changes space: it closes no tab, document or pane and makes no split.
 

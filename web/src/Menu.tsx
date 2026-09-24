@@ -32,18 +32,31 @@ export function MenuList<Id extends string>({
   style?: React.CSSProperties;
 }) {
   const list = useRef<HTMLUListElement>(null);
+  // The latest close, so a parent that passes a new closure on every render
+  // (a snapshot arriving) does not re-run the mount: that would focus the
+  // first item again and lose the keyboard's place.
+  const close = useRef(onClose);
   useEffect(() => {
-    const remove = useUiStore.getState().pushEscape(onClose);
-    list.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus();
+    close.current = onClose;
+  });
+  useEffect(() => {
+    const node = list.current;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const remove = useUiStore.getState().pushEscape(() => close.current());
+    node?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus();
     const outside = (event: PointerEvent) => {
-      if (!list.current?.contains(event.target as Node)) onClose();
+      if (!node?.contains(event.target as Node)) close.current();
     };
     window.addEventListener("pointerdown", outside, true);
     return () => {
       remove();
       window.removeEventListener("pointerdown", outside, true);
+      // Closing hands the keyboard back to the control that opened the menu,
+      // unless the close already put it somewhere (`ContextMenu`, a click).
+      const active = document.activeElement;
+      if (opener?.isConnected && (!active || active === document.body || node?.contains(active))) opener.focus({ preventScroll: true });
     };
-  }, [onClose]);
+  }, []);
   const move = (event: KeyboardEvent<HTMLUListElement>) => {
     if (event.key === "Tab") {
       event.preventDefault();

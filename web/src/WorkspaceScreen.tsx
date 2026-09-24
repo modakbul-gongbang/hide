@@ -6,6 +6,7 @@ import { LayoutIcon, ToolIcon } from "./icons";
 import { ContextMenu, MenuList, type MenuEntry } from "./Menu";
 import { FindBar } from "./Overlays";
 import { PaneCanvas, RemotePaneCanvas } from "./PaneGrid";
+import { RelationStatus } from "./PaneRelations";
 import { remoteView } from "./remote";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
@@ -220,7 +221,14 @@ function Areas({ checkout, mode, share, actions }: { checkout: Checkout; mode: V
     target.addEventListener("lostpointercapture", end);
   };
   return (
-    <div ref={body} className="relative flex min-h-0 min-w-0 flex-1" data-areas={mode}>
+    // While both areas show they ask for two minimums, and the tools column
+    // gives way first, down to its own minimum (B6): its shrink weight is far
+    // above the areas'. Below that the areas split what is left evenly.
+    <div
+      ref={body}
+      className={`relative flex min-h-0 min-w-0 grow ${agents && views ? "shrink basis-[calc(2_*_var(--size-workspace-area-min)_+_var(--size-resize-handle))]" : "flex-1"}`}
+      data-areas={mode}
+    >
       {agents ? (
         <div className={`flex min-h-0 min-w-0 flex-col ${agentPx === null ? "flex-1" : "shrink-0"}`} style={agentPx === null ? undefined : { width: agentPx }} data-agent-area="true">
           <AgentArea checkout={checkout} actions={actions} />
@@ -270,6 +278,7 @@ function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Ac
   return (
     <>
       <AgentTabBar checkout={checkout} activeTabId={checkout.active_tab_id} agents={agents} actions={actions} />
+      <RelationStatus actions={actions} />
       <FindBar actions={actions} />
       {hasTabs ? (
         <PaneCanvas actions={actions} />
@@ -335,6 +344,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
         </div>
       )}
       <AgentTabBar checkout={view.checkout} activeTabId={view.tab?.id ?? null} agents={session?.agents ?? null} device actions={actions} />
+      <RelationStatus actions={actions} />
       <RemotePaneCanvas view={view} connected={connected} actions={actions} />
     </>
   );

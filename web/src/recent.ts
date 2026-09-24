@@ -33,10 +33,6 @@ export function recentCheckoutOrder(existing: string[]): string[] {
   return [...seen, ...existing.filter((id) => !seen.includes(id))];
 }
 
-export function lastCheckoutOf(ids: string[]): string | null {
-  return recentCheckouts.find((id) => ids.includes(id)) ?? null;
-}
-
 /** Test seam. */
 export function resetRecent() {
   recentTabs.clear();

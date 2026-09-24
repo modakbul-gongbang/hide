@@ -4,6 +4,7 @@
 
 import { create } from "zustand";
 import type { Relation } from "./lineage";
+import type { Opening } from "./navigation";
 
 export type SidebarMode = "agents" | "projects";
 
@@ -101,6 +102,8 @@ type UiStore = {
   watchedTask: number | null;
   /** The pane a creation made, to be focused once the snapshot lists it (B13). */
   focusWhenListed: string | null;
+  /** A Workspace or agent asked for from Main, an Overview or the Agents list, until it is in front or refused (S6 B2, B21). */
+  opening: Opening | null;
   watchedRemoval: { deviceId: string; path: string; afterId: number } | null;
   /** True while a Shortcuts row is recording: the window listener then runs no command. */
   recordingShortcut: boolean;
@@ -126,6 +129,7 @@ type UiStore = {
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
+  setOpening: (opening: Opening | null) => void;
   setWatchedRemoval: (removal: { deviceId: string; path: string; afterId: number } | null) => void;
   setRecordingShortcut: (recording: boolean) => void;
   /** Registers an Escape layer and returns its removal. */
@@ -147,6 +151,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   workspaceDialog: null,
   watchedTask: null,
   focusWhenListed: null,
+  opening: null,
   watchedRemoval: null,
   recordingShortcut: false,
   escapeLayers: [],
@@ -171,6 +176,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setWorkspaceDialog: (workspaceDialog) => set({ workspaceDialog }),
   setWatchedTask: (watchedTask) => set({ watchedTask }),
   setFocusWhenListed: (focusWhenListed) => set({ focusWhenListed }),
+  setOpening: (opening) => set({ opening }),
   setWatchedRemoval: (watchedRemoval) => set({ watchedRemoval }),
   setRecordingShortcut: (recordingShortcut) => set({ recordingShortcut }),
   pushEscape: (handler) => {

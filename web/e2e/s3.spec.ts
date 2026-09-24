@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot } from "./wire";
 
 const SOURCE = "export const answer = 41;\n";
 
@@ -1064,6 +1064,7 @@ test("an existing v1 recovery draft survives the IndexedDB upgrade", async ({ pa
       });
     }, { path: file });
     await page.goto(app);
+    await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 99");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 99;\n");
   } finally {
@@ -1096,6 +1097,7 @@ test("a root-keyed v2 recovery draft survives the IndexedDB upgrade", async ({ p
       });
     }, { path: file, root: repo });
     await page.goto(app);
+    await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 98");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 98;\n");
   } finally {
@@ -1131,6 +1133,7 @@ test("of two legacy drafts for one file the newer is restored, and the older is 
       });
     }, { path: file, root: repo });
     await page.goto(app);
+    await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
     const kept = await page.evaluate(() => new Promise<string[]>((resolve, reject) => {
@@ -1181,6 +1184,7 @@ test("one draft id in both legacy stores migrates as its newer row (S5.5 B12)", 
       });
     }, { path: file, root: repo });
     await page.goto(app);
+    await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
   } finally {
@@ -1359,6 +1363,7 @@ test("an interrupted draft store upgrade loses nothing and completes on the next
     }));
     expect(survived).toBe(1);
     await page.goto(app);
+    await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
   } finally {

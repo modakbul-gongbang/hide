@@ -5,7 +5,7 @@
 // has no session to show. Nothing here is counted that the snapshot does not
 // carry, and a device that cannot answer says so instead of showing zeros.
 
-import { focusedRemoteDevice, type AgentRow, type Checkout, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
+import { focusedRemoteDevice, frontCheckout, type AgentRow, type Checkout, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
 export const AGENT_GROUPS: readonly { group: AgentGroup; label: string }[] = [
@@ -17,11 +17,17 @@ export const AGENT_GROUPS: readonly { group: AgentGroup; label: string }[] = [
 
 export type GroupCounts = Record<AgentGroup, number>;
 
+/**
+ * What retrying an unavailable device does: reconnect its session, or
+ * restart its helper, whose new connection reads the catalog again.
+ */
+export type AvailabilityRetry = "connect" | "helper";
+
 /** How far a device's projects can be trusted right now. */
 export type DeviceAvailability =
   | { state: "ready" }
   | { state: "loading"; text: string }
-  | { state: "unavailable"; text: string; retry: boolean };
+  | { state: "unavailable"; text: string; retry: AvailabilityRetry | null };
 
 export type ProjectEntry = {
   id: string;
@@ -101,19 +107,26 @@ export type ListedAgent = { agent: AgentRow; device: string | null };
  * gave them. A device that is not connected lists nothing, since what it
  * last reported is not current.
  */
-export function allAgents(rest: SnapshotRest | null, localAgents: AgentRow[]): ListedAgent[] {
+export function allAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[]): ListedAgent[] {
   const listed: ListedAgent[] = localAgents.map((agent) => ({ agent, device: null }));
-  for (const status of rest?.status?.remote ?? []) {
+  for (const status of remote ?? []) {
     if (status.state !== "connected") continue;
-    const device = rest?.navigator?.devices?.find((row) => row.id === status.target_id)?.label ?? status.target_id;
+    const device = devices?.find((row) => row.id === status.target_id)?.label ?? status.target_id;
     for (const agent of status.session?.agents ?? []) listed.push({ agent, device });
   }
   return listed;
 }
 
-/** How many live descendants an agent has among the rows the core lists (B13). */
-export function liveDescendants(agent: AgentRow, agents: AgentRow[]): number {
+/**
+ * How many live descendants each agent has among the rows the core lists
+ * (B13), keyed by pane, from one index of the rows rather than one per row.
+ */
+export function liveDescendantCounts(agents: AgentRow[]): Map<string, number> {
   const byPane = new Map(agents.map((row) => [row.pane_id, row]));
+  return new Map(agents.map((agent) => [agent.pane_id, descendantsIn(agent, byPane)]));
+}
+
+function descendantsIn(agent: AgentRow, byPane: Map<string, AgentRow>): number {
   const seen = new Set<string>();
   const queue = [...(agent.lineage_child_pane_ids ?? [])];
   while (queue.length > 0) {
@@ -136,28 +149,29 @@ export function checkoutAgents(checkout: Checkout, agents: AgentRow[]): AgentRow
 /**
  * This machine's Projects count agents only while its Herdr answers: an
  * unreachable Herdr has no agents to list, and "No agents" would be a zero
- * nobody measured (B3). The core reconnects on its own, so there is no Retry.
+ * nobody measured (B3). The core reconnects on its own and has no event that
+ * reconnects sooner, so there is no Retry.
  */
 function localAvailability(rest: SnapshotRest | null): DeviceAvailability {
   const herdr = rest?.status?.herdr;
   if (!herdr?.state || herdr.state === "connected") return { state: "ready" };
   if (herdr.state === "not_connected") return { state: "loading", text: "Connecting to Herdr…" };
   const reason = herdr.message ?? `Herdr is ${herdr.state.replace(/_/g, " ")}`;
-  return { state: "unavailable", text: `${reason}. Agent counts show once it answers; Hide keeps trying.`, retry: false };
+  return { state: "unavailable", text: `${reason}. Agent counts show once it answers; Hide keeps trying.`, retry: null };
 }
 
 function deviceAvailability(device: Device, status: RemoteStatus | undefined): DeviceAvailability {
   if (device.kind !== "remote") return { state: "ready" };
   if (!status || status.state === "not_connected") return { state: "loading", text: "Connecting…" };
   if (status.state !== "connected" && status.state !== "stale") {
-    return { state: "unavailable", text: status.message ?? `${device.label} is ${status.state.replace(/_/g, " ")}`, retry: status.state !== "disabled" };
+    return { state: "unavailable", text: status.message ?? `${device.label} is ${status.state.replace(/_/g, " ")}`, retry: status.state === "disabled" ? null : "connect" };
   }
   if (status.state === "stale") {
-    return { state: "unavailable", text: status.message ?? `${device.label} is not connected; showing what it last reported`, retry: true };
+    return { state: "unavailable", text: status.message ?? `${device.label} is not connected; showing what it last reported`, retry: "connect" };
   }
   const catalog = status.catalog;
   if (catalog?.state === "resolving") return { state: "loading", text: "Reading projects…" };
-  if (catalog?.state === "unavailable") return { state: "unavailable", text: catalog.message ?? "Projects could not be read", retry: false };
+  if (catalog?.state === "unavailable") return { state: "unavailable", text: catalog.message ?? "Projects could not be read", retry: "helper" };
   return { state: "ready" };
 }
 
@@ -189,7 +203,7 @@ function registrationEntry(registration: WorkspaceRegistration): ProjectEntry {
 
 function byPinThenLabel(left: ProjectEntry, right: ProjectEntry): number {
   if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
-  return 0;
+  return left.label.localeCompare(right.label);
 }
 
 /**
@@ -220,19 +234,41 @@ export function mainSections(rest: SnapshotRest | null, localAgents: AgentRow[])
   return sections;
 }
 
-/** The Project an Overview shows, on whichever device it lives, with the agents of that device. */
-export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow[], projectId: string): { workspace: Workspace; agents: AgentRow[]; device: Device | null } | null {
+export type OverviewProject = {
+  workspace: Workspace;
+  /** The Project's agents, or null while its device cannot say which are current. */
+  agents: AgentRow[] | null;
+  device: Device | null;
+  availability: DeviceAvailability;
+};
+
+/**
+ * The Project an Overview shows, on whichever device it lives, with the
+ * agents of that device. Like Main, it counts nothing its device cannot
+ * answer for right now: an unreachable Herdr has no agents to list, and a
+ * stale device's last report is not current (B3, B21).
+ */
+export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow[], projectId: string): OverviewProject | null {
   const local = rest?.navigator?.workspaces?.find((row) => row.id === projectId);
   if (local) {
-    return { workspace: local, agents: projectAgents(local, localAgents), device: rest?.navigator?.devices?.find((row) => row.kind !== "remote") ?? null };
+    const availability = localAvailability(rest);
+    return {
+      workspace: local,
+      agents: availability.state === "ready" ? projectAgents(local, localAgents) : null,
+      device: rest?.navigator?.devices?.find((row) => row.kind !== "remote") ?? null,
+      availability,
+    };
   }
   for (const status of rest?.status?.remote ?? []) {
     const workspace = status.session?.workspaces.find((row) => row.id === projectId);
     if (workspace) {
+      const device = rest?.navigator?.devices?.find((row) => row.id === status.target_id) ?? null;
+      const availability = device ? deviceAvailability(device, status) : { state: "loading" as const, text: "Connecting…" };
       return {
         workspace,
-        agents: projectAgents(workspace, status.session?.agents ?? []),
-        device: rest?.navigator?.devices?.find((row) => row.id === status.target_id) ?? null,
+        agents: availability.state === "ready" ? projectAgents(workspace, status.session?.agents ?? []) : null,
+        device,
+        availability,
       };
     }
   }
@@ -243,15 +279,17 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
 const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "unreachable", "stale", "incompatible"]);
 
 /**
- * The first screen (S6 B19, D-11): the Workspace the core kept in front once
- * it resolves, Main once the device in front has settled without one, and
- * null while that device is still being reached. The device in front decides:
- * a device Workspace is known only once that device's session arrives, and
- * this machine's Herdr settling first says nothing about it.
+ * The first screen (S6 B19, D-11): the Workspace in front when the core
+ * says it is the one used last in an earlier run, Main when it is not (a
+ * first run, or a last Workspace that is gone) or when the device in front
+ * has settled without one, and null while that device is still being
+ * reached. The device in front decides: a device Workspace is known only
+ * once that device's session arrives, and this machine's Herdr settling
+ * first says nothing about it.
  */
 export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "workspace" | "main" | null {
   if (!rest) return null;
-  if (hasFront) return "workspace";
+  if (hasFront) return rest.workspace_view?.resumed ? "workspace" : "main";
   const device = focusedRemoteDevice(rest);
   if (!device) {
     const state = rest.status?.herdr?.state;
@@ -261,4 +299,36 @@ export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "wo
   if (!status || status.state === "not_connected") return null;
   if (status.state === "connected" && !status.session) return null;
   return "main";
+}
+
+/** What Main, an Overview or the Agents list asked to bring forward (B2, B12, B21). */
+export type OpenTarget = { checkoutId: string; deviceId: string; path: string | null } | { paneId: string };
+
+/**
+ * A Workspace or agent asked for and not yet in front. The screen changes
+ * only once the core has moved there, so a refusal leaves the operator where
+ * they were, with the reason. `errorBefore` is the core's last error when the
+ * request went out; a newer one is this request's refusal.
+ */
+export type Opening = { target: OpenTarget; errorBefore: number | null; failure: string | null };
+
+/** How long an open may take before it is reported as not having happened. */
+export const OPEN_ANSWER_TIMEOUT_MS = 15_000;
+
+/** Whether the Workspace in front is the one an open asked for. */
+export function openingLanded(rest: SnapshotRest | null, target: OpenTarget): boolean {
+  const front = frontCheckout(rest);
+  if (!front) return false;
+  if ("paneId" in target) return front.tabs.some((tab) => tab.panes.some((pane) => pane.id === target.paneId));
+  if (front.id === target.checkoutId) return true;
+  // A device project with no Herdr workspace yet gets one at its folder, under a new id.
+  return target.path !== null && front.path === target.path && (rest?.navigator?.focused_device_id ?? "local") === target.deviceId;
+}
+
+/** Where an open stands: "landed", the core's refusal, or null while it is on its way. */
+export function openingProgress(rest: SnapshotRest | null, opening: Opening): "landed" | string | null {
+  if (openingLanded(rest, opening.target)) return "landed";
+  const error = rest?.status?.last_error;
+  if (error && error.occurred_at !== opening.errorBefore) return error.message;
+  return null;
 }

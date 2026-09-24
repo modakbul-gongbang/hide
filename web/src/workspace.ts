@@ -16,6 +16,8 @@ export type WorkspaceView = {
   explorer: boolean;
   changes: boolean;
   agent_share: number;
+  /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
+  resumed?: boolean;
 };
 
 /** The three layouts, in the order the toolbar and the menu offer them (D-03). */

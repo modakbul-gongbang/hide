@@ -3,7 +3,7 @@ import type { Actions } from "./actions";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
 import { chipTone } from "./lineage";
-import { agentSections, allAgents, liveDescendants } from "./navigation";
+import { agentSections, allAgents, liveDescendantCounts } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import { RowMenu } from "./RowMenu";
 import { displayBrowser } from "./shortcuts";
@@ -84,13 +84,17 @@ export function Sidebar({ actions }: { actions: Actions }) {
  * marked read.
  */
 function AgentList({ actions }: { actions: Actions }) {
-  const rest = useShellStore((s) => s.rest);
+  // Only what the list reads, so a terminal frame or an editor change does
+  // not rebuild it.
+  const remote = useShellStore((s) => s.rest?.status?.remote);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const localAgents = useShellStore((s) => s.agents);
-  const listed = useMemo(() => allAgents(rest, localAgents), [rest, localAgents]);
+  const listed = useMemo(() => allAgents(remote, devices, localAgents), [remote, devices, localAgents]);
   const agents = useMemo(() => listed.map((row) => row.agent), [listed]);
   const deviceOf = useMemo(() => new Map(listed.map((row) => [row.agent.pane_id, row.device])), [listed]);
+  const descendants = useMemo(() => liveDescendantCounts(agents), [agents]);
+  const sections = useMemo(() => agentSections(agents), [agents]);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  const sections = agentSections(agents);
   if (sections.length === 0) {
     return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted" data-agents-empty="true">No agents are running</div>;
   }
@@ -107,9 +111,9 @@ function AgentList({ actions }: { actions: Actions }) {
                 key={agent.id}
                 agent={agent}
                 device={deviceOf.get(agent.pane_id) ?? null}
-                descendants={liveDescendants(agent, agents)}
+                descendants={descendants.get(agent.pane_id) ?? 0}
                 selected={agent.pane_id === focusedPaneId}
-                onSelect={() => actions.openAgent(agent.pane_id)}
+                onOpen={actions.openAgent}
               />
             ))}
           </ul>
@@ -142,13 +146,13 @@ const AgentRowView = memo(function AgentRowView({
   device,
   descendants,
   selected,
-  onSelect,
+  onOpen,
 }: {
   agent: AgentRow;
   device: string | null;
   descendants: number;
   selected: boolean;
-  onSelect: () => void;
+  onOpen: (paneId: string) => void;
 }) {
   const attention = agent.group === "needs_you" || agent.unread;
   // A delegated row is somebody else's work: drawn quieter and indented,
@@ -158,7 +162,7 @@ const AgentRowView = memo(function AgentRowView({
     <li>
       <button
         type="button"
-        onClick={onSelect}
+        onClick={() => onOpen(agent.pane_id)}
         data-pane={agent.pane_id}
         data-attention={attention ? "true" : "false"}
         data-delegated={agent.delegated ? "true" : "false"}

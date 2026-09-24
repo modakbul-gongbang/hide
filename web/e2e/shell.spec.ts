@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
+import { enterWorkspace } from "./wire";
 
 type Daemon = {
   origin: string;
@@ -115,6 +116,7 @@ test("a sidebar row click switches the pane and typed text echoes there", async 
     daemon = await startHided({ HERDR_SOCKET_PATH: herdr.socket, HERDR_BIN_PATH: herdr.bin });
     const [first, second] = herdr.panes;
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
+    await enterWorkspace(page);
     await expect(page.locator(`[data-pane="${first}"]`)).toContainText("Agent one");
     await expect(page.locator(`[data-pane="${second}"]`)).toContainText("Agent two");
     await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", first);

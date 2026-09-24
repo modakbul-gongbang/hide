@@ -1,4 +1,4 @@
-// The S6 flow on an isolated pinned Herdr and hided: Main, a Project's
+// The S6 flow on an isolated pinned Herdr and hided: a first run on Main, a Project's
 // Overview and its Workspace (B1, B2, B4), the three layouts from the icons
 // and the palette (B5), the Explorer and History as independent tools (B10),
 // a delegated child reached from its parent's chip and left by its Return
@@ -39,15 +39,11 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     const sent = countSent(page, last);
     await open(page, daemon);
 
-    // The front checkout opens as a Workspace; a new one starts with its
-    // agents alone and the Explorer shown.
+    // A first run starts on Main (D-11), which lists this machine's Project
+    // with real counts (B1).
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toBeVisible({ timeout: 20_000 });
-    await expect(workspace).toHaveAttribute("data-layout", "agents");
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-
-    // Main lists this machine's Project with real counts (B1).
-    await page.locator("[data-go-main]").click();
+    await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await expect(workspace).toHaveCount(0);
     const project = page.locator("[data-main-project]", { hasText: "fixture" });
     await expect(project).toBeVisible();
     await expect(project.locator("[data-workspace-count]")).toHaveText(/1 workspace/);
@@ -63,6 +59,9 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await page.locator(`[data-overview-agent="${parent}"]`).click();
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
+    // A new Workspace starts with its agents alone and the Explorer shown.
+    await expect(workspace).toHaveAttribute("data-layout", "agents");
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
 
     // The icons and the palette choose a layout; each is one workspace_view (B5).
     const before = sent.get("workspace_view") ?? 0;

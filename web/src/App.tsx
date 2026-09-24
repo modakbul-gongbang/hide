@@ -16,7 +16,7 @@ import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
 import { focusedCheckout, focusedRemoteDevice, frontCheckout } from "./snapshot";
-import { startupScreen } from "./navigation";
+import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
@@ -183,11 +183,11 @@ function ShortcutSheetGate({ actions }: { actions: Actions }) {
 
 /**
  * Main, a Project's Overview, or the front Workspace (PRD S6 D-02, D-11). The
- * page starts on the Workspace the core kept in front when it is still in
- * the catalog, and on Main when there is none or it is gone; while this
- * machine's Herdr is still being reached the choice waits, so a Workspace
- * that is about to appear does not first flash Main. A Workspace that goes
- * away while it is shown gives way to Main.
+ * page starts on the Workspace the core kept in front when it is the one used
+ * last and still in the catalog, and on Main on a first run or when it is
+ * gone; while the device in front is still being reached the choice waits,
+ * so a Workspace that is about to appear does not first flash Main. A
+ * Workspace that goes away while it is shown gives way to Main.
  */
 function CenterScreen({ actions }: { actions: Actions }) {
   const screen = useUiStore((s) => s.screen);
@@ -196,6 +196,34 @@ function CenterScreen({ actions }: { actions: Actions }) {
   const first = useShellStore((s) => startupScreen(s.rest, front !== null));
   const loaded = useShellStore((s) => s.rest !== null);
   const remoteFront = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
+  const opening = useUiStore((s) => s.opening);
+  const progress = useShellStore((s) => (opening && !opening.failure ? openingProgress(s.rest, opening) : null));
+  // An open from Main, an Overview or the Agents list shows its Workspace
+  // once the core has moved there; a refusal or no answer stays put and says
+  // why on Main or the Overview. On a Workspace the core's error notice
+  // already says it, so nothing is kept for later (B2, B21).
+  useEffect(() => {
+    if (!opening || opening.failure || progress === null) return;
+    const store = useUiStore.getState();
+    if (progress === "landed") {
+      store.setOpening(null);
+      store.setScreen({ kind: "workspace" });
+      return;
+    }
+    store.setOpening(store.screen?.kind === "workspace" ? null : { ...opening, failure: progress });
+  }, [opening, progress]);
+  useEffect(() => {
+    if (!opening || opening.failure) return undefined;
+    const timer = window.setTimeout(() => {
+      const store = useUiStore.getState();
+      if (store.opening !== opening) return;
+      const failure = "It did not come forward in time; nothing changed.";
+      if (store.screen?.kind !== "workspace") return store.setOpening({ ...opening, failure });
+      store.setOpening(null);
+      store.setNotice({ text: `Not opened: ${failure}`, refreshable: false });
+    }, OPEN_ANSWER_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [opening]);
   useEffect(() => {
     if (screen !== null || !loaded) return undefined;
     if (first) {

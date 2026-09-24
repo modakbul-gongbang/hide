@@ -15,7 +15,7 @@ export function Tools({ actions }: { actions: Actions }) {
   const changes = useShellStore((s) => workspaceViewOf(s.rest)?.changes ?? false);
   if (!explorer && !changes) return null;
   return (
-    <aside className="flex h-full w-[var(--size-panel-ideal)] min-w-[var(--size-panel-min)] shrink-0 flex-col border-l border-divider bg-panel text-primary" aria-label="Workspace tools" data-workspace-tools={[explorer ? "explorer" : "", changes ? "changes" : ""].filter(Boolean).join(" ")}>
+    <aside className="flex h-full min-w-[var(--size-panel-min)] shrink-[1000] grow-0 basis-[var(--size-panel-ideal)] flex-col border-l border-divider bg-panel text-primary" aria-label="Workspace tools" data-workspace-tools={[explorer ? "explorer" : "", changes ? "changes" : ""].filter(Boolean).join(" ")}>
       {explorer ? (
         <ToolSection title="Explorer" tool="explorer" onClose={() => actions.setTool("explorer", false)}>
           {/* The tree reads the selected device's checkout through its helper. */}
