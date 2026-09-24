@@ -121,6 +121,15 @@ impl FileRoots {
             .is_some_and(|(opened, ambient)| same_directory_identity(&opened, &ambient))
     }
 
+    #[cfg(unix)]
+    pub(crate) fn opened_root_fd(&self, path: &Path) -> Option<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+        self.roots
+            .iter()
+            .find(|(root, _)| root == path)
+            .map(|(_, dir)| dir.as_raw_fd())
+    }
+
     fn parent(&self, path: &Path) -> io::Result<(Dir, std::ffi::OsString)> {
         let (dir, relative) = self.relative(path)?;
         let name = relative.file_name().ok_or_else(|| {

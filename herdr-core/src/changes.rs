@@ -26,6 +26,61 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 /// silently cut or allowed to dominate the wire.
 const MAX_DIFF_BYTES: usize = 256 * 1024;
 
+/// Git runs from the checkout capability that the daemon retained at
+/// registration. A later pathname replacement cannot redirect Git to another
+/// repository between scope validation and a status or diff invocation.
+#[derive(Clone, Copy)]
+struct GitDirectory<'a> {
+    path: &'a Path,
+    #[cfg(unix)]
+    fd: Option<std::os::fd::RawFd>,
+}
+
+impl<'a> GitDirectory<'a> {
+    fn for_checkout(
+        path: &'a Path,
+        roots: Option<&crate::files::FileRoots>,
+    ) -> Result<Self, String> {
+        #[cfg(unix)]
+        let fd =
+            match roots {
+                Some(roots) => Some(roots.opened_root_fd(path).ok_or_else(|| {
+                    "The registered History checkout could not be opened".to_owned()
+                })?),
+                None => None,
+            };
+        #[cfg(not(unix))]
+        let _ = roots;
+        Ok(Self {
+            path,
+            #[cfg(unix)]
+            fd,
+        })
+    }
+
+    fn command(self) -> Command {
+        let mut command = Command::new("git");
+        #[cfg(unix)]
+        if let Some(fd) = self.fd {
+            use std::os::unix::process::CommandExt;
+            // fchdir is async-signal-safe in the child before exec. The
+            // borrowed FileRoots keeps this fd open until spawn completes.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fchdir(fd) == -1 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+            return command;
+        }
+        command.arg("-C").arg(self.path);
+        command
+    }
+}
+
 /// What the runtime wants read: the checkout to describe and the file whose
 /// diff to fetch. Absent while neither Changes nor Explorer is showing and no
 /// diff tab is active, which keeps the reader out of the common hidden-panel
@@ -124,7 +179,27 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
         .as_ref()
         .or(request.file_roots.as_ref())
         .or(owned_roots.as_ref());
-    let toplevel = match git_toplevel(&request.root_path) {
+    if !handles_match_history_paths(request, file_roots) {
+        return ChangesSnapshot {
+            root_path: Some(root_path),
+            unavailable_reason: Some(
+                "This History folder no longer matches its registered checkout".to_owned(),
+            ),
+            ..ChangesSnapshot::default()
+        };
+    }
+    let git = match GitDirectory::for_checkout(&request.checkout_path, request.file_roots.as_ref())
+    {
+        Ok(git) => git,
+        Err(reason) => {
+            return ChangesSnapshot {
+                root_path: Some(root_path),
+                unavailable_reason: Some(reason),
+                ..ChangesSnapshot::default()
+            };
+        }
+    };
+    let toplevel = match git_toplevel(git) {
         Ok(toplevel) => toplevel,
         Err(reason) => {
             return ChangesSnapshot {
@@ -161,7 +236,7 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
         };
     }
 
-    let mut entries = match git_status(&toplevel) {
+    let mut entries = match git_status(git) {
         Ok(status) => parse_status(&status, &toplevel),
         Err(reason) => {
             return ChangesSnapshot {
@@ -173,7 +248,7 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
     };
     // One `--numstat` for the whole working tree rather than one per row: the
     // per-file numbers are a column on a list that is already being read.
-    if let Ok(numstat) = git_numstat(&toplevel, &["diff", "--numstat", "-z", "HEAD"]) {
+    if let Ok(numstat) = git_numstat(git, &["diff", "--numstat", "-z", "HEAD"]) {
         apply_line_counts(&mut entries, &numstat);
     }
     let entries = scope_entries(entries, &request.root_path, &scope);
@@ -182,7 +257,7 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
     // against, so the committed group is absent rather than empty - an empty
     // group would claim the branch has no commits.
     let (base_branch, committed) = match request.base_branch.as_deref() {
-        Some(base) => match read_committed(&toplevel, base) {
+        Some(base) => match read_committed(git, &toplevel, base) {
             Ok(Some(committed)) => (
                 Some(base.to_owned()),
                 scope_entries(committed, &request.root_path, &scope),
@@ -212,11 +287,21 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
         .and_then(|path| group.iter().find(|entry| &entry.path == path));
     let diff = selected.map(|entry| {
         if request.selected_committed {
-            read_committed_diff(&toplevel, &scope, entry, base_branch.as_deref())
+            read_committed_diff(git, &scope, entry, base_branch.as_deref())
         } else {
-            read_diff(&toplevel, &scope, entry, file_roots)
+            read_diff(git, &scope, entry, file_roots)
         }
     });
+
+    if !handles_match_history_paths(request, file_roots) {
+        return ChangesSnapshot {
+            root_path: Some(root_path),
+            unavailable_reason: Some(
+                "This History folder no longer matches its registered checkout".to_owned(),
+            ),
+            ..ChangesSnapshot::default()
+        };
+    }
 
     ChangesSnapshot {
         root_path: Some(root_path),
@@ -314,17 +399,21 @@ fn scope_entries(
 
 /// The files this branch's commits changed since `base`, with their line
 /// counts. An unresolved base omits the group; a failed read is unavailable.
-fn read_committed(toplevel: &Path, base: &str) -> Result<Option<Vec<ChangedFileSnapshot>>, String> {
-    let Some(base_ref) = resolvable_base(toplevel, base) else {
+fn read_committed(
+    git: GitDirectory<'_>,
+    toplevel: &Path,
+    base: &str,
+) -> Result<Option<Vec<ChangedFileSnapshot>>, String> {
+    let Some(base_ref) = resolvable_base(git, base) else {
         return Ok(None);
     };
     let range = format!("{base_ref}...HEAD");
     let statuses = git_text(
-        toplevel,
+        git,
         &["diff", "--name-status", "-z", "--find-renames", &range],
     )?;
     let mut entries = parse_name_status(&statuses, toplevel);
-    if let Ok(numstat) = git_numstat(toplevel, &["diff", "--numstat", "-z", &range]) {
+    if let Ok(numstat) = git_numstat(git, &["diff", "--numstat", "-z", &range]) {
         apply_line_counts(&mut entries, &numstat);
     }
     Ok(Some(entries))
@@ -333,10 +422,10 @@ fn read_committed(toplevel: &Path, base: &str) -> Result<Option<Vec<ChangedFileS
 /// The base as a ref this checkout can resolve: the local branch first, its
 /// remote-tracking form second. Mirrors the worktree reader's rule, so the
 /// card's counts and this list are measured against the same commit.
-fn resolvable_base(toplevel: &Path, base: &str) -> Option<String> {
+fn resolvable_base(git: GitDirectory<'_>, base: &str) -> Option<String> {
     for candidate in [base.to_owned(), format!("origin/{base}")] {
         if git_text(
-            toplevel,
+            git,
             &[
                 "rev-parse",
                 "--verify",
@@ -433,12 +522,12 @@ fn apply_line_counts(entries: &mut [ChangedFileSnapshot], counts: &str) {
     }
 }
 
-fn git_numstat(toplevel: &Path, arguments: &[&str]) -> Result<String, String> {
-    git_text(toplevel, arguments)
+fn git_numstat(git: GitDirectory<'_>, arguments: &[&str]) -> Result<String, String> {
+    git_text(git, arguments)
 }
 
-fn git_text(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
-    let output = run_git(cwd, arguments)?;
+fn git_text(git: GitDirectory<'_>, arguments: &[&str]) -> Result<String, String> {
+    let output = run_git_in_directory(git, arguments)?;
     if !output.status.success() {
         return Err(format!(
             "git {} failed: {}",
@@ -452,12 +541,12 @@ fn git_text(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
 /// A committed file's diff is against the base, not the index: the group is
 /// "what this branch changed", so its diff must be the same comparison.
 fn read_committed_diff(
-    toplevel: &Path,
+    git: GitDirectory<'_>,
     scope: &Path,
     entry: &ChangedFileSnapshot,
     base_branch: Option<&str>,
 ) -> ChangedFileDiffSnapshot {
-    let Some(base) = base_branch.and_then(|base| resolvable_base(toplevel, base)) else {
+    let Some(base) = base_branch.and_then(|base| resolvable_base(git, base)) else {
         return ChangedFileDiffSnapshot {
             path: entry.path.clone(),
             text: String::new(),
@@ -474,7 +563,7 @@ fn read_committed_diff(
         .map(|path| scope.join(path).to_string_lossy().into_owned())
         .unwrap_or_else(|| current.clone());
     match git_diff_text(
-        toplevel,
+        git,
         &["diff", &format!("{base}...HEAD"), "--", &previous, &current],
         false,
         None,
@@ -488,12 +577,12 @@ fn read_committed_diff(
     }
 }
 
-fn git_toplevel(root: &Path) -> Result<PathBuf, String> {
-    let output = run_git(root, &["rev-parse", "--show-toplevel"])?;
+fn git_toplevel(git: GitDirectory<'_>) -> Result<PathBuf, String> {
+    let output = run_git_in_directory(git, &["rev-parse", "--show-toplevel"])?;
     if !output.status.success() {
         return Err(format!(
             "{} is not inside a Git repository",
-            root.to_string_lossy()
+            git.path.to_string_lossy()
         ));
     }
     let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -503,9 +592,9 @@ fn git_toplevel(root: &Path) -> Result<PathBuf, String> {
     Ok(PathBuf::from(toplevel))
 }
 
-fn git_status(toplevel: &Path) -> Result<String, String> {
-    let output = run_git(
-        toplevel,
+fn git_status(git: GitDirectory<'_>) -> Result<String, String> {
+    let output = run_git_in_directory(
+        git,
         &[
             "status",
             "--porcelain=v1",
@@ -524,7 +613,7 @@ fn git_status(toplevel: &Path) -> Result<String, String> {
 }
 
 fn read_diff(
-    toplevel: &Path,
+    git: GitDirectory<'_>,
     scope: &Path,
     entry: &ChangedFileSnapshot,
     file_roots: Option<&crate::files::FileRoots>,
@@ -552,14 +641,14 @@ fn read_diff(
                     return Err("Only existing regular files can be opened".to_owned());
                 }
                 git_diff_text(
-                    toplevel,
+                    git,
                     &["diff", "--no-index", "--", "/dev/null", "-"],
                     true,
                     Some(file),
                 )
             }),
         _ => git_diff_text(
-            toplevel,
+            git,
             &["diff", "HEAD", "--", &previous, &current],
             false,
             None,
@@ -576,10 +665,16 @@ fn read_diff(
     }
 }
 
+#[cfg(test)]
 fn run_git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new("git")
-        .arg("-C")
-        .arg(cwd)
+    run_git_in_directory(GitDirectory::for_checkout(cwd, None)?, args)
+}
+
+fn run_git_in_directory(
+    git: GitDirectory<'_>,
+    args: &[&str],
+) -> Result<std::process::Output, String> {
+    git.command()
         .args(args)
         .output()
         .map_err(|error| format!("git could not be run: {error}"))
@@ -590,13 +685,13 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 /// file in `Command::output`. Stderr is drained concurrently so it cannot
 /// block a child that is reporting a failure.
 fn git_diff_text(
-    cwd: &Path,
+    git: GitDirectory<'_>,
     args: &[&str],
     no_index: bool,
     input: Option<std::fs::File>,
 ) -> Result<(String, bool), String> {
-    let mut command = Command::new("git");
-    command.arg("-C").arg(cwd).args(args);
+    let mut command = git.command();
+    command.args(args);
     if let Some(input) = input {
         command.stdin(Stdio::from(input));
     }
@@ -957,7 +1052,7 @@ mod tests {
         std::fs::rename(&nested, registered.join("moved")).unwrap();
         symlink(&outside, &nested).unwrap();
         let after_swap = read_diff(
-            &request.checkout_path,
+            GitDirectory::for_checkout(&request.checkout_path, None).unwrap(),
             Path::new("registered"),
             entry,
             Some(&scoped_roots),
@@ -1048,8 +1143,14 @@ mod tests {
         assert!(inside.unavailable_reason.is_none());
         assert!(inside.diff.unwrap().text.contains("INSIDE_CONTENT"));
 
+        let pinned =
+            GitDirectory::for_checkout(&request.checkout_path, request.file_roots.as_ref())
+                .unwrap();
         std::fs::rename(&registered, temporary.path().join("moved")).unwrap();
         symlink(&replacement, &registered).unwrap();
+        let status_after_swap = git_status(pinned).unwrap();
+        assert!(status_after_swap.contains("inside.txt"));
+        assert!(!status_after_swap.contains("secret.txt"));
         let swapped = read(&request);
         assert!(swapped.unavailable_reason.is_some());
         assert!(swapped.entries.is_empty());
