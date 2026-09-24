@@ -109,6 +109,18 @@ impl FileRoots {
         Ok(Self::from_opened(vec![(path.to_path_buf(), file)]))
     }
 
+    /// A pathname may have been replaced after its directory capability was
+    /// opened. Git still uses pathnames, so History must reject a different
+    /// ambient directory before combining Git output with handle-based reads.
+    pub(crate) fn matches_ambient_root(&self, path: &Path) -> bool {
+        self.roots
+            .iter()
+            .find(|(root, _)| root == path)
+            .and_then(|(_, dir)| dir.dir_metadata().ok())
+            .zip(fs::metadata(path).ok())
+            .is_some_and(|(opened, ambient)| same_directory_identity(&opened, &ambient))
+    }
+
     fn parent(&self, path: &Path) -> io::Result<(Dir, std::ffi::OsString)> {
         let (dir, relative) = self.relative(path)?;
         let name = relative.file_name().ok_or_else(|| {

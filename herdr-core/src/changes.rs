@@ -151,6 +151,15 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
             ..ChangesSnapshot::default()
         };
     };
+    if !handles_match_history_paths(request, file_roots) {
+        return ChangesSnapshot {
+            root_path: Some(root_path),
+            unavailable_reason: Some(
+                "This History folder no longer matches its registered checkout".to_owned(),
+            ),
+            ..ChangesSnapshot::default()
+        };
+    }
 
     let mut entries = match git_status(&toplevel) {
         Ok(status) => parse_status(&status, &toplevel),
@@ -237,6 +246,20 @@ fn repository_scope(toplevel: &Path, checkout: &Path, root: &Path) -> Option<Pat
     // a different in-repository folder, that folder is not registered even
     // though Git reports the same checkout root.
     (registered_relative == resolved_relative).then(|| resolved_relative.to_path_buf())
+}
+
+fn handles_match_history_paths(
+    request: &ChangesRequest,
+    scoped_or_registered: Option<&crate::files::FileRoots>,
+) -> bool {
+    // The daemon retains the original checkout handle. A missing handle is a
+    // registration failure, not permission to read the current ambient path.
+    let checkout_matches = request
+        .file_roots
+        .as_ref()
+        .is_none_or(|roots| roots.matches_ambient_root(&request.checkout_path));
+    checkout_matches
+        && scoped_or_registered.is_some_and(|roots| roots.matches_ambient_root(&request.root_path))
 }
 
 fn scope_entries(
@@ -987,6 +1010,106 @@ mod tests {
         assert!(retargeted.committed.is_empty());
         assert!(retargeted.diff.is_none());
         assert!(!format!("{retargeted:?}").contains("OUTSIDE_SENTINEL_CONTENT"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_checkout_root_cannot_read_another_repository() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let registered = temporary.path().join("registered");
+        let replacement = temporary.path().join("replacement");
+        std::fs::create_dir(&registered).unwrap();
+        std::fs::create_dir(&replacement).unwrap();
+        for repository in [&registered, &replacement] {
+            assert!(
+                run_git(repository, &["init", "-q"])
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+        std::fs::write(registered.join("inside.txt"), "INSIDE_CONTENT\n").unwrap();
+        std::fs::write(replacement.join("secret.txt"), "OUTSIDE_SENTINEL_CONTENT\n").unwrap();
+        let roots = crate::files::FileRoots::from_opened(vec![(
+            registered.clone(),
+            std::fs::File::open(&registered).unwrap(),
+        )]);
+        let request = ChangesRequest {
+            root_path: registered.clone(),
+            file_roots: Some(roots),
+            checkout_path: registered.clone(),
+            selected_path: Some(registered.join("inside.txt").to_string_lossy().into_owned()),
+            selected_committed: false,
+            base_branch: None,
+        };
+        let inside = read(&request);
+        assert!(inside.unavailable_reason.is_none());
+        assert!(inside.diff.unwrap().text.contains("INSIDE_CONTENT"));
+
+        std::fs::rename(&registered, temporary.path().join("moved")).unwrap();
+        symlink(&replacement, &registered).unwrap();
+        let swapped = read(&request);
+        assert!(swapped.unavailable_reason.is_some());
+        assert!(swapped.entries.is_empty());
+        assert!(swapped.diff.is_none());
+        assert!(!format!("{swapped:?}").contains("OUTSIDE_SENTINEL_CONTENT"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_handle_rejects_a_transient_sibling_swap() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        let registered = repository.join("registered");
+        let sibling = repository.join("sibling");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::create_dir(&registered).unwrap();
+        std::fs::create_dir(&sibling).unwrap();
+        assert!(
+            run_git(&repository, &["init", "-q"])
+                .unwrap()
+                .status
+                .success()
+        );
+        std::fs::write(registered.join("inside.txt"), "INSIDE_CONTENT\n").unwrap();
+        std::fs::write(sibling.join("inside.txt"), "OUTSIDE_SENTINEL_CONTENT\n").unwrap();
+        let roots = crate::files::FileRoots::from_opened(vec![(
+            repository.clone(),
+            std::fs::File::open(&repository).unwrap(),
+        )]);
+        let request = ChangesRequest {
+            root_path: registered.clone(),
+            file_roots: Some(roots.clone()),
+            checkout_path: repository,
+            selected_path: Some(registered.join("inside.txt").to_string_lossy().into_owned()),
+            selected_committed: false,
+            base_branch: None,
+        };
+        let inside = read(&request);
+        assert!(inside.unavailable_reason.is_none());
+        assert!(inside.diff.unwrap().text.contains("INSIDE_CONTENT"));
+
+        std::fs::rename(&registered, request.checkout_path.join("moved")).unwrap();
+        symlink("sibling", &registered).unwrap();
+        let stale_scope = roots.scoped(&registered).unwrap();
+        std::fs::remove_file(&registered).unwrap();
+        std::fs::rename(request.checkout_path.join("moved"), &registered).unwrap();
+        assert!(!handles_match_history_paths(&request, Some(&stale_scope)));
+        let restored = read(&request);
+        assert!(restored.unavailable_reason.is_none());
+        assert!(
+            restored
+                .diff
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("INSIDE_CONTENT")
+        );
+        assert!(!format!("{restored:?}").contains("OUTSIDE_SENTINEL_CONTENT"));
     }
 
     #[test]
