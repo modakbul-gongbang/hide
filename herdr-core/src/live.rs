@@ -1053,11 +1053,8 @@ pub fn spawn_reopen(context: LiveContext, request: ReopenRequest) -> Result<(), 
     thread::Builder::new()
         .name("herdr-core-reopen-closed".to_owned())
         .spawn(move || {
-            let result = match &request.item {
-                ClosedItem::File { path, .. } => Ok(run_file_reopen(path)),
-                _ => run_herdr_reopen(context.api_connector.as_ref(), &request)
-                    .map(FileReopenResultOrHerdr::Herdr),
-            };
+            let result = run_herdr_reopen(context.api_connector.as_ref(), &request)
+                .map(FileReopenResultOrHerdr::Herdr);
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
             };
@@ -1078,6 +1075,7 @@ pub fn spawn_file_reopen(
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     request: ReopenRequest,
+    roots: Option<crate::files::FileRoots>,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-file-reopen".to_owned())
@@ -1085,7 +1083,7 @@ pub fn spawn_file_reopen(
             let ClosedItem::File { path, .. } = &request.item else {
                 return;
             };
-            let result = Ok(run_file_reopen(path));
+            let result = Ok(run_file_reopen_with_roots(path, roots.as_ref()));
             let Some(runtime) = runtime.upgrade() else {
                 return;
             };
@@ -1108,9 +1106,21 @@ pub enum FileReopenResultOrHerdr {
     Herdr(ReopenOutcome),
 }
 
+#[cfg(test)]
 fn run_file_reopen(path: &str) -> FileReopenResultOrHerdr {
+    run_file_reopen_with_roots(path, None)
+}
+
+fn run_file_reopen_with_roots(
+    path: &str,
+    roots: Option<&crate::files::FileRoots>,
+) -> FileReopenResultOrHerdr {
     let path = Path::new(path);
-    match std::fs::metadata(path) {
+    let inspected = match roots {
+        Some(roots) => roots.open(path, false).and_then(|file| file.metadata()),
+        None => std::fs::metadata(path),
+    };
+    match inspected {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return FileReopenResultOrHerdr::File(FileReopenResult::Missing);
@@ -1122,7 +1132,7 @@ fn run_file_reopen(path: &str) -> FileReopenResultOrHerdr {
             )));
         }
     }
-    FileReopenResultOrHerdr::File(match crate::files::open(path) {
+    FileReopenResultOrHerdr::File(match crate::files::open_with_roots(path, roots) {
         Ok(document) => FileReopenResult::Opened(document),
         Err(message) => FileReopenResult::Failed(message),
     })

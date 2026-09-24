@@ -17,6 +17,8 @@ hide-memory = { path = "../hide-memory" }
 hide-project = { path = "../hide-project" }
 hide-session = { path = "../hide-session" }
 base64 = "=0.23.1"
+cap-std = "=4.0.3"
+getrandom = "=0.2.16"
 libc = "=0.2.189"
 regress = "=0.12.0"
 regex = "=1.13.1"

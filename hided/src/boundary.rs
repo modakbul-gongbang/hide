@@ -35,9 +35,9 @@
 //! its own policy - directories only, hidden names dropped - because the
 //! directory autocomplete asks a different question of the same tree.
 //!
-//! Nothing here reaches the core: a refused path is answered to the client and
-//! logged, and an accepted path is forwarded as the canonical path that was
-//! checked, so the core acts on exactly what the boundary saw.
+//! A refused path is answered to the client and logged. Accepted core events
+//! retain the checked path for UI identity, while actual file I/O uses opened
+//! checkout-root capabilities supplied from this boundary.
 
 use std::cmp::Ordering;
 use std::collections::VecDeque;
@@ -60,24 +60,48 @@ fn open_nonblocking(path: &Path, directory: bool) -> io::Result<fs::File> {
         .open(path)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn open_nonblocking(path: &Path, directory: bool) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // cap-std's rooted traversal requires a root handle that cannot be
+    // renamed out from under it on Windows.
+    let mut options = fs::OpenOptions::new();
+    options.read(true).share_mode(0x00000001 | 0x00000002);
+    if directory {
+        // FILE_FLAG_BACKUP_SEMANTICS permits opening a directory as a handle.
+        options.custom_flags(0x02000000);
+    }
+    options.open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn open_nonblocking(path: &Path, _directory: bool) -> io::Result<fs::File> {
     fs::File::open(path)
 }
 
 #[cfg(unix)]
 type RootIdentity = (u64, u64);
-#[cfg(not(unix))]
+#[cfg(windows)]
+type RootIdentity = (u32, u64);
+#[cfg(not(any(unix, windows)))]
 type RootIdentity = ();
 
 #[cfg(unix)]
-fn root_identity(metadata: &fs::Metadata) -> RootIdentity {
+fn root_identity(metadata: &fs::Metadata) -> Option<RootIdentity> {
     use std::os::unix::fs::MetadataExt;
-    (metadata.dev(), metadata.ino())
+    Some((metadata.dev(), metadata.ino()))
 }
 
-#[cfg(not(unix))]
-fn root_identity(_metadata: &fs::Metadata) -> RootIdentity {}
+#[cfg(windows)]
+fn root_identity(metadata: &fs::Metadata) -> Option<RootIdentity> {
+    use std::os::windows::fs::MetadataExt;
+    metadata.volume_serial_number().zip(metadata.file_index())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn root_identity(_metadata: &fs::Metadata) -> Option<RootIdentity> {
+    None
+}
 
 #[cfg(unix)]
 fn for_each_opened_directory_name(
@@ -121,20 +145,114 @@ fn for_each_opened_directory_name(
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn for_each_opened_directory_name(
     file: &fs::File,
     mut visit: impl FnMut(OsString) -> bool,
 ) -> io::Result<()> {
-    let path = opened_file_path(file)?;
-    for entry in fs::read_dir(path)? {
-        if let Ok(entry) = entry {
-            if !visit(entry.file_name()) {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    struct DirectoryInfo {
+        next_entry_offset: u32,
+        file_index: u32,
+        times_and_sizes: [u64; 6],
+        attributes: u32,
+        file_name_length: u32,
+        ea_size: u32,
+        short_name_length: i8,
+        short_name: [u16; 12],
+        file_id: u64,
+        file_name: [u16; 1],
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileInformationByHandleEx(
+            handle: *mut std::ffi::c_void,
+            information_class: i32,
+            buffer: *mut std::ffi::c_void,
+            buffer_size: u32,
+        ) -> i32;
+    }
+    const FILE_ID_BOTH_DIRECTORY_INFO: i32 = 10;
+    const ERROR_NO_MORE_FILES: i32 = 18;
+    const NAME_OFFSET: usize = std::mem::offset_of!(DirectoryInfo, file_name);
+    let mut buffer = [0u64; 8192];
+    loop {
+        // SAFETY: the buffer is writable and the handle remains owned by file.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FILE_ID_BOTH_DIRECTORY_INFO,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+            )
+        };
+        if ok == 0 {
+            let error = io::Error::last_os_error();
+            return if error.raw_os_error() == Some(ERROR_NO_MORE_FILES) {
+                Ok(())
+            } else {
+                Err(error)
+            };
+        }
+        let bytes =
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), buffer.len() * 8) };
+        let mut offset = 0usize;
+        loop {
+            if offset % std::mem::align_of::<DirectoryInfo>() != 0
+                || offset + std::mem::size_of::<DirectoryInfo>() > bytes.len()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid directory entry",
+                ));
+            }
+            let entry = unsafe { &*(bytes.as_ptr().add(offset).cast::<DirectoryInfo>()) };
+            let name_bytes = entry.file_name_length as usize;
+            if name_bytes % 2 != 0 || offset + NAME_OFFSET + name_bytes > bytes.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid directory name",
+                ));
+            }
+            let name = unsafe {
+                std::slice::from_raw_parts(
+                    bytes.as_ptr().add(offset + NAME_OFFSET).cast::<u16>(),
+                    name_bytes / 2,
+                )
+            };
+            if name != [b'.' as u16]
+                && name != [b'.' as u16, b'.' as u16]
+                && !visit(OsString::from_wide(name))
+            {
+                return Ok(());
+            }
+            let next = entry.next_entry_offset as usize;
+            if next == 0 {
                 break;
             }
+            if next < NAME_OFFSET + name_bytes || offset + next >= bytes.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid directory offset",
+                ));
+            }
+            offset += next;
         }
     }
-    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn for_each_opened_directory_name(
+    _file: &fs::File,
+    _visit: impl FnMut(OsString) -> bool,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "directory handle enumeration unavailable",
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -312,7 +430,7 @@ fn open_under_root(root: &RegisteredRoot, path: &Path, directory: bool) -> io::R
     use std::os::unix::ffi::OsStrExt;
 
     let anchor = open_nonblocking(&root.source.path, true)?;
-    if root_identity(&anchor.metadata()?) != root.identity
+    if root_identity(&anchor.metadata()?) != Some(root.identity)
         || opened_file_path(&anchor)? != root.real_path
     {
         return Err(io::Error::new(
@@ -339,9 +457,36 @@ fn open_under_root(root: &RegisteredRoot, path: &Path, directory: bool) -> io::R
     Ok(unsafe { fs::File::from_raw_fd(fd) })
 }
 
-#[cfg(not(unix))]
-fn open_under_root(_root: &RegisteredRoot, path: &Path, directory: bool) -> io::Result<fs::File> {
-    open_nonblocking(path, directory)
+#[cfg(windows)]
+fn open_under_root(root: &RegisteredRoot, path: &Path, directory: bool) -> io::Result<fs::File> {
+    let anchor = open_nonblocking(&root.source.path, true)?;
+    if root_identity(&anchor.metadata()?) != Some(root.identity)
+        || opened_file_path(&anchor)? != root.real_path
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "registered checkout root was replaced",
+        ));
+    }
+    if path == root.source.path {
+        return Ok(anchor);
+    }
+    let opened = open_nonblocking(path, directory)?;
+    if !opened_file_path(&opened)?.starts_with(&root.real_path) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "path is outside checkout",
+        ));
+    }
+    Ok(opened)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_under_root(_root: &RegisteredRoot, _path: &Path, _directory: bool) -> io::Result<fs::File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "registered root handles unavailable",
+    ))
 }
 
 #[derive(Debug)]
@@ -402,12 +547,13 @@ impl Boundary {
                 {
                     (registered.real_path.clone(), registered.identity)
                 } else {
-                    let real_path = root.path.canonicalize().ok()?;
-                    let metadata = fs::metadata(&root.path).ok()?;
+                    let opened = open_nonblocking(&root.path, true).ok()?;
+                    let real_path = opened_file_path(&opened).ok()?;
+                    let metadata = opened.metadata().ok()?;
                     if !metadata.is_dir() {
                         return None;
                     }
-                    (real_path, root_identity(&metadata))
+                    (real_path, root_identity(&metadata)?)
                 };
                 Some(RegisteredRoot {
                     source: root,
@@ -455,10 +601,47 @@ impl Boundary {
     }
 
     fn root_is_current(root: &RegisteredRoot) -> bool {
-        root.source.path.canonicalize().ok().as_deref() == Some(root.real_path.as_path())
-            && fs::metadata(&root.source.path)
+        let Ok(opened) = open_nonblocking(&root.source.path, true) else {
+            return false;
+        };
+        opened_file_path(&opened).ok().as_deref() == Some(root.real_path.as_path())
+            && opened
+                .metadata()
                 .ok()
-                .is_some_and(|metadata| root_identity(&metadata) == root.identity)
+                .is_some_and(|metadata| root_identity(&metadata) == Some(root.identity))
+    }
+
+    /// Clone verified root handles for the core's actual file workers.
+    /// A later pathname replacement cannot redirect an operation through one
+    /// of these already opened capabilities.
+    pub fn opened_roots(&self) -> Vec<(PathBuf, fs::File)> {
+        self.roots_for_read()
+            .iter()
+            .filter_map(|root| {
+                open_under_root(root, &root.source.path, true)
+                    .ok()
+                    .map(|opened| (root.source.path.clone(), opened))
+            })
+            .collect()
+    }
+
+    /// An opened directory whose handle, rather than its mutable pathname,
+    /// is the source for watch and index work.
+    pub fn open_directory(&self, root: &Path, raw: &str) -> Result<(PathBuf, fs::File), Refusal> {
+        let registered = self.registered_root(root)?;
+        let path = self.resolve_below(root, raw)?;
+        let opened =
+            open_under_root(&registered, &path, true).map_err(|_| Refusal::OutsideCheckout)?;
+        if !opened.metadata().map_err(|_| Refusal::NotFound)?.is_dir() {
+            return Err(Refusal::NotADirectory);
+        }
+        if !opened_file_path(&opened)
+            .map_err(|_| Refusal::OutsideCheckout)?
+            .starts_with(&registered.real_path)
+        {
+            return Err(Refusal::OutsideCheckout);
+        }
+        Ok((path, opened))
     }
 
     fn registered_root(&self, path: &Path) -> Result<RegisteredRoot, Refusal> {
@@ -944,7 +1127,7 @@ fn number_order(left: &str, right: &str) -> Ordering {
     left.len().cmp(&right.len()).then_with(|| left.cmp(right))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
@@ -1803,5 +1986,47 @@ mod tests {
         for name in ["", ".", "..", "a/b", "\0"] {
             assert!(!valid_name(name), "{name:?}");
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn opened_directory_rows_and_root_identity_follow_the_handle() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let home = sandbox.path().join("home");
+        let root = home.join("checkout");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("inside.txt"), "inside").unwrap();
+        let boundary = Boundary::new(&home).unwrap();
+        boundary.set_roots(vec![Root {
+            workspace_id: "w".to_owned(),
+            checkout_id: "c".to_owned(),
+            path: root.clone(),
+        }]);
+        let (_, opened) = boundary
+            .open_directory(&root, &root.display().to_string())
+            .unwrap();
+        let mut names = Vec::new();
+        for_each_opened_directory_name(&opened, |name| {
+            names.push(name);
+            true
+        })
+        .unwrap();
+        assert!(names.contains(&OsString::from("inside.txt")));
+        assert_eq!(
+            root_identity(&opened.metadata().unwrap()),
+            root_identity(&open_nonblocking(&root, true).unwrap().metadata().unwrap())
+        );
+        assert!(
+            fs::rename(&root, home.join("moved")).is_err(),
+            "an opened root denies delete sharing"
+        );
+        drop(opened);
+        fs::rename(&root, home.join("moved")).unwrap();
+        fs::create_dir(&root).unwrap();
+        assert!(boundary.known_root(&root.display().to_string()).is_none());
     }
 }

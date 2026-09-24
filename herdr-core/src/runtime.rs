@@ -704,6 +704,7 @@ fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bo
 
 pub struct Runtime {
     snapshot: Snapshot,
+    file_roots: Option<crate::files::FileRoots>,
     state_path: PathBuf,
     state_save_pending: bool,
     state_save_active: bool,
@@ -1060,6 +1061,7 @@ impl Runtime {
         }
         let mut runtime = Self {
             snapshot,
+            file_roots: None,
             state_path,
             home_path: environment.home_path,
             remote_enabled: environment.remote_enabled,
@@ -1207,6 +1209,12 @@ impl Runtime {
 
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    /// The daemon installs only handles opened under its pinned registrations.
+    /// An empty set still enforces the boundary; Swift leaves this as `None`.
+    pub fn set_file_roots(&mut self, roots: crate::files::FileRoots) {
+        self.file_roots = Some(roots);
     }
 
     pub fn set_live(&mut self, context: LiveContext) {

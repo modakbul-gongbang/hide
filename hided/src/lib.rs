@@ -126,9 +126,9 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .map(|path| path.display().to_string()),
         app_state_path: env.state_dir.join("core-state.json").display().to_string(),
     };
-    let boundary = boundary::Boundary::new(&env.home)?;
+    let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
     let core = CoreHandle::spawn(options)?;
-    let watch = Arc::new(watch::WatchService::new());
+    let watch = Arc::new(watch::WatchService::new(Arc::clone(&boundary)));
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
@@ -141,7 +141,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     );
     let app = AppState {
         core: Arc::new(core),
-        boundary: Arc::new(boundary),
+        boundary,
         watch: Arc::clone(&watch),
         index: Arc::clone(&index),
         attachments: Arc::clone(&attachments),
@@ -257,7 +257,7 @@ fn spawn_root_refresh(
             if !carries_roots(&value) {
                 continue;
             }
-            apply_snapshot(&value, &boundary, &watch, &index);
+            apply_snapshot(&value, &core, &boundary, &watch, &index);
         }
     });
 }
@@ -273,25 +273,34 @@ fn carries_roots(value: &Value) -> bool {
 /// One snapshot value's roots, watch folders and registered index roots.
 fn apply_snapshot(
     value: &Value,
+    core: &CoreHandle,
     boundary: &Boundary,
     watch: &watch::WatchService,
     index: &IndexService,
 ) {
     let roots = roots_from_value(value);
+    boundary.set_roots(roots.clone());
+    if let Err(error) = core.set_file_roots(boundary.opened_roots()) {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "hided", "kind": "boundary.core_roots_failed", "message": error
+            })
+        );
+    }
     index.set_roots(
         &roots
             .iter()
             .map(|root| root.path.clone())
             .collect::<Vec<_>>(),
     );
-    boundary.set_roots(roots);
     let (root, expanded) = watch_state_from_value(value);
     let root = root.filter(|root| boundary.known_root(root).is_some());
     let expanded = expanded
         .into_iter()
         .filter(|path| boundary.resolve_target(path).is_ok())
         .collect();
-    watch.reconcile(root, expanded);
+    watch.reconcile(boundary, root, expanded);
 }
 
 fn refresh_roots(
@@ -302,7 +311,7 @@ fn refresh_roots(
 ) {
     match core.snapshot(0, 0) {
         Ok(reply) => match serde_json::from_slice::<Value>(&reply.bytes) {
-            Ok(value) => apply_snapshot(&value, boundary, watch, index),
+            Ok(value) => apply_snapshot(&value, core, boundary, watch, index),
             Err(error) => eprintln!(
                 "{}",
                 serde_json::json!({

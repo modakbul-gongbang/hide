@@ -794,7 +794,7 @@ fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
 fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
     let root = payload_str(event, "root");
     let query = payload_str(event, "query");
-    let Some(known) = state.boundary.known_root(&root) else {
+    let Ok((known, opened)) = state.boundary.open_directory(Path::new(&root), &root) else {
         return vec![Message::Text(
             refused("file_index", &root, Refusal::OutsideCheckout)
                 .to_string()
@@ -802,7 +802,7 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
         )];
     };
     let root_path = known.display().to_string();
-    let payload = match state.index.query(&known, &query) {
+    let payload = match state.index.query(&known, opened, &query) {
         IndexAnswer::Indexing => json!({
             "root_path": root_path,
             "query": query,
