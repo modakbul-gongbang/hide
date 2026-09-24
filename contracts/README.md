@@ -30,3 +30,6 @@ Before launching the IDE against a local runtime, verify that the contract, the 
 The core is the writer of those strings and the shell decodes them strictly, so a value one side does not know fails the whole snapshot decode and freezes the shell on its last good frame.
 `herdr-core/src/model.rs` tests that every variant of each enum serializes to the listed value and nothing else; `SnapshotWireEnumTests` in the shell tests that each listed value decodes and that the Swift enum has no extra case.
 Add the variant to this file in the same change as the Rust variant and the Swift case; either test fails until all three agree.
+
+`workspace_view.mode` (`agents`, `together`, `views`) is not listed: the core writes `workspace_view` only for a shell with separate View areas, which today is the web shell, and omits it from the Swift snapshot, so no strict decoder reads it.
+List it here, with a Swift case, in the change that lets the Swift shell draw separate areas.

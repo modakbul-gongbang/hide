@@ -201,15 +201,23 @@ function Areas({ checkout, mode, share, actions }: { checkout: Checkout; mode: V
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
     const move = (next: PointerEvent) => setGuide(shareAt(next.clientX - left, total, minimum) * total);
-    const up = (next: PointerEvent) => {
+    const end = () => {
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
+      target.removeEventListener("pointercancel", end);
+      target.removeEventListener("lostpointercapture", end);
       setGuide(null);
+    };
+    const up = (next: PointerEvent) => {
+      end();
       const nextShare = shareAt(next.clientX - left, total, minimum);
       if (Math.abs(nextShare - share) > 0.001) actions.setWorkspaceView({ agent_share: nextShare });
     };
+    // A drag the system cancels lands nothing and leaves no guide behind.
     target.addEventListener("pointermove", move);
     target.addEventListener("pointerup", up);
+    target.addEventListener("pointercancel", end);
+    target.addEventListener("lostpointercapture", end);
   };
   return (
     <div ref={body} className="relative flex min-h-0 min-w-0 flex-1" data-areas={mode}>

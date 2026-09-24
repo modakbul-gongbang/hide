@@ -1252,6 +1252,9 @@ pub struct EditorTabSnapshot {
     pub preview: bool,
     /// Why a View tab restored after a restart has no document: its file is
     /// gone or its device cannot read it. Such a tab only offers Close (B20).
+    /// Absent from the wire when there is none, so the Swift shell's tabs
+    /// keep exactly their keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
 }
 

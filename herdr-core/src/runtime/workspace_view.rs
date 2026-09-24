@@ -223,7 +223,8 @@ impl Runtime {
                     self.set_error("editor.focus_failed", message, false);
                 }
             }
-            None => self.deactivate_editor_tab(),
+            None if self.snapshot.editor.active_tab_id.is_some() => self.deactivate_editor_tab(),
+            None => {}
         }
     }
 
