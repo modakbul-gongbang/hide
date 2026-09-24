@@ -422,7 +422,11 @@ fn a_save_whose_answer_was_lost_before_it_landed_is_read_back_as_not_saved() {
     let document = f.document("a.txt").unwrap();
     assert!(document.dirty);
     assert_eq!(document.contents_utf8.as_deref(), Some("new\n"));
-    assert_eq!(document.save, None);
+    assert_eq!(
+        document.save.map(|save| save.state).as_deref(),
+        Some("refused"),
+        "the tab says the save has not reached the file"
+    );
     assert_eq!(f.device.saves().len(), 1, "never resent");
 }
 
@@ -601,7 +605,10 @@ fn a_save_waiting_for_a_helper_that_fails_is_not_sent_and_keeps_the_draft() {
     let shown = f.shown();
     assert!(shown.dirty);
     assert_eq!(shown.contents_utf8.as_deref(), Some("mine\n"));
-    assert_eq!(shown.save, None);
+    assert_eq!(
+        shown.save.map(|save| save.state).as_deref(),
+        Some("refused")
+    );
     assert_eq!(f.last_error().as_deref(), Some("file.save_unavailable"));
     f.shared.lock().unwrap().settle_device_saves(DEVICE);
 
@@ -644,7 +651,16 @@ fn withdrawing_consent_drops_a_save_waiting_for_the_helper() {
     let shown = f.shown();
     assert!(shown.dirty);
     assert_eq!(shown.contents_utf8.as_deref(), Some("mine\n"));
-    assert_eq!(shown.save, None, "the save no longer waits");
+    assert_eq!(
+        shown.save.map(|save| (
+            save.state,
+            save.message
+                .unwrap_or_default()
+                .contains("no longer allowed")
+        )),
+        Some(("refused".to_owned(), true)),
+        "the save no longer waits and the tab says why"
+    );
     assert_eq!(f.last_error().as_deref(), Some("file.save_unavailable"));
     f.set_phase(f.ready());
     f.shared.lock().unwrap().settle_device_saves(DEVICE);

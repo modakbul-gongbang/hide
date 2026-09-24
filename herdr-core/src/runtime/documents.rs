@@ -38,6 +38,10 @@ pub(super) struct SaveSlot {
     /// connecting; it goes out when the helper is ready, and is dropped
     /// (draft kept) if the connection fails. The reason is what the tab shows.
     held: Option<String>,
+    /// Why the last save of this tab was refused or not sent, until the next
+    /// save starts: the tab shows it with Export and Retry at the save's own
+    /// place rather than only in the diagnostic log (S5.5 B15, B45).
+    refused: Option<String>,
 }
 
 struct PendingSave {
@@ -550,6 +554,9 @@ impl Runtime {
     }
 
     fn start_document_save(&mut self, tab_id: &str, contents: String, close_after: bool) {
+        if let Some(slot) = self.document_saves.get_mut(tab_id) {
+            slot.refused = None;
+        }
         let Some(place) = self.document_places.get(tab_id).cloned() else {
             self.set_error(
                 "file.save_rejected",
@@ -583,11 +590,13 @@ impl Runtime {
                 return;
             }
             Err(message) => {
-                self.set_error(
-                    "file.save_unavailable",
-                    format!("{message}; nothing was sent and the draft was preserved"),
-                    true,
-                );
+                let message = format!("{message}; nothing was sent and the draft was preserved");
+                self.document_saves
+                    .entry(tab_id.to_owned())
+                    .or_default()
+                    .refused = Some(message.clone());
+                self.sync_save_snapshot(tab_id);
+                self.set_error("file.save_unavailable", message, true);
                 return;
             }
         };
@@ -722,6 +731,10 @@ impl Runtime {
                 self.set_error("file.save_conflict", message, true);
             }
             SaveOutcome::Refused(message) => {
+                self.document_saves
+                    .entry(tab_id.to_owned())
+                    .or_default()
+                    .refused = Some(message.clone());
                 self.set_error("file.save_failed", message, true);
             }
             SaveOutcome::Unknown(reason) => {
@@ -848,11 +861,9 @@ impl Runtime {
             Ok(Some(revision)) if revision == unsettled.expected => {
                 slot.unsettled = None;
                 slot.waiting = None;
-                self.set_error(
-                    "file.save_not_applied",
-                    "The file was read back unchanged, so the unanswered save has not reached it yet. The device may still finish it; the draft is kept, and a save that finds the file changed will show the conflict.",
-                    true,
-                );
+                let message = "The file was read back unchanged, so the unanswered save has not reached it yet. The device may still finish it; the draft is kept, and a save that finds the file changed will show the conflict.";
+                slot.refused = Some(message.to_owned());
+                self.set_error("file.save_not_applied", message, true);
             }
             Ok(disk_revision) => {
                 slot.unsettled = None;
@@ -927,6 +938,9 @@ impl Runtime {
             };
             if slot.held.take().is_some() {
                 slot.queued = None;
+                slot.refused = Some(format!(
+                    "{reason}; nothing was sent and the draft was preserved"
+                ));
                 released = true;
                 self.sync_save_snapshot(&tab_id);
             }
@@ -969,12 +983,17 @@ impl Runtime {
                     state: "saving".to_owned(),
                     message: None,
                 })
-            } else {
-                slot.held.as_ref().map(|reason| EditorSaveSnapshot {
+            } else if let Some(reason) = &slot.held {
+                Some(EditorSaveSnapshot {
                     state: "waiting".to_owned(),
                     message: Some(format!(
                         "{reason}; the save goes out when the helper is ready"
                     )),
+                })
+            } else {
+                slot.refused.as_ref().map(|reason| EditorSaveSnapshot {
+                    state: "refused".to_owned(),
+                    message: Some(reason.clone()),
                 })
             }
         });

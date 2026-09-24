@@ -345,7 +345,7 @@ function EditorBody({
       {document.conflict ? (
         <ConflictBar tabId={tab.id} draftKey={draftKey} path={tab.path} removed={document.conflict.disk_revision === null} actions={actions} />
       ) : null}
-      {document.save && document.save.state !== "saving" ? <SaveStatusBar tabId={tab.id} path={tab.path} save={document.save} /> : null}
+      {document.save && document.save.state !== "saving" ? <SaveStatusBar tabId={tab.id} path={tab.path} save={document.save} actions={actions} /> : null}
       <CodeMirrorEditor
         key={tab.id}
         tabId={tab.id}
@@ -425,13 +425,26 @@ function ExportDraftButton({ tabId, path }: { tabId: string; path: string }) {
 
 /**
  * A save that has no result yet: one waiting for the device's helper, or one
- * whose answer was lost, which is never resent and is read back to settle it (B14).
+ * whose answer was lost, which is never resent and is read back to settle it
+ * (B14). Or a save that was refused or not sent, with its reason, Export and
+ * Retry at the same place; autosave waits for Retry rather than repeating a
+ * refusal (S5.5 B15, B45).
  */
-function SaveStatusBar({ tabId, path, save }: { tabId: string; path: string; save: NonNullable<EditorDocumentSnapshot["save"]> }) {
+function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: string; save: NonNullable<EditorDocumentSnapshot["save"]>; actions: Actions }) {
+  const refused = save.state === "refused";
   return (
-    <div role="status" className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-save-state={save.state}>
-      <span className="min-w-0 flex-1">{save.message ?? "The last save's result is unknown; reading the file back."} Your draft is preserved.</span>
+    <div role="status" className="flex flex-wrap items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-save-state={save.state}>
+      <span className="min-w-0 flex-1 break-words">
+        {refused ? "Not saved: " : ""}
+        {save.message ?? "The last save's result is unknown; reading the file back."}
+        {refused ? "" : " Your draft is preserved."}
+      </span>
       <ExportDraftButton tabId={tabId} path={path} />
+      {refused ? (
+        <button type="button" className="text-secondary hover:text-primary" data-save-retry="true" onClick={() => actions.saveFile(tabId)}>
+          Retry
+        </button>
+      ) : null}
     </div>
   );
 }

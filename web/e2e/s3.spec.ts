@@ -377,6 +377,18 @@ test("a deleted open file reports a failed save without losing its draft", async
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
     await expect(content).toContainText("export const answer = 44;");
     expect(fs.existsSync(file)).toBe(false);
+    // The refusal is shown where the save is, with its reason, Export and
+    // Retry, and a retry is one more save that still recreates nothing
+    // (S5.5 B15, B45).
+    const bar = page.locator('[data-editor-save-state="refused"]');
+    await expect(bar).toBeVisible({ timeout: 10_000 });
+    await expect(bar).toContainText("Not saved:");
+    await expect(bar.locator("[data-export-draft]")).toBeVisible();
+    const before = sent.get("file_save") ?? 0;
+    await bar.locator("[data-save-retry]").click();
+    await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBe(before + 1);
+    await expect(bar).toBeVisible({ timeout: 10_000 });
+    expect(fs.existsSync(file)).toBe(false);
   } finally {
     close(fixture);
   }
