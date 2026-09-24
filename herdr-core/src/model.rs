@@ -1380,7 +1380,6 @@ pub struct EditorDocumentSnapshot {
     pub language: Option<String>,
     pub document_kind: DocumentKind,
     pub contents_utf8: Option<String>,
-    pub opened_modified_at_unix_ms: Option<u64>,
     /// The content revision (`sha256:<hex>`) the draft is based on: read at
     /// open, moved by each save, and what the next save is checked against.
     /// Present exactly for an editable document.

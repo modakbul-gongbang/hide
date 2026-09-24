@@ -56,10 +56,6 @@ function receiptDevice(deviceId: string | null | undefined): string {
   return deviceId ?? "local";
 }
 
-export function isLocal(workspace: Workspace): boolean {
-  return !workspace.remote_target_id && workspace.device_id === "local";
-}
-
 /** The project row's menu on any device: Pin/Unpin and Remove project for a registered project, and New worktree for a Git project. */
 export function projectMenu(workspace: Workspace): MenuItem[] {
   const items: MenuItem[] = [];

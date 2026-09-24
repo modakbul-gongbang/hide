@@ -12,6 +12,11 @@ import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 
+/** The `device_id` an event carries: none for this machine, which the core takes as the default. */
+function deviceField(device: string): { device_id?: string } {
+  return device === "local" ? {} : { device_id: device };
+}
+
 export type Actions = ReturnType<typeof createActions>;
 
 export function createActions(dispatch: DispatchFn) {
@@ -32,7 +37,7 @@ export function createActions(dispatch: DispatchFn) {
   const explorerTarget = (): { root: string; device_id?: string } | null => {
     const context = explorerContext(rest());
     if (!context.checkout) return null;
-    return { root: context.checkout.path, ...(context.device === "local" ? {} : { device_id: context.device }) };
+    return { root: context.checkout.path, ...deviceField(context.device) };
   };
 
   const setLeftSidebarVisible = (visible: boolean) => {
@@ -57,18 +62,6 @@ export function createActions(dispatch: DispatchFn) {
     void _workspaces;
     void _devices;
     dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
-  };
-
-  /**
-   * With an SSH device selected, a command this shell cannot run on that host
-   * is refused here with a notice, so it never acts on this machine instead
-   * (PRD S5 B19). Returns true when it refused.
-   */
-  const refusedRemotely = (command: string): boolean => {
-    const context = remoteContext(rest());
-    if (!context) return false;
-    ui().setNotice({ text: `${command} is not available for ${context.device.label} from the web shell; nothing was sent.`, refreshable: false });
-    return true;
   };
 
   /**
@@ -229,7 +222,7 @@ export function createActions(dispatch: DispatchFn) {
     dispatch({
       schema_version: 2,
       kind: "file_open",
-      payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview, ...(here.device === "local" ? {} : { device_id: here.device }) },
+      payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview, ...deviceField(here.device) },
     });
   };
 
@@ -277,7 +270,7 @@ export function createActions(dispatch: DispatchFn) {
         // The core checks the save against the revision it read when it
         // opened the file; the shell sends only the draft.
         contents_utf8: contents,
-        ...(device === "local" ? {} : { device_id: device }),
+        ...deviceField(device),
       },
     });
     if (sent === false) return false;
@@ -666,8 +659,14 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     openFind() {
-      // The core searches a pane's history through this machine's Herdr only.
-      if (refusedRemotely("Find in pane")) return;
+      // The core searches a pane's history through this machine's Herdr
+      // only, so with an SSH device selected Find is refused with a notice
+      // rather than run on this machine (PRD S5 B19).
+      const context = remoteContext(rest());
+      if (context) {
+        ui().setNotice({ text: `Find in pane is not available for ${context.device.label} from the web shell; nothing was sent.`, refreshable: false });
+        return;
+      }
       ui().openOverlay("find");
     },
 
@@ -694,7 +693,7 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Asks for the index of `root` on `device`; a device's is walked by its helper. */
     requestFileIndex(root: string, query: string, device: string) {
-      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query, ...(device === "local" ? {} : { device_id: device }) } });
+      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query, ...deviceField(device) } });
     },
 
     /** A palette pick opens in the checkout's preview tab (B12) and closes the palette. */
@@ -708,8 +707,7 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Registers a folder on `deviceId`; a device's own helper judges it against that device's home. */
     createWorkspace(path: string, label: string, deviceId = "local") {
-      const device = deviceId === "local" ? {} : { device_id: deviceId };
-      dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...device, path, label, initialize_git: false } });
+      dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...deviceField(deviceId), path, label, initialize_git: false } });
     },
 
     /** Removes a registration after its panes close (D-10); the folder is never touched. */
@@ -724,7 +722,7 @@ export function createActions(dispatch: DispatchFn) {
     /** One checkout folder's children, answered by hided as a `directory_list`. */
     listChildren(root: string, path: string) {
       const device = explorerContext(rest()).device;
-      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path, ...(device === "local" ? {} : { device_id: device }) } });
+      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path, ...deviceField(device) } });
     },
 
     /** The core owns which folders the tree has expanded, per device; this replaces the selected device's set. */

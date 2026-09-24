@@ -55,7 +55,6 @@ use crate::root::open_parent;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Saved {
     pub revision: String,
-    pub modified_at_unix_ms: u64,
 }
 
 /// The points a test can stop a save at to change the world underneath it.
@@ -104,10 +103,7 @@ pub fn save_observed(
     let original = inspect_target(&parent, &name)?;
     let current = read_revision(&parent, &name)?;
     if current == revision_of(contents) {
-        return Ok(Saved {
-            revision: current,
-            modified_at_unix_ms: original.modified_at_unix_ms,
-        });
+        return Ok(Saved { revision: current });
     }
     if current != expected_revision {
         return Err(HostError::conflict(
@@ -166,27 +162,13 @@ pub fn save_observed(
         )
     })?;
     sync_directory(&parent);
-    let saved = parent
-        .symlink_metadata(Path::new(&name))
-        .map_err(|error| HostError::io(&error, "The saved file could not be inspected"))?;
     Ok(Saved {
         revision: revision_of(contents),
-        modified_at_unix_ms: modified_of(&saved),
     })
 }
 
 struct Target {
     mode: u32,
-    modified_at_unix_ms: u64,
-}
-
-fn modified_of(metadata: &cap_std::fs::Metadata) -> u64 {
-    metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.into_std().duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or(0)
 }
 
 /// Refuses every target a replace-by-exchange could not save faithfully.
@@ -232,7 +214,6 @@ fn inspect_target(parent: &Dir, name: &OsStr) -> HostResult<Target> {
         }
         Ok(Target {
             mode: metadata.mode() & 0o7777,
-            modified_at_unix_ms: modified_of(&metadata),
         })
     }
     #[cfg(not(unix))]

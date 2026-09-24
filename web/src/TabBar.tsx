@@ -22,6 +22,8 @@ export function TabBar({ actions }: { actions: Actions }) {
   return (
     <Strip
       checkout={checkout}
+      activeId={activeStripId(checkout, editor)}
+      showingEditor={editorFor(editor) !== null}
       editor={editor}
       savingTabs={savingTabs}
       bufferWarnings={bufferWarnings}
@@ -82,61 +84,36 @@ function useTabDrag(actions: Actions) {
  * is the same as this machine's: a Herdr tab moves on the device's Herdr.
  */
 export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Actions }) {
-  const operations = useShellStore((s) => s.rest?.status?.async_operations ?? NONE);
+  const operations = useShellStore((s) => s.rest?.status?.async_operations);
   const editor = useShellStore((s) => s.editor);
   const savingTabs = useShellStore((s) => s.savingTabs);
   const bufferWarnings = useShellStore((s) => s.bufferWarnings);
-  const { checkout } = view;
-  const showing = remoteEditorTab(editor, checkout);
-  const dirty = new Set((editor?.tabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
-  const drag = useTabDrag(actions);
+  const showing = remoteEditorTab(editor, view.checkout);
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel" role="tablist" data-tab-bar={checkout.id} data-remote-tab-bar="true">
-      {checkout.strip.map((entry, index) => {
-        if (entry.kind === "session" || entry.kind === "memory") return null;
-        const isFile = entry.kind === "file" || entry.kind === "diff";
-        const fileTab = isFile ? editor?.tabs.find((tab) => tab.id === entry.source_id) : null;
-        const active = isFile ? showing?.id === entry.source_id : !showing && entry.source_id === view.tab?.id;
-        return (
-          <TabButton
-            key={entry.id}
-            entry={entry}
-            identity={fileTab ? editorIdentity(entry, fileTab) : entry.label}
-            active={active}
-            dirty={dirty.has(entry.source_id)}
-            saving={savingTabs.has(entry.source_id)}
-            tabOnly={bufferWarnings.has(entry.source_id)}
-            closing={!isFile && closingSuffix(entry.source_id, "tab.close", operations)}
-            onSelect={() => (isFile ? actions.focusFileTab(entry.source_id) : actions.focusTab(entry.source_id))}
-            onDoubleClick={() => { if (isFile) actions.keepOpenFile(entry.source_id); }}
-            onClose={() => (isFile ? actions.closeFileTab(entry.source_id) : actions.closeTab(entry.source_id))}
-            {...drag(entry, index)}
-          />
-        );
-      })}
-      <button
-        type="button"
-        className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-secondary hover:bg-elevated hover:text-primary"
-        aria-label={`New tab ${checkout.next_tab_label}`}
-        title="New tab (⌥T)"
-        onClick={() => actions.createTab()}
-      >
-        +
-      </button>
-    </div>
+    <Strip
+      checkout={view.checkout}
+      activeId={showing ? showing.id : (view.tab?.id ?? null)}
+      showingEditor={showing !== null}
+      device
+      editor={editor}
+      savingTabs={savingTabs}
+      bufferWarnings={bufferWarnings}
+      operations={operations ?? NONE}
+      actions={actions}
+    />
   );
 }
 
 /** Phases of a close the core is still confirming with Herdr (`operations.rs`). */
 const IN_FLIGHT = new Set(["transmitting", "awaiting_topology", "unknown"]);
 
-/** "closing…" while the core is still confirming a close with Herdr. */
 /** What a file or diff tab stands for, read by assistive technology. */
 function editorIdentity(entry: StripTab, tab: EditorTabSnapshot): string {
   const kind = entry.kind === "diff" ? `${tab.diff_committed ? "Committed on branch" : "Uncommitted"} diff` : "File";
   return `${kind}: ${tab.path}${entry.preview ? " · Preview" : ""}`;
 }
 
+/** "closing…" while the core is still confirming a close with Herdr. */
 export function closingSuffix(targetId: string, kind: "tab.close" | "pane.close", operations: AsyncOperation[]): boolean {
   return operations.some((op) => op.kind === kind && op.target_id === targetId && IN_FLIGHT.has(op.phase));
 }
@@ -151,8 +128,16 @@ export function activeStripId(checkout: Checkout, editor: EditorSnapshot | null)
   return showing ? showing.active_tab_id : checkout.active_tab_id;
 }
 
+/**
+ * One checkout's strip. `activeId` and `showingEditor` say which entry is
+ * drawn active: the editor tab when the editor owns the surface, else the
+ * Herdr tab.
+ */
 const Strip = memo(function Strip({
   checkout,
+  activeId,
+  showingEditor,
+  device = false,
   editor,
   savingTabs,
   bufferWarnings,
@@ -160,14 +145,15 @@ const Strip = memo(function Strip({
   actions,
 }: {
   checkout: Checkout;
+  activeId: string | null;
+  showingEditor: boolean;
+  device?: boolean;
   editor: EditorSnapshot | null;
   savingTabs: Set<string>;
   bufferWarnings: Set<string>;
   operations: AsyncOperation[];
   actions: Actions;
 }) {
-  const activeId = activeStripId(checkout, editor);
-  const showingEditor = editorFor(editor) !== null;
   const dirty = new Set((editor?.tabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
   const drag = useTabDrag(actions);
 
@@ -176,6 +162,7 @@ const Strip = memo(function Strip({
       className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel"
       role="tablist"
       data-tab-bar={checkout.id}
+      data-remote-tab-bar={device ? "true" : undefined}
     >
       {checkout.strip.map((entry, index) => {
         // Session and Memory viewers are deferred (PRD Non-goals), so their

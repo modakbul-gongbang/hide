@@ -698,7 +698,6 @@ impl Runtime {
         match outcome {
             SaveOutcome::Saved(saved) => {
                 document.revision = Some(saved.revision);
-                document.opened_modified_at_unix_ms = Some(saved.modified_at_unix_ms);
                 document.conflict = None;
                 if document.contents_utf8.as_deref() == Some(request.contents.as_str()) {
                     document.dirty = false;

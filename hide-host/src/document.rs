@@ -4,7 +4,6 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
-use std::time::UNIX_EPOCH;
 
 use cap_std::fs::{Dir, OpenOptions};
 use serde::{Deserialize, Serialize};
@@ -51,7 +50,6 @@ pub struct Document {
     pub contents: Option<String>,
     pub readonly_reason: Option<String>,
     pub revision: Option<String>,
-    pub modified_at_unix_ms: u64,
     pub size_bytes: u64,
 }
 
@@ -91,7 +89,6 @@ pub fn open(dir: &Dir, relative: &Path) -> HostResult<Document> {
             "Only existing regular files can be opened",
         ));
     }
-    let modified = modified_milliseconds(&metadata)?;
     let language = language_for(relative);
     let document = |kind, contents: Option<String>, readonly_reason: Option<&str>| Document {
         kind,
@@ -99,7 +96,6 @@ pub fn open(dir: &Dir, relative: &Path) -> HostResult<Document> {
         revision: contents.as_deref().map(|text| revision_of(text.as_bytes())),
         contents,
         readonly_reason: readonly_reason.map(str::to_owned),
-        modified_at_unix_ms: modified,
         size_bytes: metadata.len(),
     };
 
@@ -150,15 +146,6 @@ pub(crate) fn read_bounded(file: &mut std::fs::File) -> HostResult<Option<Vec<u8
         .read_to_end(&mut bytes)
         .map_err(|error| HostError::io(&error, "The selected file contents could not be read"))?;
     Ok((bytes.len() as u64 <= MAX_EDITABLE_BYTES).then_some(bytes))
-}
-
-pub(crate) fn modified_milliseconds(metadata: &std::fs::Metadata) -> HostResult<u64> {
-    metadata
-        .modified()
-        .map_err(|error| HostError::io(&error, "File modification time is unavailable"))?
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .map_err(|_| HostError::new(ErrorCode::Io, "File modification time is invalid"))
 }
 
 fn has_image_extension(path: &Path) -> bool {

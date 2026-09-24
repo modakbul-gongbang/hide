@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/controls";
 import { EditorSurface } from "./Editor";
-import { FindBar } from "./Overlays";
 import { RemotePaneCanvas } from "./PaneGrid";
 import { remoteView } from "./remote";
 import { canRetryDevice, deviceLine } from "./settings";
@@ -67,10 +66,7 @@ export function RemoteSurface({ actions }: { actions: Actions }) {
       )}
       <RemoteTabBar view={view} actions={actions} />
       {showingFile ? (
-        <>
-          <FindBar actions={actions} />
-          <EditorSurface actions={actions} />
-        </>
+        <EditorSurface actions={actions} />
       ) : (
         <RemotePaneCanvas view={view} connected={connected} dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
       )}

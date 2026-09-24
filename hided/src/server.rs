@@ -1057,53 +1057,55 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
             ))
         },
     );
-    let payload = match answer {
-        IndexAnswer::Indexing => json!({
-            "device_id": herdr_core::workspace::LOCAL_DEVICE_ID,
-            "root_path": root_path,
-            "query": query,
-            "files": [],
-            "truncated": false,
-            "indexing": true,
-        }),
-        IndexAnswer::Ready { entries, truncated } => {
-            let listed: Vec<Value> = entries
+    vec![Message::Text(
+        index_result(
+            herdr_core::workspace::LOCAL_DEVICE_ID,
+            &root_path,
+            &query,
+            answer,
+            |relative| {
+                let path = known.join(relative).display().to_string();
+                state.boundary.resolve_target(&path).ok().map(|_| path)
+            },
+        )
+        .to_string()
+        .into(),
+    )]
+}
+
+/// The `file_index_result` frame for one answer. `path_of` gives an entry's
+/// absolute path on its device, or `None` to leave an entry out.
+fn index_result(
+    device: &str,
+    root: &str,
+    query: &str,
+    answer: IndexAnswer,
+    path_of: impl Fn(&str) -> Option<String>,
+) -> Value {
+    let (files, truncated, indexing, unavailable) = match answer {
+        IndexAnswer::Indexing => (Vec::new(), false, true, None),
+        IndexAnswer::Ready { entries, truncated } => (
+            entries
                 .iter()
                 .filter_map(|relative| {
-                    let path = known.join(relative).display().to_string();
-                    state.boundary.resolve_target(&path).ok().map(|_| {
-                        json!({
-                            "path": path,
-                            "relative_path": relative,
-                        })
-                    })
+                    path_of(relative).map(|path| json!({"path": path, "relative_path": relative}))
                 })
-                .collect();
-            json!({
-                "device_id": herdr_core::workspace::LOCAL_DEVICE_ID,
-                "root_path": root_path,
-                "query": query,
-                "files": listed,
-                "truncated": truncated,
-                "indexing": false,
-            })
-        }
-        // This machine's walk reads its own opened root and cannot fail.
-        IndexAnswer::Failed(message) => json!({
-            "device_id": herdr_core::workspace::LOCAL_DEVICE_ID,
-            "root_path": root_path,
-            "query": query,
-            "files": [],
-            "truncated": false,
-            "indexing": false,
-            "unavailable": message,
-        }),
+                .collect(),
+            truncated,
+            false,
+            None,
+        ),
+        IndexAnswer::Failed(message) => (Vec::new(), false, false, Some(message)),
     };
-    vec![Message::Text(
-        json!({"type": "file_index_result", "payload": payload})
-            .to_string()
-            .into(),
-    )]
+    json!({"type": "file_index_result", "payload": {
+        "device_id": device,
+        "root_path": root,
+        "query": query,
+        "files": files,
+        "truncated": truncated,
+        "indexing": indexing,
+        "unavailable": unavailable,
+    }})
 }
 
 /// A `file_index` query for a checkout on an SSH device. The root has to be
@@ -1131,28 +1133,9 @@ fn device_file_index(state: &AppState, device: &str, root: &str, query: &str) ->
         })
     });
     let base = root.trim_end_matches('/');
-    let (files, truncated, indexing, unavailable) = match answer {
-        IndexAnswer::Indexing => (Vec::new(), false, true, None),
-        IndexAnswer::Ready { entries, truncated } => (
-            entries
-                .iter()
-                .map(|relative| json!({"path": format!("{base}/{relative}"), "relative_path": relative}))
-                .collect(),
-            truncated,
-            false,
-            None,
-        ),
-        IndexAnswer::Failed(message) => (Vec::new(), false, false, Some(message)),
-    };
-    json!({"type": "file_index_result", "payload": {
-        "device_id": device,
-        "root_path": root,
-        "query": query,
-        "files": files,
-        "truncated": truncated,
-        "indexing": indexing,
-        "unavailable": unavailable,
-    }})
+    index_result(device, root, query, answer, |relative| {
+        Some(format!("{base}/{relative}"))
+    })
 }
 
 /// Bytes one binary frame carries; a read streams in frames this size so a

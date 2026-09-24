@@ -241,7 +241,6 @@ export type EditorDocumentSnapshot = {
   language: string | null;
   document_kind: DocumentKind;
   contents_utf8: string | null;
-  opened_modified_at_unix_ms: number | null;
   /** The content revision (`sha256:<hex>`) the draft is based on; present for an editable document. */
   revision: string | null;
   dirty: boolean;
@@ -627,11 +626,6 @@ export function activeEditorTab(editor: EditorSnapshot | null): EditorTabSnapsho
 /** The editor tab a strip entry stands behind, or null for a Herdr entry. */
 export function editorTabFor(editor: EditorSnapshot | null, tabId: string): EditorTabSnapshot | null {
   return editor?.tabs.find((tab) => tab.id === tabId) ?? null;
-}
-
-/** The expanded checkout folders the core reports, as a set the tree walks. */
-export function expandedPathSet(rest: SnapshotRest | null): Set<string> {
-  return new Set(explorerContext(rest).expanded);
 }
 
 const NO_PATHS: string[] = [];
