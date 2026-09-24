@@ -122,6 +122,22 @@ fn to_value(value: impl serde::Serialize) -> HostResult<Value> {
     })
 }
 
+fn project_facts(path: &str) -> HostResult<hide_project::ProjectFacts> {
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err(HostError::new(
+            ErrorCode::InvalidPath,
+            "A project path must be absolute",
+        ));
+    }
+    hide_project::facts(path).map_err(|error| match error {
+        hide_project::ResolveError::MissingPath(_) => {
+            HostError::new(ErrorCode::NotFound, error.to_string())
+        }
+        other => HostError::new(ErrorCode::Io, other.to_string()),
+    })
+}
+
 fn open_root(root: &RootRef) -> HostResult<Root> {
     Root::open_pinned(Path::new(&root.path), root.identity)
 }
@@ -159,6 +175,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
                 revision: save::current_revision(root.dir(), &relative_path(&path)?)?,
             })
         }
+        Call::Project { path } => to_value(project_facts(&path)?),
         Call::Save {
             root,
             path,

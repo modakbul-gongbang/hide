@@ -14,7 +14,7 @@ use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -55,6 +55,13 @@ pub enum Call {
         path: String,
         contents: String,
         expected_revision: String,
+    },
+    /// The project facts of a folder on this machine (`hide_project::facts`):
+    /// a Herdr pane's directory or a registered project's path, which the
+    /// daemon's catalog groups into projects with this device's id. Only
+    /// facts are answered, never contents.
+    Project {
+        path: String,
     },
 }
 
