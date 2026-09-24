@@ -114,6 +114,19 @@ export function checkoutAgents(checkout: Checkout, agents: AgentRow[]): AgentRow
   return agents.filter((agent) => panes.has(agent.pane_id));
 }
 
+/**
+ * This machine's Projects count agents only while its Herdr answers: an
+ * unreachable Herdr has no agents to list, and "No agents" would be a zero
+ * nobody measured (B3). The core reconnects on its own, so there is no Retry.
+ */
+function localAvailability(rest: SnapshotRest | null): DeviceAvailability {
+  const herdr = rest?.status?.herdr;
+  if (!herdr?.state || herdr.state === "connected") return { state: "ready" };
+  if (herdr.state === "not_connected") return { state: "loading", text: "Connecting to Herdr…" };
+  const reason = herdr.message ?? `Herdr is ${herdr.state.replace(/_/g, " ")}`;
+  return { state: "unavailable", text: `${reason}. Agent counts show once it answers; Hide keeps trying.`, retry: false };
+}
+
 function deviceAvailability(device: Device, status: RemoteStatus | undefined): DeviceAvailability {
   if (device.kind !== "remote") return { state: "ready" };
   if (!status || status.state === "not_connected") return { state: "loading", text: "Connecting…" };
@@ -129,7 +142,7 @@ function deviceAvailability(device: Device, status: RemoteStatus | undefined): D
   return { state: "ready" };
 }
 
-function entryOf(workspace: Workspace, agents: AgentRow[], trusted: boolean): ProjectEntry {
+function entryOf(workspace: Workspace, agents: AgentRow[], trusted: boolean, checkoutsTrusted = trusted): ProjectEntry {
   return {
     id: workspace.id,
     label: workspace.label,
@@ -137,7 +150,7 @@ function entryOf(workspace: Workspace, agents: AgentRow[], trusted: boolean): Pr
     deviceId: workspace.device_id,
     pinned: workspace.pinned,
     workspace,
-    workspaceCount: trusted ? workspace.checkouts.length : null,
+    workspaceCount: checkoutsTrusted ? workspace.checkouts.length : null,
     counts: trusted ? groupCounts(projectAgents(workspace, agents)) : null,
   };
 }
@@ -171,8 +184,10 @@ export function mainSections(rest: SnapshotRest | null, localAgents: AgentRow[])
   const sections: DeviceSection[] = [];
   const local = devices.find((device) => device.kind !== "remote");
   if (local) {
-    const projects = (rest?.navigator?.workspaces ?? []).map((workspace) => entryOf(workspace, localAgents, true));
-    sections.push({ device: local, local: true, availability: { state: "ready" }, projects: [...projects].sort(byPinThenLabel) });
+    const availability = localAvailability(rest);
+    // The checkouts are this machine's own facts; only the agents need Herdr.
+    const projects = (rest?.navigator?.workspaces ?? []).map((workspace) => entryOf(workspace, localAgents, availability.state === "ready", true));
+    sections.push({ device: local, local: true, availability, projects: [...projects].sort(byPinThenLabel) });
   }
   for (const device of devices.filter((row) => row.kind === "remote")) {
     const status = rest?.status?.remote?.find((row) => row.target_id === device.id);

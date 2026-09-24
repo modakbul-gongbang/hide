@@ -34,6 +34,19 @@ describe("Main", () => {
   });
 });
 
+describe("Main while this machine's Herdr does not answer", () => {
+  it("shows why instead of counting no agents", () => {
+    const rest = {
+      navigator: { devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [project("a", "local")] },
+      status: { herdr: { state: "unreachable", message: "Herdr did not answer" } },
+    } as unknown as SnapshotRest;
+    const [local] = mainSections(rest, []);
+    expect(local?.availability.state).toBe("unavailable");
+    expect(local?.projects[0]?.counts).toBeNull();
+    expect(local?.projects[0]?.workspaceCount).toBe(1);
+  });
+});
+
 describe("the Agents explorer", () => {
   const row = (pane_id: string, group: string, children: string[] = []) => ({ pane_id, group, lineage_child_pane_ids: children }) as never;
 
