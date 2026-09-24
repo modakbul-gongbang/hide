@@ -15,7 +15,7 @@ import {
   selectionAfterRemoval,
   type ExplorerRow,
 } from "./explorer";
-import { focusedCheckout } from "./snapshot";
+import { changesFor, focusedCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type ExplorerDraft } from "./ui";
 import { expandedUnderRoot, watchedFolders } from "./watch";
@@ -72,7 +72,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   const rootPath = checkout?.path ?? null;
   const expandedPaths = useShellStore((s) => s.rest?.ui_state?.expanded_paths ?? EMPTY_PATHS);
   const listings = useShellStore((s) => s.listings);
-  const changes = useShellStore((s) => s.changes);
+  const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   const selectedPath = useShellStore((s) => s.rest?.ui_state?.selected_path ?? null);
   const pathRefusal = useShellStore((s) => s.pathRefusal);
   const operation = useShellStore((s) => s.rest?.explorer_operation ?? null);

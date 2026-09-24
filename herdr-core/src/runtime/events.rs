@@ -1311,6 +1311,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
                 self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
                 self.snapshot.navigator.root_path = Some(cwd.clone());
+                self.sync_changes_root_path();
                 self.deactivate_editor_tab();
                 self.persist_current_ui_state();
                 let action = match session_workspace_id {
@@ -1395,6 +1396,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id.clone());
                 self.snapshot.navigator.root_path = Some(checkout_path);
+                self.sync_changes_root_path();
                 self.refresh_inactive_groups();
                 self.visible_tab_ids
                     .insert(payload.checkout_id.clone(), payload.tab_id.clone());
@@ -2053,6 +2055,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(tab.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(tab.checkout_id);
                 self.snapshot.navigator.root_path = Some(checkout.path);
+                self.sync_changes_root_path();
                 self.select_terminal_pane(pane_id);
                 self.operator_focused_pane_id = None;
                 self.refresh_pane_read_state();

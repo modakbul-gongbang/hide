@@ -10,9 +10,9 @@ import type { HerdrFixture } from "./herdr-fixture";
 
 export type Daemon = { origin: string; token: string; home: string; stop: () => void };
 
-export async function startHided(herdr: HerdrFixture, label = "s2"): Promise<Daemon> {
+export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string): Promise<Daemon> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `hide-e2e-${label}-`));
-  const home = path.join(dir, "home");
+  const home = homeOverride ?? path.join(dir, "home");
   fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
   fs.writeFileSync(path.join(home, "projects", "notes.txt"), "x");

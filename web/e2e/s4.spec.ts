@@ -96,3 +96,59 @@ test("History opens a scoped patch, then updates after editing the original file
     herdr.stop();
   }
 });
+
+test("registered subfolder History opens inside patches and hides sibling changes", async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Awaited<ReturnType<typeof startHided>> | null = null;
+  try {
+    const sent = countSent(page);
+    const repo = path.join(fs.realpathSync(herdr.root), "fixture");
+    const registered = path.join(repo, "registered");
+    fs.mkdirSync(registered, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    fs.writeFileSync(path.join(registered, "inside.txt"), "inside base\n");
+    fs.writeFileSync(path.join(repo, "outside.txt"), "outside base\n");
+    execFileSync("git", ["add", "-A"], { cwd: repo });
+    execFileSync("git", ["-c", "user.email=e2e@example.com", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-qm", "base"], { cwd: repo });
+    execFileSync("git", ["update-ref", "refs/remotes/origin/main", "main"], { cwd: repo });
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: repo });
+    execFileSync("git", ["switch", "-q", "-c", "feature"], { cwd: repo });
+    fs.writeFileSync(path.join(registered, "branch.txt"), "inside committed\n");
+    fs.writeFileSync(path.join(repo, "outside-branch.txt"), "outside committed\n");
+    execFileSync("git", ["add", "-A"], { cwd: repo });
+    execFileSync("git", ["-c", "user.email=e2e@example.com", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-qm", "feature"], { cwd: repo });
+    fs.writeFileSync(path.join(registered, "inside.txt"), "inside base\ninside working\n");
+    fs.writeFileSync(path.join(repo, "outside.txt"), "outside base\noutside working\n");
+    daemon = await startHided(herdr, "s4-nested", herdr.root);
+
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    await page.keyboard.press("Alt+Shift+KeyN");
+    const input = page.getByLabel("Workspace path");
+    await expect(input).toHaveValue(`${daemon.home}/`);
+    await input.fill(registered);
+    await expect(page.locator(`[data-suggestion="${registered}"]`)).toBeVisible();
+    await input.press("Enter");
+    await expect.poll(() => sent.get("create_workspace") ?? 0).toBe(1);
+    await expect(page.locator(`[data-recent-path="${registered}"]`)).toBeVisible();
+    const project = page.locator("[data-project]", { hasText: "registered" });
+    await expect(project).toBeVisible({ timeout: 20_000 });
+    await project.locator("[data-checkout]").first().click();
+    await page.keyboard.press("Meta+Shift+KeyB");
+    await page.getByRole("button", { name: "History", exact: true }).click();
+    const history = page.locator('[data-history-root]');
+    await expect(history).toHaveAttribute("data-history-root", registered);
+    await expect(page.locator('[data-history-path="inside.txt"]')).toBeVisible();
+    await expect(page.locator('[data-history-path="branch.txt"]')).toBeVisible();
+    await expect(page.locator('[data-history-path="outside.txt"]')).toHaveCount(0);
+    await expect(page.locator('[data-history-path="outside-branch.txt"]')).toHaveCount(0);
+
+    await page.locator('[data-history-group="working"][data-history-path="inside.txt"]').click();
+    await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+inside working");
+    await page.locator('[data-history-group="committed"][data-history-path="branch.txt"]').click();
+    await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+inside committed");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});

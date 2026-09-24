@@ -60,6 +60,7 @@ impl Runtime {
             .unwrap_or(self.snapshot.changes.selected_committed);
         Some(crate::changes::ChangesRequest {
             root_path,
+            file_roots: self.file_roots.clone(),
             checkout_path: PathBuf::from(&checkout.path),
             selected_path,
             selected_committed,
@@ -69,20 +70,35 @@ impl Runtime {
         })
     }
 
-    /// A registration can name a folder inside its Git checkout. Keep its
-    /// History inside that folder while linked worktree rows use their own
-    /// checkout root. The reader verifies the repository root separately.
+    /// A registration can name a folder inside its Git checkout. The
+    /// navigator workspace path may have been projected as the repository
+    /// root after Herdr occupies it, so use the registration's own path.
+    /// Linked worktree rows use their own checkout root.
     pub(super) fn focused_changes_root_path(&self) -> Option<PathBuf> {
         let (workspace, checkout) = self.focused_local_checkout()?;
-        let registered = PathBuf::from(&workspace.path);
         let checkout_root = PathBuf::from(&checkout.path);
-        Some(
-            if workspace.registered && registered.starts_with(&checkout_root) {
-                registered
-            } else {
-                checkout_root
-            },
-        )
+        if workspace.registered {
+            let registered = self
+                .snapshot
+                .ui_state
+                .workspace_registrations
+                .iter()
+                .find(|registration| registration.id == workspace.id)?;
+            let registered = PathBuf::from(&registered.path);
+            if registered.starts_with(&checkout_root) {
+                return Some(registered);
+            }
+        }
+        Some(checkout_root)
+    }
+
+    /// Keep the History identity in the same snapshot frame as checkout focus.
+    /// All focus routes call this after assigning the focused workspace and
+    /// checkout; remote checkouts clear the identity immediately.
+    pub(super) fn sync_changes_root_path(&mut self) {
+        self.snapshot.navigator.changes_root_path = self
+            .focused_changes_root_path()
+            .map(|path| path.to_string_lossy().into_owned());
     }
 
     pub fn worktrees_request(&self) -> crate::worktrees::WorktreeRequest {

@@ -33,6 +33,9 @@ const MAX_DIFF_BYTES: usize = 256 * 1024;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangesRequest {
     pub root_path: PathBuf,
+    /// Opened registered roots from the daemon. The native shell supplies no
+    /// handle, so the reader pins its scope before starting its Git reads.
+    pub file_roots: Option<crate::files::FileRoots>,
     /// The selected checkout's Git root, independently of a narrower
     /// registered-folder History scope.
     pub checkout_path: PathBuf,
@@ -89,6 +92,38 @@ impl Default for ChangesReader {
 
 fn read(request: &ChangesRequest) -> ChangesSnapshot {
     let root_path = request.root_path.to_string_lossy().into_owned();
+    let owned_roots = if request.file_roots.is_none() {
+        std::fs::File::open(&request.root_path).ok().map(|file| {
+            crate::files::FileRoots::from_opened(vec![(request.root_path.clone(), file)])
+        })
+    } else {
+        None
+    };
+    let scoped_roots = if request.root_path != request.checkout_path {
+        match request
+            .file_roots
+            .as_ref()
+            .and_then(|roots| roots.scoped(&request.root_path).ok())
+        {
+            Some(roots) => Some(roots),
+            None if request.file_roots.is_some() => {
+                return ChangesSnapshot {
+                    root_path: Some(root_path),
+                    unavailable_reason: Some(
+                        "The registered History folder could not be opened".to_owned(),
+                    ),
+                    ..ChangesSnapshot::default()
+                };
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+    let file_roots = scoped_roots
+        .as_ref()
+        .or(request.file_roots.as_ref())
+        .or(owned_roots.as_ref());
     let toplevel = match git_toplevel(&request.root_path) {
         Ok(toplevel) => toplevel,
         Err(reason) => {
@@ -167,7 +202,7 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
         if request.selected_committed {
             read_committed_diff(&toplevel, &scope, entry, base_branch.as_deref())
         } else {
-            read_diff(&toplevel, &scope, entry)
+            read_diff(&toplevel, &scope, entry, file_roots)
         }
     });
 
@@ -411,6 +446,7 @@ fn read_committed_diff(
         toplevel,
         &["diff", &format!("{base}...HEAD"), "--", &previous, &current],
         false,
+        None,
     ) {
         Ok((text, truncated)) => bounded_diff(entry.path.clone(), text, truncated),
         Err(reason) => ChangedFileDiffSnapshot {
@@ -460,6 +496,7 @@ fn read_diff(
     toplevel: &Path,
     scope: &Path,
     entry: &ChangedFileSnapshot,
+    file_roots: Option<&crate::files::FileRoots>,
 ) -> ChangedFileDiffSnapshot {
     let current = scope
         .join(&entry.relative_path)
@@ -474,15 +511,27 @@ fn read_diff(
         // An untracked file has no index side to diff against, so it is
         // compared with an empty file. `--no-index` reports a difference as
         // exit code 1, which is the expected outcome here rather than an error.
-        ChangedFileStatus::Untracked => git_diff_text(
-            toplevel,
-            &["diff", "--no-index", "--", "/dev/null", &entry.path],
-            true,
-        ),
+        ChangedFileStatus::Untracked => file_roots
+            .ok_or_else(|| "The selected file could not be read".to_owned())
+            .and_then(|roots| {
+                let file = roots
+                    .open(Path::new(&entry.path), false)
+                    .map_err(|_| "The selected file could not be read".to_owned())?;
+                if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+                    return Err("Only existing regular files can be opened".to_owned());
+                }
+                git_diff_text(
+                    toplevel,
+                    &["diff", "--no-index", "--", "/dev/null", "-"],
+                    true,
+                    Some(file),
+                )
+            }),
         _ => git_diff_text(
             toplevel,
             &["diff", "HEAD", "--", &previous, &current],
             false,
+            None,
         ),
     };
 
@@ -509,11 +558,18 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
 /// diff that exceeds it, rather than first buffering an arbitrarily large
 /// file in `Command::output`. Stderr is drained concurrently so it cannot
 /// block a child that is reporting a failure.
-fn git_diff_text(cwd: &Path, args: &[&str], no_index: bool) -> Result<(String, bool), String> {
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(args)
+fn git_diff_text(
+    cwd: &Path,
+    args: &[&str],
+    no_index: bool,
+    input: Option<std::fs::File>,
+) -> Result<(String, bool), String> {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(cwd).args(args);
+    if let Some(input) = input {
+        command.stdin(Stdio::from(input));
+    }
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -797,6 +853,7 @@ mod tests {
         std::fs::write(&file, "한글".repeat(100_000)).unwrap();
         let snapshot = read(&ChangesRequest {
             root_path: root.to_path_buf(),
+            file_roots: None,
             checkout_path: root.to_path_buf(),
             selected_path: Some(file.to_string_lossy().into_owned()),
             selected_committed: false,
@@ -806,6 +863,76 @@ mod tests {
         assert!(diff.text.len() <= MAX_DIFF_BYTES);
         assert!(diff.notice.as_deref().unwrap().contains("truncated"));
         assert!(diff.text.is_char_boundary(diff.text.len()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untracked_diff_uses_the_registered_handle_after_a_parent_swap() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().join("repository");
+        let outside = repository.join("outside");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        assert!(
+            run_git(&repository, &["init", "-q"])
+                .unwrap()
+                .status
+                .success()
+        );
+        let registered = repository.join("registered");
+        let nested = registered.join("nested");
+        std::fs::create_dir(&registered).unwrap();
+        std::fs::create_dir(&nested).unwrap();
+        let inside = nested.join("file.txt");
+        std::fs::write(&inside, "INSIDE_CONTENT\n").unwrap();
+        std::fs::write(outside.join("file.txt"), "OUTSIDE_SENTINEL_CONTENT\n").unwrap();
+        let roots = crate::files::FileRoots::from_opened(vec![(
+            repository.clone(),
+            std::fs::File::open(&repository).unwrap(),
+        )]);
+        let request = ChangesRequest {
+            root_path: registered.clone(),
+            file_roots: Some(roots.clone()),
+            checkout_path: repository.clone(),
+            selected_path: Some(inside.to_string_lossy().into_owned()),
+            selected_committed: false,
+            base_branch: None,
+        };
+        let listed = read(&request);
+        assert!(listed.entries.iter().all(|entry| {
+            entry
+                .path
+                .starts_with(&registered.to_string_lossy().to_string())
+        }));
+        let entry = listed
+            .entries
+            .iter()
+            .find(|entry| entry.path == inside.to_string_lossy())
+            .unwrap();
+        assert!(
+            listed
+                .diff
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("INSIDE_CONTENT"),
+            "diff: {:?}",
+            listed.diff
+        );
+
+        let scoped_roots = roots.scoped(&registered).unwrap();
+        std::fs::rename(&nested, registered.join("moved")).unwrap();
+        symlink(&outside, &nested).unwrap();
+        let after_swap = read_diff(
+            &request.checkout_path,
+            Path::new("registered"),
+            entry,
+            Some(&scoped_roots),
+        );
+        assert!(!after_swap.text.contains("OUTSIDE_SENTINEL_CONTENT"));
+        assert!(after_swap.notice.is_some());
     }
 
     #[test]
@@ -825,6 +952,7 @@ mod tests {
         let projected = reader
             .read_if_due(Some(ChangesRequest {
                 root_path: root.clone(),
+                file_roots: None,
                 checkout_path: root.clone(),
                 selected_path: None,
                 selected_committed: false,
@@ -889,6 +1017,7 @@ mod tests {
 
         let request = |path: Option<&str>, committed| ChangesRequest {
             root_path: registered.clone(),
+            file_roots: None,
             checkout_path: repository.to_path_buf(),
             selected_path: path.map(|path| registered.join(path).to_string_lossy().into_owned()),
             selected_committed: committed,

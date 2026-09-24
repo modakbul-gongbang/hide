@@ -356,7 +356,11 @@ export function createActions(dispatch: DispatchFn) {
     selectChange(path: string, committed: boolean, preview: boolean) {
       const here = current();
       const changes = useShellStore.getState().changes;
-      if (!here || changes?.root_path !== here.checkout.path) return diagnostic("changes_select: checkout is unavailable");
+      const scope = rest()?.navigator?.changes_root_path;
+      if (!here || !scope || changes?.root_path !== scope ||
+          (scope !== here.checkout.path && !scope.startsWith(`${here.checkout.path}/`))) {
+        return diagnostic("changes_select: checkout is unavailable");
+      }
       const group = committed ? changes.committed : changes.entries;
       if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
       dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview } });

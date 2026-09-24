@@ -24,21 +24,51 @@ const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "tiff"
 /// The Swift shell uses the ambient path calls below; both shells share the
 /// document and explorer logic, while the daemon's paths resolve through
 /// these directory capabilities when the actual I/O runs.
-#[derive(Clone, Default)]
-pub struct FileRoots(Arc<Vec<(PathBuf, Arc<Dir>)>>);
+#[derive(Clone, Debug, Default)]
+pub struct FileRoots {
+    roots: Arc<Vec<(PathBuf, Arc<Dir>)>>,
+    identities: Arc<Vec<(PathBuf, Option<(u64, u64)>)>>,
+}
+
+impl PartialEq for FileRoots {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.roots, &other.roots)
+            || (self.identities.len() == other.identities.len()
+                && self.identities.iter().zip(other.identities.iter()).all(
+                    |((left_path, left_id), (right_path, right_id))| {
+                        left_path == right_path && left_id.is_some() && left_id == right_id
+                    },
+                ))
+    }
+}
+
+impl Eq for FileRoots {}
 
 impl FileRoots {
     pub fn from_opened(roots: Vec<(PathBuf, File)>) -> Self {
-        Self(Arc::new(
-            roots
-                .into_iter()
-                .map(|(path, file)| (path, Arc::new(Dir::from_std_file(file))))
-                .collect(),
-        ))
+        let mut opened = Vec::with_capacity(roots.len());
+        let mut identities = Vec::with_capacity(roots.len());
+        for (path, file) in roots {
+            #[cfg(unix)]
+            let identity = {
+                use std::os::unix::fs::MetadataExt;
+                file.metadata()
+                    .ok()
+                    .map(|metadata| (metadata.dev(), metadata.ino()))
+            };
+            #[cfg(not(unix))]
+            let identity = None;
+            identities.push((path.clone(), identity));
+            opened.push((path, Arc::new(Dir::from_std_file(file))));
+        }
+        Self {
+            roots: Arc::new(opened),
+            identities: Arc::new(identities),
+        }
     }
 
     fn relative<'a>(&'a self, path: &'a Path) -> io::Result<(&'a Dir, &'a Path)> {
-        self.0
+        self.roots
             .iter()
             .filter_map(|(root, dir)| path.strip_prefix(root).ok().map(|rest| (root, dir, rest)))
             .max_by_key(|(root, _, _)| root.components().count())
@@ -62,6 +92,19 @@ impl FileRoots {
         }
         dir.open_with(relative, &options)
             .map(|file| file.into_std())
+    }
+
+    /// Narrow an already opened checkout to one registered subfolder. This
+    /// open is resolved through the existing capability, not an ambient path.
+    pub(crate) fn scoped(&self, path: &Path) -> io::Result<Self> {
+        let file = self.open(path, false)?;
+        if !file.metadata()?.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "History scope is not a directory",
+            ));
+        }
+        Ok(Self::from_opened(vec![(path.to_path_buf(), file)]))
     }
 
     fn parent(&self, path: &Path) -> io::Result<(Dir, std::ffi::OsString)> {
@@ -749,7 +792,7 @@ fn move_rooted_to_trash(
 /// placed inside a checkout whose original spelling has since been replaced.
 fn stage_is_inside_root(stage: &Path, roots: &FileRoots) -> io::Result<bool> {
     let real = stage.canonicalize()?;
-    for (_, root) in roots.0.iter() {
+    for (_, root) in roots.roots.iter() {
         let root_metadata = root.dir_metadata()?;
         for ancestor in real.ancestors() {
             if same_directory_identity(&root_metadata, &fs::metadata(ancestor)?) {

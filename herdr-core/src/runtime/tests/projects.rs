@@ -63,6 +63,10 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
     assert_eq!(checkout.path, repository.to_string_lossy());
     checkout.base_branch = Some("main".to_owned());
+    // An occupied Herdr workspace is keyed by its Git root while the
+    // registration retains the narrower folder as its actual scope.
+    runtime.snapshot.navigator.workspaces[0].path = repository.to_string_lossy().into_owned();
+    runtime.sync_changes_root_path();
     runtime.snapshot.ui_state.right_panel_visible = true;
     runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
     assert_eq!(
@@ -129,6 +133,50 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     request.selected_committed = false;
     let deleted = reader.read_if_due(Some(request)).unwrap().diff.unwrap();
     assert!(deleted.text.contains("deleted content"));
+
+    // A focus event publishes its new History identity in the same frame.
+    // Retain the previous snapshot to model a coordinator read still in flight.
+    let local = runtime.snapshot.navigator.workspaces[0].clone();
+    let local_id = local.id.clone();
+    let local_checkout_id = local.checkouts[0].id.clone();
+    let mut remote = local.clone();
+    remote.id = "remote-collision".to_owned();
+    remote.remote_target_id = Some("remote-device".to_owned());
+    remote.checkouts[0].id = "remote-checkout".to_owned();
+    remote.checkouts[0].workspace_id = remote.id.clone();
+    let mut sibling = local;
+    sibling.id = "sibling-local".to_owned();
+    sibling.path = repository.to_string_lossy().into_owned();
+    sibling.registered = false;
+    sibling.checkouts[0].id = "sibling-checkout".to_owned();
+    sibling.checkouts[0].workspace_id = sibling.id.clone();
+    runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .extend([remote, sibling]);
+    let focus = |runtime: &mut Runtime, workspace_id: &str, checkout_id: &str| {
+        let event = serde_json::to_vec(&serde_json::json!({"schema_version":2,"kind":"focus_checkout","payload":{"workspace_id":workspace_id,"checkout_id":checkout_id}})).unwrap();
+        assert!(runtime.dispatch_json(&event));
+    };
+    focus(&mut runtime, "remote-collision", "remote-checkout");
+    assert!(runtime.snapshot.navigator.changes_root_path.is_none());
+    assert!(runtime.changes_request().is_none());
+    assert_eq!(
+        runtime.snapshot.changes.root_path.as_deref(),
+        registered.to_str()
+    );
+    focus(&mut runtime, "sibling-local", "sibling-checkout");
+    assert_eq!(
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        repository.to_str()
+    );
+    assert_eq!(runtime.changes_request().unwrap().root_path, repository);
+    focus(&mut runtime, &local_id, &local_checkout_id);
+    assert_eq!(
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        registered.to_str()
+    );
 }
 
 #[test]
