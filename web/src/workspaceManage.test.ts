@@ -83,16 +83,18 @@ describe("branch names", () => {
 });
 
 describe("row menus", () => {
-  it("offers pin for local registrations and new worktree for a Git project on any device", () => {
+  it("offers pin and removal for a registration and new worktree for a Git project on any device", () => {
     expect(projectMenu(workspace()).map((item) => [item.id, item.unavailable])).toEqual([
       ["pin", null],
       ["new_worktree", null],
+      ["remove_project", null],
     ]);
     expect(projectMenu(workspace({ pinned: true }))[0]?.id).toBe("unpin");
     const remote = projectMenu(workspace({ device_id: "studio", remote_target_id: "studio" }));
     expect(remote.map((item) => [item.id, item.unavailable === null])).toEqual([
-      ["pin", false],
+      ["pin", true],
       ["new_worktree", true],
+      ["remove_project", true],
     ]);
     expect(projectMenu(workspace({ registered: false })).map((item) => item.id)).toEqual(["new_worktree"]);
     expect(projectMenu(workspace({ is_git: false }))[1]?.unavailable).toMatch(/not a Git/);

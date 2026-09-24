@@ -117,6 +117,8 @@ export type Workspace = {
   temporary: boolean;
   pinned: boolean;
   last_activity_unix_ms?: number | null;
+  /** What `Remove project…` would close, counted by the core (D-10). */
+  removal?: { pane_count: number; running_agent_count: number };
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
 };

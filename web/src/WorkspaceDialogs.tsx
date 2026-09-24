@@ -15,13 +15,14 @@ import {
   branchProblem,
   deletionConsequences,
   normalizePurpose,
+  projectRemovalConsequences,
   purposeCountLabel,
   purposeIsLong,
   removalFor,
   taskFor,
 } from "./workspaceManage";
 
-function useErrorSince(since: number | null, prefixes: readonly string[]): string | null {
+export function useErrorSince(since: number | null, prefixes: readonly string[]): string | null {
   const error = useShellStore((s) => s.rest?.status?.last_error ?? null);
   if (since === null || !error || error.occurred_at < since) return null;
   return prefixes.some((prefix) => error.kind.startsWith(prefix)) ? error.message : null;
@@ -65,9 +66,72 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
     );
   }
   if (dialog.kind === "new_worktree") return <NewWorktreeDialog actions={actions} workspace={target.workspace} onClose={close} />;
+  if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} onClose={close} />;
   if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} onClose={close} />;
   if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;
   return null;
+}
+
+/**
+ * `Remove project…` on any device: the panes the core counted close first,
+ * then only the registration goes. The row leaving the registrations is the
+ * answer; a refusal or a close that failed is the core's error.
+ */
+function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
+  const [at, setAt] = useState<number | null>(null);
+  const registered = useShellStore((s) => s.rest?.ui_state?.workspace_registrations?.some((row) => row.id === workspace.id) ?? false);
+  const refused = useErrorSince(at, ["workspace.remove", "workspace.create_in_flight"]);
+  const removed = at !== null && !registered;
+  const working = at !== null && !removed && refused === null;
+  const panes = workspace.removal?.pane_count ?? 0;
+  return (
+    <Dialog label={`Remove project ${workspace.label}`} role="alertdialog" initialFocus="container" onClose={onClose} data-remove-project={workspace.id}>
+      <div className="space-y-sm p-lg">
+        <DialogHeader title={`Remove project ${workspace.label}?`} detail={workspace.path} />
+        {at === null ? (
+          <ul className="list-disc space-y-xxs pl-lg text-body text-secondary" data-remove-consequences="true">
+            {projectRemovalConsequences(workspace).map((line) => (
+              <li key={line} className="break-words">
+                {line}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {working ? (
+          <Status tone="pending" data-remove-phase="closing">
+            {panes > 0 ? "Closing the project's panes…" : "Removing the registration…"}
+          </Status>
+        ) : null}
+        {refused ? (
+          <Note tone="error" data-remove-result="failed">
+            {refused}
+          </Note>
+        ) : null}
+        {removed ? (
+          <Note tone="ok" data-remove-result="finished">
+            Project removed. Its folder is untouched.
+          </Note>
+        ) : null}
+        <div className="flex justify-end gap-sm pt-sm">
+          <Button onClick={onClose} data-remove-cancel="true">
+            {removed || refused ? "Close" : working ? "Hide" : "Keep project"}
+          </Button>
+          {at === null ? (
+            <Button
+              appearance="danger"
+              onClick={() => {
+                setAt(Date.now());
+                actions.removeWorkspace(workspace.id);
+              }}
+              data-remove-confirm="true"
+            >
+              {panes === 1 ? "Close 1 pane and remove" : panes > 1 ? `Close ${panes} panes and remove` : "Remove project"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </Dialog>
+  );
 }
 
 function DialogHeader({ title, detail }: { title: string; detail?: string }) {

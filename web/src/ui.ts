@@ -26,7 +26,8 @@ export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_pa
 export type WorkspaceDialog =
   | { kind: "new_worktree"; workspaceId: string }
   | { kind: "purpose"; workspaceId: string; checkoutId: string }
-  | { kind: "delete_worktree"; workspaceId: string; checkoutId: string };
+  | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
+  | { kind: "remove_project"; workspaceId: string };
 
 /** A held-modifier cycle over recent tabs or projects; committed when ⌥ is released. */
 export type Cycle = {

@@ -115,6 +115,10 @@ pub(super) struct GithubRequestPayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateWorkspacePayload {
+    /// The device that holds the folder; this machine when absent. A
+    /// device's own helper judges the folder (`Call::Registrable`).
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
     pub(super) path: String,
     pub(super) label: String,
     pub(super) initialize_git: bool,
@@ -1232,6 +1236,13 @@ impl Runtime {
             Event::AiSettings(payload) => self.apply_ai_settings(payload),
             Event::RetryConnect(payload) => self.retry_remote_device(&payload.target_id),
             Event::CreateWorkspace(payload) => {
+                if let Some(device) = payload
+                    .device_id
+                    .clone()
+                    .filter(|device| device != workspace::LOCAL_DEVICE_ID)
+                {
+                    return self.create_device_registration(&device, payload.path, payload.label);
+                }
                 if let Some(context) = self.live.as_ref().cloned() {
                     // A folder whose removal is still closing panes keeps the
                     // registration id it is about to lose; adding it now would

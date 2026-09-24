@@ -185,7 +185,7 @@ fn host_directory(host: &dyn crate::host_access::HostChannel, path: &str) -> Opt
 /// for Herdr to confirm, the same handshake a worktree deletion uses, then
 /// hands the answer to the runtime, which alone removes the registration.
 pub fn spawn_workspace_close(
-    context: LiveContext,
+    context: WorktreeTarget,
     workspace_id: String,
     checkout_paths: Vec<String>,
     pane_ids: Vec<String>,
@@ -194,7 +194,7 @@ pub fn spawn_workspace_close(
         .name("herdr-core-workspace-close".into())
         .spawn(move || {
             let result = close_checkout_panes(
-                context.api_connector.as_ref(),
+                context.connector.as_ref(),
                 &checkout_paths,
                 &pane_ids,
                 CONFIRM_TIMEOUT,

@@ -326,6 +326,99 @@ pub(crate) fn group(
     }
 }
 
+/// A device's registrations carried onto its grouped session (B3, B23-B25).
+///
+/// A registered project keeps its row while Herdr has no workspace in it: its
+/// main checkout is listed without tabs, under a checkout id that names no
+/// Herdr workspace, so nothing is sent to the host for it by mistake. A
+/// registered row carries its pin and what `Remove project…` would close,
+/// counted from the device's own session; an unregistered row is neither.
+pub(crate) fn apply_registrations(
+    target: &str,
+    session: &mut RemoteSessionSnapshot,
+    registrations: &[crate::model::WorkspaceRegistration],
+    facts: &DeviceFacts,
+) {
+    let registrations = registrations
+        .iter()
+        .filter(|registration| registration.device_id == target)
+        .collect::<Vec<_>>();
+    for project in &mut session.workspaces {
+        let registration = registrations
+            .iter()
+            .find(|registration| registration.id == project.id);
+        project.registered = registration.is_some();
+        project.pinned = registration.is_some_and(|registration| registration.pinned);
+    }
+    for registration in &registrations {
+        if session
+            .workspaces
+            .iter()
+            .any(|project| project.id == registration.id)
+        {
+            continue;
+        }
+        let known = facts.known(&registration.path);
+        let branch = known.and_then(|facts| facts.branch.clone());
+        session.workspaces.push(WorkspaceSnapshot {
+            home_issues: Default::default(),
+            id: registration.id.clone(),
+            label: registration.label.clone(),
+            path: registration.path.clone(),
+            remote_target_id: Some(target.to_owned()),
+            expanded: true,
+            device_id: target.to_owned(),
+            repo_name: registration.label.clone(),
+            is_git: known.is_some_and(|facts| facts.kind == ProjectKind::Git),
+            default_branch: branch.clone(),
+            branches: Vec::new(),
+            registered: true,
+            temporary: false,
+            session_workspace_ids: Vec::new(),
+            last_activity_unix_ms: None,
+            pinned: registration.pinned,
+            checkouts: vec![CheckoutSnapshot {
+                id: format!("{}#registered", registration.id),
+                workspace_id: registration.id.clone(),
+                label: crate::workspace::checkout_row_label(
+                    branch.as_deref(),
+                    Path::new(&registration.path),
+                ),
+                path: registration.path.clone(),
+                branch,
+                exists: true,
+                ..CheckoutSnapshot::default()
+            }],
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+        });
+    }
+    let running = session
+        .agents
+        .iter()
+        .filter(|agent| agent.activity == crate::sidebar::AgentActivity::Working.name())
+        .map(|agent| agent.pane_id.clone())
+        .collect::<BTreeSet<_>>();
+    for project in &mut session.workspaces {
+        let mut removal = crate::model::WorkspaceRemovalGateSnapshot::default();
+        if project.registered {
+            for pane in project
+                .checkouts
+                .iter()
+                .flat_map(|checkout| &checkout.tabs)
+                .flat_map(|tab| &tab.panes)
+            {
+                removal.pane_count += 1;
+                if running.contains(&pane.id) {
+                    removal.running_agent_count += 1;
+                }
+            }
+        }
+        project.removal = removal;
+    }
+    crate::project_context::sort_projects(&mut session.workspaces, &session.agents);
+}
+
 /// A device's repositories' worktrees as its helper last answered, keyed by
 /// main worktree path, and the read in flight.
 #[derive(Clone, Debug, Default)]

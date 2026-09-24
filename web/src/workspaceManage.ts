@@ -45,13 +45,11 @@ export function branchProblem(name: string): string | null {
 }
 
 export type MenuItem = {
-  id: "pin" | "unpin" | "new_worktree" | "set_purpose" | "delete_worktree";
+  id: "pin" | "unpin" | "new_worktree" | "remove_project" | "set_purpose" | "delete_worktree";
   label: string;
   /** Why the action is not offered here; the item is drawn disabled with this as its hint. */
   unavailable: string | null;
 };
-
-const REMOTE_ONLY = "Only projects on the daemon's own machine can be managed here.";
 
 /** The device a receipt names; the daemon's own machine when it names none. */
 function receiptDevice(deviceId: string | null | undefined): string {
@@ -62,15 +60,14 @@ export function isLocal(workspace: Workspace): boolean {
   return !workspace.remote_target_id && workspace.device_id === "local";
 }
 
-/** The project row's menu: Pin/Unpin for a registered local project, and New worktree for a Git project on any device. */
+/** The project row's menu on any device: Pin/Unpin and Remove project for a registered project, and New worktree for a Git project. */
 export function projectMenu(workspace: Workspace): MenuItem[] {
-  const local = isLocal(workspace);
   const items: MenuItem[] = [];
   if (workspace.registered) {
     items.push({
       id: workspace.pinned ? "unpin" : "pin",
       label: workspace.pinned ? "Unpin" : "Pin",
-      unavailable: local ? null : REMOTE_ONLY,
+      unavailable: null,
     });
   }
   items.push({
@@ -78,7 +75,21 @@ export function projectMenu(workspace: Workspace): MenuItem[] {
     label: "New worktree…",
     unavailable: workspace.is_git === false ? "This project is not a Git repository." : null,
   });
+  if (workspace.registered) items.push({ id: "remove_project", label: "Remove project…", unavailable: null });
   return items;
+}
+
+/** What removing a project's registration does, spelled out before it is confirmed (D-10). */
+export function projectRemovalConsequences(workspace: Workspace): string[] {
+  const panes = workspace.removal?.pane_count ?? 0;
+  const running = workspace.removal?.running_agent_count ?? 0;
+  const lines: string[] = [];
+  if (panes > 0) {
+    const stopping = running > 0 ? `, stopping ${running === 1 ? "1 running agent" : `${running} running agents`}` : "";
+    lines.push(`${panes === 1 ? "1 pane in this project closes" : `${panes} panes in this project close`} first${stopping}.`);
+  }
+  lines.push("Only the registration is removed: the folder, its repository and its worktrees stay on disk.");
+  return lines;
 }
 
 /**

@@ -14,7 +14,7 @@ use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -116,6 +116,11 @@ pub enum Call {
     },
     /// The real path of an existing directory, or `null`.
     Directory {
+        path: String,
+    },
+    /// The project a folder would be registered as, judged against the
+    /// host's own home folder (`hide_host::register::check`).
+    Registrable {
         path: String,
     },
     /// Rechecks and removes one operator-confirmed linked worktree without

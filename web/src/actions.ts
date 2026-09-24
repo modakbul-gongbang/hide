@@ -687,8 +687,15 @@ export function createActions(dispatch: DispatchFn) {
       openInFront(path, true, "file_open");
     },
 
-    createWorkspace(path: string, label: string) {
-      dispatch({ schema_version: 2, kind: "create_workspace", payload: { path, label, initialize_git: false } });
+    /** Registers a folder on `deviceId`; a device's own helper judges it against that device's home. */
+    createWorkspace(path: string, label: string, deviceId = "local") {
+      const device = deviceId === "local" ? {} : { device_id: deviceId };
+      dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...device, path, label, initialize_git: false } });
+    },
+
+    /** Removes a registration after its panes close (D-10); the folder is never touched. */
+    removeWorkspace(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "remove_workspace", payload: { workspace_id: workspaceId } });
     },
 
     listDirectory(path: string) {

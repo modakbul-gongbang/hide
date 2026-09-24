@@ -3,6 +3,7 @@ import type { Actions } from "./actions";
 import { listingRootFor, localRefusal, normalizePath, readRecent, refusalText, rememberRecent, suggestions } from "./registration";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { useErrorSince } from "./WorkspaceDialogs";
 
 // The registration input (PRD S2 B8/B9): a path under home, completed from
 // hided's directory listing, with recent registrations offered first. A
@@ -11,6 +12,80 @@ import { useUiStore } from "./ui";
 // across a reconnect (the component is not remounted by the socket).
 
 export function NewWorkspace({ actions }: { actions: Actions }) {
+  const device = useShellStore((s) => s.rest?.navigator?.focused_device_id ?? "local");
+  return device === "local" ? <LocalNewWorkspace actions={actions} /> : <DeviceNewWorkspace actions={actions} device={device} />;
+}
+
+/**
+ * A folder on the selected SSH device (PRD S5.5 B23, B24). This machine's
+ * home and listing say nothing about that device, so the path goes to the
+ * core as typed (`~/` is that device's home) and the device's own helper
+ * judges it; its refusal is shown here, and the field closes once the
+ * device's registrations grow.
+ */
+function DeviceNewWorkspace({ actions, device }: { actions: Actions; device: string }) {
+  const open = useUiStore((s) => s.overlay === "new_workspace");
+  const closeOverlay = useUiStore((s) => s.closeOverlay);
+  const label = useShellStore((s) => s.rest?.navigator?.devices?.find((row) => row.id === device)?.label ?? device);
+  const count = useShellStore((s) => s.rest?.ui_state?.workspace_registrations?.filter((row) => row.device_id === device).length ?? 0);
+  const [text, setText] = useState("~/");
+  const [sent, setSent] = useState<{ at: number; count: number } | null>(null);
+  const refused = useErrorSince(sent?.at ?? null, ["workspace.create"]);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+  useEffect(() => {
+    if (!sent || count <= sent.count) return;
+    setSent(null);
+    setText("~/");
+    closeOverlay("new_workspace");
+  }, [sent, count, closeOverlay]);
+  if (!open) return null;
+  const submit = () => {
+    const path = text.trim().replace(/\/+$/, "");
+    if (!path || path === "~") return;
+    setSent({ at: Date.now(), count });
+    actions.createWorkspace(path, path.slice(path.lastIndexOf("/") + 1), device);
+  };
+  return (
+    <div data-new-workspace={device} className="border-t border-divider bg-panel p-sm text-caption">
+      <div className="mb-xs flex items-center justify-between text-secondary">
+        <span>새 워크스페이스 · {label}</span>
+        <button type="button" className="text-muted" aria-label="Close new workspace" onClick={() => closeOverlay("new_workspace")}>
+          ×
+        </button>
+      </div>
+      <input
+        ref={inputRef}
+        value={text}
+        placeholder="~/…"
+        aria-label={`Workspace path on ${label}`}
+        className="w-full rounded-xs bg-elevated px-xs py-xxs font-mono text-body text-primary outline-none"
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submit();
+          }
+        }}
+      />
+      <p className="mt-xs text-muted">A folder inside {label}&apos;s home; that device checks it.</p>
+      {refused ? (
+        <div role="alert" data-registration-reason="device" className="mt-xs text-danger">
+          {refused}
+        </div>
+      ) : sent ? (
+        <div className="mt-xs text-muted" data-registration-pending="true">
+          Asking {label}…
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LocalNewWorkspace({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overlay === "new_workspace");
   const closeOverlay = useUiStore((s) => s.closeOverlay);
   const listing = useShellStore((s) => s.directoryList);

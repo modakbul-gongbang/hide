@@ -16,6 +16,7 @@ pub mod git;
 pub mod list;
 pub mod mutate;
 pub mod protocol;
+pub mod register;
 pub mod root;
 pub mod save;
 pub mod serve;

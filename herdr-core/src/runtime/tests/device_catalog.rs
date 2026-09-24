@@ -404,3 +404,154 @@ fn a_helper_attempt_from_before_a_removal_cannot_settle_the_new_connection() {
     ));
     assert!(runtime.ingest_host_closed(TARGET, current, "closed".to_owned()));
 }
+
+fn dispatch(runtime: &mut Runtime, kind: &str, payload: serde_json::Value) {
+    let event =
+        serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": kind, "payload": payload});
+    runtime.dispatch_json(&serde_json::to_vec(&event).unwrap());
+}
+
+/// B3, B23-B25: a project registered on a device is listed there with no
+/// Herdr workspace in it, is pinned and removed as a local one is, and a
+/// registration of the same path on this machine never shows on the device
+/// nor leaves with it; a Herdr-only project on the device is not registered.
+#[test]
+fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_device_only() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: FakeDevice::new(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hide-host-helper".to_owned(),
+            },
+            generation: 1,
+        },
+    );
+    runtime
+        .snapshot
+        .ui_state
+        .workspace_registrations
+        .push(crate::model::WorkspaceRegistration {
+            id: "workspace:local-other".to_owned(),
+            label: "Local other".to_owned(),
+            path: t.other.clone(),
+            device_id: "local".to_owned(),
+            pinned: false,
+        });
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(session(vec![herdr_workspace(
+            TARGET,
+            "w1",
+            &t.main,
+            &[("t1", &t.main)],
+        )])),
+    );
+    let rows = |runtime: &Runtime| {
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .workspaces
+            .iter()
+            .map(|project| (project.path.clone(), project.registered, project.pinned))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rows(&runtime), vec![(t.main.clone(), false, false)]);
+
+    assert!(runtime.ingest_device_registration(
+        TARGET,
+        "Other".to_owned(),
+        Ok(hide_host::register::Registrable {
+            root: t.other.clone(),
+            is_git: false,
+        }),
+    ));
+    let id = device_catalog::project_id(TARGET, Path::new(&t.other));
+    let session = runtime.snapshot.status.remote[0].session.clone().unwrap();
+    let registered = session
+        .workspaces
+        .iter()
+        .find(|project| project.id == id)
+        .unwrap();
+    assert!(registered.registered);
+    assert_eq!(registered.label, "Other");
+    assert_eq!(registered.checkouts.len(), 1);
+    assert!(registered.checkouts[0].tabs.is_empty());
+    assert_eq!(
+        device_catalog::remote_checkout_source_id(TARGET, &registered.checkouts[0].id),
+        None,
+        "a registration-only checkout names no Herdr workspace"
+    );
+    assert_eq!(rows(&runtime).len(), 2);
+
+    dispatch(
+        &mut runtime,
+        "workspace_pin_set",
+        serde_json::json!({"workspace_id": id, "pinned": true}),
+    );
+    assert_eq!(rows(&runtime)[0], (t.other.clone(), true, true));
+
+    dispatch(
+        &mut runtime,
+        "remove_workspace",
+        serde_json::json!({"workspace_id": id}),
+    );
+    assert_eq!(rows(&runtime), vec![(t.main.clone(), false, false)]);
+    let registrations = &runtime.snapshot.ui_state.workspace_registrations;
+    assert_eq!(registrations.len(), 1);
+    assert_eq!(registrations[0].device_id, "local");
+    assert!(
+        Path::new(&t.other).is_dir(),
+        "removal never touches the folder"
+    );
+}
+
+/// B24: a device's helper judges a folder against that device's home, so a
+/// folder outside it is refused with the reason and nothing is registered.
+#[test]
+fn a_device_folder_outside_its_home_is_refused_by_its_helper() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: FakeDevice::new(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hide-host-helper".to_owned(),
+            },
+            generation: 1,
+        },
+    );
+    // The double answers with this process's home; the fixture is a
+    // temporary folder outside it.
+    assert!(!Path::new(&t.other).starts_with(std::env::var("HOME").unwrap()));
+
+    dispatch(
+        &mut runtime,
+        "create_workspace",
+        serde_json::json!({"device_id": TARGET, "path": t.other, "label": "Other", "initialize_git": false}),
+    );
+
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.create_refused");
+    assert!(
+        error.message.contains("inside the home folder"),
+        "{}",
+        error.message
+    );
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+}

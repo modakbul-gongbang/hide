@@ -27,6 +27,12 @@ impl Runtime {
         let empty = DeviceFacts::default();
         let facts = self.device_facts.get(target).unwrap_or(&empty);
         let mut session = device_catalog::group(target, raw, facts);
+        device_catalog::apply_registrations(
+            target,
+            &mut session,
+            &self.snapshot.ui_state.workspace_registrations,
+            facts,
+        );
         if let Some(worktrees) = self.device_worktrees.get(target) {
             for project in &mut session.workspaces {
                 if let Some(listed) = worktrees.projects.get(&project.path) {
@@ -117,8 +123,16 @@ impl Runtime {
         if known.is_some_and(|facts| facts.in_flight.is_some() || facts.unavailable.is_some()) {
             return self.refresh_device_catalog(target);
         }
+        let registered = self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .filter(|registration| registration.device_id == target)
+            .map(|registration| registration.path.clone());
         let missing = device_catalog::needed_paths(raw)
             .into_iter()
+            .chain(registered)
             .filter(|path| known.is_none_or(|facts| !facts.facts.contains_key(path)))
             .collect::<Vec<_>>();
         if missing.is_empty() {
@@ -408,4 +422,128 @@ fn ask_facts(
         }
     }
     (answers, None)
+}
+
+const REGISTRABLE_TIMEOUT: Duration = Duration::from_secs(15);
+
+impl Runtime {
+    /// `create_workspace` on a device (B23, B24): the device's helper judges
+    /// the folder against that device's home and names the project it
+    /// belongs to; the registration is that project, and it is listed with
+    /// or without a Herdr workspace there. Nothing is created on the device.
+    pub(super) fn create_device_registration(
+        &mut self,
+        device: &str,
+        path: String,
+        label: String,
+    ) -> bool {
+        let channel = match self.device_channel(device) {
+            Ok(channel) => channel,
+            Err(message) => {
+                self.set_error(
+                    "workspace.create_unavailable",
+                    format!("Adding a project on this device needs its connection: {message}"),
+                    true,
+                );
+                return true;
+            }
+        };
+        let ask = move || {
+            call_as::<hide_host::register::Registrable>(
+                channel.as_ref(),
+                hide_host::protocol::Call::Registrable { path: path.clone() },
+                REGISTRABLE_TIMEOUT,
+            )
+            .map_err(|error| match error {
+                HostCallError::Refused(error) => error.message,
+                other => other.to_string(),
+            })
+        };
+        let Some(context) = self.worker_context.clone() else {
+            let answer = ask();
+            return self.ingest_device_registration(device, label, answer);
+        };
+        let device = device.to_owned();
+        let spawned = thread::Builder::new()
+            .name("herdr-core-device-registration".to_owned())
+            .spawn(move || {
+                let answer = ask();
+                let Some(runtime) = context.runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => guard.ingest_device_registration(&device, label, answer),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    context.notifier.notify();
+                }
+            });
+        if let Err(error) = spawned {
+            self.set_error(
+                "workspace.create_worker_failed",
+                format!("The registration worker could not be started: {error}"),
+                true,
+            );
+        }
+        true
+    }
+
+    pub(super) fn ingest_device_registration(
+        &mut self,
+        device: &str,
+        label: String,
+        answer: Result<hide_host::register::Registrable, String>,
+    ) -> bool {
+        let registrable = match answer {
+            Ok(registrable) => registrable,
+            Err(message) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "registration", "kind": "create.refused",
+                    "target": device, "message": message,
+                }));
+                self.set_error("workspace.create_refused", message, false);
+                return true;
+            }
+        };
+        let id = device_catalog::project_id(device, Path::new(&registrable.root));
+        if self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .any(|registration| registration.id == id)
+        {
+            // Registering the same project again reaches the same state.
+            return false;
+        }
+        let label = Some(label.trim())
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                Path::new(&registrable.root)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| registrable.root.clone());
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .push(crate::model::WorkspaceRegistration {
+                id: id.clone(),
+                label,
+                path: registrable.root,
+                device_id: device.to_owned(),
+                pinned: false,
+            });
+        self.persist_ui_state();
+        crate::diagnostic!(serde_json::json!({
+            "component": "registration", "kind": "workspace.registered",
+            "target": device, "workspace_id": id,
+        }));
+        self.request_device_facts(device);
+        self.refresh_device_catalog(device);
+        true
+    }
 }

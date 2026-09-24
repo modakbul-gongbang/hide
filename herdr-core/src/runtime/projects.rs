@@ -946,6 +946,12 @@ impl Runtime {
             return false;
         }
         registration.pinned = payload.pinned;
+        let device = registration.device_id.clone();
+        if device != workspace::LOCAL_DEVICE_ID {
+            // A device's rows are derived from its registrations, so the row
+            // moves when its session is derived again.
+            self.refresh_device_catalog(&device);
+        }
         for workspace in self
             .snapshot
             .navigator
@@ -1007,10 +1013,29 @@ impl Runtime {
             );
             return true;
         }
-        let (checkout_paths, pane_ids) = self
+        let device = self
             .snapshot
-            .navigator
-            .workspaces
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .find(|registration| registration.id == payload.workspace_id)
+            .map(|registration| registration.device_id.clone())
+            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
+        // A device's project lists its panes in that device's session, by
+        // scoped ids; Herdr there closes them by its own.
+        let rows = match device.as_deref() {
+            Some(device) => self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == device)
+                .and_then(|status| status.session.as_ref())
+                .map(|session| session.workspaces.as_slice())
+                .unwrap_or_default(),
+            None => self.snapshot.navigator.workspaces.as_slice(),
+        };
+        let (checkout_paths, pane_ids) = rows
             .iter()
             .filter(|workspace| workspace.id == payload.workspace_id)
             .flat_map(|workspace| &workspace.checkouts)
@@ -1018,13 +1043,14 @@ impl Runtime {
                 (Vec::new(), Vec::new()),
                 |(mut paths, mut panes), checkout| {
                     paths.push(checkout.path.clone());
-                    panes.extend(
-                        checkout
-                            .tabs
-                            .iter()
-                            .flat_map(|tab| &tab.panes)
-                            .map(|pane| pane.id.clone()),
-                    );
+                    panes.extend(checkout.tabs.iter().flat_map(|tab| &tab.panes).filter_map(
+                        |pane| match device.as_deref() {
+                            Some(device) => {
+                                super::remote_pane_source_id(device, &pane.id).map(str::to_owned)
+                            }
+                            None => Some(pane.id.clone()),
+                        },
+                    ));
                     (paths, panes)
                 },
             );
@@ -1034,14 +1060,22 @@ impl Runtime {
         crate::diagnostic!(serde_json::json!({
             "component": "registration", "kind": "remove.close_requested",
             "workspace_id": payload.workspace_id, "pane_ids": pane_ids,
+            "target": device.as_deref().unwrap_or(workspace::LOCAL_DEVICE_ID),
         }));
-        let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "workspace.remove_failed",
-                "Removing a project with open panes needs a live Herdr connection",
-                true,
-            );
-            return true;
+        let context = match device.as_deref() {
+            Some(device) => self.device_worktree_target(device),
+            None => self.local_worktree_target(),
+        };
+        let context = match context {
+            Ok(context) => context,
+            Err(message) => {
+                self.set_error(
+                    "workspace.remove_failed",
+                    format!("Removing a project with open panes needs its device's Herdr connection: {message}"),
+                    true,
+                );
+                return true;
+            }
         };
         self.workspace_removals_in_flight
             .insert(payload.workspace_id.clone());
@@ -1123,6 +1157,14 @@ impl Runtime {
     /// Drops the registration and its row. Files, worktrees and Herdr
     /// workspaces are never touched here.
     fn retire_workspace_registration(&mut self, workspace_id: &str) -> bool {
+        let device = self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .find(|registration| registration.id == workspace_id)
+            .map(|registration| registration.device_id.clone())
+            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
         let before = self.snapshot.ui_state.workspace_registrations.len();
         self.snapshot
             .ui_state
@@ -1130,6 +1172,9 @@ impl Runtime {
             .retain(|registration| registration.id != workspace_id);
         if before == self.snapshot.ui_state.workspace_registrations.len() {
             return false;
+        }
+        if let Some(device) = device {
+            self.refresh_device_catalog(&device);
         }
         // The focused checkout and the selected pane leave with the project;
         // kept, they would name a checkout no catalog carries and the sync

@@ -409,11 +409,13 @@ enum ClientAction {
 }
 
 /// The file events a checkout on an SSH device answers through that
-/// device's helper. This machine's checkout roots say nothing about another
-/// machine's paths, so these never meet the local boundary: the core finds the
-/// checkout and its device in its own catalog, and the helper confines the
-/// path to the checkout root it opened.
-const DEVICE_FILE_EVENTS: [&str; 9] = [
+/// device's helper. This machine's checkout roots and home say nothing about
+/// another machine's paths, so these never meet the local boundary: the core
+/// finds the checkout and its device in its own catalog, and the helper
+/// confines the path to the checkout root it opened, or, for a registration,
+/// to that device's own home (`hide_host::register`).
+const DEVICE_FILE_EVENTS: [&str; 10] = [
+    "create_workspace",
     "file_list",
     "file_open",
     "reveal_path",

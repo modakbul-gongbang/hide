@@ -203,6 +203,22 @@ pub fn handle(call: Call) -> HostResult<Value> {
             to_value(())
         }
         Call::Directory { path } => to_value(worktrees::directory(&absolute(&path)?)),
+        Call::Registrable { path } => {
+            let home = std::env::var_os("HOME").ok_or_else(|| {
+                HostError::new(
+                    ErrorCode::Unsupported,
+                    "HOME is not set, so no folder can be judged against it",
+                )
+            })?;
+            // `~` is this host's home, as a shell on it would read it.
+            let path = match path.strip_prefix('~') {
+                Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+                    format!("{}{rest}", home.to_string_lossy())
+                }
+                _ => path,
+            };
+            to_value(crate::register::check(&absolute(&path)?, Path::new(&home))?)
+        }
         Call::WorktreeRemove { removal } => {
             absolute(&removal.repository_root)?;
             absolute(&removal.checkout_path)?;

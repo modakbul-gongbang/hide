@@ -333,6 +333,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
   if (item === "pin" || item === "unpin") return actions.setPinned(workspace.id, item === "pin");
   if (item === "new_worktree") useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
+  if (item === "remove_project") useUiStore.getState().setWorkspaceDialog({ kind: "remove_project", workspaceId: workspace.id });
 }
 
 function runCheckoutItem(workspace: Workspace, checkout: Checkout, item: MenuItem["id"]) {
