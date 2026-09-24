@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentSections, liveDescendants, mainSections } from "./navigation";
+import { agentSections, allAgents, liveDescendants, mainSections } from "./navigation";
 import type { SnapshotRest } from "./snapshot";
 
 const project = (id: string, device: string, pinned = false) => ({
@@ -62,5 +62,24 @@ describe("the Agents explorer", () => {
   it("counts every live descendant once, not only the direct children", () => {
     const agents = [row("root", "working", ["child", "gone"]), row("child", "working", ["grandchild"]), row("grandchild", "seen", ["root"])];
     expect(liveDescendants(agents[0]!, agents)).toBe(2);
+  });
+});
+
+describe("every current agent", () => {
+  it("lists this machine's and each connected device's, naming the device, and nothing a device only last reported", () => {
+    const rest = {
+      navigator: { devices: [{ id: "mini", kind: "remote", label: "Mac mini" }] },
+      status: {
+        remote: [
+          { target_id: "mini", state: "connected", session: { agents: [{ pane_id: "remote:mini:pane:1", group: "working" }] } },
+          { target_id: "old", state: "stale", session: { agents: [{ pane_id: "remote:old:pane:1", group: "working" }] } },
+        ],
+      },
+    } as unknown as SnapshotRest;
+    const listed = allAgents(rest, [{ pane_id: "w:p", group: "seen" }] as never);
+    expect(listed.map((row) => [row.agent.pane_id, row.device])).toEqual([
+      ["w:p", null],
+      ["remote:mini:pane:1", "Mac mini"],
+    ]);
   });
 });

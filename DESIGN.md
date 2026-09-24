@@ -910,7 +910,7 @@ A chip opens the existing child at once; while that move is in flight the chip s
 A child pane has a compact Return mark in its identity row, named with the parent in its tooltip and accessible name.
 The pane menu, from its `⋯` or a right-click on the header, lists the parent, the other siblings and the children as explicit Open items, then Copy pane name and Close pane; opening it moves no focus and marks nothing read.
 
-The Agents explorer groups every current agent under Needs You, Done, Working and Seen and leaves an empty group out.
+The Agents explorer groups every current agent, this machine's and each connected device's, under Needs You, Done, Working and Seen and leaves an empty group out; a device's row names its device before the agent kind, and a device that is not connected lists nothing it only last reported.
 A delegated row is indented and muted, and a row with live descendants carries a `↳N` badge whose tooltip counts them by state.
 
 ## Terminal image attachment boundary

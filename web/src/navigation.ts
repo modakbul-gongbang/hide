@@ -92,6 +92,25 @@ export function agentSections(agents: AgentRow[]): AgentSection[] {
   return sections.filter((section) => section.agents.length > 0);
 }
 
+/** An agent row and, for a row on an SSH device, the device's name. */
+export type ListedAgent = { agent: AgentRow; device: string | null };
+
+/**
+ * Every current agent the snapshot carries (S6 B13, D-12): this machine's
+ * and each connected device's, each device's rows in the order its core
+ * gave them. A device that is not connected lists nothing, since what it
+ * last reported is not current.
+ */
+export function allAgents(rest: SnapshotRest | null, localAgents: AgentRow[]): ListedAgent[] {
+  const listed: ListedAgent[] = localAgents.map((agent) => ({ agent, device: null }));
+  for (const status of rest?.status?.remote ?? []) {
+    if (status.state !== "connected") continue;
+    const device = rest?.navigator?.devices?.find((row) => row.id === status.target_id)?.label ?? status.target_id;
+    for (const agent of status.session?.agents ?? []) listed.push({ agent, device });
+  }
+  return listed;
+}
+
 /** How many live descendants an agent has among the rows the core lists (B13). */
 export function liveDescendants(agent: AgentRow, agents: AgentRow[]): number {
   const byPane = new Map(agents.map((row) => [row.pane_id, row]));

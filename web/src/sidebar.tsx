@@ -1,9 +1,9 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import type { Actions } from "./actions";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
 import { chipTone } from "./lineage";
-import { agentSections, liveDescendants } from "./navigation";
+import { agentSections, allAgents, liveDescendants } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import { RowMenu } from "./RowMenu";
 import { displayBrowser } from "./shortcuts";
@@ -78,12 +78,17 @@ export function Sidebar({ actions }: { actions: Actions }) {
 }
 
 /**
- * The agents of the context on screen, this machine's or the selected SSH
- * device's, under Needs You, Done, Working and Seen (S6 B13). Showing the
- * list changes nothing: no focus moves and nothing is marked read.
+ * Every current agent, this machine's and each connected device's, under
+ * Needs You, Done, Working and Seen (S6 B13); a device's row names its
+ * device. Showing the list changes nothing: no focus moves and nothing is
+ * marked read.
  */
 function AgentList({ actions }: { actions: Actions }) {
-  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
+  const rest = useShellStore((s) => s.rest);
+  const localAgents = useShellStore((s) => s.agents);
+  const listed = useMemo(() => allAgents(rest, localAgents), [rest, localAgents]);
+  const agents = useMemo(() => listed.map((row) => row.agent), [listed]);
+  const deviceOf = useMemo(() => new Map(listed.map((row) => [row.agent.pane_id, row.device])), [listed]);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const sections = agentSections(agents);
   if (sections.length === 0) {
@@ -101,6 +106,7 @@ function AgentList({ actions }: { actions: Actions }) {
               <AgentRowView
                 key={agent.id}
                 agent={agent}
+                device={deviceOf.get(agent.pane_id) ?? null}
                 descendants={liveDescendants(agent, agents)}
                 selected={agent.pane_id === focusedPaneId}
                 onSelect={() => actions.openAgent(agent.pane_id)}
@@ -133,11 +139,13 @@ function descendantDetail(agent: AgentRow, count: number): string {
 
 const AgentRowView = memo(function AgentRowView({
   agent,
+  device,
   descendants,
   selected,
   onSelect,
 }: {
   agent: AgentRow;
+  device: string | null;
   descendants: number;
   selected: boolean;
   onSelect: () => void;
@@ -154,7 +162,8 @@ const AgentRowView = memo(function AgentRowView({
         data-pane={agent.pane_id}
         data-attention={attention ? "true" : "false"}
         data-delegated={agent.delegated ? "true" : "false"}
-        title={agent.identity_label}
+        title={device ? `${agent.identity_label} · ${device}` : agent.identity_label}
+        data-agent-device={device ?? "local"}
         className={`flex w-full flex-col items-start py-xs pr-md text-left outline-none focus-visible:bg-elevated ${
           agent.delegated ? "pl-[calc(var(--spacing-md)+var(--size-lineage-indent))]" : "pl-md"
         } ${selected ? "bg-elevated" : ""} ${tone}`}
@@ -177,6 +186,7 @@ const AgentRowView = memo(function AgentRowView({
           <span className="text-micro text-muted">{agent.elapsed}</span>
         </span>
         <span className="pl-[var(--size-agent-mark)] text-caption text-secondary">
+          {device ? `${device} · ` : ""}
           {agent.unknown ? "unknown" : `${agent.agent_kind}${agent.detail ? ` / ${agent.detail}` : ""}`}
         </span>
       </button>
