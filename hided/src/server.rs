@@ -285,6 +285,12 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     // listing of a device checkout) arrive here from their own tasks, so a
     // slow device never holds up this socket's snapshot stream.
     let (device_frames_tx, mut device_frames) = tokio::sync::mpsc::channel::<String>(16);
+    // Device file reads for this client, each in its own task: their frames
+    // come back through `device_bytes`, at most two ranges ahead of the
+    // socket, and every read ends with the connection.
+    let (device_bytes_tx, mut device_bytes) = tokio::sync::mpsc::channel::<Message>(2);
+    let mut device_reads: std::collections::VecDeque<tokio::task::AbortHandle> =
+        std::collections::VecDeque::new();
     let daemon = json!({"type": "daemon", "payload": state.daemon_info.as_ref()});
     if socket
         .send(Message::Text(daemon.to_string().into()))
@@ -349,6 +355,11 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
                 }
             }
+            Some(frame) = device_bytes.recv() => {
+                if socket.send(frame).await.is_err() {
+                    break;
+                }
+            }
             Some(frame) = device_frames.recv() => {
                 if socket.send(Message::Text(frame.into())).await.is_err() {
                     break;
@@ -359,11 +370,11 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                     Some(Ok(Message::Text(text))) => {
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
-                                let sent = match event_device(&event) {
-                                    Some(device) => send_device_file_bytes(&mut socket, &state, &device, &event).await,
-                                    None => send_file_bytes(&mut socket, &state.boundary, &event).await,
-                                };
-                                if sent.is_err() { break; }
+                                if let Some(device) = event_device(&event) {
+                                    start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), device, event);
+                                } else if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() {
+                                    break;
+                                }
                             }
                             Ok(ClientAction::DeviceListing(event)) => {
                                 spawn_device_listing(&state, event, device_frames_tx.clone());
@@ -403,7 +414,45 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             }
         }
     }
+    for read in device_reads {
+        read.abort();
+    }
     client_gone(&state, connection);
+}
+
+/// How many device file reads one client runs at once. A viewer asks for one
+/// file; a read beyond this is most likely for a view the page has left, so
+/// the oldest read is ended to make room (D-15).
+const DEVICE_READS_PER_CLIENT: usize = 2;
+
+fn start_device_read(
+    state: &AppState,
+    reads: &mut std::collections::VecDeque<tokio::task::AbortHandle>,
+    frames: tokio::sync::mpsc::Sender<Message>,
+    device: String,
+    event: Value,
+) {
+    reads.retain(|read| !read.is_finished());
+    if reads.len() >= DEVICE_READS_PER_CLIENT
+        && let Some(oldest) = reads.pop_front()
+    {
+        oldest.abort();
+        eprintln!(
+            "{}",
+            json!({
+                "component": "hided", "kind": "device.file_bytes_ended",
+                "device": device, "reason": "a newer read for this client took its place",
+            })
+        );
+    }
+    let task = tokio::spawn(stream_device_file_bytes(
+        frames,
+        Arc::clone(&state.core),
+        Arc::clone(&state.boundary),
+        device,
+        event,
+    ));
+    reads.push_back(task.abort_handle());
 }
 
 /// Constant in the token's length, so a byte-by-byte mismatch does not leak
@@ -1183,12 +1232,19 @@ fn file_bytes_error(request_id: &str, path: &str, reason: &str) -> Message {
 /// range per call, so this keeps one range in memory as the local read does.
 /// A file that changed between ranges ends the read as `read_failed` rather
 /// than joining two files' bytes.
-async fn send_device_file_bytes(
-    socket: &mut WebSocket,
-    state: &AppState,
-    device: &str,
-    event: &Value,
+///
+/// Each range is a helper round trip that can take seconds, so the read runs
+/// in its own task and hands its frames to the client loop through a bounded
+/// channel: the socket keeps carrying typing and snapshots meanwhile, and a
+/// full channel holds the read back instead of buffering it.
+async fn stream_device_file_bytes(
+    frames: tokio::sync::mpsc::Sender<Message>,
+    core: Arc<CoreHandle>,
+    boundary: Arc<Boundary>,
+    device: String,
+    event: Value,
 ) -> Result<(), ()> {
+    let (device, event) = (device.as_str(), &event);
     let request_id = payload_str(event, "request_id");
     let path = payload_str(event, "path");
     let root = payload_str(event, "root");
@@ -1202,8 +1258,8 @@ async fn send_device_file_bytes(
         .and_then(|rest| rest.strip_prefix('/'))
         .filter(|rest| hide_host::relative_path(rest).is_ok())
         .map(str::to_owned);
-    let Some(relative) = relative.filter(|_| state.boundary.is_device_root(device, &root)) else {
-        return socket
+    let Some(relative) = relative.filter(|_| boundary.is_device_root(device, &root)) else {
+        return frames
             .send(Message::Text(
                 refused("file_bytes", &path, Refusal::OutsideCheckout)
                     .to_string()
@@ -1213,7 +1269,7 @@ async fn send_device_file_bytes(
             .map_err(|_| ());
     };
     if length.is_some_and(|length| length > boundary::MAX_FILE_BYTES) {
-        return socket
+        return frames
             .send(file_bytes_error(&request_id, &path, "too_large"))
             .await
             .map_err(|_| ());
@@ -1221,11 +1277,12 @@ async fn send_device_file_bytes(
     let mut cursor = offset;
     let mut end: Option<u64> = None;
     let mut first: Option<hide_host::bytes::FileStamp> = None;
+    let mut total: Option<u64> = None;
     loop {
         let wanted = end.map_or(hide_host::bytes::MAX_RANGE, |end| {
             end.saturating_sub(cursor).min(hide_host::bytes::MAX_RANGE)
         });
-        let core = Arc::clone(&state.core);
+        let core = Arc::clone(&core);
         let (read_device, read_root, read_relative) =
             (device.to_owned(), root.clone(), relative.clone());
         let range = tokio::task::spawn_blocking(move || {
@@ -1254,7 +1311,7 @@ async fn send_device_file_bytes(
                         "message": message,
                     })
                 );
-                return socket
+                return frames
                     .send(file_bytes_error(&request_id, &path, "read_failed"))
                     .await
                     .map_err(|_| ());
@@ -1265,23 +1322,39 @@ async fn send_device_file_bytes(
             range.offset.saturating_add(wanted).min(range.total)
         });
         if end_now - range.offset.min(end_now) > boundary::MAX_FILE_BYTES {
-            return socket
+            return frames
                 .send(file_bytes_error(&request_id, &path, "too_large"))
                 .await
                 .map_err(|_| ());
         }
         if first.get_or_insert_with(|| range.file.clone()) != &range.file {
-            return socket
+            return frames
+                .send(file_bytes_error(&request_id, &path, "read_failed"))
+                .await
+                .map_err(|_| ());
+        }
+        // The helper's answer is untrusted input: it has to be the range that
+        // was asked for, of the same file size, and no longer than asked, or
+        // a misbehaving helper could keep this read going forever.
+        let expected_total = *total.get_or_insert(range.total);
+        if range.offset != cursor || range.total != expected_total {
+            return frames
                 .send(file_bytes_error(&request_id, &path, "read_failed"))
                 .await
                 .map_err(|_| ());
         }
         let Ok(bytes) = range.bytes() else {
-            return socket
+            return frames
                 .send(file_bytes_error(&request_id, &path, "read_failed"))
                 .await
                 .map_err(|_| ());
         };
+        if bytes.len() as u64 > wanted {
+            return frames
+                .send(file_bytes_error(&request_id, &path, "read_failed"))
+                .await
+                .map_err(|_| ());
+        }
         let taken = bytes
             .len()
             .min((end_now - range.offset.min(end_now)) as usize);
@@ -1294,7 +1367,7 @@ async fn send_device_file_bytes(
             "total": range.total,
             "eof": eof,
         });
-        socket
+        frames
             .send(Message::Binary(
                 bytes_frame(&header, &bytes[..taken]).into(),
             ))
