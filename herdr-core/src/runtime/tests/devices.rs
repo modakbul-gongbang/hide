@@ -385,7 +385,9 @@ fn a_device_project_at_this_machines_path_does_not_hold_up_its_add_or_removal() 
         registration("local:1", workspace::LOCAL_DEVICE_ID),
         registration("remote:mac:workspace:1", "mac"),
     ];
-    runtime.workspace_removals_in_flight.insert("local:1".to_owned());
+    runtime
+        .workspace_removals_in_flight
+        .insert("local:1".to_owned());
     assert_eq!(
         runtime.workspace_removal_in_flight_for("/work/same"),
         Some("local:1".to_owned())

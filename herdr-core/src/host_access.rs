@@ -123,7 +123,25 @@ pub fn list_folder(
     {
         channel.pin(root, None);
     }
-    result
+    result.map(|mut listing: Listing| {
+        // A device's answer is untrusted input: a name that is not one plain
+        // path component, or entries past the cap, never reach the page.
+        let answered = listing.entries.len();
+        listing
+            .entries
+            .retain(|entry| hide_host::mutate::valid_name(&entry.name).is_ok());
+        if listing.entries.len() > hide_host::list::LIST_CAP {
+            listing.entries.truncate(hide_host::list::LIST_CAP);
+            listing.truncated = true;
+        }
+        if listing.entries.len() < answered.min(hide_host::list::LIST_CAP) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "host_access", "kind": "host.listing_names_refused",
+                "root": root, "refused": answered - listing.entries.len(),
+            }));
+        }
+        listing
+    })
 }
 
 /// How long a watch poll waits for its stamps; the next poll asks again.
@@ -191,7 +209,18 @@ pub fn index_root(
     {
         channel.pin(root, None);
     }
-    result
+    result.map(|mut walked: hide_host::index::Walked| {
+        // As for a listing: only relative paths inside the root, and no more
+        // of them than the walk cap.
+        walked
+            .paths
+            .retain(|path| hide_host::relative_path(path).is_ok());
+        if walked.paths.len() > hide_host::index::INDEX_CAP {
+            walked.paths.truncate(hide_host::index::INDEX_CAP);
+            walked.truncated = true;
+        }
+        walked
+    })
 }
 
 pub fn call_as<T: serde::de::DeserializeOwned>(
@@ -218,5 +247,77 @@ impl HostChannel for InProcessHost {
 
     fn in_process(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A device helper that answers whatever it likes.
+    struct Hostile;
+
+    impl HostChannel for Hostile {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<Value, HostCallError> {
+            let entry =
+                |name: &str| serde_json::json!({"name": name, "is_directory": false, "inode": 1});
+            Ok(match call {
+                Call::List { .. } => {
+                    let mut entries = vec![
+                        entry("ok.txt"),
+                        entry("../../etc"),
+                        entry("a/b"),
+                        entry(".."),
+                    ];
+                    entries.extend((0..600).map(|n| entry(&format!("f{n}"))));
+                    serde_json::json!({"entries": entries, "truncated": false})
+                }
+                Call::Index { .. } => {
+                    let mut paths = vec![
+                        "src/a.rs".to_owned(),
+                        "../outside".to_owned(),
+                        "/etc/passwd".to_owned(),
+                    ];
+                    paths.extend((0..hide_host::index::INDEX_CAP + 5).map(|n| format!("f{n}")));
+                    serde_json::json!({"paths": paths, "truncated": false})
+                }
+                _ => serde_json::json!(null),
+            })
+        }
+
+        fn pinned(&self, _root: &str) -> Option<RootIdentity> {
+            Some(RootIdentity {
+                device: 1,
+                inode: 1,
+            })
+        }
+    }
+
+    /// A device's listing and walk are untrusted input: names that are not
+    /// one plain component and paths that leave the root are dropped, and
+    /// neither passes its cap (S5.5 B6, B7).
+    #[test]
+    fn a_hostile_listing_or_walk_is_confined_and_capped() {
+        let listing = list_folder(&Hostile, "/r", "").unwrap();
+        assert_eq!(listing.entries.len(), hide_host::list::LIST_CAP);
+        assert!(listing.truncated);
+        assert_eq!(listing.entries[0].name, "ok.txt");
+        assert!(
+            listing
+                .entries
+                .iter()
+                .all(|entry| !entry.name.contains('/') && entry.name != "..")
+        );
+
+        let walked = index_root(&Hostile, "/r").unwrap();
+        assert_eq!(walked.paths.len(), hide_host::index::INDEX_CAP);
+        assert!(walked.truncated);
+        assert_eq!(walked.paths[0], "src/a.rs");
+        assert!(
+            walked
+                .paths
+                .iter()
+                .all(|path| !path.starts_with("..") && !path.starts_with('/'))
+        );
     }
 }

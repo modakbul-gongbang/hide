@@ -648,7 +648,10 @@ fn withdrawing_consent_drops_a_save_waiting_for_the_helper() {
     assert_eq!(f.last_error().as_deref(), Some("file.save_unavailable"));
     f.set_phase(f.ready());
     f.shared.lock().unwrap().settle_device_saves(DEVICE);
-    assert!(f.device.saves().is_empty(), "nothing goes out once allowed again");
+    assert!(
+        f.device.saves().is_empty(),
+        "nothing goes out once allowed again"
+    );
 }
 
 /// B47: this machine's disk is read on a worker too, so a slow volume holds

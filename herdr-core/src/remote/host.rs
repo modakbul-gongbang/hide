@@ -28,7 +28,6 @@ use std::sync::Condvar;
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc;
 
-
 /// The longest answer line read from a device helper. The largest answer is
 /// a 16 MiB document, which JSON escaping can grow by up to six times, so
 /// this bounds memory without refusing any answer the protocol can produce.
