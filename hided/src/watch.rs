@@ -21,9 +21,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use cap_std::fs::Dir;
+use cap_std::time::SystemTime;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{broadcast, mpsc};
 
