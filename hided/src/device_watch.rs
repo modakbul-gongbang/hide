@@ -27,6 +27,10 @@ use crate::core::CoreHandle;
 /// interval for the whole watch set.
 const DEVICE_POLL: Duration = Duration::from_secs(2);
 
+/// Each watched folder's last stamp, `None` for a folder the helper could not
+/// read, keyed by its absolute path on the device.
+type Stamps = HashMap<String, Option<String>>;
+
 /// The folders to stamp on one device: the checkout root and its watched
 /// folders as absolute paths on that device, root first.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -160,10 +164,7 @@ fn frame(device_id: &str, path: &str) -> String {
 /// before, and a folder watched for the first time in the same checkout. The
 /// page listed that folder when it was expanded, which may be before its
 /// first stamp, so one re-read closes the gap between the two.
-fn changed_folders(
-    before: &HashMap<String, Option<String>>,
-    now: &HashMap<String, Option<String>>,
-) -> Vec<String> {
+fn changed_folders(before: &Stamps, now: &Stamps) -> Vec<String> {
     let mut changed: Vec<String> = now
         .iter()
         .filter(|(path, stamp)| before.get(*path).is_none_or(|previous| previous != *stamp))
@@ -182,7 +183,7 @@ async fn run(
     let mut interval = tokio::time::interval(DEVICE_POLL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // The device and root the recorded stamps belong to.
-    let mut recorded: Option<((String, String), HashMap<String, Option<String>>)> = None;
+    let mut recorded: Option<((String, String), Stamps)> = None;
     let mut failing: Option<String> = None;
     loop {
         tokio::select! {
@@ -243,7 +244,7 @@ async fn run(
             }
         };
         failing = None;
-        let now: HashMap<String, Option<String>> = pairs
+        let now: Stamps = pairs
             .into_iter()
             .map(|(folder, _)| folder)
             .zip(stamps)
