@@ -150,8 +150,10 @@ pub fn save_observed(
                 {
                     let _ = parent.remove_file(Path::new(&temporary));
                 } else {
-                    return Err(HostError::new(
-                        ErrorCode::Conflict,
+                    // The path holds the second writer's file again; its
+                    // revision is what Keep Editing adopts.
+                    return Err(HostError::conflict(
+                        read_revision(&parent, &name).ok(),
                         format!(
                             "The file changed on disk twice while it was being saved; the other versions are kept, one beside it as {}, and the draft was preserved",
                             temporary.to_string_lossy()
@@ -163,8 +165,8 @@ pub fn save_observed(
                     "The file changed on disk while it was being saved; the other version was kept and the draft was preserved",
                 ))
             }
-            Err(error) => Err(HostError::new(
-                ErrorCode::Conflict,
+            Err(error) => Err(HostError::conflict(
+                read_revision(&parent, &name).ok(),
                 format!(
                     "The file changed on disk while it was being saved and could not be put back ({error}); the other version is kept beside it as {}, and the draft was preserved",
                     temporary.to_string_lossy()

@@ -130,6 +130,12 @@ fn a_third_writer_during_the_swap_back_keeps_its_file() {
     .unwrap_err();
     assert_eq!(error.code, ErrorCode::Conflict);
     assert_eq!(fs::read_to_string(&path).unwrap(), "theirs");
+    // The conflict names the revision now at the path, so Keep Editing can
+    // adopt it instead of conflicting on every later save.
+    assert_eq!(
+        error.actual_revision.as_deref(),
+        Some(revision_of(b"theirs").as_str())
+    );
     let kept: Vec<String> = leftovers(&f.checkout)
         .iter()
         .map(|name| fs::read_to_string(f.checkout.join(name)).unwrap())
