@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bufferDecision, bufferFor, draftStorageHold, identity, recoveryBuffers, tabBufferKey, type BufferKey, type StoredBuffer } from "./buffers";
+import { bufferDecision, bufferFor, closeWithSaveOutcome, draftStorageHold, storedDraftOnClose, identity, recoveryBuffers, tabBufferKey, type BufferKey, type StoredBuffer } from "./buffers";
 import { draftPlace } from "./DraftRecovery";
 import type { SnapshotRest } from "./snapshot";
 
@@ -118,5 +118,28 @@ describe("draft recovery (B10-B12)", () => {
     expect(landed).toBe(false);
     await deleteBuffer(KEY);
     await expect(allBuffers()).resolves.toEqual([]);
+  });
+});
+
+describe("a stored draft when its tab closes (S5.5 B10-B12, B44)", () => {
+  it("goes only when it is exactly the clean text the core holds", () => {
+    const stored = buffer(KEY, "draft");
+    expect(storedDraftOnClose(null, null)).toBe("none");
+    expect(storedDraftOnClose(stored, { contents_utf8: "draft", dirty: false })).toBe("delete");
+    // A background tab this page never showed, a changed file, a read-only document.
+    expect(storedDraftOnClose(stored, null)).toBe("keep");
+    expect(storedDraftOnClose(stored, { contents_utf8: "disk", dirty: false })).toBe("keep");
+    expect(storedDraftOnClose(stored, { contents_utf8: null, dirty: false })).toBe("keep");
+  });
+
+  it("goes after a close with a save only when that close landed", () => {
+    const watch = { tabId: "t", hostId: "host-a", device: "mac" };
+    const next = { connection: "live", hostId: "host-a", tabIds: [] as string[], deviceIds: ["mac"] };
+    expect(closeWithSaveOutcome(watch, { ...next, tabIds: ["t"] })).toBe("wait");
+    expect(closeWithSaveOutcome(watch, next)).toBe("landed");
+    expect(closeWithSaveOutcome(watch, { ...next, deviceIds: [] })).toBe("keep");
+    expect(closeWithSaveOutcome(watch, { ...next, connection: "reconnecting" })).toBe("keep");
+    expect(closeWithSaveOutcome(watch, { ...next, hostId: "host-b" })).toBe("keep");
+    expect(closeWithSaveOutcome({ ...watch, device: "local" }, { ...next, deviceIds: [] })).toBe("landed");
   });
 });

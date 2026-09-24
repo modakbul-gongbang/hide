@@ -28,6 +28,12 @@ use std::sync::Condvar;
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc;
 
+
+/// The longest answer line read from a device helper. The largest answer is
+/// a 16 MiB document, which JSON escaping can grow by up to six times, so
+/// this bounds memory without refusing any answer the protocol can produce.
+const MAX_ANSWER_BYTES: usize = 128 * 1024 * 1024;
+
 /// The scope the operator agrees to, versioned. A build that needs more than
 /// this contract describes bumps it, and every device asks again (B51).
 pub const HOST_CONSENT_CONTRACT: u32 = 1;
@@ -295,14 +301,19 @@ impl RemoteHost {
         });
         match written {
             Ok(Ok(())) => {}
+            // A write that failed or timed out may have sent part of the
+            // line, and the next request would be read as its tail, so the
+            // connection ends here; the next use reconnects.
             Ok(Err(error)) => {
                 lock_recover(&inner.pending).remove(&id);
+                self.close("a request could not be written to the device helper");
                 return Err(HostCallError::Unknown(format!(
                     "The connection to the device failed while the request was sent ({error}); its result is unknown"
                 )));
             }
             Err(_) => {
                 lock_recover(&inner.pending).remove(&id);
+                self.close("a request was not accepted by the device helper in time");
                 return Err(HostCallError::Unknown(
                     "The device did not accept the request in time; its result is unknown"
                         .to_owned(),
@@ -856,12 +867,17 @@ fn spawn_host(
     client.runtime.spawn(async move {
         let mut channel = channel;
         let mut buffer: Vec<u8> = Vec::new();
+        // How far `buffer` has been searched for a line end, so a large
+        // answer arriving in many chunks is scanned once.
+        let mut scanned = 0;
         let mut stderr: Vec<u8> = Vec::new();
         let reason = loop {
             match channel.wait().await {
                 Some(ChannelMsg::Data { data }) => {
                     buffer.extend_from_slice(&data);
-                    while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
+                    while let Some(offset) = buffer[scanned..].iter().position(|byte| *byte == b'\n') {
+                        let end = scanned + offset;
+                        scanned = 0;
                         let line: Vec<u8> = buffer.drain(..=end).collect();
                         let Some(inner) = reader.upgrade() else { return };
                         match serde_json::from_slice::<Response>(&line) {
@@ -883,6 +899,16 @@ fn spawn_host(
                                 "bytes": line.len(),
                             })),
                         }
+                    }
+                    scanned = buffer.len();
+                    // The helper's answers are untrusted input: a line that
+                    // outgrows every answer the protocol allows ends the
+                    // connection rather than this process's memory.
+                    if buffer.len() > MAX_ANSWER_BYTES {
+                        break format!(
+                            "the device helper sent an answer longer than {} MiB",
+                            MAX_ANSWER_BYTES / (1024 * 1024)
+                        );
                     }
                 }
                 Some(ChannelMsg::ExtendedData { data, .. }) => {

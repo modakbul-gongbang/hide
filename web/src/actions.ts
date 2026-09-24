@@ -2,7 +2,7 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import { deleteBuffer, tabBufferKey } from "./buffers";
+import { allBuffers, bufferFor, closeWithSaveOutcome, deleteBuffer, storedDraftOnClose, tabBufferKey } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
@@ -306,14 +306,29 @@ export function createActions(dispatch: DispatchFn) {
     if (pending) {
       // The draft goes when the close lands, not when it is asked for: the
       // core closes the tab only after its save landed clean, and a close it
-      // refuses keeps the recovery copy (D-14).
+      // refuses, or a tab that leaves for another reason, keeps the recovery
+      // copy (D-14).
+      const watch = { tabId, hostId: state.daemon?.host_id, device: deviceOfCheckout(state.rest, tab.checkout_id) };
       const unsubscribe = useShellStore.subscribe((next) => {
-        if ((next.editor?.tabs ?? []).some((row) => row.id === tabId)) return;
+        const outcome = closeWithSaveOutcome(watch, {
+          connection: next.connection,
+          hostId: next.daemon?.host_id,
+          tabIds: (next.editor?.tabs ?? []).map((row) => row.id),
+          deviceIds: (next.rest?.navigator?.devices ?? []).map((row) => row.id),
+        });
+        if (outcome === "wait") return;
         unsubscribe();
-        if (draftKey) void deleteBuffer(draftKey);
+        if (outcome === "landed" && draftKey) void deleteBuffer(draftKey);
       });
     } else if (draftKey) {
-      void deleteBuffer(draftKey);
+      // Nothing rides this close, but a stored draft may still hold work this
+      // page never loaded; it goes only when it matches what the core holds.
+      const known = document ? { contents_utf8: document.contents_utf8, dirty: document.dirty } : null;
+      void allBuffers().then((buffers) => {
+        const decision = storedDraftOnClose(bufferFor(buffers, draftKey), known);
+        if (decision === "delete") void deleteBuffer(draftKey);
+        else if (decision === "keep") diagnostic(`file_close: the stored draft of ${tab.path} is kept as a recovery item`);
+      });
     }
     dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: pending } });
   };

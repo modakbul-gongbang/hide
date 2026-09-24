@@ -320,6 +320,36 @@ export async function moveBuffer(from: BufferKey, to: BufferKey): Promise<"moved
  * other clean document is held read-only, so no new edit is made that could
  * not be kept. Nothing stored is evicted to make room, on any device.
  */
+/**
+ * A stored draft of a tab closed without a save (S5.5 B10-B12, B44). It goes
+ * only when it is exactly the text the core holds for that file; anything
+ * else, including a background tab whose draft this page never loaded or a
+ * document that turned read-only, stays as a recovery item to open, export
+ * or discard.
+ */
+export function storedDraftOnClose(stored: StoredBuffer | null, document: { contents_utf8: string | null; dirty: boolean } | null): "none" | "delete" | "keep" {
+  if (!stored) return "none";
+  return document && !document.dirty && document.contents_utf8 === stored.contents ? "delete" : "keep";
+}
+
+/**
+ * What a close that carried a save learns from the next snapshot. The core
+ * removes the tab only after that save landed, so a tab gone from the same
+ * daemon over a live connection, with its device still registered, is a
+ * landed close and its draft goes. A dropped connection, another daemon or a
+ * removed device can also take the tab away without the save landing, so
+ * the draft is then kept for recovery.
+ */
+export function closeWithSaveOutcome(
+  watch: { tabId: string; hostId: string | null | undefined; device: string },
+  next: { connection: string; hostId: string | null | undefined; tabIds: string[]; deviceIds: string[] },
+): "wait" | "landed" | "keep" {
+  if (next.connection !== "live" || next.hostId !== watch.hostId) return "keep";
+  if (next.tabIds.includes(watch.tabId)) return "wait";
+  if (watch.device !== "local" && !next.deviceIds.includes(watch.device)) return "keep";
+  return "landed";
+}
+
 export function draftStorageHold(input: { storageFull: boolean; unstored: boolean; dirty: boolean }): "unstored" | "held" | null {
   if (input.unstored) return "unstored";
   if (input.storageFull && !input.dirty) return "held";
