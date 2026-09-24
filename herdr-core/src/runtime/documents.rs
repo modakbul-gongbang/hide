@@ -41,7 +41,17 @@ pub(super) struct SaveSlot {
     /// Why the last save of this tab was refused or not sent, until the next
     /// save starts: the tab shows it with Export and Retry at the save's own
     /// place rather than only in the diagnostic log (S5.5 B15, B45).
-    refused: Option<String>,
+    refused: Option<Unsaved>,
+}
+
+/// Why the tab's last save has not landed.
+enum Unsaved {
+    /// It was refused, or never sent.
+    Refused(String),
+    /// Its answer was lost and the file was read back unchanged: it has not
+    /// reached the file yet, and a helper whose connection ended may still
+    /// finish it, so it is "not yet" rather than "not saved" (B14).
+    NotYet(String),
 }
 
 struct PendingSave {
@@ -606,7 +616,7 @@ impl Runtime {
                 self.document_saves
                     .entry(tab_id.to_owned())
                     .or_default()
-                    .refused = Some(message.clone());
+                    .refused = Some(Unsaved::Refused(message.clone()));
                 self.sync_save_snapshot(tab_id);
                 self.set_error("file.save_unavailable", message, true);
                 return;
@@ -746,7 +756,7 @@ impl Runtime {
                 self.document_saves
                     .entry(tab_id.to_owned())
                     .or_default()
-                    .refused = Some(message.clone());
+                    .refused = Some(Unsaved::Refused(message.clone()));
                 self.set_error("file.save_failed", message, true);
             }
             SaveOutcome::Unknown(reason) => {
@@ -874,7 +884,7 @@ impl Runtime {
                 slot.unsettled = None;
                 slot.waiting = None;
                 let message = "The file was read back unchanged, so the unanswered save has not reached it yet. The device may still finish it; the draft is kept, and a save that finds the file changed will show the conflict.";
-                slot.refused = Some(message.to_owned());
+                slot.refused = Some(Unsaved::NotYet(message.to_owned()));
                 self.set_error("file.save_not_applied", message, true);
             }
             Ok(disk_revision) => {
@@ -950,9 +960,9 @@ impl Runtime {
             };
             if slot.held.take().is_some() {
                 slot.queued = None;
-                slot.refused = Some(format!(
+                slot.refused = Some(Unsaved::Refused(format!(
                     "{reason}; nothing was sent and the draft was preserved"
-                ));
+                )));
                 released = true;
                 self.sync_save_snapshot(&tab_id);
             }
@@ -1003,9 +1013,15 @@ impl Runtime {
                     )),
                 })
             } else {
-                slot.refused.as_ref().map(|reason| EditorSaveSnapshot {
-                    state: "refused".to_owned(),
-                    message: Some(reason.clone()),
+                slot.refused.as_ref().map(|unsaved| {
+                    let (state, message) = match unsaved {
+                        Unsaved::Refused(message) => ("refused", message),
+                        Unsaved::NotYet(message) => ("not_applied", message),
+                    };
+                    EditorSaveSnapshot {
+                        state: state.to_owned(),
+                        message: Some(message.clone()),
+                    }
                 })
             }
         });

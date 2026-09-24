@@ -431,16 +431,20 @@ function ExportDraftButton({ tabId, path }: { tabId: string; path: string }) {
  * refusal (S5.5 B15, B45).
  */
 function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: string; save: NonNullable<EditorDocumentSnapshot["save"]>; actions: Actions }) {
-  const refused = save.state === "refused";
+  // `not_applied` is an unanswered save read back unchanged: it has not
+  // reached the file yet but may still, so it is not called unsaved. Retry
+  // is safe there: a save that meets the late one lands as a conflict.
+  const prefix = save.state === "refused" ? "Not saved: " : save.state === "not_applied" ? "Not saved yet: " : "";
+  const settled = prefix !== "";
   return (
     <div role="status" className="flex flex-wrap items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-save-state={save.state}>
       <span className="min-w-0 flex-1 break-words">
-        {refused ? "Not saved: " : ""}
+        {prefix}
         {save.message ?? "The last save's result is unknown; reading the file back."}
-        {refused ? "" : " Your draft is preserved."}
+        {settled ? "" : " Your draft is preserved."}
       </span>
       <ExportDraftButton tabId={tabId} path={path} />
-      {refused ? (
+      {settled ? (
         <button type="button" className="text-secondary hover:text-primary" data-save-retry="true" onClick={() => actions.saveFile(tabId)}>
           Retry
         </button>

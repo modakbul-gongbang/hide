@@ -432,9 +432,10 @@ fn a_save_whose_answer_was_lost_after_it_landed_is_read_back_as_saved() {
 }
 
 /// B14: the connection dropped before the write. The read-back finds the
-/// old file, so the draft is kept unsaved and nothing is resent.
+/// old file, so the draft is kept, the tab says the save has not reached the
+/// file yet (it may still), nothing is resent, and Retry saves.
 #[test]
-fn a_save_whose_answer_was_lost_before_it_landed_is_read_back_as_not_saved() {
+fn a_save_whose_answer_was_lost_before_it_landed_is_read_back_as_not_saved_yet() {
     let f = Fixture::new();
     f.open_and_wait("a.txt");
     f.device.answer(Answer::LoseBeforeEffect);
@@ -457,10 +458,18 @@ fn a_save_whose_answer_was_lost_before_it_landed_is_read_back_as_not_saved() {
     assert_eq!(document.contents_utf8.as_deref(), Some("new\n"));
     assert_eq!(
         document.save.map(|save| save.state).as_deref(),
-        Some("refused"),
+        Some("not_applied"),
         "the tab says the save has not reached the file"
     );
     assert_eq!(f.device.saves().len(), 1, "never resent");
+
+    f.device.answer(Answer::Normally);
+    f.save("a.txt", "new\n");
+    f.wait_for_document("a.txt", "the retried save", |document| !document.dirty);
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a.txt")).unwrap(),
+        "new\n"
+    );
 }
 
 /// B14: while the device cannot be reached the result stays unknown, a new

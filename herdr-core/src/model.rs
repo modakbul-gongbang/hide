@@ -1400,6 +1400,9 @@ pub struct EditorSaveSnapshot {
     /// while it waits for the device's helper to finish connecting, `unknown`
     /// when the answer was lost and the file has not been read back yet, and
     /// `checking` while it is read back. An unknown save blocks the next one.
+    /// `refused` when the last save was refused or never sent, and
+    /// `not_applied` when an unknown save was read back unchanged: it has not
+    /// reached the file yet and may still, so it is not called unsaved.
     pub state: String,
     pub message: Option<String>,
 }

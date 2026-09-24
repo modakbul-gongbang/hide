@@ -230,9 +230,9 @@ export type EditorConflictSnapshot = {
   disk_revision: string | null;
 };
 
-/** A save without a known result yet: `saving`, `unknown` (the answer was lost) or `checking` (being read back). */
+/** A save without a landed result: `saving`, `waiting` (for the device's helper), `unknown` (the answer was lost), `checking` (being read back), `refused` (refused or never sent) or `not_applied` (read back unchanged: not reached the file yet). */
 export type EditorSaveSnapshot = {
-  state: "saving" | "waiting" | "unknown" | "checking" | "refused";
+  state: "saving" | "waiting" | "unknown" | "checking" | "refused" | "not_applied";
   message: string | null;
 };
 
