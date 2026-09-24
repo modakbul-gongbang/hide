@@ -458,7 +458,8 @@ fn start_device_read(
             "{}",
             json!({
                 "component": "hided", "kind": "device.file_bytes_ended",
-                "device": device, "request_id": oldest.request_id,
+                "device": device,
+                "request_id": oldest.request_id.chars().take(LOGGED_PATH_CAP).collect::<String>(),
                 "reason": "a newer read for this client took its place",
             })
         );
