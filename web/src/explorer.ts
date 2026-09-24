@@ -88,11 +88,6 @@ function higherRisk(current: ChangedFileStatus | undefined, candidate: ChangedFi
 }
 
 /**
- * The root-scoped Git slot of every changed path, derived once per changes
- * section rather than per row: a folder's badge is the riskiest status under
- * it, so every ancestor of every changed file is marked.
- */
-/**
  * The line above the Explorer tree about the checkout's Git status: still
  * loading, unavailable, or decorations kept from an earlier read after the
  * latest one failed, which are never shown as current (PRD S5.5 B20, B22).
@@ -105,6 +100,11 @@ export function explorerGitLine(changes: ChangesSnapshot | null): { state: "load
   return null;
 }
 
+/**
+ * The root-scoped Git slot of every changed path, derived once per changes
+ * section rather than per row: a folder's badge is the riskiest status under
+ * it, so every ancestor of every changed file is marked.
+ */
 export function gitDecorations(changes: ChangesSnapshot | null, rootPath: string | null): GitDecorations {
   const files = new Map<string, ChangedFileStatus>();
   const directories = new Map<string, ChangedFileStatus>();

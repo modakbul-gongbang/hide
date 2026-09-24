@@ -1016,7 +1016,8 @@ pub fn remove_worktree(repository_root: &Path, checkout: &Path) -> Result<String
         rows.iter().any(|row| Path::new(&row.path) == checkout)
     });
     let remains = match (remains, &answer) {
-        (Ok(listed), _) => listed || checkout.try_exists().map_err(|error| error.to_string())?,
+        (Ok(listed), Err(_)) => listed || checkout.try_exists().unwrap_or(true),
+        (Ok(listed), Ok(_)) => listed || checkout.try_exists().map_err(|error| error.to_string())?,
         (Err(_), Err(_)) => true,
         (Err(error), Ok(_)) => return Err(error),
     };
