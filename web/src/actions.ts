@@ -6,7 +6,7 @@ import { deleteBuffer, tabBufferKey } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
-import { remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
+import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
 import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
@@ -131,8 +131,15 @@ export function createActions(dispatch: DispatchFn) {
       const host = remoteHost("Switching workspace");
       if (!host) return;
       const project = context.session?.workspaces.find((row) => row.id === workspaceId);
-      if (!project?.checkouts.some((row) => row.id === checkoutId)) {
+      const checkout = project?.checkouts.find((row) => row.id === checkoutId);
+      if (!checkout) {
         return diagnostic(`focus_workspace: ${checkoutId} is not on ${context.device.label}`);
+      }
+      // A registered project Herdr has no workspace in yet is opened by
+      // creating one at its folder there (find-or-create, as on this machine).
+      if (checkoutId.endsWith(REGISTERED_CHECKOUT)) {
+        sendRemote(host.targetId, { action: "create_tab", workspace_id: workspaceId, checkout_id: checkoutId, cwd: checkout.path, label: checkout.next_tab_label });
+        return;
       }
       sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId });
       return;

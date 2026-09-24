@@ -16,6 +16,9 @@ export type RemoteContext = {
   session: RemoteSession | null;
 };
 
+/** The suffix of a registered device project's checkout while Herdr has no workspace in it (`device_catalog::REGISTERED_CHECKOUT`). */
+export const REGISTERED_CHECKOUT = "#registered";
+
 /**
  * The SSH device the operator selected, with its connection and session, or
  * null while this machine is the context.
