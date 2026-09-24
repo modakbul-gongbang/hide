@@ -407,13 +407,24 @@ impl Runtime {
     /// installs file roots; the Swift shell reads by path and never waits.
     /// A device's files are read through its helper, so its Workspace waits
     /// for the helper rather than marking every file unavailable while it
-    /// starts; `ingest_host_established` asks again once it is ready.
+    /// starts, and for its catalog, which moves the device's checkouts into
+    /// their Projects: a tab restored before that names a Workspace the
+    /// device no longer shows. The helper and the catalog each ask again
+    /// once they are ready.
     fn view_root_ready(&self, key: &WorkspaceKey) -> bool {
         if key.0 != workspace::LOCAL_DEVICE_ID {
-            return matches!(
+            let helper_ready = matches!(
                 self.device_hosts.get(&key.0).map(|host| &host.phase),
                 Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none()
             );
+            let catalog_ready = self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == key.0)
+                .is_some_and(|status| status.catalog.state == "ready");
+            return helper_ready && catalog_ready;
         }
         self.file_roots
             .as_ref()

@@ -1048,3 +1048,71 @@ fn a_refused_device_request_does_not_bring_the_device_forward() {
     assert!(runtime.snapshot.status.last_error.is_some());
     assert_eq!(runtime.snapshot.navigator.focused_device_id, before);
 }
+
+/// S6 B14-B16, B21: a device pane carries its direct children and its path
+/// back to the parent from the device's own lineage, as a pane here does.
+#[test]
+fn a_device_pane_carries_its_children_and_its_path_to_the_parent() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let mut raw = session(vec![herdr_workspace(
+        TARGET,
+        "w1",
+        &t.main,
+        &[("t1", &t.main), ("t2", &t.main)],
+    )]);
+    let parent = format!("remote:{TARGET}:pane:t1");
+    let child = format!("remote:{TARGET}:pane:t2");
+    let row = |pane: &str, spawned_from: Option<&str>| {
+        let mut agents = crate::sidebar::project_agents(
+            serde_json::from_value(serde_json::json!({"agents": [{
+                "pane_id": pane, "agent": "claude", "agent_status": "working",
+                "state_change_seq": 1, "tokens": {"task": format!("Task {pane}")}
+            }]}))
+            .unwrap(),
+        )
+        .agents;
+        let mut agent = agents.remove(0);
+        agent.spawned_from_pane_id = spawned_from.map(str::to_owned);
+        agent
+    };
+    raw.agents = vec![row(&parent, None), row(&child, Some(&parent))];
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+
+    let panes = runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .flat_map(|checkout| &checkout.tabs)
+        .flat_map(|tab| &tab.panes)
+        .cloned()
+        .collect::<Vec<_>>();
+    let pane = |id: &str| panes.iter().find(|pane| pane.id == id).unwrap();
+    let chips = &pane(&parent).children.as_ref().expect("children").chips;
+    assert_eq!(
+        chips
+            .iter()
+            .map(|chip| chip.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        [child.as_str()]
+    );
+    let path = &pane(&child).lineage_path;
+    assert_eq!(
+        path.iter()
+            .map(|step| step.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        [parent.as_str(), child.as_str()]
+    );
+}

@@ -78,6 +78,9 @@ impl Runtime {
         }
         if changed {
             self.repoint_device_editor_tabs(target);
+            // A device Workspace in front waited for its catalog to bring
+            // its View tabs back.
+            self.restore_front_when_ready();
         }
         changed
     }

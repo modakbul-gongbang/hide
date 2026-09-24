@@ -15,7 +15,8 @@ import { SettingsGate } from "./SettingsSheet";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { focusedCheckout, frontCheckout } from "./snapshot";
+import { focusedCheckout, focusedRemoteDevice, frontCheckout } from "./snapshot";
+import { startupScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
@@ -180,9 +181,6 @@ function ShortcutSheetGate({ actions }: { actions: Actions }) {
   return open ? <ShortcutSheet actions={actions} /> : null;
 }
 
-/** Herdr states in which the catalog will not change on its own soon. */
-const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "unreachable", "stale", "incompatible"]);
-
 /**
  * Main, a Project's Overview, or the front Workspace (PRD S6 D-02, D-11). The
  * page starts on the Workspace the core kept in front when it is still in
@@ -195,24 +193,22 @@ function CenterScreen({ actions }: { actions: Actions }) {
   const screen = useUiStore((s) => s.screen);
   const front = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
   const hasView = useShellStore((s) => Boolean(s.rest?.workspace_view));
-  const herdr = useShellStore((s) => s.herdrState);
+  const first = useShellStore((s) => startupScreen(s.rest, front !== null));
   const loaded = useShellStore((s) => s.rest !== null);
+  const remoteFront = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
   useEffect(() => {
     if (screen !== null || !loaded) return undefined;
-    if (front) {
-      useUiStore.getState().setScreen({ kind: "workspace" });
+    if (first) {
+      useUiStore.getState().setScreen({ kind: first });
       return undefined;
     }
-    if (herdr && SETTLED_HERDR.has(herdr)) {
-      useUiStore.getState().setScreen({ kind: "main" });
-      return undefined;
-    }
-    // A Herdr that never answers must not hold the page on a blank screen.
+    // A Herdr or a device that never answers must not hold the page on a
+    // blank screen; a device gets longer, since it is reached over SSH.
     const timer = window.setTimeout(() => {
       if (useUiStore.getState().screen === null) useUiStore.getState().setScreen({ kind: "main" });
-    }, 3000);
+    }, remoteFront ? 15_000 : 3000);
     return () => window.clearTimeout(timer);
-  }, [screen, loaded, front, herdr]);
+  }, [screen, loaded, first, remoteFront]);
   if (screen === null) {
     return (
       <div className="flex flex-1 items-center justify-center text-caption text-muted" data-center-screen="starting">

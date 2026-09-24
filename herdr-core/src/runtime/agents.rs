@@ -1001,7 +1001,8 @@ impl Runtime {
         if lineage_pruned {
             self.persist_ui_state();
         }
-        let synced = sync_pane_status(&mut session.workspaces, &session.agents);
+        let synced = sync_pane_status(&mut session.workspaces, &session.agents)
+            | sync_remote_pane_relations(session);
         let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
             &session.workspaces,
@@ -1971,4 +1972,38 @@ pub(super) fn remote_herdr_workspace(
             .map(str::to_owned),
         None => remote_workspace_source_id(target_id, workspace_id).map(str::to_owned),
     }
+}
+
+/// A device pane's children and ancestors, from that device's own lineage,
+/// so its header carries the same child row and Return as a pane on this
+/// machine (S6 B14-B16, B21). A device pane has no local hook tokens; the
+/// projection reports it as uninstrumented for in-process counts, while its
+/// Herdr-declared children are still known.
+fn sync_remote_pane_relations(session: &mut RemoteSessionSnapshot) -> bool {
+    let agents = &session.agents;
+    let mut changed = false;
+    for pane in session
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+        .flat_map(|checkout| checkout.tabs.iter_mut())
+        .flat_map(|tab| tab.panes.iter_mut())
+    {
+        let children = crate::sidebar::project_pane_children(
+            agents,
+            &pane.id,
+            crate::agent_hooks::PaneHookTokens::default(),
+            &|_| None,
+        );
+        let lineage_path = crate::sidebar::project_lineage_path(agents, &pane.id);
+        if pane.children != children {
+            pane.children = children;
+            changed = true;
+        }
+        if pane.lineage_path != lineage_path {
+            pane.lineage_path = lineage_path;
+            changed = true;
+        }
+    }
+    changed
 }

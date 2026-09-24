@@ -1203,6 +1203,18 @@ fn a_device_workspaces_view_tabs_wait_for_its_helper_after_a_restart() {
     let views_dir = tempfile::tempdir().unwrap();
     {
         let mut runtime = f.shared.lock().unwrap();
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: DEVICE.to_owned(),
+            state: "connected".to_owned(),
+            message: None,
+            herdr_version: None,
+            session: None,
+            files: RemoteFileListSnapshot::idle(),
+            catalog: crate::model::DeviceCatalogSnapshot {
+                state: "ready".to_owned(),
+                ..Default::default()
+            },
+        });
         runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
         let mut store = WorkspaceViewStore::open(views_dir.path().join("views.json")).0;
         let record = ViewTabRecord {
@@ -1233,6 +1245,12 @@ fn a_device_workspaces_view_tabs_wait_for_its_helper_after_a_restart() {
             platform: "macos aarch64".to_owned(),
             helper_path: "/fake/hide-host-helper".to_owned(),
         };
+        runtime.snapshot.status.remote[0].catalog.state = "resolving".to_owned();
+        assert!(
+            !runtime.restore_front_when_ready(),
+            "the device's checkouts are not in their Projects yet"
+        );
+        runtime.snapshot.status.remote[0].catalog.state = "ready".to_owned();
         f.device.hold();
         assert!(runtime.restore_front_when_ready());
         runtime.sync_workspace_view();

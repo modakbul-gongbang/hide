@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentSections, allAgents, liveDescendants, mainSections } from "./navigation";
+import { agentSections, allAgents, liveDescendants, mainSections, startupScreen } from "./navigation";
 import type { SnapshotRest } from "./snapshot";
 
 const project = (id: string, device: string, pinned = false) => ({
@@ -81,5 +81,25 @@ describe("every current agent", () => {
       ["w:p", null],
       ["remote:mini:pane:1", "Mac mini"],
     ]);
+  });
+});
+
+describe("the first screen", () => {
+  const local = { navigator: { focused_device_id: "local", devices: [{ id: "local", kind: "local", label: "This Mac" }] } };
+  const device = { navigator: { focused_device_id: "mini", devices: [{ id: "mini", kind: "remote", label: "Mac mini" }] } };
+
+  it("waits for this machine's Herdr, then opens Main when no Workspace is in front", () => {
+    expect(startupScreen({ ...local, status: { herdr: { state: "not_connected" } } } as unknown as SnapshotRest, false)).toBeNull();
+    expect(startupScreen({ ...local, status: { herdr: { state: "connected" } } } as unknown as SnapshotRest, false)).toBe("main");
+    expect(startupScreen({ ...local, status: { herdr: { state: "connecting" } } } as unknown as SnapshotRest, true)).toBe("workspace");
+  });
+
+  it("waits for the device in front, not for this machine's Herdr", () => {
+    const connecting = { ...device, status: { herdr: { state: "connected" }, remote: [{ target_id: "mini", state: "not_connected" }] } };
+    expect(startupScreen(connecting as unknown as SnapshotRest, false)).toBeNull();
+    const noSession = { ...device, status: { herdr: { state: "connected" }, remote: [{ target_id: "mini", state: "connected", session: null }] } };
+    expect(startupScreen(noSession as unknown as SnapshotRest, false)).toBeNull();
+    const gone = { ...device, status: { herdr: { state: "connected" }, remote: [{ target_id: "mini", state: "unreachable" }] } };
+    expect(startupScreen(gone as unknown as SnapshotRest, false)).toBe("main");
   });
 });

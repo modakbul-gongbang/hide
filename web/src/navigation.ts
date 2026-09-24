@@ -5,7 +5,7 @@
 // has no session to show. Nothing here is counted that the snapshot does not
 // carry, and a device that cannot answer says so instead of showing zeros.
 
-import type { AgentRow, Checkout, Device, RemoteStatus, SnapshotRest, Workspace, WorkspaceRegistration } from "./snapshot";
+import { focusedRemoteDevice, type AgentRow, type Checkout, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
 export const AGENT_GROUPS: readonly { group: AgentGroup; label: string }[] = [
@@ -237,4 +237,28 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
     }
   }
   return null;
+}
+
+/** Herdr states in which a catalog will not change on its own soon. */
+const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "unreachable", "stale", "incompatible"]);
+
+/**
+ * The first screen (S6 B19, D-11): the Workspace the core kept in front once
+ * it resolves, Main once the device in front has settled without one, and
+ * null while that device is still being reached. The device in front decides:
+ * a device Workspace is known only once that device's session arrives, and
+ * this machine's Herdr settling first says nothing about it.
+ */
+export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "workspace" | "main" | null {
+  if (!rest) return null;
+  if (hasFront) return "workspace";
+  const device = focusedRemoteDevice(rest);
+  if (!device) {
+    const state = rest.status?.herdr?.state;
+    return state && SETTLED_HERDR.has(state) ? "main" : null;
+  }
+  const status = rest.status?.remote?.find((row) => row.target_id === device.id);
+  if (!status || status.state === "not_connected") return null;
+  if (status.state === "connected" && !status.session) return null;
+  return "main";
 }
