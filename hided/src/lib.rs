@@ -82,6 +82,8 @@ pub async fn run_daemon(env: Env) -> Result<(), String> {
 
 pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    let host_id = state_file::host_id(&env.state_dir)
+        .map_err(|error| format!("the daemon host id could not be read or written: {error}"))?;
     let token = new_token();
     let listener = server::bind(env.bind).await?;
     let port = listener
@@ -170,6 +172,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         daemon_info: Arc::new(serde_json::json!({
             "version": VERSION,
             "schema_version": SCHEMA_VERSION,
+            "host_id": host_id,
             "pid": std::process::id(),
             "started_at_unix": state.started_at.clone(),
             "state_dir": env.state_dir.display().to_string(),

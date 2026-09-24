@@ -2,12 +2,12 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import { deleteBuffer } from "./buffers";
+import { deleteBuffer, tabBufferKey } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
 import { remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
-import { activeEditorTab, checkoutById, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
+import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -291,17 +291,18 @@ export function createActions(dispatch: DispatchFn) {
       contents !== null
         ? { tab_id: tab.id, path: tab.path, contents_utf8: contents }
         : null;
-    const root = checkoutById(state.rest, tab.checkout_id)?.path ?? "";
+    const draftKey = tabBufferKey(state.daemon?.host_id, state.rest, tab);
     if (pending) {
-      // The buffer goes when the close lands, not when it is asked for: a
-      // close the core refuses keeps its recovery copy (D-14).
+      // The draft goes when the close lands, not when it is asked for: the
+      // core closes the tab only after its save landed clean, and a close it
+      // refuses keeps the recovery copy (D-14).
       const unsubscribe = useShellStore.subscribe((next) => {
         if ((next.editor?.tabs ?? []).some((row) => row.id === tabId)) return;
         unsubscribe();
-        void deleteBuffer(root, tab.path);
+        if (draftKey) void deleteBuffer(draftKey);
       });
-    } else {
-      void deleteBuffer(root, tab.path);
+    } else if (draftKey) {
+      void deleteBuffer(draftKey);
     }
     dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: pending } });
   };

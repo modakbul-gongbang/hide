@@ -77,6 +77,7 @@ describe("settings rules", () => {
     const text = diagnosticsText({
       daemon: {
         version: "0.1.0",
+        host_id: "host-00000000000000000000000000000000",
         schema_version: 2,
         pid: 42,
         started_at_unix: "1",

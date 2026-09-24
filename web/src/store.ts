@@ -1,3 +1,4 @@
+import type { StoredBuffer } from "./buffers";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
 import { remoteContext, remoteView } from "./remote";
@@ -67,6 +68,8 @@ export type Frame = {
 /** What the daemon says about itself after a handshake (hided `daemon` frame). */
 export type DaemonInfo = {
   version: string;
+  /** This daemon host's lasting identity; a draft is filed under it (S5.5 B9). */
+  host_id: string;
   schema_version: number;
   pid: number;
   started_at_unix: string;
@@ -119,6 +122,9 @@ type Store = {
   savingTabs: Set<string>;
   /** Tabs whose buffer could not be stored; they say "kept in this tab only" (D-14). */
   bufferWarnings: Set<string>;
+  /** Stored drafts no open tab stands for, to open, export or discard (S5.5 B10-B12). */
+  recoveryDrafts: StoredBuffer[];
+  setRecoveryDrafts: (drafts: StoredBuffer[]) => void;
   /** Watch frames per folder, counted so the Explorer re-reads even a folder
    * whose listing was in flight when the change landed. */
   folderChanges: Record<string, number>;
@@ -190,6 +196,8 @@ export const useShellStore = create<Store>((set, get) => ({
   attachmentRefusal: null,
   savingTabs: new Set<string>(),
   bufferWarnings: new Set<string>(),
+  recoveryDrafts: [],
+  setRecoveryDrafts: (recoveryDrafts) => set({ recoveryDrafts }),
   folderChanges: {},
   diagnostics: [],
   diagnosticsDropped: 0,

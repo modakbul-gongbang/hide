@@ -1,29 +1,75 @@
-// Unsaved editor buffers across a disconnect (PRD B8, D-07). The core owns the
-// document, but a daemon restart loses the in-memory draft; the shell keeps the
-// newest buffer per path in IndexedDB, and a reconnect reconciles it against
-// the core: a buffer for an open document wins over a clean core document, and
-// a buffer whose document is gone is discarded with a diagnostic. When
-// IndexedDB is unavailable the store degrades to no-op, which is what a test
-// runtime without it gets.
+// Unsaved editor drafts across a disconnect (PRD S3 B8, S5.5 B9-B12, B44).
+// The core owns the document, but a daemon restart loses the in-memory draft;
+// the shell keeps the newest draft per document in IndexedDB, and a reconnect
+// reconciles it against the core: a draft for an open document wins over a
+// clean core document, and a draft whose document is not open stays as a
+// recovery item until the operator opens, exports or discards it. Nothing is
+// discarded on its own: a draft exists only while it differs from what was
+// saved, and a draft of another host or device is not this screen's to judge.
+// When IndexedDB is unavailable the store degrades to no-op, which is what a
+// test runtime without it gets, and each write says it did not land.
+
+import { checkoutById, deviceOfCheckout, type EditorTabSnapshot, type SnapshotRest } from "./snapshot";
+
+/** Which document a draft belongs to: the daemon host, the device, the checkout root and the real path. */
+export type BufferKey = { host: string; device: string; root: string; path: string };
 
 export type StoredBuffer = {
-  /** The store's key: identity(root, path). */
+  /** The store's key: identity(key). */
   id: string;
-  /** The checkout root this path belongs to; the buffer's other half (D-14). */
+  /**
+   * The daemon host and device the draft was written for; null for a draft
+   * stored before drafts named them, whose origin is unverified (B11).
+   */
+  host: string | null;
+  device: string | null;
+  /** The checkout root; "" for a draft from before drafts named a root. */
   root: string;
   path: string;
   contents: string;
   updated_at: number;
 };
 
-/** Buffers older than this are discarded on the next start (D-14). */
-export const BUFFER_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
-
 const DATABASE = "hide-shell";
-const LEGACY_STORE = "buffers";
-const STORE = "buffers_v2";
-/** v2 keys a buffer by (checkout root, real path); v1 keyed by path alone. */
-const DATABASE_VERSION = 3;
+/** v1 kept path-only drafts; v2 and v3 keyed them by (root, path). */
+const LEGACY_STORES = ["buffers", "buffers_v2"];
+const STORE = "drafts_v4";
+/** v4 keys a draft by (host, device, root, path). */
+const DATABASE_VERSION = 4;
+/** Every stored draft together, the browser's quota permitting (D-15, B44). */
+export const MAX_STORED_BYTES = 512 * 1024 * 1024;
+
+/**
+ * Moves every older draft into the v4 store as an unverified recovery item,
+ * inside the upgrade transaction: it commits whole or not at all, so an
+ * interrupted upgrade keeps the old stores and runs again on the next open
+ * (B12). No draft is attributed to a device here; only an explicit open on
+ * this host's own checkout claims one (`claimLegacyBuffer`).
+ */
+function migrate(database: IDBDatabase, transaction: IDBTransaction) {
+  const destination = database.objectStoreNames.contains(STORE)
+    ? transaction.objectStore(STORE)
+    : database.createObjectStore(STORE, { keyPath: "id" });
+  for (const name of LEGACY_STORES) {
+    if (!database.objectStoreNames.contains(name)) continue;
+    const source = transaction.objectStore(name);
+    source.getAll().onsuccess = (event) => {
+      const rows = (event.target as IDBRequest<Array<{ root?: string; path: string; contents: string; updated_at: number }>>).result;
+      for (const row of rows) {
+        const record = legacyRecord(row.root ?? "", row.path, row.contents, row.updated_at);
+        destination.get(record.id).onsuccess = (lookup) => {
+          const current = (lookup.target as IDBRequest<StoredBuffer | undefined>).result;
+          if (!current || current.updated_at < record.updated_at) destination.put(record);
+        };
+      }
+      database.deleteObjectStore(name);
+    };
+  }
+}
+
+function legacyRecord(root: string, path: string, contents: string, updated_at: number): StoredBuffer {
+  return { id: legacyIdentity(root, path), host: null, device: null, root, path, contents, updated_at };
+}
 
 function openDatabase(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
@@ -39,32 +85,7 @@ function openDatabase(): Promise<IDBDatabase | null> {
       return;
     }
     let settled = false;
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      // v1 has no checkout root. Keep those unsaved edits until a live core
-      // snapshot can identify their open tabs; deleting the store here would
-      // lose work during the upgrade from the already shipped S3 shell.
-      if (!database.objectStoreNames.contains(STORE)) database.createObjectStore(STORE, { keyPath: "id" });
-      // Completion builds also wrote root-keyed rows to the old store at DB
-      // version 2. Move those rows in the upgrade transaction; without a
-      // version bump, onupgradeneeded would never create the new store.
-      if (database.objectStoreNames.contains(LEGACY_STORE)) {
-        const source = request.transaction!.objectStore(LEGACY_STORE);
-        if (source.keyPath === "id") {
-          const read = source.getAll();
-          read.onsuccess = () => {
-            const destination = request.transaction!.objectStore(STORE);
-            for (const row of read.result as StoredBuffer[]) {
-              destination.get(row.id).onsuccess = (lookup) => {
-                const current = (lookup.target as IDBRequest<StoredBuffer | undefined>).result;
-                if (!current || current.updated_at < row.updated_at) destination.put(row);
-              };
-            }
-            database.deleteObjectStore(LEGACY_STORE);
-          };
-        }
-      }
-    };
+    request.onupgradeneeded = () => migrate(request.result, request.transaction!);
     request.onsuccess = () => {
       if (settled) request.result.close();
       else { settled = true; resolve(request.result); }
@@ -91,37 +112,44 @@ async function withStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStor
       return;
     }
     let result: T | null = null;
-    request.onsuccess = () => { result = request.result; };
+    // A listener, not `onsuccess`: `run` may own that handler (`putWithinCap`).
+    request.addEventListener("success", () => { result = request.result; });
     transaction.oncomplete = () => { database.close(); resolve({ ok: true, result }); };
     transaction.onabort = () => { database.close(); resolve({ ok: false, result: null }); };
     transaction.onerror = () => { database.close(); resolve({ ok: false, result: null }); };
   });
 }
 
-type LegacyBuffer = { path: string; contents: string; updated_at: number };
-
-/** Claim one v1 path only after the core identifies its checkout root. */
-export async function claimLegacyBuffer(root: string, path: string): Promise<void> {
+/**
+ * Claims an unverified draft for a document this host just opened on its own
+ * machine, when one was stored for the same checkout root and path (or, from
+ * before drafts named a root, the same path). A draft already stored for the
+ * document is newer and wins. A device's document never claims one: a draft
+ * with no device may have been written for this machine only (B11).
+ */
+export async function claimLegacyBuffer(key: BufferKey): Promise<void> {
+  if (key.device !== "local") return;
   const database = await openDatabase();
   if (!database) return;
-  if (!database.objectStoreNames.contains(LEGACY_STORE)) { database.close(); return; }
   await new Promise<void>((resolve) => {
     let transaction: IDBTransaction;
-    try { transaction = database.transaction([LEGACY_STORE, STORE], "readwrite"); }
+    try { transaction = database.transaction(STORE, "readwrite"); }
     catch { database.close(); resolve(); return; }
-    const old = transaction.objectStore(LEGACY_STORE);
-    const current = transaction.objectStore(STORE);
-    old.get(path).onsuccess = (event) => {
-      const row = (event.target as IDBRequest<LegacyBuffer | undefined>).result;
-      if (!row || !root || !path.startsWith(`${root}/`)) return;
-      if (Date.now() - row.updated_at > BUFFER_MAX_AGE_MS) { old.delete(path); return; }
-      current.get(identity(root, path)).onsuccess = (lookup) => {
-        // A v2 edit is newer than a legacy path-only draft.
-        if (!(lookup.target as IDBRequest<StoredBuffer | undefined>).result) {
-          current.put({ id: identity(root, path), root, path, contents: row.contents, updated_at: row.updated_at });
-        }
-        old.delete(path);
-      };
+    const store = transaction.objectStore(STORE);
+    const target = identity(key);
+    store.get(target).onsuccess = (lookup) => {
+      if ((lookup.target as IDBRequest<StoredBuffer | undefined>).result) return;
+      for (const legacyId of [legacyIdentity(key.root, key.path), legacyIdentity("", key.path)]) {
+        store.get(legacyId).onsuccess = (event) => {
+          const row = (event.target as IDBRequest<StoredBuffer | undefined>).result;
+          if (!row) return;
+          store.get(target).onsuccess = (again) => {
+            if ((again.target as IDBRequest<StoredBuffer | undefined>).result) return;
+            store.put({ ...row, id: target, host: key.host, device: key.device, root: key.root, path: key.path });
+            store.delete(legacyId);
+          };
+        };
+      }
     };
     const finish = () => { database.close(); resolve(); };
     transaction.oncomplete = finish;
@@ -130,36 +158,6 @@ export async function claimLegacyBuffer(root: string, path: string): Promise<voi
   });
 }
 
-/** Drop v1 drafts whose document is no longer open, after claiming open paths. */
-export async function discardLegacyBuffers(openPaths: Set<string>): Promise<string[]> {
-  const database = await openDatabase();
-  if (!database) return [];
-  if (!database.objectStoreNames.contains(LEGACY_STORE)) { database.close(); return []; }
-  return new Promise((resolve) => {
-    const discarded: string[] = [];
-    let transaction: IDBTransaction;
-    try { transaction = database.transaction(LEGACY_STORE, "readwrite"); }
-    catch { database.close(); resolve([]); return; }
-    const store = transaction.objectStore(LEGACY_STORE);
-    store.getAll().onsuccess = (event) => {
-      const rows = (event.target as IDBRequest<LegacyBuffer[]>).result;
-      for (const row of rows) {
-        if (openPaths.has(row.path) && Date.now() - row.updated_at <= BUFFER_MAX_AGE_MS) continue;
-        store.delete(row.path);
-        discarded.push(row.path);
-      }
-    };
-    transaction.oncomplete = () => { database.close(); resolve(discarded); };
-    transaction.onabort = () => { database.close(); resolve([]); };
-    transaction.onerror = () => { database.close(); resolve([]); };
-  });
-}
-
-/**
- * Stores one buffer. `false` means the write did not land - IndexedDB is
- * unavailable or the quota is full - so the caller keeps editing and says the
- * buffer lives in this tab only (D-14).
- */
 /** One active write and one latest pending operation per identity. */
 type QueuedOperation =
   | { kind: "put"; record: StoredBuffer; settled?: (ok: boolean | null) => void }
@@ -170,6 +168,23 @@ const MAX_BUFFER_QUEUES = 32;
 const MAX_BUFFER_QUEUE_BYTES = 128 * 1024 * 1024;
 const BUFFER_WRITE_DELAY_MS = 150;
 const operationBytes = (operation: QueuedOperation | null) => operation?.kind === "put" ? operation.record.contents.length * 2 : 0;
+
+/**
+ * Writes one draft unless every stored draft together would pass
+ * `MAX_STORED_BYTES`. The total is read in the write's own transaction, so
+ * the cap holds however many tabs write at once.
+ */
+function putWithinCap(record: StoredBuffer): Promise<{ ok: boolean; result: StoredBuffer[] | null }> {
+  return withStore<StoredBuffer[]>("readwrite", (store) => {
+    const all = store.getAll() as IDBRequest<StoredBuffer[]>;
+    all.onsuccess = () => {
+      const others = all.result.filter((row) => row.id !== record.id).reduce((sum, row) => sum + row.contents.length * 2, 0);
+      if (others + record.contents.length * 2 > MAX_STORED_BYTES) all.transaction?.abort();
+      else store.put(record);
+    };
+    return all;
+  });
+}
 
 async function flush(key: string, queue: BufferQueue): Promise<void> {
   if (queue.active) return;
@@ -187,7 +202,7 @@ async function flush(key: string, queue: BufferQueue): Promise<void> {
   let committed = false;
   try {
     const outcome = operation.kind === "put"
-      ? await withStore("readwrite", (store) => store.put(operation.record))
+      ? await putWithinCap(operation.record)
       : await withStore("readwrite", (store) => store.delete(key));
     committed = outcome.ok;
   } catch {
@@ -224,47 +239,50 @@ function enqueue(key: string, operation: QueuedOperation): boolean {
   return true;
 }
 
-/** Coalesce keystrokes without growing one transaction or promise per edit. */
-export function queueBuffer(root: string, path: string, contents: string, settled: (ok: boolean | null) => void): void {
-  const key = identity(root, path);
-  const record = { id: key, root, path, contents, updated_at: Date.now() };
-  if (!enqueue(key, { kind: "put", record, settled })) settled(false);
+function recordFor(key: BufferKey, contents: string): StoredBuffer {
+  return { id: identity(key), host: key.host, device: key.device, root: key.root, path: key.path, contents, updated_at: Date.now() };
 }
 
-/** Used for a path move: the old identity is removed only after this commits. */
-export function putBuffer(root: string, path: string, contents: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const key = identity(root, path);
-    const record = { id: key, root, path, contents, updated_at: Date.now() };
-    if (!enqueue(key, { kind: "put", record, settled: (ok) => resolve(ok === true) })) resolve(false);
-  });
+/**
+ * Stores one draft, coalescing keystrokes. `false` means the write did not
+ * land - IndexedDB is unavailable, the drafts together would pass
+ * `MAX_STORED_BYTES`, or the browser's quota is full - so the caller keeps
+ * editing and says the draft lives in this tab only (D-14, B44).
+ */
+export function queueBuffer(key: BufferKey, contents: string, settled: (ok: boolean | null) => void): void {
+  const id = identity(key);
+  if (!enqueue(id, { kind: "put", record: recordFor(key, contents), settled })) settled(false);
 }
 
-export function deleteBuffer(root: string, path: string): Promise<void> {
+export function deleteBuffer(key: BufferKey): Promise<void> {
+  return deleteBufferId(identity(key));
+}
+
+/** Removes one stored draft by its id: the operator's explicit discard of a recovery item. */
+export function deleteBufferId(id: string): Promise<void> {
   return new Promise((resolve) => {
-    const key = identity(root, path);
-    if (!enqueue(key, { kind: "delete", settled: () => resolve() })) {
+    if (!enqueue(id, { kind: "delete", settled: () => resolve() })) {
       // The cap protects pending drafts, not cleanup. No queue for this key
       // exists here, so a direct committed delete cannot overtake its write.
-      void withStore("readwrite", (store) => store.delete(key)).then(() => resolve(), () => resolve());
+      void withStore("readwrite", (store) => store.delete(id)).then(() => resolve(), () => resolve());
     }
   });
 }
 
 /** A reconnect reads only after this tab's queued recovery copy has landed. */
-export function flushBuffer(root: string, path: string): Promise<void> {
-  const key = identity(root, path);
-  const queue = queues.get(key);
+export function flushBuffer(key: BufferKey): Promise<void> {
+  const id = identity(key);
+  const queue = queues.get(id);
   if (!queue) return Promise.resolve();
   return new Promise((resolve) => {
     queue.idleWaiters.push(resolve);
-    if (!queue.active) void flush(key, queue);
+    if (!queue.active) void flush(id, queue);
   });
 }
 
 /** Retarget an unsaved draft in one transaction after its old writes settle. */
-export async function moveBuffer(oldRoot: string, oldPath: string, root: string, path: string): Promise<"moved" | "missing" | "failed"> {
-  await flushBuffer(oldRoot, oldPath);
+export async function moveBuffer(from: BufferKey, to: BufferKey): Promise<"moved" | "missing" | "failed"> {
+  await flushBuffer(from);
   const database = await openDatabase();
   if (!database) return "failed";
   return new Promise((resolve) => {
@@ -272,8 +290,8 @@ export async function moveBuffer(oldRoot: string, oldPath: string, root: string,
     try { transaction = database.transaction(STORE, "readwrite"); }
     catch { database.close(); resolve("failed"); return; }
     const store = transaction.objectStore(STORE);
-    const oldKey = identity(oldRoot, oldPath);
-    const newKey = identity(root, path);
+    const oldKey = identity(from);
+    const newKey = identity(to);
     let found = false;
     store.get(oldKey).onsuccess = (event) => {
       const old = (event.target as IDBRequest<StoredBuffer | undefined>).result;
@@ -284,7 +302,7 @@ export async function moveBuffer(oldRoot: string, oldPath: string, root: string,
         // A newer edit at the destination wins. A still-queued destination
         // edit will commit after this transaction and also wins.
         if (!current || current.updated_at < old.updated_at) {
-          store.put({ ...old, id: newKey, root, path });
+          store.put({ ...old, id: newKey, host: to.host, device: to.device, root: to.root, path: to.path });
         }
         store.delete(oldKey);
       };
@@ -300,31 +318,49 @@ export async function allBuffers(): Promise<StoredBuffer[]> {
   return rows.result ?? [];
 }
 
-/** What a stored buffer means against the document the core reports now. */
+/** What a stored draft means against the document the core reports now. */
 export function bufferDecision(buffer: StoredBuffer, document: { contents_utf8: string | null; dirty: boolean } | null): "restore" | "keep" | "drop" {
   if (!document) return "keep";
-  if (buffer.contents === (document.contents_utf8 ?? "")) return "drop";
+  // The same contents in a dirty core is the core holding this draft in
+  // memory, not on disk: a refused or pending save. The stored copy is the
+  // only one a restart keeps, so it stays until the core reports clean.
+  if (buffer.contents === (document.contents_utf8 ?? "")) return document.dirty ? "keep" : "drop";
   // The core's copy is the disk version (clean) or an older draft; the
-  // operator's newest buffer is the one to show either way.
+  // operator's newest draft is the one to show either way.
   return "restore";
 }
 
-/** The buffer for one (checkout root, real path) identity, or null. */
-export function bufferFor(buffers: StoredBuffer[], root: string, path: string): StoredBuffer | null {
-  return buffers.find((buffer) => buffer.root === root && buffer.path === path) ?? null;
+/** The draft stored for one document, or null. */
+export function bufferFor(buffers: StoredBuffer[], key: BufferKey): StoredBuffer | null {
+  const id = identity(key);
+  return buffers.find((buffer) => buffer.id === id) ?? null;
 }
 
-/** Buffers whose document the core no longer holds: these are discarded. */
-export function sweepBuffers(buffers: StoredBuffer[], openIdentities: Set<string>): StoredBuffer[] {
-  return buffers.filter((buffer) => !openIdentities.has(identity(buffer.root, buffer.path)));
+/**
+ * Drafts no open tab stands for: kept as recovery items, never discarded on
+ * their own (B10-B12). A draft of another host or device, or one whose
+ * origin is unverified, is among them.
+ */
+export function recoveryBuffers(buffers: StoredBuffer[], openIdentities: Set<string>): StoredBuffer[] {
+  return buffers.filter((buffer) => !openIdentities.has(buffer.id)).sort((a, b) => b.updated_at - a.updated_at);
 }
 
-/** The one key a (checkout root, real path) pair is compared by. */
-export function identity(root: string, path: string): string {
-  return `${root}\u0000${path}`;
+/** The one key a document's draft is stored and compared by. */
+export function identity(key: BufferKey): string {
+  return [key.host, key.device, key.root, key.path].join("\u0000");
 }
 
-/** Buffers older than `maxAgeMs`; the next start discards them (D-14). */
-export function staleBuffers(buffers: StoredBuffer[], now: number, maxAgeMs = BUFFER_MAX_AGE_MS): StoredBuffer[] {
-  return buffers.filter((buffer) => now - buffer.updated_at > maxAgeMs);
+function legacyIdentity(root: string, path: string): string {
+  return ["", "", root, path].join("\u0000");
+}
+
+/**
+ * The draft key of an open file tab: this daemon host, the device of the
+ * tab's checkout, its root and path. Null until the daemon has named itself
+ * or while the checkout is unknown, when no draft can be filed safely.
+ */
+export function tabBufferKey(host: string | null | undefined, rest: SnapshotRest | null, tab: Pick<EditorTabSnapshot, "checkout_id" | "path">): BufferKey | null {
+  const root = checkoutById(rest, tab.checkout_id)?.path;
+  if (!host || !root) return null;
+  return { host, device: deviceOfCheckout(rest, tab.checkout_id), root, path: tab.path };
 }

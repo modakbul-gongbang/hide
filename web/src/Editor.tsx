@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, BUFFER_MAX_AGE_MS, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, queueBuffer } from "./buffers";
+import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, identity, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { PatchView } from "./editor/PatchView";
 import { clearDraft, latestDraft, noteDraft } from "./editor/draft";
-import { activeEditorTab, changesFor, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
+import { activeEditorTab, changesFor, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
 import { downloadFile } from "./fileBytes";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -24,18 +24,20 @@ export const AUTOSAVE_IDLE_MS = 600;
 export function EditorSurface({ actions }: { actions: Actions }) {
   const editor = useShellStore((s) => s.editor);
   const rest = useShellStore((s) => s.rest);
+  const host = useShellStore((s) => s.daemon?.host_id ?? null);
   const scale = useShellStore((s) => s.rest?.ui_state?.editor_text_scale);
   const findRequest = useUiStore((s) => s.editorFindRequest);
   const showing = editorFor(editor);
   const tab = activeEditorTab(editor);
   if (!showing || !tab) return null;
-  // A buffer's identity is its checkout root plus the real path (D-14).
-  const root = checkoutById(rest, tab.checkout_id)?.path ?? "";
+  // A draft is filed under this daemon host, the tab's device, its checkout
+  // root and the real path (D-14, S5.5 B9).
+  const draftKey = tab.kind === "file" ? tabBufferKey(host, rest, tab) : null;
   return (
     <EditorTabView
       key={tab.id}
       tab={tab}
-      root={root}
+      draftKey={draftKey}
       document={showing.document}
       scale={typeof scale === "number" ? scale : DEFAULT_SCALE}
       findRequest={findRequest}
@@ -46,14 +48,14 @@ export function EditorSurface({ actions }: { actions: Actions }) {
 
 function EditorTabView({
   tab,
-  root,
+  draftKey,
   document,
   scale,
   findRequest,
   actions,
 }: {
   tab: EditorTabSnapshot;
-  root: string;
+  draftKey: BufferKey | null;
   document: EditorDocumentSnapshot | null;
   scale: number;
   findRequest: number;
@@ -64,7 +66,7 @@ function EditorTabView({
       <EditorHeader tab={tab} document={document} actions={actions} />
       {tab.kind === "diff"
         ? <DiffBody tab={tab} scale={scale} />
-        : <EditorBody tab={tab} root={root} document={document} scale={scale} findRequest={findRequest} actions={actions} />}
+        : <EditorBody tab={tab} draftKey={draftKey} document={document} scale={scale} findRequest={findRequest} actions={actions} />}
     </div>
   );
 }
@@ -159,19 +161,22 @@ function EditorHeader({
 
 function EditorBody({
   tab,
-  root,
+  draftKey,
   document,
   scale,
   findRequest,
   actions,
 }: {
   tab: EditorTabSnapshot;
-  root: string;
+  draftKey: BufferKey | null;
   document: EditorDocumentSnapshot | null;
   scale: number;
   findRequest: number;
   actions: Actions;
 }) {
+  const draftId = draftKey ? identity(draftKey) : null;
+  const keyRef = useRef(draftKey);
+  keyRef.current = draftKey;
   const editable = document?.document_kind === "text" || document?.document_kind === "markdown";
   const latest = useRef(document);
   latest.current = document;
@@ -244,52 +249,51 @@ function EditorBody({
     if (failureAt !== null) useShellStore.getState().noteSaving(tab.id, false);
   }, [failureAt, tab.id]);
 
-  // A reconnect may have left an unsaved buffer in IndexedDB (B8): the buffer
+  // A reconnect may have left an unsaved draft in IndexedDB (B8): the draft
   // is the newest edit, so it is restored over a clean core document and
-  // dropped when the core already holds the same contents.
+  // dropped when the core already holds the same contents. A draft is never
+  // dropped for its age (S5.5 B12).
   useEffect(() => {
     checked.current = false;
-    if (connection !== "live") return;
+    const key = keyRef.current;
+    if (connection !== "live" || !key) return;
     let live = true;
-    void flushBuffer(root, tab.path).then(() => claimLegacyBuffer(root, tab.path)).then(allBuffers).then((buffers) => {
+    void flushBuffer(key).then(() => claimLegacyBuffer(key)).then(allBuffers).then((buffers) => {
       if (!live) return;
-      const buffer = bufferFor(buffers, root, tab.path);
+      const buffer = bufferFor(buffers, key);
       checked.current = true;
       if (!buffer) return;
-      if (Date.now() - buffer.updated_at > BUFFER_MAX_AGE_MS) {
-        void deleteBuffer(root, tab.path);
-        useShellStore.getState().noteDiagnostic(`discarded the stale unsaved buffer for ${tab.path}`);
-        return;
-      }
       const current = latest.current;
       if (!current) return;
-      // A read-only or preview-only document has no draft the core would
-      // accept, so its buffer is the shell's own and cannot be restored: it
-      // goes with a note rather than blocking the tab's close forever (D-14).
+      // A read-only or preview-only document takes no draft, so this one
+      // cannot be restored into it; it stays a recovery item to export or
+      // discard rather than being deleted here (D-14, B11).
       if (current.readonly_reason !== null || current.contents_utf8 === null) {
-        void deleteBuffer(root, tab.path);
         useShellStore
           .getState()
-          .noteDiagnostic(`discarded the unsaved buffer for a document that is not editable here: ${tab.path}`);
+          .noteDiagnostic(`an unsaved draft for ${tab.path} is kept for recovery: the document is not editable here`);
         return;
       }
-      if (bufferDecision(buffer, current) === "restore") {
+      const decision = bufferDecision(buffer, current);
+      if (decision === "restore") {
         noteDraft(tab.id, buffer.contents);
         actions.updateDraft(buffer.contents);
-      }
-      else void deleteBuffer(root, tab.path);
+      } else if (decision === "drop") void deleteBuffer(key);
     });
     return () => {
       live = false;
     };
-  }, [tab.id, root, tab.path, actions, connection]);
+  }, [tab.id, draftId, tab.path, actions, connection]);
 
-  // A document the core reports clean has nothing unsaved, so its buffer goes.
+  // A document the core reports clean holds the draft on disk, so its copy
+  // goes: the core is clean only after a save of the draft landed, or when no
+  // draft was ever made (the restore above runs first).
   useEffect(() => {
-    if (!checked.current || document?.dirty) return;
+    const key = keyRef.current;
+    if (!key || !checked.current || document?.dirty) return;
     if (document?.document_kind !== "text" && document?.document_kind !== "markdown") return;
-    void deleteBuffer(root, tab.path);
-  }, [document?.dirty, document?.document_kind, root, tab.path]);
+    void deleteBuffer(key);
+  }, [document?.dirty, document?.document_kind, draftId]);
 
   if (!document) {
     return <Notice text="Loading…" state="loading" />;
@@ -310,7 +314,7 @@ function EditorBody({
         </div>
       ) : null}
       {document.conflict ? (
-        <ConflictBar tabId={tab.id} root={root} path={tab.path} removed={document.conflict.disk_revision === null} actions={actions} />
+        <ConflictBar tabId={tab.id} draftKey={draftKey} path={tab.path} removed={document.conflict.disk_revision === null} actions={actions} />
       ) : null}
       {document.save && document.save.state !== "saving" ? <SaveStatusBar tabId={tab.id} path={tab.path} save={document.save} /> : null}
       <CodeMirrorEditor
@@ -322,12 +326,16 @@ function EditorBody({
         live={document.document_kind === "markdown" && tab.markdown_live}
         findRequest={findRequest}
         onDraft={(contents) => {
-          noteDraft(tab.id, contents);
+          noteDraft(tab.id, contents); 
           // A buffer that cannot be stored keeps the edit alive and says so on
           // the tab; the session continues either way (D-14).
-          queueBuffer(root, tab.path, contents, (stored) => {
-            if (stored !== null) useShellStore.getState().noteBufferWarning(tab.id, !stored);
-          });
+          if (draftKey) {
+            queueBuffer(draftKey, contents, (stored) => {
+              if (stored !== null) useShellStore.getState().noteBufferWarning(tab.id, !stored);
+            });
+          } else {
+            useShellStore.getState().noteBufferWarning(tab.id, true);
+          }
           actions.updateDraft(contents);
           scheduleAutosave();
         }}
@@ -397,7 +405,7 @@ function SaveStatusBar({ tabId, path, save }: { tabId: string; path: string; sav
   );
 }
 
-function ConflictBar({ tabId, root, path, removed, actions }: { tabId: string; root: string; path: string; removed: boolean; actions: Actions }) {
+function ConflictBar({ tabId, draftKey, path, removed, actions }: { tabId: string; draftKey: BufferKey | null; path: string; removed: boolean; actions: Actions }) {
   return (
     <div className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-conflict="true">
       <span className="flex-1">
@@ -410,7 +418,7 @@ function ConflictBar({ tabId, root, path, removed, actions }: { tabId: string; r
         data-conflict-action="reload"
         onClick={() => {
           clearDraft(tabId);
-          void deleteBuffer(root, path);
+          if (draftKey) void deleteBuffer(draftKey);
           actions.resolveConflict("reload");
         }}
       >

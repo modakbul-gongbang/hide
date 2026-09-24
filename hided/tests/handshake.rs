@@ -187,6 +187,8 @@ async fn the_daemon_describes_itself_before_the_first_snapshot() {
     assert_eq!(daemon["type"], "daemon");
     assert_eq!(daemon["payload"]["schema_version"], 2);
     assert_eq!(daemon["payload"]["pid"], std::process::id());
+    let host_id = std::fs::read_to_string(dir.path().join("host-id")).unwrap();
+    assert_eq!(daemon["payload"]["host_id"], host_id.trim());
     assert_eq!(
         daemon["payload"]["core_state_path"],
         dir.path().join("core-state.json").display().to_string()
