@@ -50,7 +50,8 @@ impl Runtime {
         if !changes_list_visible && !explorer_visible && active_diff.is_none() {
             return None;
         }
-        let root_path = self.snapshot.navigator.root_path.as_ref()?;
+        let (_, checkout) = self.focused_local_checkout()?;
+        let root_path = self.focused_changes_root_path()?;
         let selected_path = active_diff
             .map(|tab| tab.path.clone())
             .or_else(|| self.snapshot.changes.selected_path.clone());
@@ -58,15 +59,30 @@ impl Runtime {
             .and_then(|tab| tab.diff_committed)
             .unwrap_or(self.snapshot.changes.selected_committed);
         Some(crate::changes::ChangesRequest {
-            root_path: PathBuf::from(root_path),
+            root_path,
+            checkout_path: PathBuf::from(&checkout.path),
             selected_path,
             selected_committed,
             // The base comes from the checkout row, so the committed group and
             // the card's `↑A ↓B` are measured against the same branch.
-            base_branch: self
-                .focused_local_checkout()
-                .and_then(|(_, checkout)| checkout.base_branch.clone()),
+            base_branch: checkout.base_branch.clone(),
         })
+    }
+
+    /// A registration can name a folder inside its Git checkout. Keep its
+    /// History inside that folder while linked worktree rows use their own
+    /// checkout root. The reader verifies the repository root separately.
+    pub(super) fn focused_changes_root_path(&self) -> Option<PathBuf> {
+        let (workspace, checkout) = self.focused_local_checkout()?;
+        let registered = PathBuf::from(&workspace.path);
+        let checkout_root = PathBuf::from(&checkout.path);
+        Some(
+            if workspace.registered && registered.starts_with(&checkout_root) {
+                registered
+            } else {
+                checkout_root
+            },
+        )
     }
 
     pub fn worktrees_request(&self) -> crate::worktrees::WorktreeRequest {

@@ -61,7 +61,7 @@ type Item = { kind: "group"; committed: boolean; title: string; count: number } 
 
 export function HistoryList({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => focusedCheckout(s.rest));
-  const rootPath = useShellStore((s) => s.rest?.navigator?.root_path ?? null);
+  const rootPath = useShellStore((s) => s.rest?.navigator?.changes_root_path ?? null);
   const changes = useShellStore((s) => changesFor(s.changes, rootPath));
   const [expanded, setExpanded] = useState({ working: true, committed: true });
   const scrollRef = useRef<HTMLDivElement>(null);

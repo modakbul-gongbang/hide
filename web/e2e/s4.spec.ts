@@ -36,7 +36,8 @@ test("History opens a scoped patch, then updates after editing the original file
     herdr.run(["workspace", "create", "--cwd", repo, "--label", "history-repo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
 
     daemon = await startHided(herdr, "s4");
-    const sent = countSent(page);
+    const lastSent = new Map<string, Record<string, unknown>>();
+    const sent = countSent(page, lastSent);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first().click();
@@ -80,8 +81,13 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+third");
     await expect(page.locator('[data-patch-view] .cm-content')).not.toContainText("second <script>");
     await expect(page.locator('[data-tab-kind="file"]')).toHaveAttribute("data-preview", "false"); // edited preview remains open
-    await row.dblclick();
-    await expect(page.locator('[data-tab-kind="diff"]')).toHaveAttribute("data-preview", "false");
+    const diffTab = page.locator('[data-tab-kind="diff"]');
+    const diffTabId = await diffTab.getAttribute("data-tab");
+    await page.locator('[data-tab-kind="file"]').click();
+    await expect(diffTab).toHaveAttribute("aria-selected", "false");
+    await diffTab.dblclick();
+    await expect(diffTab).toHaveAttribute("data-preview", "false");
+    expect(lastSent.get("file_keep_open")).toMatchObject({ tab_id: diffTabId });
     expect(sent.get("file_draft")).toBeGreaterThanOrEqual(1);
     expect(sent.get("file_save")).toBeGreaterThanOrEqual(1);
     await screenshot(page, "s4-updated-diff");

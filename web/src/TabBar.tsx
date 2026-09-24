@@ -103,7 +103,7 @@ const Strip = memo(function Strip({
             dragging={dragging === entry.id}
             over={over === entry.id && dragging !== entry.id}
             onSelect={() => (isEditor ? actions.focusFileTab(entry.source_id) : actions.focusTab(entry.source_id))}
-            onDoubleClick={() => { if (isEditor) actions.keepOpenFile(); }}
+            onDoubleClick={() => { if (isEditor) actions.keepOpenFile(entry.source_id); }}
             onClose={() => (isEditor ? actions.closeFileTab(entry.source_id) : actions.closeTab(entry.source_id))}
             onPointerDown={(x) => {
               drag.current = { id: entry.id, x, active: false };

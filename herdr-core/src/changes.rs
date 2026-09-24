@@ -7,8 +7,9 @@
 //! changes or the refresh window lapses, and it produces nothing at all while
 //! neither Changes nor Explorer is visible and no diff tab needs it.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::model::{
@@ -32,6 +33,9 @@ const MAX_DIFF_BYTES: usize = 256 * 1024;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChangesRequest {
     pub root_path: PathBuf,
+    /// The selected checkout's Git root, independently of a narrower
+    /// registered-folder History scope.
+    pub checkout_path: PathBuf,
     pub selected_path: Option<String>,
     /// Whether the selection is in the committed group, which decides what
     /// its diff is taken against.
@@ -95,6 +99,13 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
             };
         }
     };
+    if toplevel.canonicalize().ok() != request.checkout_path.canonicalize().ok() {
+        return ChangesSnapshot {
+            root_path: Some(root_path),
+            unavailable_reason: Some("This History scope belongs to another checkout".to_owned()),
+            ..ChangesSnapshot::default()
+        };
+    }
     let Some(scope) = repository_scope(&toplevel, &request.root_path) else {
         return ChangesSnapshot {
             root_path: Some(root_path),
@@ -125,11 +136,18 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
     // group would claim the branch has no commits.
     let (base_branch, committed) = match request.base_branch.as_deref() {
         Some(base) => match read_committed(&toplevel, base) {
-            Some(committed) => (
+            Ok(Some(committed)) => (
                 Some(base.to_owned()),
                 scope_entries(committed, &request.root_path, &scope),
             ),
-            None => (None, Vec::new()),
+            Ok(None) => (None, Vec::new()),
+            Err(reason) => {
+                return ChangesSnapshot {
+                    root_path: Some(root_path),
+                    unavailable_reason: Some(reason),
+                    ..ChangesSnapshot::default()
+                };
+            }
         },
         None => (None, Vec::new()),
     };
@@ -205,6 +223,10 @@ fn scope_entries(
                     previous.map(|path| path.to_string_lossy().into_owned());
                 if crosses_boundary {
                     entry.status = ChangedFileStatus::Added;
+                    // Repository-wide rename counts are not the scoped
+                    // addition's counts. Leave them unknown instead.
+                    entry.added_lines = None;
+                    entry.removed_lines = None;
                 }
                 scoped.push(entry);
             }
@@ -225,20 +247,21 @@ fn scope_entries(
 }
 
 /// The files this branch's commits changed since `base`, with their line
-/// counts. `None` when the base does not resolve in this checkout.
-fn read_committed(toplevel: &Path, base: &str) -> Option<Vec<ChangedFileSnapshot>> {
-    let base_ref = resolvable_base(toplevel, base)?;
+/// counts. An unresolved base omits the group; a failed read is unavailable.
+fn read_committed(toplevel: &Path, base: &str) -> Result<Option<Vec<ChangedFileSnapshot>>, String> {
+    let Some(base_ref) = resolvable_base(toplevel, base) else {
+        return Ok(None);
+    };
     let range = format!("{base_ref}...HEAD");
     let statuses = git_text(
         toplevel,
         &["diff", "--name-status", "-z", "--find-renames", &range],
-    )
-    .ok()?;
+    )?;
     let mut entries = parse_name_status(&statuses, toplevel);
     if let Ok(numstat) = git_numstat(toplevel, &["diff", "--numstat", "-z", &range]) {
         apply_line_counts(&mut entries, &numstat);
     }
-    Some(entries)
+    Ok(Some(entries))
 }
 
 /// The base as a ref this checkout can resolve: the local branch first, its
@@ -384,11 +407,12 @@ fn read_committed_diff(
         .as_ref()
         .map(|path| scope.join(path).to_string_lossy().into_owned())
         .unwrap_or_else(|| current.clone());
-    match git_text(
+    match git_diff_text(
         toplevel,
         &["diff", &format!("{base}...HEAD"), "--", &previous, &current],
+        false,
     ) {
-        Ok(text) => truncate_diff(entry.path.clone(), text),
+        Ok((text, truncated)) => bounded_diff(entry.path.clone(), text, truncated),
         Err(reason) => ChangedFileDiffSnapshot {
             path: entry.path.clone(),
             text: String::new(),
@@ -450,31 +474,20 @@ fn read_diff(
         // An untracked file has no index side to diff against, so it is
         // compared with an empty file. `--no-index` reports a difference as
         // exit code 1, which is the expected outcome here rather than an error.
-        ChangedFileStatus::Untracked => run_git(
+        ChangedFileStatus::Untracked => git_diff_text(
             toplevel,
             &["diff", "--no-index", "--", "/dev/null", &entry.path],
-        )
-        .and_then(|output| match output.status.code() {
-            Some(0 | 1) => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
-            _ => Err(format!(
-                "git diff failed: {}",
-                git_error_text(&output.stderr)
-            )),
-        }),
-        _ => run_git(toplevel, &["diff", "HEAD", "--", &previous, &current]).and_then(|output| {
-            if output.status.success() {
-                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-            } else {
-                Err(format!(
-                    "git diff failed: {}",
-                    git_error_text(&output.stderr)
-                ))
-            }
-        }),
+            true,
+        ),
+        _ => git_diff_text(
+            toplevel,
+            &["diff", "HEAD", "--", &previous, &current],
+            false,
+        ),
     };
 
     match text {
-        Ok(text) => truncate_diff(entry.path.clone(), text),
+        Ok((text, truncated)) => bounded_diff(entry.path.clone(), text, truncated),
         Err(reason) => ChangedFileDiffSnapshot {
             path: entry.path.clone(),
             text: String::new(),
@@ -490,6 +503,72 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
         .args(args)
         .output()
         .map_err(|error| format!("git could not be run: {error}"))
+}
+
+/// Capture at most one patch's wire budget plus a UTF-8 boundary. Kill a Git
+/// diff that exceeds it, rather than first buffering an arbitrarily large
+/// file in `Command::output`. Stderr is drained concurrently so it cannot
+/// block a child that is reporting a failure.
+fn git_diff_text(cwd: &Path, args: &[&str], no_index: bool) -> Result<(String, bool), String> {
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("git could not be run: {error}"))?;
+    let mut stdout = child.stdout.take().expect("piped Git stdout");
+    let mut stderr = child.stderr.take().expect("piped Git stderr");
+    let stderr_reader = std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut chunk = [0; 8192];
+        loop {
+            let count = stderr.read(&mut chunk)?;
+            if count == 0 {
+                break;
+            }
+            kept.extend_from_slice(&chunk[..count.min(8192usize.saturating_sub(kept.len()))]);
+        }
+        Ok::<_, std::io::Error>(kept)
+    });
+    let mut bytes = Vec::with_capacity(MAX_DIFF_BYTES + 4);
+    let mut chunk = [0; 8192];
+    let mut truncated = false;
+    let mut read_error = None;
+    loop {
+        match stdout.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => {
+                let remaining = (MAX_DIFF_BYTES + 4).saturating_sub(bytes.len());
+                bytes.extend_from_slice(&chunk[..count.min(remaining)]);
+                if count > remaining {
+                    truncated = true;
+                    let _ = child.kill();
+                    break;
+                }
+            }
+            Err(error) => {
+                read_error = Some(error);
+                let _ = child.kill();
+                break;
+            }
+        }
+    }
+    drop(stdout);
+    let status = child.wait();
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "git diff error output could not be read".to_owned())?
+        .map_err(|error| format!("git diff error output could not be read: {error}"))?;
+    let status = status.map_err(|error| format!("git diff could not finish: {error}"))?;
+    if let Some(error) = read_error {
+        return Err(format!("git diff output could not be read: {error}"));
+    }
+    if !truncated && !status.success() && !(no_index && status.code() == Some(1)) {
+        return Err(format!("git diff failed: {}", git_error_text(&stderr)));
+    }
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated))
 }
 
 fn git_error_text(stderr: &[u8]) -> String {
@@ -565,6 +644,17 @@ fn truncate_diff(path: String, text: String) -> ChangedFileDiffSnapshot {
             MAX_DIFF_BYTES / 1024
         )),
     }
+}
+
+fn bounded_diff(path: String, text: String, truncated: bool) -> ChangedFileDiffSnapshot {
+    let mut diff = truncate_diff(path, text);
+    if truncated && diff.notice.is_none() {
+        diff.notice = Some(format!(
+            "This diff is larger than {} KB and is shown truncated",
+            MAX_DIFF_BYTES / 1024
+        ));
+    }
+    diff
 }
 
 #[cfg(test)]
@@ -698,6 +788,27 @@ mod tests {
     }
 
     #[test]
+    fn selected_large_untracked_patch_is_captured_within_the_wire_budget() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path();
+        let output = run_git(root, &["init", "-q"]).unwrap();
+        assert!(output.status.success());
+        let file = root.join("large.txt");
+        std::fs::write(&file, "한글".repeat(100_000)).unwrap();
+        let snapshot = read(&ChangesRequest {
+            root_path: root.to_path_buf(),
+            checkout_path: root.to_path_buf(),
+            selected_path: Some(file.to_string_lossy().into_owned()),
+            selected_committed: false,
+            base_branch: None,
+        });
+        let diff = snapshot.diff.expect("untracked patch");
+        assert!(diff.text.len() <= MAX_DIFF_BYTES);
+        assert!(diff.notice.as_deref().unwrap().contains("truncated"));
+        assert!(diff.text.is_char_boundary(diff.text.len()));
+    }
+
+    #[test]
     fn a_closed_view_reads_nothing_and_publishes_an_empty_projection() {
         let mut reader = ChangesReader::new();
         let projected = reader.read_if_due(None).expect("first read is always due");
@@ -714,6 +825,7 @@ mod tests {
         let projected = reader
             .read_if_due(Some(ChangesRequest {
                 root_path: root.clone(),
+                checkout_path: root.clone(),
                 selected_path: None,
                 selected_committed: false,
                 base_branch: None,
@@ -777,10 +889,14 @@ mod tests {
 
         let request = |path: Option<&str>, committed| ChangesRequest {
             root_path: registered.clone(),
+            checkout_path: repository.to_path_buf(),
             selected_path: path.map(|path| registered.join(path).to_string_lossy().into_owned()),
             selected_committed: committed,
             base_branch: Some("main".to_owned()),
         };
+        let mut wrong_checkout = request(None, false);
+        wrong_checkout.checkout_path = registered.clone();
+        assert!(read(&wrong_checkout).unavailable_reason.is_some());
         let listed = read(&request(Some("inside.txt"), false));
         assert!(listed.unavailable_reason.is_none());
         assert_eq!(
@@ -818,6 +934,10 @@ mod tests {
             .unwrap();
         assert_eq!(working_incoming.status, ChangedFileStatus::Added);
         assert_eq!(working_incoming.previous_relative_path, None);
+        assert_eq!(
+            (working_incoming.added_lines, working_incoming.removed_lines),
+            (None, None)
+        );
         let working_outgoing = listed
             .entries
             .iter()
@@ -867,6 +987,7 @@ mod tests {
             .unwrap();
         assert_eq!(incoming.status, ChangedFileStatus::Added);
         assert_eq!(incoming.previous_relative_path, None);
+        assert_eq!((incoming.added_lines, incoming.removed_lines), (None, None));
         let outgoing = listed
             .committed
             .iter()

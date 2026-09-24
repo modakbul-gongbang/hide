@@ -325,10 +325,11 @@ Every frame and reason code lives in `contracts/hided-ws.schema.json`.
 
 The Explorer (`web/src/ExplorerTree.tsx`) and History (`web/src/HistoryList.tsx`) are the web right panel's sections, drawn where the core's `right_panel_visible` and `right_panel_section` say (`web/src/RightPanel.tsx`): the core owns which folders are expanded (`ui_state.expanded_paths`) and hided answers one listing per folder, so an Explorer row is a pure function of those, the checkout's changed-file set and the file's icon (`web/src/explorer.ts`, unit-tested without a browser).
 `@tanstack/react-virtual` lays out a 10,000-row folder; nothing in a row runs git or reads the disk (B16).
-The core computes a checkout's changed files only while Explorer or History is visible or a diff tab is active, and the web renders only a Changes snapshot whose root matches the focused checkout.
+The core computes a checkout's changed files only while Explorer or History is visible or a diff tab is active, and the web renders only a Changes snapshot whose root matches the focused local checkout's `navigator.changes_root_path`.
 History keeps the core's uncommitted and branch groups separate, and a row sends one `changes_select` event with its path, group and preview intent; it starts no Git read from render, scroll or click.
-A workspace registration can name a folder below the Git top level, while the catalog projects its checkout at the repository root; History follows that checkout identity.
-When the Changes reader receives a nested folder as its root, it scopes both groups and selected diffs to that folder; a rename crossing its boundary appears as an addition or deletion without naming the outside path.
+A workspace registration can name a folder below the Git top level while the catalog projects its checkout at the repository root; `navigator.changes_root_path` keeps History on the registered folder for that checkout and stays absent for remote checkouts.
+The Changes reader verifies that this scope belongs to the selected Git root, scopes both groups and selected diffs to it, and presents a rename crossing the boundary as an addition or deletion without naming the outside path.
+The selected diff's Git stdout is captured only to the 256 KiB wire budget plus a UTF-8 boundary, then the child is ended with the existing truncation notice; a large patch is never fully buffered before the limit.
 The selected diff remains the core's bounded unified patch in the `changes` snapshot, rendered as a read-only CodeMirror 6 view with old and new number gutters; a diff tab has no editor document, autosave or draft buffer.
 The patch wire does not carry complete old and new documents, so `@codemirror/merge`'s two-document view would require an extra read and is not used.
 A single click opens the checkout's preview tab, a double click or ⌘⇧K promotes it, and the tab strip draws file and diff entries beside Herdr tabs, in italics while preview.

@@ -63,14 +63,14 @@ function EditorTabView({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-editor={tab.id} data-editor-kind={tab.kind}>
       <EditorHeader tab={tab} document={document} actions={actions} />
       {tab.kind === "diff"
-        ? <DiffBody tab={tab} root={root} scale={scale} />
+        ? <DiffBody tab={tab} scale={scale} />
         : <EditorBody tab={tab} root={root} document={document} scale={scale} findRequest={findRequest} actions={actions} />}
     </div>
   );
 }
 
-function DiffBody({ tab, root, scale }: { tab: EditorTabSnapshot; root: string; scale: number }) {
-  const changes = useShellStore((s) => changesFor(s.changes, root));
+function DiffBody({ tab, scale }: { tab: EditorTabSnapshot; scale: number }) {
+  const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   if (!changes) return <Notice text="Reading the diff…" state="diff-loading" />;
   if (changes.unavailable_reason) return <Notice text="History is unavailable for this checkout. Reselect the file to retry." state="diff-unavailable" />;
   const committed = tab.diff_committed === true;

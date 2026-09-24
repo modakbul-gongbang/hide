@@ -165,6 +165,9 @@ pub struct PetOriginSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NavigatorSnapshot {
     pub root_path: Option<String>,
+    /// The focused local checkout's History scope. A registered subfolder may
+    /// be narrower than the Git checkout used by Explorer and editor tabs.
+    pub changes_root_path: Option<String>,
     pub focused_device_id: Option<String>,
     pub focused_workspace_id: Option<String>,
     pub focused_checkout_id: Option<String>,
@@ -2356,6 +2359,7 @@ impl Snapshot {
             schema_version: SCHEMA_VERSION,
             navigator: NavigatorSnapshot {
                 root_path: None,
+                changes_root_path: None,
                 focused_device_id: None,
                 focused_workspace_id: None,
                 focused_checkout_id: None,

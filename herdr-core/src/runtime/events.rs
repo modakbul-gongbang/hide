@@ -2604,6 +2604,17 @@ impl Runtime {
                     self.snapshot.changes.diff = None;
                     return true;
                 };
+                if self.snapshot.changes.root_path.as_deref()
+                    != self.snapshot.navigator.changes_root_path.as_deref()
+                    || self.snapshot.navigator.changes_root_path.is_none()
+                {
+                    self.set_error(
+                        "diff.invalid_context",
+                        "History no longer belongs to the selected local checkout",
+                        false,
+                    );
+                    return true;
+                }
                 let entries = if payload.committed {
                     &self.snapshot.changes.committed
                 } else {

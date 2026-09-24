@@ -93,10 +93,11 @@ function higherRisk(current: ChangedFileStatus | undefined, candidate: ChangedFi
 export function gitDecorations(changes: ChangesSnapshot | null, rootPath: string | null): GitDecorations {
   const files = new Map<string, ChangedFileStatus>();
   const directories = new Map<string, ChangedFileStatus>();
-  if (!changes || !rootPath) return { files, directories };
+  if (!changes || !rootPath || !changes.root_path ||
+      (changes.root_path !== rootPath && !changes.root_path.startsWith(`${rootPath}/`))) return { files, directories };
   for (const entry of changes.entries) {
-    const relative = entry.relative_path;
-    if (!relative) continue;
+    if (!entry.path.startsWith(`${changes.root_path}/`)) continue;
+    const relative = relativeTo(entry.path, rootPath);
     files.set(relative, higherRisk(files.get(relative), entry.status));
     const parts = relative.split("/");
     for (let depth = 1; depth < parts.length; depth += 1) {
@@ -258,4 +259,3 @@ export function selectionAfterRemoval(rows: ExplorerRow[], path: string, rootPat
   }
   return parentSelection(rows, path) ?? rootPath;
 }
-

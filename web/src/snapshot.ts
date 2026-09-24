@@ -254,6 +254,8 @@ export type SnapshotRest = {
     focused_checkout_id?: string | null;
     /** The focused checkout's root, which the Explorer reveals under. */
     root_path?: string | null;
+    /** History's registered-folder scope; it may be narrower than root_path. */
+    changes_root_path?: string | null;
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
