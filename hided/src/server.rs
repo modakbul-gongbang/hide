@@ -289,7 +289,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     // come back through `device_bytes`, at most two ranges ahead of the
     // socket, and every read ends with the connection.
     let (device_bytes_tx, mut device_bytes) = tokio::sync::mpsc::channel::<Message>(2);
-    let mut device_reads: std::collections::VecDeque<tokio::task::AbortHandle> =
+    let mut device_reads: std::collections::VecDeque<DeviceRead> =
         std::collections::VecDeque::new();
     let daemon = json!({"type": "daemon", "payload": state.daemon_info.as_ref()});
     if socket
@@ -371,7 +371,14 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if let Some(device) = event_device(&event) {
-                                    start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), device, event);
+                                    let superseded = start_device_read(&state, &mut device_reads, device_bytes_tx.clone(), device, event);
+                                    // Sent here rather than through `device_bytes`,
+                                    // which this loop drains and could be full.
+                                    if let Some(frame) = superseded
+                                        && socket.send(frame).await.is_err()
+                                    {
+                                        break;
+                                    }
                                 } else if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() {
                                     break;
                                 }
@@ -415,36 +422,60 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         }
     }
     for read in device_reads {
-        read.abort();
+        read.task.abort();
     }
     client_gone(&state, connection);
 }
 
 /// How many device file reads one client runs at once. A viewer asks for one
 /// file; a read beyond this is most likely for a view the page has left, so
-/// the oldest read is ended to make room (D-15).
+/// the oldest read is ended to make room and answered as `superseded`, so
+/// whatever waits on it settles (D-15).
 const DEVICE_READS_PER_CLIENT: usize = 2;
 
+struct DeviceRead {
+    request_id: String,
+    path: String,
+    task: tokio::task::AbortHandle,
+}
+
+/// Starts a device read and returns the error frame for the read it ended to
+/// make room, if any.
 fn start_device_read(
     state: &AppState,
-    reads: &mut std::collections::VecDeque<tokio::task::AbortHandle>,
+    reads: &mut std::collections::VecDeque<DeviceRead>,
     frames: tokio::sync::mpsc::Sender<Message>,
     device: String,
     event: Value,
-) {
-    reads.retain(|read| !read.is_finished());
+) -> Option<Message> {
+    reads.retain(|read| !read.task.is_finished());
+    let mut superseded = None;
     if reads.len() >= DEVICE_READS_PER_CLIENT
         && let Some(oldest) = reads.pop_front()
     {
-        oldest.abort();
+        oldest.task.abort();
         eprintln!(
             "{}",
             json!({
                 "component": "hided", "kind": "device.file_bytes_ended",
-                "device": device, "reason": "a newer read for this client took its place",
+                "device": device, "request_id": oldest.request_id,
+                "reason": "a newer read for this client took its place",
             })
         );
+        superseded = Some(file_bytes_error(
+            &oldest.request_id,
+            &oldest.path,
+            "superseded",
+        ));
     }
+    let text = |key: &str| {
+        event
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let (request_id, path) = (text("request_id"), text("path"));
     let task = tokio::spawn(stream_device_file_bytes(
         frames,
         Arc::clone(&state.core),
@@ -452,7 +483,12 @@ fn start_device_read(
         device,
         event,
     ));
-    reads.push_back(task.abort_handle());
+    reads.push_back(DeviceRead {
+        request_id,
+        path,
+        task: task.abort_handle(),
+    });
+    superseded
 }
 
 /// Constant in the token's length, so a byte-by-byte mismatch does not leak
