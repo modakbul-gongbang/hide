@@ -954,7 +954,7 @@ fn create_worktree_observing_purpose(
     // than rolling back what may be a good worktree (B27).
     let unverified = |error: String| {
         format!(
-            "The worktree was created at {} but its host could not confirm it ({error}); it was kept and no agent was started in it. Once the device answers it is listed under its project, where you can start the agent in its pane or delete the worktree; creating it again is refused because its branch is in use",
+            "The worktree was created at {} but its host could not confirm it ({error}); it was kept and no agent was started in it. Once its host answers it is listed under its project, where you can start the agent in its pane or delete the worktree; creating it again is refused because its branch is in use",
             created.path
         )
     };
