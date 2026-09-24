@@ -127,10 +127,16 @@ pub struct WatchService {
     commands: UnboundedSender<Command>,
     frames: broadcast::Sender<String>,
     requested: Arc<Mutex<Vec<PathBuf>>>,
+    /// The selected device's Explorer, stamped by its helper and announced on
+    /// the same frames (`device_watch.rs`).
+    device: crate::device_watch::DeviceWatch,
 }
 
 impl WatchService {
-    pub fn new(boundary: Arc<crate::boundary::Boundary>) -> Self {
+    pub fn new(
+        boundary: Arc<crate::boundary::Boundary>,
+        core: Arc<crate::core::CoreHandle>,
+    ) -> Self {
         let (commands, receiver) = mpsc::unbounded_channel();
         let (frames, _) = broadcast::channel(64);
         let requested = Arc::new(Mutex::new(Vec::new()));
@@ -140,11 +146,18 @@ impl WatchService {
             Arc::clone(&requested),
             boundary,
         ));
+        let device = crate::device_watch::DeviceWatch::spawn(core, frames.clone());
         Self {
             commands,
             frames,
             requested,
+            device,
         }
+    }
+
+    /// Announces the device Explorer to stamp, or none.
+    pub fn reconcile_device(&self, target: Option<crate::device_watch::DeviceTarget>) {
+        self.device.set_target(target);
     }
 
     /// Announces `root`'s folders as the ones to watch; the task diffs them
@@ -197,7 +210,7 @@ impl WatchService {
 fn frame(path: &std::path::Path) -> String {
     serde_json::json!({
         "type": "directory_changed",
-        "payload": {"path": path.display().to_string()},
+        "payload": {"path": path.display().to_string(), "device_id": herdr_core::workspace::LOCAL_DEVICE_ID},
     })
     .to_string()
 }

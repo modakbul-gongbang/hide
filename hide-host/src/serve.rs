@@ -178,6 +178,10 @@ pub fn handle(call: Call) -> HostResult<Value> {
             list::require_directory(root.dir(), &relative)?;
             to_value(list::list(root.dir(), &relative, root.real_path())?)
         }
+        Call::Stamps { root, folders } => {
+            let root = open_root(&root)?;
+            to_value(list::stamps(root.dir(), &folders)?)
+        }
         Call::Bytes {
             root,
             path,

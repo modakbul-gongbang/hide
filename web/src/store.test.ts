@@ -188,6 +188,20 @@ describe("snapshot merge", () => {
     expect(useShellStore.getState().diagnostics.at(-1)).toContain("boom");
   });
 
+  it("re-reads a watched folder only for the device it shows", () => {
+    const store = useShellStore.getState();
+    useShellStore.setState({
+      rest: { navigator: { focused_device_id: "mac" } } as never,
+      listings: { "/r/src": { kind: "file_list", root_path: "/r/src", entries: [], truncated: false } as never },
+      folderChanges: {},
+    });
+    store.applyFrame({ type: "directory_changed", payload: { path: "/r/src", device_id: "local" } });
+    expect(useShellStore.getState().listings["/r/src"]).toBeDefined();
+    store.applyFrame({ type: "directory_changed", payload: { path: "/r/src", device_id: "mac" } });
+    expect(useShellStore.getState().listings["/r/src"]).toBeUndefined();
+    expect(useShellStore.getState().folderChanges["/r/src"]).toBe(1);
+  });
+
   it("keeps the Explorer's listing apart from the registration input", () => {
     const store = useShellStore.getState();
     store.applyFrame({

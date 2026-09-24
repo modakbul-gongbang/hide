@@ -457,6 +457,23 @@ impl Boundary {
             .any(|known| known.device_id == device_id && known.path == root)
     }
 
+    /// Whether `path` is a checkout root the catalog carries for `device_id`
+    /// or a folder under one, by spelling alone: the device's helper is what
+    /// judges the path itself.
+    pub fn is_under_device_root(&self, device_id: &str, path: &str) -> bool {
+        self.device_roots
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .any(|known| {
+                known.device_id == device_id
+                    && (known.path == path
+                        || path
+                            .strip_prefix(known.path.trim_end_matches('/'))
+                            .is_some_and(|rest| rest.starts_with('/')))
+            })
+    }
+
     fn roots_for_read(&self) -> RwLockReadGuard<'_, Vec<RegisteredRoot>> {
         self.roots
             .read()
@@ -1305,6 +1322,22 @@ mod tests {
         let listing = boundary.list(&s(boundary.home())).unwrap();
         assert_eq!(listing.entries.len(), LIST_CAP);
         assert!(listing.truncated);
+    }
+
+    /// A device watch frame is admitted only for a folder under a root the
+    /// catalog carries for that same device (S5.5 B2, B43).
+    #[test]
+    fn a_device_folder_is_under_only_its_own_devices_roots() {
+        let home = tempfile::tempdir().unwrap();
+        let boundary = Boundary::new(home.path()).unwrap();
+        boundary.set_device_roots(vec![DeviceRoot {
+            device_id: "mac".to_owned(),
+            path: "/r".to_owned(),
+        }]);
+        assert!(boundary.is_under_device_root("mac", "/r"));
+        assert!(boundary.is_under_device_root("mac", "/r/src"));
+        assert!(!boundary.is_under_device_root("mac", "/rx/src"));
+        assert!(!boundary.is_under_device_root("other", "/r/src"));
     }
 
     #[test]

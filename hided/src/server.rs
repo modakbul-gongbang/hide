@@ -319,10 +319,24 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             changed = directory_changes.recv() => {
                 match changed {
                     Ok(frame) => {
-                        let path = serde_json::from_str::<Value>(&frame)
-                            .ok()
-                            .and_then(|value| value.pointer("/payload/path").and_then(Value::as_str).map(str::to_owned));
-                        if !path.is_some_and(|path| state.boundary.resolve_target(&path).is_ok()) {
+                        let value = serde_json::from_str::<Value>(&frame).ok();
+                        let field = |name: &str| {
+                            value
+                                .as_ref()
+                                .and_then(|value| value.pointer(&format!("/payload/{name}")))
+                                .and_then(Value::as_str)
+                        };
+                        // A folder on this machine is re-checked against its
+                        // checkout roots; a device's folder names a path there,
+                        // which only that device's catalog roots can vouch for.
+                        let admitted = match (field("path"), field("device_id")) {
+                            (Some(path), Some(herdr_core::workspace::LOCAL_DEVICE_ID) | None) => {
+                                state.boundary.resolve_target(path).is_ok()
+                            }
+                            (Some(path), Some(device)) => state.boundary.is_under_device_root(device, path),
+                            (None, _) => false,
+                        };
+                        if !admitted {
                             continue;
                         }
                         if socket.send(Message::Text(frame.into())).await.is_err() {

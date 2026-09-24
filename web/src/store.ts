@@ -297,8 +297,11 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "directory_changed") {
       // A watched folder moved; its cached listing is dropped and the count
       // lets the Explorer re-read even a listing that was still in flight.
+      // Listings are the shown device's, so another device's frame names a
+      // path that is not the one listed here (S5.5 B2).
       const path = payload.path;
-      if (path) {
+      const shownDevice = get().rest?.navigator?.focused_device_id ?? "local";
+      if (path && (payload.device_id ?? "local") === shownDevice) {
         get().invalidateListings([path]);
         // A bounded map ordered by recency: the count is re-inserted so a
         // folder that keeps changing is the last one evicted.

@@ -52,12 +52,13 @@
       }
     },
     "directoryChanged": {
-      "description": "Payload of a directory_changed frame: the watched folder whose contents changed. The daemon watches the focused checkout's root and its most recently expanded folders, at most 64 in total (the root counts); a change within 200 ms of the last one for the same folder is coalesced into the frame already sent. A client re-reads the one folder this names, which is the Explorer's live refresh without a reload.",
+      "description": "Payload of a directory_changed frame: the watched folder whose contents changed. The daemon watches the focused checkout's root and its most recently expanded folders, at most 64 in total (the root counts); a change within 200 ms of the last one for the same folder is coalesced into the frame already sent. A client re-reads the one folder this names, which is the Explorer's live refresh without a reload. device_id names the device the folder is on: `local` for the daemon's own machine, polled from opened handles every 200 ms, or an SSH device whose helper stamps the selected device's front checkout root and watched folders (the same 64) every 2 s while its Explorer is showing and its helper is ready; a client ignores a frame for a device it is not showing.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["path"],
+      "required": ["path", "device_id"],
       "properties": {
-        "path": { "type": "string" }
+        "path": { "type": "string" },
+        "device_id": { "type": "string" }
       }
     },
     "clientEvent": {

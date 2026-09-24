@@ -144,6 +144,59 @@ fn read_link_text(_folder: &Dir, _name: &str) -> std::io::Result<std::path::Path
 
 /// Refuses a listing request whose folder is a file, with the code a caller
 /// maps to `not_a_directory`.
+/// The most folders one stamp request names: the Explorer watch cap, the same
+/// on this machine (`hided/src/watch.rs`) and on a device.
+pub const MAX_STAMPED_FOLDERS: usize = 64;
+
+/// A fingerprint of each folder's own entry, for a device Explorer's watch
+/// (PRD S5.5 B43): which directory the path names and when its list of names
+/// last changed, so a changed stamp means the folder is worth listing again.
+/// Each folder is opened from the root handle, so a path that leaves the
+/// checkout or no longer names a folder is `None` rather than an error that
+/// would hide the other folders' answers.
+pub fn stamps(dir: &Dir, folders: &[String]) -> HostResult<Vec<Option<String>>> {
+    if folders.len() > MAX_STAMPED_FOLDERS {
+        return Err(HostError::new(
+            ErrorCode::TooLarge,
+            format!("At most {MAX_STAMPED_FOLDERS} folders are watched at once"),
+        ));
+    }
+    folders
+        .iter()
+        .map(|folder| {
+            let relative = crate::root::relative_path(folder)?;
+            let opened = if relative.as_os_str().is_empty() {
+                dir.try_clone()
+            } else {
+                dir.open_dir(&relative)
+            };
+            Ok(opened
+                .and_then(|folder| folder.dir_metadata())
+                .ok()
+                .and_then(|metadata| folder_stamp(&metadata)))
+        })
+        .collect()
+}
+
+fn folder_stamp(metadata: &cap_std::fs::Metadata) -> Option<String> {
+    let modified = metadata
+        .modified()
+        .ok()?
+        .into_std()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt;
+        Some(format!("{}:{}:{modified}", metadata.dev(), metadata.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        Some(modified.to_string())
+    }
+}
+
 pub fn require_directory(dir: &Dir, relative: &Path) -> HostResult<()> {
     if relative.as_os_str().is_empty() {
         return Ok(());

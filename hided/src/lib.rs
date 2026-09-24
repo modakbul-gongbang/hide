@@ -4,6 +4,7 @@ pub mod cli;
 pub mod coexist;
 pub mod core;
 pub mod demand;
+pub mod device_watch;
 pub mod env;
 pub mod index;
 pub mod opener;
@@ -162,8 +163,11 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         host_helper_root: env.host_helper_root.clone(),
     };
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
-    let core = CoreHandle::spawn(options)?;
-    let watch = Arc::new(watch::WatchService::new(Arc::clone(&boundary)));
+    let core = Arc::new(CoreHandle::spawn(options)?);
+    let watch = Arc::new(watch::WatchService::new(
+        Arc::clone(&boundary),
+        Arc::clone(&core),
+    ));
     let index = Arc::new(IndexService::new());
     let attachments = Arc::new(Attachments::new(&env.state_dir));
     let shutdown = Arc::new(Notify::new());
@@ -175,7 +179,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         supervisor_exe,
     );
     let app = AppState {
-        core: Arc::new(core),
+        core,
         boundary,
         watch: Arc::clone(&watch),
         index: Arc::clone(&index),
@@ -363,6 +367,7 @@ fn apply_snapshot(
         .filter(|path| boundary.resolve_target(path).is_ok())
         .collect();
     watch.reconcile(boundary, root, expanded);
+    watch.reconcile_device(device_watch::target_from_value(value));
 }
 
 fn refresh_roots(
