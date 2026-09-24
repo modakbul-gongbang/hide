@@ -9,12 +9,26 @@ import type { DispatchFn } from "./ws";
 const LIVE_STATES = new Set(["connected", "controlling", "idle"]);
 
 export function paneTitle(pane: PaneRow): string {
-  return pane.identity_label ?? pane.terminal_title ?? pane.herdr_label ?? pane.id;
+  // A remote pane's id is scoped to its device (`remote:<device>:pane:w1:p2`);
+  // the device is already on screen, so the header names the host's own id.
+  return pane.identity_label ?? pane.terminal_title ?? pane.herdr_label ?? pane.id.replace(/^remote:.+?:pane:/, "");
 }
 
-/** The caption a non-live transport state gets, and whether a click asks the core to reattach. */
-export function transportCaption(transport: TerminalPane | undefined): { text: string; reconnects: boolean } | null {
+/**
+ * The caption a non-live transport state gets, and whether a click asks the
+ * core to reattach. `reconnect_pane` finds its pane among this machine's, so a
+ * remote pane's caption only reports; the core reattaches it on the host's
+ * next session update.
+ */
+export function transportCaption(transport: TerminalPane | undefined, local = true, offline = false): { text: string; reconnects: boolean } | null {
+  // With its host's connection down, a remote attach ends as `closing`; the
+  // pane is not closing, its device is unreachable.
+  if (offline) return { text: "disconnected", reconnects: false };
   if (!transport || LIVE_STATES.has(transport.transport_state)) return null;
+  if (!local) {
+    const state = transport.transport_state;
+    return { text: state === "closing" ? "closing…" : state === "ended" || state === "unavailable" ? state : "starting…", reconnects: false };
+  }
   switch (transport.transport_state) {
     case "released":
       return { text: "released · click to attach", reconnects: true };
@@ -39,6 +53,8 @@ export const PaneView = memo(function PaneView({
   scale,
   dispatch,
   onClose,
+  local = true,
+  offline = false,
 }: {
   pane: PaneRow;
   transport: TerminalPane | undefined;
@@ -46,6 +62,10 @@ export const PaneView = memo(function PaneView({
   scale: number;
   dispatch: DispatchFn;
   onClose: (paneId: string) => void;
+  /** False for a pane on a selected SSH device. */
+  local?: boolean;
+  /** True while that device's connection is down. */
+  offline?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewGeneration = useShellStore((s) => s.viewGeneration);
@@ -106,7 +126,7 @@ export const PaneView = memo(function PaneView({
     return () => host.removeEventListener("paste", onPaste, true);
   }, [paneId]);
 
-  const caption = transportCaption(transport);
+  const caption = transportCaption(transport, local, offline);
   return (
     <section
       className="flex h-full min-h-0 min-w-0 flex-col bg-background"

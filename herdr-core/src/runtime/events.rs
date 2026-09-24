@@ -463,6 +463,9 @@ pub(super) struct UiStateUpdatePayload {
     pub(super) selected_pane_id: Option<String>,
     #[serde(default)]
     pub(super) shortcut_bindings: std::collections::BTreeMap<String, String>,
+    /// Absent keeps the web shell's chords; only that shell sends them.
+    #[serde(default)]
+    pub(super) browser_shortcut_bindings: Option<std::collections::BTreeMap<String, String>>,
     #[serde(default)]
     pub(super) focused_device_id: Option<Option<String>>,
     #[serde(default)]
@@ -609,17 +612,15 @@ pub(super) struct TaskOperationAckPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct TaskAgentRetryPayload {
+    pub(super) id: u64,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct RemoveWorktreePayload {
     pub(super) checkout_path: String,
     #[serde(default)]
     pub(super) delete_branch: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct WorktreeRemovalFinishedPayload {
-    pub(super) id: u64,
-    pub(super) removed: bool,
-    pub(super) message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -824,8 +825,8 @@ pub(super) enum Event {
     SetCheckoutIssue(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
     TaskOperationAck(TaskOperationAckPayload),
+    TaskAgentRetry(TaskAgentRetryPayload),
     RemoveWorktree(RemoveWorktreePayload),
-    WorktreeRemovalFinished(WorktreeRemovalFinishedPayload),
     GithubRequest(GithubRequestPayload),
     /// The card's refresh button, opening the delete confirmation, and a
     /// completed worktree removal. All three say "read again now" about a
@@ -845,6 +846,18 @@ pub(super) enum Event {
     PetDrag(PetDragPayload),
     PetActivity,
     PetShortcutUpdate(PetShortcutPayload),
+}
+
+/// The web shell rebinds a handful of pane commands; the bound keeps a
+/// malformed client from growing the persisted state without limit.
+const BROWSER_BINDINGS_CAP: usize = 16;
+const BROWSER_BINDING_TEXT_CAP: usize = 64;
+
+fn browser_bindings_fit(bindings: &std::collections::BTreeMap<String, String>) -> bool {
+    bindings.len() <= BROWSER_BINDINGS_CAP
+        && bindings.iter().all(|(command, chord)| {
+            command.len() <= BROWSER_BINDING_TEXT_CAP && chord.len() <= BROWSER_BINDING_TEXT_CAP
+        })
 }
 
 pub(super) fn decode(bytes: &[u8]) -> Result<Event, EventValidationError> {
@@ -968,10 +981,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
         "task_operation_ack" => decode!(TaskOperationAckPayload, TaskOperationAck),
+        "task_agent_retry" => decode!(TaskAgentRetryPayload, TaskAgentRetry),
         "remove_worktree" => decode!(RemoveWorktreePayload, RemoveWorktree),
-        "worktree_removal_finished" => {
-            decode!(WorktreeRemovalFinishedPayload, WorktreeRemovalFinished)
-        }
         "github_request" => decode!(GithubRequestPayload, GithubRequest),
         "cleanup_review" => Ok(Event::CleanupReview),
         "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
@@ -1168,27 +1179,7 @@ impl Runtime {
                 self.request_agent_hook_install(&payload.runtime_id)
             }
             Event::AiSettings(payload) => self.apply_ai_settings(payload),
-            Event::RetryConnect(payload) => {
-                if let Some(remote) = self
-                    .snapshot
-                    .status
-                    .remote
-                    .iter_mut()
-                    .find(|remote| remote.target_id == payload.target_id)
-                {
-                    remote.state = "retry_requested".to_owned();
-                    remote.message =
-                        Some("Reconnect is waiting for the remote integration task".to_owned());
-                    true
-                } else {
-                    self.set_error(
-                        "remote.unknown_target",
-                        "Reconnect target is not registered",
-                        false,
-                    );
-                    true
-                }
-            }
+            Event::RetryConnect(payload) => self.retry_remote_device(&payload.target_id),
             Event::CreateWorkspace(payload) => {
                 if let Some(context) = self.live.as_ref().cloned() {
                     // A folder whose removal is still closing panes keeps the
@@ -1484,8 +1475,12 @@ impl Runtime {
                     );
                     return true;
                 }
+                let local = payload.device_id == workspace::LOCAL_DEVICE_ID;
                 self.snapshot.navigator.focused_device_id = Some(payload.device_id);
                 self.deactivate_editor_tab();
+                if local {
+                    self.return_keyboard_to_local_pane();
+                }
                 self.reconcile_remote_terminal_selection();
                 self.persist_current_ui_state();
                 true
@@ -1594,7 +1589,7 @@ impl Runtime {
                     .ui_state
                     .device_registrations
                     .push(registration.clone());
-                self.rebuild_catalog();
+                self.rebuild_device_rows();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.registered",
@@ -1626,7 +1621,7 @@ impl Runtime {
                     return true;
                 }
                 self.disconnect_remote_device(&payload.device_id);
-                self.rebuild_catalog();
+                self.rebuild_device_rows();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.unregistered",
@@ -1658,6 +1653,27 @@ impl Runtime {
                 self.start_device_test(&payload.device_id)
             }
             Event::CreatePane(payload) => {
+                // A split names no pane; it acts on the current terminal pane.
+                // With another device selected that pane is not the one the
+                // operator is looking at, so the split is refused rather than
+                // landing on this machine (PRD S5 B19). A shell that routes
+                // remote splits sends `remote_control` instead.
+                if let Some(device_id) = self
+                    .snapshot
+                    .navigator
+                    .focused_device_id
+                    .as_deref()
+                    .filter(|device_id| *device_id != workspace::LOCAL_DEVICE_ID)
+                {
+                    self.set_error(
+                        "pane.device_mismatch",
+                        format!(
+                            "Device {device_id} is selected; nothing was split on this machine"
+                        ),
+                        false,
+                    );
+                    return true;
+                }
                 if payload.command.is_some() {
                     self.set_error(
                         "pane.command_unsupported",
@@ -2584,8 +2600,8 @@ impl Runtime {
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),
+            Event::TaskAgentRetry(payload) => self.retry_task_agent(payload.id),
             Event::RemoveWorktree(payload) => self.remove_git_worktree(payload),
-            Event::WorktreeRemovalFinished(payload) => self.finish_worktree_removal(payload),
             Event::EditorTextScale(payload) => {
                 let current = self.snapshot.ui_state.editor_text_scale;
                 let Some(next) = self.stepped_text_scale(current, &payload.direction) else {
@@ -2754,6 +2770,18 @@ impl Runtime {
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
                     shortcut_bindings: payload.shortcut_bindings,
+                    browser_shortcut_bindings: match payload.browser_shortcut_bindings {
+                        Some(bindings) if browser_bindings_fit(&bindings) => bindings,
+                        Some(_) => {
+                            self.set_error(
+                                "ui_state.browser_shortcuts_invalid",
+                                "Browser shortcuts were not saved: too many or too long",
+                                false,
+                            );
+                            current.browser_shortcut_bindings.clone()
+                        }
+                        None => current.browser_shortcut_bindings.clone(),
+                    },
                     pet_visible: self.snapshot.ui_state.pet_visible,
                     pet_origin: self.snapshot.ui_state.pet_origin,
                     pet_shortcut: self.snapshot.ui_state.pet_shortcut.clone(),

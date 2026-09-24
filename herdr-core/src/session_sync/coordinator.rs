@@ -320,6 +320,11 @@ fn run_coordinator(
                         && let Ok(mut locked) = core.lock()
                     {
                         locked.set_error("agent_hooks.install_refused", refusal.message(), false);
+                        drop(locked);
+                        // The refusal is the answer to the operator's press;
+                        // without an announcement it waited for an unrelated
+                        // change to reach any screen.
+                        context.notifier.notify();
                     }
                 }
                 // While the Settings agents tab is on screen the diagnosis is
@@ -1123,6 +1128,19 @@ fn save_ai_settings(
     settings: &hide_ai::AiSettings,
 ) -> bool {
     let Err(error) = hide_ai::settings::save(home, settings) else {
+        // The file now holds the operator's choice, so the group says
+        // "chosen" from this write on, not only after the next launch reads it.
+        let Some(runtime) = context.runtime.upgrade() else {
+            return false;
+        };
+        let changed = match runtime.lock() {
+            Ok(mut guard) => guard.ingest_ai_settings(settings.clone(), true, None),
+            Err(_) => return false,
+        };
+        drop(runtime);
+        if changed {
+            context.notifier.notify();
+        }
         return true;
     };
     crate::diagnostic!(serde_json::json!({

@@ -45,6 +45,7 @@ export type CommandId =
   | "text_larger"
   | "text_smaller"
   | "text_reset"
+  | "settings"
   | "shortcuts";
 
 export type Command = {
@@ -88,10 +89,11 @@ export const REGISTRY: readonly Command[] = [
   { id: "text_smaller", title: "Smaller text", group: "Panes", browser: { code: "Minus", meta: true }, electron: null, moved: false },
   { id: "text_reset", title: "Reset text size", group: "Panes", browser: { code: "Digit0", meta: true }, electron: null, moved: false },
   { id: "move_to_trash", title: "Move to Trash", group: "Panes", browser: { code: "Backspace", meta: true }, electron: null, moved: false, passthrough: "Explorer only; in a terminal ⌘⌫ clears the line" },
+  { id: "settings", title: "Settings", group: "Help", browser: { code: "Comma", alt: true }, electron: null, moved: true, movedFrom: "⌘," },
   { id: "shortcuts", title: "Keyboard shortcuts", group: "Help", browser: { code: "Slash", meta: true }, electron: null, moved: false },
 ];
 
-/** Chords Chrome never hands to a page; a browser chord using one is a registry error. */
+/** Chords Chrome or macOS never hands to a page; a browser chord using one is a registry error. */
 const CHROME_RESERVED: readonly Chord[] = [
   { code: "KeyT", meta: true },
   { code: "KeyW", meta: true },
@@ -100,6 +102,11 @@ const CHROME_RESERVED: readonly Chord[] = [
   { code: "KeyW", meta: true, shift: true },
   { code: "Tab", ctrl: true },
   { code: "Tab", ctrl: true, shift: true },
+  { code: "KeyN", meta: true },
+  { code: "KeyQ", meta: true },
+  { code: "KeyH", meta: true },
+  { code: "KeyM", meta: true },
+  { code: "Comma", meta: true },
 ];
 
 export function chordEquals(a: Chord, b: Chord): boolean {
@@ -116,13 +123,125 @@ export function isChromeReserved(chord: Chord): boolean {
   return CHROME_RESERVED.some((reserved) => chordEquals(reserved, chord));
 }
 
+type KeyEventLike = Pick<KeyboardEvent, "code" | "metaKey" | "altKey" | "shiftKey" | "ctrlKey">;
+
+export function chordFromEvent(event: KeyEventLike): Chord {
+  return { code: event.code, meta: event.metaKey, alt: event.altKey, shift: event.shiftKey, ctrl: event.ctrlKey };
+}
+
 /** The command a keydown names on the browser host, or null. */
-export function matchBrowser(event: Pick<KeyboardEvent, "code" | "metaKey" | "altKey" | "shiftKey" | "ctrlKey">): Command | null {
-  const chord: Chord = { code: event.code, meta: event.metaKey, alt: event.altKey, shift: event.shiftKey, ctrl: event.ctrlKey };
-  return REGISTRY.find((command) => command.browser && !command.passthrough && chordEquals(command.browser, chord)) ?? null;
+export function matchBrowser(event: KeyEventLike, registry: readonly Command[] = REGISTRY): Command | null {
+  const chord = chordFromEvent(event);
+  return registry.find((command) => command.browser && !command.passthrough && chordEquals(command.browser, chord)) ?? null;
+}
+
+// The pane commands an operator may rebind on the browser host (PRD S5 D-07):
+// the eight Swift pane commands less Toggle Conversation, which the web shell
+// has no surface for. Their overrides live in the core's
+// `ui_state.browser_shortcut_bindings`, apart from the Swift host's own map.
+export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
+  "split_right",
+  "split_down",
+  "toggle_zoom",
+  "close_pane",
+  "text_larger",
+  "text_smaller",
+  "text_reset",
+];
+
+// A physical key a chord may use. Anything else (a dead key, an IME process
+// key, a lone modifier) is not a chord this registry can match reliably.
+const BINDABLE_CODE = /^(Key[A-Z]|Digit[0-9]|Enter|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|Arrow(Up|Down|Left|Right))$/;
+
+/** One stored chord: its modifiers in a fixed order, then the physical key. */
+export function serializeChord(chord: Chord): string {
+  return [chord.ctrl && "ctrl", chord.alt && "alt", chord.shift && "shift", chord.meta && "meta", chord.code].filter(Boolean).join("+");
+}
+
+export function parseChord(text: string): Chord | null {
+  const parts = text.split("+");
+  const code = parts.pop() ?? "";
+  if (!BINDABLE_CODE.test(code)) return null;
+  const chord: Chord = { code };
+  for (const part of parts) {
+    if (part !== "ctrl" && part !== "alt" && part !== "shift" && part !== "meta") return null;
+    const key = part === "ctrl" ? "ctrl" : part === "alt" ? "alt" : part === "shift" ? "shift" : "meta";
+    if (chord[key]) return null;
+    chord[key] = true;
+  }
+  return chord;
+}
+
+/**
+ * Why `chord` cannot become `id`'s binding in `registry`, or null when it can.
+ * The same rules decide a stored override on load, so a chord the editor
+ * refuses can never become effective by being written to the core directly.
+ */
+export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[]): string | null {
+  if (!BINDABLE_CODE.test(chord.code)) return "Use a letter, a digit, Return, an arrow or a punctuation key.";
+  if (!chord.meta && !chord.ctrl && !chord.alt) return "Include ⌘, ⌥ or ⌃ so typing in a terminal stays typing.";
+  if (isChromeReserved(chord)) return `${displayChord(chord)} is kept by Chrome or macOS and never reaches the page.`;
+  const taken = registry.find((command) => command.id !== id && command.browser && chordEquals(command.browser, chord));
+  if (taken) return `${displayChord(chord)} is already ${taken.title}.`;
+  return null;
+}
+
+export type EffectiveRegistry = { registry: readonly Command[]; diagnostic: string | null };
+
+/**
+ * The registry the browser host runs, with the operator's stored pane chords
+ * applied. A stored map that names an unknown command, holds a chord this
+ * host cannot use, or collides with another command is dropped as a whole and
+ * the defaults run, the way the Swift host resolves its own map; the
+ * diagnostic says why.
+ */
+export function effectiveRegistry(stored: Record<string, string> | null | undefined): EffectiveRegistry {
+  const entries = Object.entries(stored ?? {});
+  if (entries.length === 0) return { registry: REGISTRY, diagnostic: null };
+  let registry: Command[] = [...REGISTRY];
+  for (const [id, text] of entries) {
+    if (!EDITABLE_PANE_COMMANDS.includes(id as CommandId)) {
+      return { registry: REGISTRY, diagnostic: `Stored browser shortcuts name an unknown command (${id}); defaults are in use.` };
+    }
+    const chord = parseChord(text);
+    const problem = chord ? bindingProblem(id as CommandId, chord, registry) : "unreadable chord";
+    if (!chord || problem) {
+      return { registry: REGISTRY, diagnostic: `Stored browser shortcut for ${id} was not usable (${problem}); defaults are in use.` };
+    }
+    registry = registry.map((command) => (command.id === id ? { ...command, browser: chord, moved: false, movedFrom: undefined } : command));
+  }
+  return { registry, diagnostic: null };
+}
+
+let resolved: { stored: Record<string, string> | null | undefined; value: EffectiveRegistry } | null = null;
+
+/**
+ * `effectiveRegistry` for the stored map the snapshot carries now, computed
+ * once per map: the store shares an unchanged section by reference, so a
+ * keystroke reuses the last resolution instead of re-validating every chord.
+ */
+export function resolvedRegistry(stored: Record<string, string> | null | undefined): EffectiveRegistry {
+  if (!resolved || resolved.stored !== stored) resolved = { stored, value: effectiveRegistry(stored) };
+  return resolved.value;
+}
+
+/** The default browser chord for a command, before any override. */
+export function defaultBrowserChord(id: CommandId): Chord | null {
+  return REGISTRY.find((command) => command.id === id)?.browser ?? null;
 }
 
 const CODE_GLYPHS: Record<string, string> = {
+  Comma: ",",
+  Period: ".",
+  Semicolon: ";",
+  Quote: "'",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Backslash: "\\",
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  ArrowLeft: "←",
+  ArrowRight: "→",
   Backquote: "`",
   Tab: "⇥",
   Enter: "↩",
@@ -140,7 +259,7 @@ export function displayChord(chord: Chord): string {
   return `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}${key}`;
 }
 
-export function displayBrowser(id: CommandId): string {
-  const command = REGISTRY.find((row) => row.id === id);
+export function displayBrowser(id: CommandId, registry: readonly Command[] = REGISTRY): string {
+  const command = registry.find((row) => row.id === id);
   return command?.browser ? displayChord(command.browser) : "";
 }

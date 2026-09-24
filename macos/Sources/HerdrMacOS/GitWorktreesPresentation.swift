@@ -80,6 +80,10 @@ struct CoreTaskOperation: Decodable, Sendable {
     let paneID: String?
     let agentKind: String?
     let message: String?
+    /// The core starts the chosen agent after the creation settles and
+    /// reports it here: `starting`, `started`, `failed` or `unknown`.
+    var agentPhase: String? = nil
+    var agentMessage: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, kind, phase, branch, path, message
@@ -87,6 +91,8 @@ struct CoreTaskOperation: Decodable, Sendable {
         case baseBranch = "base_branch"
         case paneID = "pane_id"
         case agentKind = "agent_kind"
+        case agentPhase = "agent_phase"
+        case agentMessage = "agent_message"
     }
 }
 

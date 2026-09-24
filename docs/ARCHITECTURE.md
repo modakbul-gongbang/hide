@@ -106,7 +106,13 @@ The lineage is therefore built before the read axis is applied on every ingest, 
 The Agents `My Work` view filters only the core-final Delegated answer and leaves visible orphans in operator-owned groups; `All` changes only the shell's session-local visibility projection.
 Overview groups the same canonical agents by the checkout their pane is in and nests a child under its parent only from authoritative child IDs; a parent in another worktree is named in a caption, never inferred.
 The Overview has no selection of its own: a row click dispatches the existing pane-selection event, a header click the checkout-focus event, and the `N files` chip one `overview_open_section` event that focuses the checkout and switches the panel to History together, so a refusal cannot leave the screen half moved.
-`agent_start_in_checkout` creates a tab in a Herdr workspace used exclusively by that project through the task-operation slot that `create_worktree` already uses, and the shell starts the chosen provider in the created pane on the same path.
+`agent_start_in_checkout` creates a tab in a Herdr workspace used exclusively by that project through the task-operation slot that `create_worktree` already uses.
+The worker that created the pane then starts the chosen provider in that exact pane with `agent.start` (`worktree_control::start_task_agent`), after the creation is published, so both shells share one executor and neither starts an agent itself.
+The answer lands on the task receipt's own axis (`agent_phase`: `starting`, `started`, `failed` or `unknown`, with `agent_message`): a failure keeps the worktree and the pane, a provider missing from the daemon's PATH fails before Herdr is asked, a transport failure is `unknown` because the agent may be running, and only a definite failure is offered again (`task_agent_retry`, which reuses the recorded pane and refuses when it is gone).
+The receipt cannot be acknowledged while the agent is still `starting`.
+Worktree deletion has the same single executor: `remove_worktree` closes the checkout's panes on the close worker, which then rechecks Git's registration, HEAD, branch, protected base, nested worktrees and dirt against the confirmed request and runs non-force `git worktree remove` and, when chosen, `git branch -d` itself (`worktree_cleanup::remove_confirmed`); the phases are `closing`, `removing`, `finished` and `failed`.
+No shell reports a removal's completion, so there is no event a client could send to claim one.
+Only a pane outside the set Herdr confirmed closed counts as one that appeared during the confirmation, because the navigator still lists the closed pane until Herdr's close events are applied.
 When every known Herdr workspace for the checkout is also associated with another registered project, Add Tab and agent start create a fresh workspace with the checkout path instead of leaking the other project's label and tabs into the new surface.
 
 What an agent has spawned in-process is not on Herdr's wire at all.
@@ -233,6 +239,8 @@ The token comparison is constant in the token's length (`subtle`), so a refusal 
 Client frames are core events (`schema_version`, `kind`, `payload`).
 HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
 No HTTP request dispatches a core event.
+The first frame after a valid handshake is `daemon` (`version`, `pid`, `schema_version`, the state paths, the Herdr binary and socket, the idle policy); Settings > General reads it, and it never carries the token.
+The daemon owns the core's one Settings observation flag (`ai_settings.observing`, which runs the provider probe and the hook diagnosis): a client's `observing` is only that connection's demand (`hided/src/demand.rs`), the flag follows the first observer in and the last one out, and a connection that closes releases its demand, so a closed tab never leaves the probe running.
 `hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client, and `hide serve --keep-alive`.
 It does not start a Herdr server.
 A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a debug build reads the directory from disk, so `pnpm build` shows up without a cargo rebuild.
@@ -261,6 +269,31 @@ The same frames pad every row to the full width with written spaces and never so
 An Escape the shell answers (a cycle, a close confirmation, the sheet, the find bar) is stopped at the window capture listener, because the pane's textarea keeps keyboard focus under the sheet and xterm would send the same press to the program as an ESC byte.
 Closing mirrors the Swift flow in `web/src/close.ts`: an unknown activity status asks for `refresh_status` first, a working pane asks once, an idle pane closes with `confirmed: false`.
 
+### Settings and workspace management in the web shell
+
+Settings (`web/src/SettingsSheet.tsx`, rules in `web/src/settings.ts`) opens from the sidebar's gear or ⌥, and carries the native sheet's sections less Pet: General reads the `daemon` frame and `status.{herdr,environment,diagnostics}`, Appearance writes `accent_hex` and `font_size` through `ui_state_update`, Agents reads `status.{background_ai,agent_hooks}` and sends `ai_settings` and `install_agent_hooks`, Devices sends `register_device`, `test_device`, `retry_connect`, `focus_device` and `remove_device` (the sidebar's device switcher sends `focus_device` too), and Shortcuts writes `browser_shortcut_bindings`.
+Every row shows what the snapshot says; an edit is pending until the snapshot carries it, and a refusal is matched to the edit by the core's `last_error` kind and time.
+Copy diagnostics carries versions, paths, states and the core's recent diagnostics, redacts anything token-shaped, and has no terminal output or pane input among its inputs.
+`retry_connect` is a new connection attempt: it retires the device's coordinator and transports and connects again from its registration, keeping the device focus, and a connected device refuses it.
+The web's `ui_state_update` echo omits `workspace_registrations` and `device_registrations`, which their own events own, so a stale echo can never undo a registration.
+The accent swatches read the `--color-accent-choice-*` tokens; the chosen value replaces `--color-accent`, and `font_size` scales the interface text tokens through `--interface-scale` while the terminal and editor sizes stay their own.
+
+The sidebar's project and checkout rows carry a `⋯` menu, also on right-click (`web/src/RowMenu.tsx`, rules in `web/src/workspaceManage.ts`): Pin/Unpin for a registered local project, New worktree for a local Git project, a purpose for any checkout, and deletion for a local linked worktree whose gate allows it; an action a row cannot use is drawn disabled with its reason.
+The dialogs (`web/src/WorkspaceDialogs.tsx`) send `create_worktree`, `set_checkout_purpose` and `remove_worktree` and read only the receipt for their own request (`task_operation` by kind, id and target; `worktree_removal` by checkout and id), so another page's or an older request's answer is never shown as theirs.
+A created worktree's pane is focused with one `focus_pane` once the snapshot lists it, because only a focus request is tracked until Herdr confirms it; a late focus event for the pane left behind cannot undo the move.
+A dialog or sheet returns keyboard focus to a terminal through `focusTerminal` on the core's focused pane (`restoreFocus`), never by re-focusing the textarea that held it, which would be reported as the operator moving there.
+
+The device switcher sits at the bottom of the sidebar (`web/src/DevicePicker.tsx`), the web form of the native chip and `HideDevicePicker`, and sends `focus_device`.
+Selecting an SSH device makes it the context (`web/src/remote.ts`, `web/src/RemoteSurface.tsx`): the sidebar lists that host's Herdr workspaces and agents and the canvas draws its visible tab from `status.remote[].session`, the projection the core already builds over SSH with every id scoped to the target (`remote:<target>:pane:…`).
+The web follows the host's own focus rather than keeping a selection, because the core attaches exactly the panes of that host's focused tab; a pane is placed by the rectangle Herdr reports for it, and there is no divider because a remote pane's size is its host's.
+Keystrokes, scroll and viewport go out with the scoped pane id, which the core writes to that host's terminal session; focus, split, zoom, close pane, new tab, tab focus and close tab go out as `remote_control` with the device as `target_id` and a fresh `request_id`, and the core checks every id against that host's session before anything is sent, so a stale or local id is refused rather than retargeted.
+The pane's own id decides where a click-to-focus goes, and a close confirmation carries the device it was asked about.
+A device that is not connected takes no command: the web says so and sends nothing, keeps the last session on screen under a Retry banner while it is `stale`, and draws the connection's own state when there is no session.
+Reorder, reopen closed, find in pane, open file, the Explorer and History, worktree creation and deletion, and pin stay this machine's and are refused or disabled with the reason; a remote checkout's purpose is written through the core when the host's Herdr is 0.9.1 or newer.
+The core also refuses `create_pane`, whose target is implicit, while a remote device is focused (`pane.device_mismatch`), so a split never falls back to this machine.
+Typing into a remote pane makes it the core's terminal pane, so `focus_device` back to this machine, or removing the selected device, hands the keyboard back to `ui_state.selected_pane_id` or the drawn tab's focused pane (`return_keyboard_to_local_pane`).
+Registering or removing a device refreshes only the device rows (`rebuild_device_rows`); rebuilding the whole catalog there dropped every checkout's tabs until the next session publish.
+
 ### The `$HOME` filesystem boundary
 
 `hided/src/boundary.rs` is the one place the boundary is enforced, in the dispatch path before an event reaches the core (`server::apply_boundary`).
@@ -274,7 +307,7 @@ A `file_list` is the Explorer's line for one folder inside a checkout the user a
 Those rows follow the Swift order - directories first, then a case-insensitive name comparison in which a run of digits compares by value - and are capped at `LIST_CAP` with `truncated` set.
 The two lines stay separate because their policies differ, and the `directory_list` frame names the event that asked in `kind`, so a client routes one answer to the registration flow and the other to the folder it is showing.
 A request of `~` lists the home directory and answers with its real path, which is how the web shell learns `$HOME` for the checks it can make before sending anything (outside home by prefix, already registered, not in the listing it holds).
-The boundary root is read from `HOME` at boot and is not configurable; an allowed-roots setting is an S5 candidate.
+The boundary root is read from `HOME` at boot and is not configurable; widening it is a security-policy decision the web Settings does not take, and registering a folder outside home stays with the existing CLI path.
 Both frames and the reason codes are in `contracts/hided-ws.schema.json`.
 
 ### The checkout-root boundary and the Explorer frames
@@ -345,6 +378,10 @@ Edits are coalesced to one active and one pending committed write per document w
 
 `web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
 The `⌘/` sheet is generated from the table.
+Settings > Shortcuts rebinds the seven browser pane commands (split right and down, zoom, close pane, larger, smaller and reset text); the Swift host's eighth, Toggle Conversation, has no web surface.
+The overrides live in the core's `ui_state.browser_shortcut_bindings`, apart from the Swift host's `shortcut_bindings`, because the hosts reserve different keys; a save that omits the field keeps them.
+The window listener, the sheet and the editor all read one effective registry (`effectiveRegistry`), and a chord is refused in its row before it is saved when it has no ⌘, ⌥ or ⌃, is one Chrome or macOS keeps, or is another command's; a stored map that fails the same rules is dropped whole and the defaults run with a diagnostic.
+While a row records, the listener runs no command, and IME composition never records.
 The Electron column is empty until that host exists (TODO: fill it from `ShellMenuCommand.swift` and `PaneShortcutSettings.swift` when the Electron host lands).
 
 | Command | Swift | Browser | Electron |
@@ -364,4 +401,5 @@ The Electron column is empty until that host exists (TODO: fill it from `ShellMe
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | TODO |
 | Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords | TODO |
 | Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | TODO |
+| Settings | ⌘, | ⌥, (moved: Chrome keeps ⌘,) | TODO |
 | Keyboard shortcuts | - | ⌘/ | TODO |

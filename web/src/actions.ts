@@ -6,7 +6,8 @@ import { deleteBuffer } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
-import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
+import { remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
+import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -33,33 +34,111 @@ export function createActions(dispatch: DispatchFn) {
    * The core's ui state with one patch applied. The event replaces the whole
    * state rather than merging it, so every field the snapshot carries rides
    * along; a field the web omits would fall back to the core's default and
-   * erase a value another surface owns.
+   * erase a value another surface owns. The two registration lists are the
+   * exception: their own events (`register_device`, `workspace_pin_set`, …)
+   * own them and the core keeps them when they are absent, so an echo of an
+   * older snapshot can never undo a registration that landed after it.
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
     if (!state) return;
-    dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...state, ...patch } });
+    const { workspace_registrations: _workspaces, device_registrations: _devices, ...owned } = state;
+    void _workspaces;
+    void _devices;
+    dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
   };
 
-  const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"]) => {
-    const decision = closeDecision(kind, panes, useShellStore.getState().agents);
+  /**
+   * With an SSH device selected, a command this shell cannot run on that host
+   * is refused here with a notice, so it never acts on this machine instead
+   * (PRD S5 B19). Returns true when it refused.
+   */
+  const refusedRemotely = (command: string): boolean => {
+    const context = remoteContext(rest());
+    if (!context) return false;
+    ui().setNotice({ text: `${command} is not available for ${context.device.label} from the web shell; nothing was sent.`, refreshable: false });
+    return true;
+  };
+
+  /**
+   * The selected host, when a pane or tab command can go to it now. A device
+   * that is not connected gets a notice and nothing is sent; the core would
+   * refuse it too (`remote.control.not_connected`), but only in its log.
+   */
+  const remoteHost = (command: string): { targetId: string; view: RemoteView | null; agents: AgentRow[] } | null => {
+    const context = remoteContext(rest());
+    if (!context) return null;
+    if (!remoteConnected(context)) {
+      ui().setNotice({ text: `${context.device.label} is not connected. ${command} was not sent.`, refreshable: false });
+      return null;
+    }
+    return { targetId: context.device.id, view: remoteView(context.session), agents: context.session?.agents ?? [] };
+  };
+
+  const sendRemote = (targetId: string, request: RemoteAction) => dispatch(remoteControl(targetId, request));
+
+  /** The id of the core's task slot now, so a request can tell its own answer from an older one. */
+  const taskIdNow = () => rest()?.task_operation?.id ?? 0;
+
+  /**
+   * One close through the Swift flow. `targetId` names the SSH device the
+   * pane or tab lives on, and the close goes there as `remote_control`; a
+   * local close is the core's own `close_pane`/`close_tab`.
+   */
+  const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"], targetId: string | null, agents: AgentRow[]) => {
+    const decision = closeDecision(kind, panes, agents);
     if (decision.action === "status_unknown") {
       ui().setNotice({ text: statusUnknownNotice(decision.label), refreshable: true });
       return;
     }
     if (decision.action === "confirm") {
-      ui().setPendingClose({ kind, id, title: decision.title, consequence: decision.consequence, affected: decision.affected });
+      ui().setPendingClose({ kind, id, targetId, title: decision.title, consequence: decision.consequence, affected: decision.affected });
+      return;
+    }
+    sendClose(kind, id, targetId, false);
+  };
+
+  const sendClose = (kind: "pane" | "tab", id: string, targetId: string | null, confirmed: boolean) => {
+    if (targetId) {
+      sendRemote(targetId, kind === "pane" ? { action: "close_pane", pane_id: id, confirmed } : { action: "close_tab", tab_id: id, confirmed });
       return;
     }
     dispatch({
       schema_version: 2,
       kind: kind === "pane" ? "close_pane" : "close_tab",
-      payload: kind === "pane" ? { pane_id: id, confirmed: false } : { tab_id: id, confirmed: false },
+      payload: kind === "pane" ? { pane_id: id, confirmed } : { tab_id: id, confirmed },
     });
   };
 
-  const focusCheckout = (workspaceId: string, checkoutId: string) =>
+  /** A project or checkout row: on a selected SSH device every checkout is one Herdr workspace there. */
+  const focusCheckout = (workspaceId: string, checkoutId: string) => {
+    const context = remoteContext(rest());
+    if (context) {
+      const host = remoteHost("Switching workspace");
+      if (!host) return;
+      if (!context.session?.workspaces.some((row) => row.id === workspaceId)) {
+        return diagnostic(`focus_workspace: ${workspaceId} is not on ${context.device.label}`);
+      }
+      sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId });
+      return;
+    }
     dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
+  };
+
+  /**
+   * Keyboard focus to one pane. The pane's own id says which host it is on,
+   * so a remote pane is focused there and a local one here, whatever the
+   * context was when the click started.
+   */
+  const focusPane = (paneId: string) => {
+    const targetId = remoteTargetOfPane(rest(), paneId);
+    if (targetId) {
+      sendRemote(targetId, { action: "focus_pane", pane_id: paneId });
+      return;
+    }
+    if (remoteContext(rest())) return diagnostic(`focus_pane: ${paneId} is not on the selected device`);
+    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
+  };
 
   /** Switches the left sidebar's mode; the Explorer is a right panel now. */
   const showSidebarMode = (mode: SidebarMode) => {
@@ -197,8 +276,99 @@ export function createActions(dispatch: DispatchFn) {
   return {
     dispatch,
     revealAncestors,
+    taskIdNow,
+
+    openSettings() {
+      ui().openOverlay("settings");
+    },
+
+    setAccent(hex: string) {
+      updateUiState({ accent_hex: hex });
+    },
+
+    setFontSize(size: number) {
+      updateUiState({ font_size: size });
+    },
+
+    /** The browser host's pane chords, replaced as a whole; the Swift host's map is untouched. */
+    setBrowserShortcuts(bindings: Record<string, string>) {
+      updateUiState({ browser_shortcut_bindings: bindings });
+    },
+
+    /** Whether this page is looking at the Agents tab; the daemon owns the core's flag. */
+    observeAgents(observing: boolean) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { observing } });
+    },
+
+    chooseAi(provider: string, model?: string) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: model === undefined ? { provider } : { provider, model } });
+    },
+
+    installHook(runtimeId: string) {
+      dispatch({ schema_version: 2, kind: "install_agent_hooks", payload: { runtime_id: runtimeId } });
+    },
+
+    registerDevice(id: string, label: string, alias: string) {
+      dispatch({ schema_version: 2, kind: "register_device", payload: { id, label, ssh_alias: alias } });
+    },
+
+    testDevice(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "test_device", payload: { device_id: deviceId } });
+    },
+
+    retryDevice(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "retry_connect", payload: { target_id: deviceId } });
+    },
+
+    removeDevice(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "remove_device", payload: { device_id: deviceId } });
+    },
+
+    focusDevice(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
+    },
+
+    setPinned(workspaceId: string, pinned: boolean) {
+      dispatch({ schema_version: 2, kind: "workspace_pin_set", payload: { workspace_id: workspaceId, pinned } });
+    },
+
+    createWorktree(request: { repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {
+      dispatch({
+        schema_version: 2,
+        kind: "create_worktree",
+        payload: {
+          repository_root: request.repositoryRoot,
+          branch: request.branch,
+          base_branch: request.baseBranch,
+          agent_kind: request.agentKind,
+          purpose: request.purpose,
+        },
+      });
+    },
+
+    setPurpose(checkoutId: string, text: string) {
+      dispatch({ schema_version: 2, kind: "set_checkout_purpose", payload: { checkout_id: checkoutId, text } });
+    },
+
+    removeWorktree(checkoutPath: string, deleteBranch: boolean) {
+      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { checkout_path: checkoutPath, delete_branch: deleteBranch } });
+    },
+
+    retryTaskAgent(id: number) {
+      dispatch({ schema_version: 2, kind: "task_agent_retry", payload: { id } });
+    },
+
+    focusPane,
 
     createTab() {
+      if (remoteContext(rest())) {
+        const host = remoteHost("New tab");
+        if (!host) return;
+        const checkout = host.view?.checkout;
+        if (!checkout) return diagnostic("create_tab: the remote device has no workspace open");
+        sendRemote(host.targetId, { action: "create_tab", workspace_id: checkout.workspace_id, cwd: checkout.path, label: checkout.next_tab_label });
+        return;
+      }
       const here = current();
       if (!here) return diagnostic("create_tab: no focused checkout");
       dispatch({
@@ -209,6 +379,11 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     focusTab(tabId: string) {
+      if (remoteContext(rest())) {
+        const host = remoteHost("Switching tab");
+        if (host) sendRemote(host.targetId, { action: "focus_tab", tab_id: tabId });
+        return;
+      }
       const here = current();
       if (!here) return;
       dispatch({
@@ -219,6 +394,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     reorderTab(stripId: string, toIndex: number) {
+      // Herdr orders a remote host's tabs; the native shell does not move them either.
+      if (refusedRemotely("Reordering tabs")) return;
       const here = current();
       if (!here) return;
       dispatch({
@@ -229,6 +406,14 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closeTab(tabId?: string) {
+      if (remoteContext(rest())) {
+        const host = remoteHost("Close tab");
+        if (!host) return;
+        const tab = host.view?.checkout.tabs.find((row) => row.id === (tabId ?? host.view?.tab?.id));
+        if (!tab?.id) return diagnostic("close_tab: no visible remote tab");
+        requestClose("tab", tab.id, tab.panes, host.targetId, host.agents);
+        return;
+      }
       // The strip shows a file tab while the editor is up, so the close chord
       // closes what the operator sees rather than the terminal tab behind it.
       const fileTab = activeEditorTab(useShellStore.getState().editor);
@@ -237,15 +422,23 @@ export function createActions(dispatch: DispatchFn) {
       const id = tabId ?? here?.tab?.id;
       if (!here || !id) return diagnostic("close_tab: no visible tab");
       const tab = here.checkout.tabs.find((row) => row.id === id);
-      requestClose("tab", id, tab?.panes ?? []);
+      requestClose("tab", id, tab?.panes ?? [], null, useShellStore.getState().agents);
     },
 
     closePane(paneId?: string) {
-      const here = current();
       const id = paneId ?? useShellStore.getState().focusedPaneId;
+      if (remoteContext(rest())) {
+        const host = remoteHost("Close pane");
+        if (!host) return;
+        const pane = host.view?.tab?.panes.find((row) => row.id === id);
+        if (!id || !pane) return diagnostic("close_pane: no focused remote pane");
+        requestClose("pane", id, [pane], host.targetId, host.agents);
+        return;
+      }
+      const here = current();
       if (!here?.tab || !id) return diagnostic("close_pane: no focused pane");
       const pane = here.tab.panes.find((row) => row.id === id);
-      requestClose("pane", id, pane ? [pane] : []);
+      requestClose("pane", id, pane ? [pane] : [], null, useShellStore.getState().agents);
     },
 
     /** The operator chose "Stop work and close" on the confirmation. */
@@ -253,11 +446,9 @@ export function createActions(dispatch: DispatchFn) {
       const pending = ui().pendingClose;
       if (!pending) return;
       ui().setPendingClose(null);
-      dispatch({
-        schema_version: 2,
-        kind: pending.kind === "pane" ? "close_pane" : "close_tab",
-        payload: pending.kind === "pane" ? { pane_id: pending.id, confirmed: true } : { tab_id: pending.id, confirmed: true },
-      });
+      // The confirmation names the host it was asked about; switching devices
+      // while it was open does not move the close to another one.
+      sendClose(pending.kind, pending.id, pending.targetId, true);
     },
 
     keepOpen() {
@@ -275,6 +466,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     reopenClosed() {
+      // The core's reopen stack holds only closes made on this machine.
+      if (refusedRemotely("Reopen closed tab")) return;
       const recent = rest()?.recent_closed;
       if (!recent?.can_reopen) {
         diagnostic(`reopen_closed: nothing to reopen${recent?.reopen_blocked_reason ? ` (${recent.reopen_blocked_reason})` : ""}`);
@@ -284,6 +477,14 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     split(direction: "right" | "down") {
+      if (remoteContext(rest())) {
+        const host = remoteHost("Split");
+        if (!host) return;
+        const pane = host.view?.tab?.panes.find((row) => row.id === host.view?.focusedPaneId);
+        if (!pane) return diagnostic("split_pane: no focused remote pane");
+        sendRemote(host.targetId, { action: "split_pane", pane_id: pane.id, direction, cwd: pane.cwd || null });
+        return;
+      }
       const here = current();
       const paneId = useShellStore.getState().focusedPaneId;
       const pane = here?.tab?.panes.find((row) => row.id === paneId);
@@ -296,6 +497,14 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     toggleZoom() {
+      if (remoteContext(rest())) {
+        const host = remoteHost("Zoom pane");
+        if (!host) return;
+        const paneId = host.view?.focusedPaneId;
+        if (!paneId) return diagnostic("toggle_pane_zoom: no focused remote pane");
+        sendRemote(host.targetId, { action: "toggle_pane_zoom", pane_id: paneId });
+        return;
+      }
       const paneId = useShellStore.getState().focusedPaneId;
       if (!paneId) return diagnostic("toggle_zoom: no focused pane");
       dispatch({ schema_version: 2, kind: "toggle_zoom", payload: { pane_id: paneId } });
@@ -304,6 +513,9 @@ export function createActions(dispatch: DispatchFn) {
     /** ⌘= / ⌘- / ⌘0 scale whichever surface is showing: the document when an
      * editor tab owns the canvas, else the focused terminal pane. */
     textScale(direction: "in" | "out" | "reset") {
+      // A pane's text size is this page's drawing, stored in the core's ui
+      // state by pane id; a remote pane is sized the same way and nothing is
+      // sent to its host.
       if (editorFor(useShellStore.getState().editor)) {
         dispatch({ schema_version: 2, kind: "editor_text_scale", payload: { direction } });
         return;
@@ -317,6 +529,10 @@ export function createActions(dispatch: DispatchFn) {
 
     /** A project row: the checkout the operator was last in, else the first row (PRD S2 D-07). */
     focusProject(workspaceId: string) {
+      if (remoteContext(rest())) {
+        const checkout = remoteContext(rest())?.session?.workspaces.find((row) => row.id === workspaceId)?.checkouts[0];
+        return focusCheckout(workspaceId, checkout?.id ?? "");
+      }
       const workspace = rest()?.navigator?.workspaces?.find((row) => row.id === workspaceId);
       if (!workspace) return;
       const ids = workspace.checkouts.map((row) => row.id);
@@ -371,6 +587,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     openFind() {
+      // The core searches a pane's history through this machine's Herdr only.
+      if (refusedRemotely("Find in pane")) return;
       ui().openOverlay("find");
     },
 
@@ -387,6 +605,8 @@ export function createActions(dispatch: DispatchFn) {
 
     /** ⌘P: the file palette over hided's index of the focused checkout. */
     openFilePalette() {
+      // Remote files are viewed on their device (PRD S5 Non-goals).
+      if (refusedRemotely("Open file")) return;
       ui().openOverlay(ui().overlay === "file_palette" ? "none" : "file_palette");
     },
 

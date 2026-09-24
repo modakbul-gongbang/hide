@@ -1,8 +1,13 @@
 import { memo } from "react";
 import type { Actions } from "./actions";
+import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
-import type { AgentRow, Checkout, InactiveProjectGroup, Workspace } from "./snapshot";
+import { RowMenu } from "./RowMenu";
+import { displayBrowser } from "./shortcuts";
+import { contextAgents, contextWorkspaces, remoteContext, remoteView } from "./remote";
+import { checkoutMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
+import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore } from "./ui";
 
@@ -18,7 +23,10 @@ export function Sidebar({ actions }: { actions: Actions }) {
   const herdrState = useShellStore((s) => s.herdrState);
   const mode = useUiStore((s) => s.sidebarMode);
   const visible = useShellStore((s) => s.rest?.ui_state?.left_sidebar_visible ?? true);
-  const status = herdrRowLabel(herdrState);
+  // The row speaks for this machine's Herdr, so it is not shown over a
+  // selected SSH device's lists; that device's state is on the canvas.
+  const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
+  const status = remote ? null : herdrRowLabel(herdrState);
   if (!visible) return null;
 
   return (
@@ -38,6 +46,16 @@ export function Sidebar({ actions }: { actions: Actions }) {
         ))}
         <span className="flex-1" />
         <span className="text-muted">⌘E</span>
+        <button
+          type="button"
+          aria-label={`Settings (${displayBrowser("settings")})`}
+          title={`Settings (${displayBrowser("settings")})`}
+          data-open-settings="true"
+          className="text-muted hover:text-primary focus-visible:text-primary"
+          onClick={() => actions.openSettings()}
+        >
+          ⚙
+        </button>
       </div>
       {status ? (
         <div className="border-b border-divider px-md py-sm text-caption text-muted">{status}</div>
@@ -52,28 +70,19 @@ export function Sidebar({ actions }: { actions: Actions }) {
       >
         + 새 워크스페이스 <span className="text-muted">⌥⇧N</span>
       </button>
+      <DevicePicker actions={actions} />
     </nav>
   );
 }
 
+/** The agents of the context on screen: this machine's, or the selected SSH device's. */
 function AgentList({ actions }: { actions: Actions }) {
-  const agents = useShellStore((s) => s.agents);
+  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   return (
     <ul className="min-h-0 flex-1 overflow-auto">
       {agents.map((agent) => (
-        <AgentRowView
-          key={agent.id}
-          agent={agent}
-          selected={agent.pane_id === focusedPaneId}
-          onSelect={() =>
-            actions.dispatch({
-              schema_version: 2,
-              kind: "focus_pane",
-              payload: { pane_id: agent.pane_id, origin: "operator" },
-            })
-          }
-        />
+        <AgentRowView key={agent.id} agent={agent} selected={agent.pane_id === focusedPaneId} onSelect={() => actions.focusPane(agent.pane_id)} />
       ))}
     </ul>
   );
@@ -113,14 +122,22 @@ const AgentRowView = memo(function AgentRowView({
   );
 });
 
-const NO_WORKSPACES: Workspace[] = [];
 const NO_GROUPS: InactiveProjectGroup[] = [];
 
+/**
+ * The projects of the context on screen. A selected SSH device lists its
+ * Herdr workspaces, one checkout each, with the one its host has focused
+ * marked; the inactive folds and pins are this machine's and are not drawn
+ * there (DESIGN.md: the remote context carries no pins).
+ */
 function ProjectList({ actions }: { actions: Actions }) {
-  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces ?? NO_WORKSPACES);
-  const groups = useShellStore((s) => s.rest?.navigator?.inactive_projects ?? NO_GROUPS);
-  const focusedCheckoutId = useShellStore((s) => s.rest?.navigator?.focused_checkout_id ?? null);
-  const agents = useShellStore((s) => s.agents);
+  const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
+  const workspaces = useShellStore((s) => contextWorkspaces(s.rest));
+  const groups = useShellStore((s) => (remote ? NO_GROUPS : (s.rest?.navigator?.inactive_projects ?? NO_GROUPS)));
+  const focusedCheckoutId = useShellStore((s) =>
+    remote ? (remoteView(remoteContext(s.rest)?.session ?? null)?.checkout.id ?? null) : (s.rest?.navigator?.focused_checkout_id ?? null),
+  );
+  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const rows = projectRows(workspaces, groups);
   return (
     <ul className="min-h-0 flex-1 overflow-auto" data-project-list="true">
@@ -197,25 +214,32 @@ function WorkspaceRows({
   const inset = level === "child" ? "pl-[var(--size-lineage-indent)]" : "";
   return (
     <li data-project={workspace.id} className={inset}>
-      <button
-        type="button"
-        data-project-row={workspace.id}
-        className="flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated"
-        onClick={() => actions.focusProject(workspace.id)}
+      <RowMenu
+        label={`${workspace.label} actions`}
+        items={projectMenu(workspace)}
+        onSelect={(item) => runProjectItem(actions, workspace, item)}
+        data-project-menu={workspace.id}
       >
-        <span className="flex w-full items-baseline gap-xs text-body text-primary">
-          <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
-          {workspace.pinned ? (
-            <span className="text-micro uppercase text-muted" data-pinned="true">
-              pinned
-            </span>
-          ) : null}
-        </span>
-        <span className="text-caption text-muted">{activityLabel(workspace, agents, Date.now())}</span>
-      </button>
+        <button
+          type="button"
+          data-project-row={workspace.id}
+          className="flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated"
+          onClick={() => actions.focusProject(workspace.id)}
+        >
+          <span className="flex w-full items-baseline gap-xs text-body text-primary">
+            <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
+            {workspace.pinned ? (
+              <span className="text-micro uppercase text-muted" data-pinned="true">
+                pinned
+              </span>
+            ) : null}
+          </span>
+          <span className="text-caption text-muted">{activityLabel(workspace, agents, Date.now())}</span>
+        </button>
+      </RowMenu>
       <ul>
         {active.map((checkout) => (
-          <CheckoutRowView key={checkout.id} checkout={checkout} focused={checkout.id === focusedCheckoutId} actions={actions} />
+          <CheckoutRowView key={checkout.id} workspace={workspace} checkout={checkout} focused={checkout.id === focusedCheckoutId} actions={actions} />
         ))}
         {inactive.length > 0 ? (
           <li>
@@ -233,7 +257,7 @@ function WorkspaceRows({
         ) : null}
         {workspace.inactive_checkouts.expanded
           ? inactive.map((checkout) => (
-              <CheckoutRowView key={checkout.id} checkout={checkout} focused={checkout.id === focusedCheckoutId} actions={actions} />
+              <CheckoutRowView key={checkout.id} workspace={workspace} checkout={checkout} focused={checkout.id === focusedCheckoutId} actions={actions} />
             ))
           : null}
       </ul>
@@ -242,43 +266,63 @@ function WorkspaceRows({
 }
 
 const CheckoutRowView = memo(function CheckoutRowView({
+  workspace,
   checkout,
   focused,
   actions,
 }: {
+  workspace: Workspace;
   checkout: Checkout;
   focused: boolean;
   actions: Actions;
 }) {
   const badge = checkout.pull_request ? pullRequestBadge(checkout.pull_request) : null;
+  const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
   return (
     <li>
-      <button
-        type="button"
-        data-checkout={checkout.id}
-        aria-current={focused ? "true" : undefined}
-        className={`flex w-full flex-col items-start px-md py-xs pl-[var(--size-lineage-indent)] text-left ${
-          focused ? "bg-elevated text-primary" : "text-secondary hover:bg-elevated"
-        }`}
-        onClick={() => actions.focusCheckout(checkout.workspace_id, checkout.id)}
+      <RowMenu
+        label={`${checkout.branch ?? checkout.label} actions`}
+        items={checkoutMenu(workspace, checkout, purposeProblem)}
+        onSelect={(item) => runCheckoutItem(workspace, checkout, item)}
+        data-checkout-menu={checkout.id}
       >
-        <span className="flex w-full items-baseline gap-xs text-body">
-          <span className="w-[var(--size-checkout-icon)] font-mono text-caption text-muted" aria-hidden="true">
-            {checkout.is_worktree ? "⑂" : "◆"}
+        <button
+          type="button"
+          data-checkout={checkout.id}
+          aria-current={focused ? "true" : undefined}
+          className={`flex w-full flex-col items-start px-md py-xs pl-[var(--size-lineage-indent)] text-left ${
+            focused ? "bg-elevated text-primary" : "text-secondary hover:bg-elevated"
+          }`}
+          onClick={() => actions.focusCheckout(checkout.workspace_id, checkout.id)}
+        >
+          <span className="flex w-full items-baseline gap-xs text-body">
+            <span className="w-[var(--size-checkout-icon)] font-mono text-caption text-muted" aria-hidden="true">
+              {checkout.is_worktree ? "⑂" : "◆"}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{checkout.branch ?? checkout.label}</span>
+            {badge ? (
+              <span className={`text-micro ${badge.color}`} data-pr-badge={badge.label}>
+                #{checkout.pull_request?.number} {badge.label}
+              </span>
+            ) : null}
           </span>
-          <span className="min-w-0 flex-1 truncate">{checkout.branch ?? checkout.label}</span>
-          {badge ? (
-            <span className={`text-micro ${badge.color}`} data-pr-badge={badge.label}>
-              #{checkout.pull_request?.number} {badge.label}
+          {checkout.purpose?.text ? (
+            <span className="w-full truncate pl-[var(--size-checkout-icon)] text-caption text-muted" data-purpose={checkout.purpose.origin}>
+              {checkout.purpose.text}
             </span>
           ) : null}
-        </span>
-        {checkout.purpose?.text ? (
-          <span className="w-full truncate pl-[var(--size-checkout-icon)] text-caption text-muted" data-purpose={checkout.purpose.origin}>
-            {checkout.purpose.text}
-          </span>
-        ) : null}
-      </button>
+        </button>
+      </RowMenu>
     </li>
   );
 });
+
+function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
+  if (item === "pin" || item === "unpin") return actions.setPinned(workspace.id, item === "pin");
+  if (item === "new_worktree") useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
+}
+
+function runCheckoutItem(workspace: Workspace, checkout: Checkout, item: MenuItem["id"]) {
+  if (item === "set_purpose") useUiStore.getState().setWorkspaceDialog({ kind: "purpose", workspaceId: workspace.id, checkoutId: checkout.id });
+  if (item === "delete_worktree") useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: workspace.id, checkoutId: checkout.id });
+}

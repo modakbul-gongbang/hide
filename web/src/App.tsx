@@ -11,12 +11,16 @@ import { PaneCanvas } from "./PaneGrid";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
+import { RemoteSurface } from "./RemoteSurface";
 import { RightPanel } from "./RightPanel";
+import { SettingsGate } from "./SettingsSheet";
+import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { checkoutById, editorFor, focusedCheckout } from "./snapshot";
+import { checkoutById, editorFor, focusedCheckout, focusedRemoteDevice } from "./snapshot";
 import { useShellStore } from "./store";
 import { TabBar } from "./TabBar";
+import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { useUiStore } from "./ui";
 import { connectShell, type DispatchFn } from "./ws";
@@ -55,6 +59,18 @@ export function App() {
       // A terminal lives as long as the core streams its pane; released or
       // vanished panes lose theirs here, never on a tab switch (D-05).
       if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) retainTerminals();
+      // A command a remote host refused is one the operator can act on (a
+      // lost connection, a close that needs confirming), so it is a notice
+      // rather than only a diagnostic (design 13).
+      // A notice about one device's command does not outlive the device
+      // context it was about.
+      if (state.rest?.navigator?.focused_device_id !== previous.rest?.navigator?.focused_device_id) {
+        useUiStore.getState().setNotice(null);
+      }
+      const error = state.rest?.status?.last_error;
+      if (error && error.occurred_at !== previous.rest?.status?.last_error?.occurred_at && error.kind.startsWith("remote.control.")) {
+        useUiStore.getState().setNotice({ text: error.message, refreshable: error.kind === "remote.control.close_status_unknown" });
+      }
       const checkout = focusedCheckout(state.rest);
       if (!checkout) return;
       const before = focusedCheckout(previous.rest);
@@ -69,6 +85,20 @@ export function App() {
       session.close();
     };
   }, [actions]);
+
+  // Appearance is the core's: the stored accent replaces the accent token and
+  // the stored interface size scales the interface text tokens, so a reload
+  // restores both from the snapshot (B4). A value outside what the sheet
+  // offers leaves the token default rather than drawing a guess.
+  const accentHex = useShellStore((s) => usableAccent(s.rest?.ui_state?.accent_hex));
+  const fontSize = useShellStore((s) => usableFontSize(s.rest?.ui_state?.font_size));
+  useEffect(() => {
+    const root = document.documentElement.style;
+    if (accentHex) root.setProperty("--color-accent", accentHex);
+    else root.removeProperty("--color-accent");
+    if (fontSize) root.setProperty("--interface-scale", String(fontSize / FONT_SIZE_BASE));
+    else root.removeProperty("--interface-scale");
+  }, [accentHex, fontSize]);
 
   // A reconnect cancels an in-flight drag or cycle; the registration text
   // stays because its component is not remounted (PRD S2 B14).
@@ -145,12 +175,11 @@ export function App() {
     <div className="relative flex h-full flex-col bg-background text-primary">
       <ConnectionBadge />
       <NoticeBar actions={actions} />
+      <WorkspaceNotices actions={actions} />
       <div className="flex min-h-0 flex-1">
         <Sidebar actions={actions} />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <TabBar actions={actions} />
-          <FindBar actions={actions} />
-          <Canvas actions={actions} />
+          <MainSurface actions={actions} />
         </main>
         <RightPanel actions={actions} />
       </div>
@@ -159,6 +188,8 @@ export function App() {
       <ConfirmTrash actions={actions} />
       <Palette actions={actions} />
       <ShortcutSheetGate actions={actions} />
+      <SettingsGate actions={actions} />
+      <WorkspaceDialogs actions={actions} />
     </div>
   );
 }
@@ -166,6 +197,19 @@ export function App() {
 function ShortcutSheetGate({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overlay === "shortcuts");
   return open ? <ShortcutSheet actions={actions} /> : null;
+}
+
+/** This machine's tabs, or the selected SSH device's own tabs and panes in their place (B19). */
+function MainSurface({ actions }: { actions: Actions }) {
+  const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
+  if (remote) return <RemoteSurface actions={actions} />;
+  return (
+    <>
+      <TabBar actions={actions} />
+      <FindBar actions={actions} />
+      <Canvas actions={actions} />
+    </>
+  );
 }
 
 /**

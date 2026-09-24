@@ -93,6 +93,14 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
         type: string;
         payload?: { revision?: number; terminal_sequence?: number };
       };
+      // The daemon describes itself before the first snapshot. It is not
+      // state: the connection turns live only with the snapshot, because
+      // everything keyed to "live" (buffer reconciliation, terminal views)
+      // reads the snapshot that has not arrived yet.
+      if (frame.type === "daemon") {
+        useShellStore.getState().applyFrame(frame);
+        return;
+      }
       if (frame.type === "file_bytes_error") {
         receiveBytesError(frame.payload as unknown as { request_id: string; reason: string });
         return;

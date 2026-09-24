@@ -767,45 +767,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         dispatch(kind: "refresh_status", payload: [:])
     }
 
-    func startAgentInCreatedPane(
-        paneID: String,
-        path: String,
-        provider: AgentProvider,
-        completion: @escaping @MainActor (AgentLaunchResult) -> Void
-    ) {
-        guard case .connected = localHerdrMutationReadiness else {
-            completion(AgentLaunchResult(
-                succeeded: false,
-                message: localHerdrMutationReadiness.message,
-                paneID: paneID
-            ))
-            return
-        }
-        guard let runtimeSelection else {
-            completion(AgentLaunchResult(
-                succeeded: false,
-                message: HideStartupDiagnostic.runtimeUnavailable,
-                paneID: paneID
-            ))
-            return
-        }
-        let herdrPath = runtimeSelection.path
-        Task { @MainActor in
-            let result = await Task.detached {
-                HerdrAgentLauncher.startInPane(
-                    paneID: paneID,
-                    path: path,
-                    provider: provider,
-                    agentIsInstalled: AgentCLIAvailability.isUsable(provider.rawValue),
-                    run: { arguments in
-                        HerdrAgentLauncher.run(herdrPath: herdrPath, arguments: arguments)
-                    }
-                )
-            }.value
-            completion(result)
-        }
-    }
-
     @discardableResult
     func registerTerminal(
         paneID: String,

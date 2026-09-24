@@ -935,8 +935,9 @@ fn signal(pid: u32, sig: i32) {
 #[cfg(not(unix))]
 fn signal(_pid: u32, _sig: i32) {}
 
-/// Shared by every backend that starts a user-installed CLI.
-pub(crate) fn resolve_binary(binary: &Path) -> Option<PathBuf> {
+/// Shared by every backend that starts a user-installed CLI, and by the core
+/// before it asks Herdr to start one in a pane.
+pub fn resolve_binary(binary: &Path) -> Option<PathBuf> {
     if binary.components().count() > 1 {
         return binary.is_file().then(|| binary.to_path_buf());
     }

@@ -113,7 +113,8 @@ The write itself runs on the coordinator thread, outside every lock, and the dia
 The helper ships beside the app's own executable, in `Contents/MacOS/`, under the name `hide_agent_hooks::HELPER_BINARY_NAME`.
 `hide_agent_hooks::helper_for` is the only thing that resolves it, and it checks the layout rather than the file name: the executable's parent must be `MacOS`, its parent `Contents`, and its parent must end in `.app`.
 Anything else is refused as `HelperNotBundled`, and a bundle that shipped without the helper is refused as `HelperMissing`.
-A refused install writes nothing and reports why; an install the operator pressed for also raises `agent_hooks.install_refused` so the press is answered on screen.
+A refused install writes nothing and reports why; an install the operator pressed for also raises `agent_hooks.install_refused` and announces it, so the press is answered on screen at once rather than on some later change.
+A standalone `hided` is not inside an application bundle, so the web shell's install is refused this way and names the installed app as the place to install from.
 
 The refusal exists because a hook command outlives the process that wrote it.
 It is a path stored in the operator's own configuration file and run by every future session of that agent, so the only path worth writing is one that survives a rebuild.

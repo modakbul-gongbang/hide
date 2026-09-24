@@ -2432,7 +2432,10 @@ impl Runtime {
             .snapshot
             .task_operation
             .as_ref()
-            .is_some_and(|operation| operation.phase == "working")
+            .is_some_and(|operation| {
+                // A created pane's agent answer still lands in this slot.
+                operation.phase == "working" || operation.agent_phase.as_deref() == Some("starting")
+            })
         {
             return Err("Another task operation is still running".into());
         }
@@ -2449,6 +2452,8 @@ impl Runtime {
             pane_id: None,
             agent_kind,
             message: None,
+            agent_phase: None,
+            agent_message: None,
         });
         Ok(id)
     }
@@ -2482,6 +2487,9 @@ impl Runtime {
                 operation.phase = "ready".into();
                 operation.path = Some(path.clone());
                 operation.pane_id = Some(pane_id.clone());
+                // The creation is settled here; the chosen agent starts on the
+                // same worker afterwards and reports on its own axis.
+                operation.agent_phase = operation.agent_kind.as_ref().map(|_| "starting".into());
                 if should_focus {
                     self.snapshot.terminal.pane_id = Some(pane_id.clone());
                     self.snapshot.focused.surface = Surface::Terminal;
@@ -2922,12 +2930,110 @@ impl Runtime {
         }
         true
     }
+    /// The agent the task's worker should now start: the created pane and
+    /// the chosen kind, once the creation is settled.
+    pub(crate) fn pending_task_agent_start(&self, id: u64) -> Option<(String, String)> {
+        let operation = self.snapshot.task_operation.as_ref()?;
+        if operation.id != id
+            || operation.phase != "ready"
+            || operation.agent_phase.as_deref() != Some("starting")
+        {
+            return None;
+        }
+        Some((operation.pane_id.clone()?, operation.agent_kind.clone()?))
+    }
+
+    pub(crate) fn ingest_task_agent_result(
+        &mut self,
+        id: u64,
+        outcome: live::TaskAgentOutcome,
+    ) -> bool {
+        let Some(operation) = self.snapshot.task_operation.as_mut().filter(|operation| {
+            operation.id == id && operation.agent_phase.as_deref() == Some("starting")
+        }) else {
+            return false;
+        };
+        let (phase, message) = match outcome {
+            live::TaskAgentOutcome::Started => ("started", None),
+            live::TaskAgentOutcome::Failed(message) => ("failed", Some(message)),
+            live::TaskAgentOutcome::Unknown(message) => ("unknown", Some(message)),
+        };
+        crate::diagnostic!(serde_json::json!({
+            "component": "task_operation",
+            "kind": format!("agent.{phase}"),
+            "id": id,
+            "pane_id": operation.pane_id,
+            "agent_kind": operation.agent_kind,
+        }));
+        operation.agent_phase = Some(phase.to_owned());
+        operation.agent_message = message;
+        true
+    }
+
+    /// Starts the chosen agent again in the pane the task already created.
+    /// Only a definite failure is retried; an unknown answer may have started
+    /// the agent, and starting it twice is not a recovery.
+    pub(super) fn retry_task_agent(&mut self, id: u64) -> bool {
+        let Some(operation) = self.snapshot.task_operation.as_ref().filter(|operation| {
+            operation.id == id && operation.agent_phase.as_deref() == Some("failed")
+        }) else {
+            self.set_error(
+                "task_operation.agent_retry_unavailable",
+                "That agent start is no longer waiting for a retry",
+                false,
+            );
+            return true;
+        };
+        let pane_listed = operation.pane_id.as_deref().is_some_and(|pane_id| {
+            self.snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.checkouts)
+                .flat_map(|checkout| &checkout.tabs)
+                .flat_map(|tab| &tab.panes)
+                .any(|pane| pane.id == pane_id)
+        });
+        if !pane_listed {
+            self.set_error(
+                "task_operation.agent_retry_pane_gone",
+                "The pane the agent was meant to start in is gone",
+                false,
+            );
+            return true;
+        }
+        let Some(context) = self.live.as_ref().cloned() else {
+            self.set_error(
+                "task_operation.agent_retry_offline",
+                "Starting an agent needs a live Herdr connection",
+                true,
+            );
+            return true;
+        };
+        let operation = self
+            .snapshot
+            .task_operation
+            .as_mut()
+            .expect("checked above");
+        operation.agent_phase = Some("starting".into());
+        operation.agent_message = None;
+        if let Err(message) = live::spawn_task_agent_start(context, id) {
+            return self.ingest_task_agent_result(id, live::TaskAgentOutcome::Failed(message));
+        }
+        true
+    }
+
     pub(super) fn acknowledge_task_operation(&mut self, id: u64) -> bool {
         if self
             .snapshot
             .task_operation
             .as_ref()
-            .is_some_and(|operation| operation.id == id && operation.phase != "working")
+            .is_some_and(|operation| {
+                operation.id == id
+                    && operation.phase != "working"
+                    // The agent's answer is still on its way to this slot.
+                    && operation.agent_phase.as_deref() != Some("starting")
+            })
         {
             self.snapshot.task_operation = None;
             true
@@ -3220,6 +3326,10 @@ impl Runtime {
             }
         }
     }
+    /// Rebuilds the navigator from registrations alone, as test setup; the
+    /// product rebuilds it from each session publish and device rows with
+    /// `rebuild_device_rows`.
+    #[cfg(test)]
     pub(super) fn rebuild_catalog(&mut self) {
         let mut workspaces = workspace::build_catalog(
             &self.snapshot.ui_state.workspace_registrations,

@@ -45,12 +45,16 @@ export default {
         md: "var(--radius-md)",
         lg: "var(--radius-lg)",
       },
+      // Interface text scales with Settings > Appearance > Interface font
+      // (`--interface-scale`, set from the core's ui_state.font_size); the
+      // terminal and editor sizes are separate tokens and do not scale here.
       fontSize: {
-        micro: "var(--text-micro)",
-        caption: "var(--text-caption)",
-        body: "var(--text-body)",
-        subhead: "var(--text-subhead)",
-        title: "var(--text-title)",
+        micro: "calc(var(--text-micro) * var(--interface-scale, 1))",
+        caption: "calc(var(--text-caption) * var(--interface-scale, 1))",
+        body: "calc(var(--text-body) * var(--interface-scale, 1))",
+        subhead: "calc(var(--text-subhead) * var(--interface-scale, 1))",
+        title: "calc(var(--text-title) * var(--interface-scale, 1))",
+        headline: "calc(var(--text-headline) * var(--interface-scale, 1))",
       },
     },
   },

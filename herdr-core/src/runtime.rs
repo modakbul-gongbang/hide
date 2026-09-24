@@ -473,6 +473,15 @@ fn remote_pane_id_prefix(target_id: &str) -> String {
     format!("remote:{target_id}:pane:")
 }
 
+/// Whether a pane id is one the core scoped to a remote target
+/// (`operations::remote_pane_id`), whichever target it was; a Herdr pane id on
+/// this machine never takes that form.
+fn is_remote_scoped_pane_id(pane_id: &str) -> bool {
+    pane_id
+        .strip_prefix("remote:")
+        .is_some_and(|rest| rest.contains(":pane:"))
+}
+
 /// Copies each pane's status word and close-confirmation answer from the agent
 /// rows that carry the read axis.
 ///

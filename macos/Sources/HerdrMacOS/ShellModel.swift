@@ -182,6 +182,8 @@ final class ShellModel: ObservableObject {
     @Published private(set) var sidebarReveal: SidebarRevealRequest?
     @Published var deleteWorktreeBranch = false
     private var handledRemovalIDs: Set<UInt64> = []
+    private var handledTaskAgentIDs: Set<UInt64> = []
+    private var acknowledgedTaskOperationIDs: Set<UInt64> = []
     @Published var worktreeWorkspace: CoreWorkspaceSnapshot?
     @Published var worktreeDraft = WorktreeSheetDraft()
     @Published private(set) var worktreeError: String?
@@ -1884,13 +1886,22 @@ final class ShellModel: ObservableObject {
     }
 
     private func observeTaskOperation(in snapshot: CoreSnapshot?) {
-        guard let operation = snapshot?.taskOperation,
-              operation.phase != "working",
-              handledTaskOperationIDs.insert(operation.id).inserted
-        else { return }
-        defer {
-            core.dispatch(kind: "task_operation_ack", payload: ["id": operation.id])
+        guard let operation = snapshot?.taskOperation, operation.phase != "working" else { return }
+        // The core starts a chosen agent after the creation settles and
+        // reports it on its own axis, so the creation is handled once and the
+        // agent's answer once, and the receipt is acknowledged only after both.
+        if operation.agentPhase != nil, operation.agentPhase != "starting",
+           handledTaskAgentIDs.insert(operation.id).inserted,
+           operation.agentPhase == "failed" || operation.agentPhase == "unknown" {
+            interactionNotice = operation.agentMessage ?? "The agent did not start."
         }
+        defer {
+            if operation.agentPhase != "starting",
+               acknowledgedTaskOperationIDs.insert(operation.id).inserted {
+                core.dispatch(kind: "task_operation_ack", payload: ["id": operation.id])
+            }
+        }
+        guard handledTaskOperationIDs.insert(operation.id).inserted else { return }
         if operation.kind == "checkout_issue" {
             // Metadata writes create neither a pane nor a path. Keep the
             // result until the popover consumes it, even after the core ack.
@@ -1920,7 +1931,7 @@ final class ShellModel: ObservableObject {
             }
             return
         }
-        guard let paneID = operation.paneID, let path = operation.path else {
+        guard operation.paneID != nil, operation.path != nil else {
             let message = "The operation completed without a pane or path."
             if operation.kind == "worktree_create" {
                 worktreeError = message
@@ -1929,46 +1940,21 @@ final class ShellModel: ObservableObject {
             }
             return
         }
-        if operation.kind == "worktree_create" || operation.kind == "agent_start" {
-            if operation.kind == "worktree_create" {
-                worktreeWorkspace = nil
-                worktreeDraft = WorktreeSheetDraft()
-            }
-            if let raw = operation.agentKind, let provider = AgentProvider(rawValue: raw) {
-                guard requireLocalHerdrMutationReadiness() else { return }
-                core.startAgentInCreatedPane(
-                    paneID: paneID,
-                    path: path,
-                    provider: provider
-                ) { [weak self] result in
-                    if !result.succeeded { self?.interactionNotice = result.message }
-                }
-            }
+        if operation.kind == "worktree_create" {
+            worktreeWorkspace = nil
+            worktreeDraft = WorktreeSheetDraft()
         }
     }
 
+    /// The core closes the panes, rechecks the target and runs Git itself;
+    /// the shell only reports how the request it made ended.
     private func observeWorktreeRemoval(in snapshot: CoreSnapshot?) {
-        guard let removal = snapshot?.worktreeRemoval else { return }
-        if removal.phase == "failed", !handledRemovalIDs.contains(removal.id) {
-            handledRemovalIDs.insert(removal.id)
-            interactionNotice = removal.message ?? "Worktree removal failed."
-        }
-        guard removal.phase == "ready", handledRemovalIDs.insert(removal.id).inserted else { return }
-        Task { @MainActor [weak self] in
-            let result = await Task.detached(priority: .userInitiated) {
-                GitWorktreeRemover.remove(repositoryRoot: removal.repositoryRoot,
-                    path: removal.checkoutPath,
-                    expectedHeadSHA: removal.expectedHeadSHA,
-                    expectedBranch: removal.expectedBranch,
-                    protectedBaseBranch: removal.protectedBaseBranch,
-                    branch: removal.deleteBranch ? removal.branch : nil)
-            }.value
-            guard let self else { return }
-            core.dispatch(kind: "worktree_removal_finished", payload: [
-                "id": removal.id, "removed": result.succeeded, "message": result.message,
-            ])
-            interactionNotice = result.message
-        }
+        guard let removal = snapshot?.worktreeRemoval,
+              removal.phase == "finished" || removal.phase == "failed",
+              handledRemovalIDs.insert(removal.id).inserted
+        else { return }
+        interactionNotice = removal.message
+            ?? (removal.phase == "failed" ? "Worktree removal failed." : "Worktree removed.")
     }
 
     func addTab() {

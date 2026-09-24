@@ -196,7 +196,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
     if (!entry) return;
     useUiStore.getState().closeOverlay();
     if (entry.kind === "agent" && entry.paneId) {
-      actions.dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: entry.paneId, origin: "operator" } });
+      actions.focusPane(entry.paneId);
     } else if (entry.kind === "project" && entry.workspaceId) {
       actions.focusProject(entry.workspaceId);
     } else if (entry.workspaceId && entry.checkoutId) {

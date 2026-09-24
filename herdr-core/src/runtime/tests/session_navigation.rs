@@ -2670,3 +2670,73 @@ fn tab_strip_reorder_a_drag_that_interleaves_two_workspaces_still_lands() {
 
     std::fs::remove_dir_all(&directory).ok();
 }
+
+/// The web shell's chords are its own: a save from a shell that does not
+/// know them (the Swift shell, or any older payload) keeps them.
+#[test]
+fn browser_shortcut_bindings_survive_a_ui_state_update_that_omits_them() {
+    let mut runtime = runtime();
+    let set = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "ui_state_update",
+        "payload": {
+            "expanded_paths": [],
+            "selected_path": null,
+            "selected_pane_id": null,
+            "shortcut_bindings": {"split_right": "command+option+r"},
+            "browser_shortcut_bindings": {"split_right": "alt+KeyR"}
+        }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&set));
+    let native_save = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "ui_state_update",
+        "payload": {
+            "expanded_paths": [],
+            "selected_path": null,
+            "selected_pane_id": null,
+            "shortcut_bindings": {}
+        }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&native_save));
+    let state = &runtime.snapshot().ui_state;
+    assert!(state.shortcut_bindings.is_empty());
+    assert_eq!(
+        state
+            .browser_shortcut_bindings
+            .get("split_right")
+            .map(String::as_str),
+        Some("alt+KeyR")
+    );
+
+    let oversized: serde_json::Map<String, serde_json::Value> = (0..40)
+        .map(|index| (format!("command_{index}"), serde_json::json!("alt+KeyR")))
+        .collect();
+    let flood = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "ui_state_update",
+        "payload": {
+            "expanded_paths": [],
+            "selected_path": null,
+            "selected_pane_id": null,
+            "browser_shortcut_bindings": oversized
+        }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&flood));
+    assert_eq!(
+        runtime.snapshot().ui_state.browser_shortcut_bindings.len(),
+        1
+    );
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("ui_state.browser_shortcuts_invalid")
+    );
+}

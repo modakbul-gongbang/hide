@@ -99,6 +99,7 @@ A file that exists and cannot be read is never taken as the defaults in silence:
 The plugin writes that line when the reason changes, not when it reads the file.
 It re-reads the choice on every scan and rotates nothing, so a line per read would grow its log for as long as the file stayed broken; a repaired file is recorded once too, as `ai_settings_readable`, so fixing it is visible in the same place.
 A write that fails says so on the same group, because a choice the operator made and the file on disk must not silently disagree.
+A write that succeeds marks the choice as chosen at once, so the group stops calling it the default without waiting for the next launch to read the file back.
 A session with no home directory to write to reports that on the group for the same reason: the choice has already left the runtime, so it cannot be dropped quietly.
 
 Choosing a provider reorders the ordinary background-feature priority and changes nothing else.
@@ -108,6 +109,7 @@ Project Memory uses that ordinary priority and fallback policy, while retaining 
 Settings shows each provider's availability and the models it offers.
 Both come from asking the provider, so no model list is written into the core or the shell; `AiRouter::availability()` and `AiRouter::models()` are the source.
 Asking costs child processes, so the probe is a capability reader like the project panel's: the session-sync coordinator drives it, the work runs on a worker thread, the runtime mutex is never held across it, and it asks nothing at all while the group is off screen.
+In the web shell the daemon holds that flag for every connected page: each page reports only its own demand, and a page that closes or disconnects releases it (`hided/src/demand.rs`).
 `scripts/check-capability-readers-off-lock.sh` asserts that structurally, by name.
 
 ## Process ownership and budgets

@@ -221,6 +221,7 @@ An expanded Workspace omits the summary and sentence because each nested agent r
 The full second-line sentence remains in the checkout tooltip and accessibility label.
 The right-edge disclosure and fixed semantic status colors follow [the shared status contract](docs/status-model.md#shared-agent-and-workspace-status-contract).
 `agentWorking` (`#61A6FF`) is the fixed blue semantic status token; workspace chrome and user accent choices do not recolor it.
+The accents Settings offers are the `AccentChoice` tokens (`--color-accent-choice-lime`, `-sky`, `-violet`, `-amber`); the chosen one is stored as its hex in `ui_state.accent_hex` and takes the place of `accent`.
 The checkout tooltip starts with `#N · state · title` when a pull request is known and appends `Last known <age>` when stale, then carries the agent count, detached commit and path when applicable.
 Pull-request numbers, file counts, ahead and behind counts, review decisions and CI do not appear on the sidebar surface.
 Clicking the lifecycle octicon or choosing `Open PR #N` from the checkout context menu opens that pull request in GitHub; the rest of the row retains its disclosure or selection action.
@@ -469,6 +470,7 @@ Up and Down move focus, Return or a click selects, and Escape dismisses without 
 Empty lists say `No devices available`, long names truncate in their title line, and the complete identity remains in the row's accessibility label.
 The list uses the existing tooltip width and relationship-list height cap, with scrolling beyond the cap.
 The reusable device-row and remote-location state sheets are maintained in the design library; the approved scope is recorded in `agents/prd/remote-interface-parity/prd.md`.
+The web shell draws the same trigger and list at the bottom of its sidebar from the shared tokens (`web/src/DevicePicker.tsx`), with line icons standing in for the SF Symbols.
 
 ### Search keyboard navigation
 

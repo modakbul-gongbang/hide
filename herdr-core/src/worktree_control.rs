@@ -23,23 +23,58 @@ pub fn spawn_worktree_close(
                 &pane_ids,
                 CONFIRM_TIMEOUT,
             );
-            if let Some(runtime) = context.runtime.upgrade() {
-                match runtime.lock() {
-                    Ok(mut guard) => {
-                        guard.ingest_worktree_close_result(id, result);
-                    }
-                    Err(error) => {
-                        trace(
-                            &checkout_path,
-                            &pane_ids,
-                            "publish_failed",
-                            Some(&error.to_string()),
-                        );
-                        return;
-                    }
+            // This thread is the removal's only executor: it closes the panes,
+            // takes the runtime's confirmation, and runs Git itself. No shell
+            // reports a completion, so a client cannot claim one.
+            let Some(runtime) = context.runtime.upgrade() else {
+                return;
+            };
+            let confirmed = match runtime.lock() {
+                Ok(mut guard) => {
+                    guard.ingest_worktree_close_result(id, &pane_ids, result);
+                    guard.confirmed_worktree_removal(id)
                 }
-                context.notifier.notify();
+                Err(error) => {
+                    trace(
+                        &checkout_path,
+                        &pane_ids,
+                        "publish_failed",
+                        Some(&error.to_string()),
+                    );
+                    return;
+                }
+            };
+            context.notifier.notify();
+            let Some(request) = confirmed else {
+                return;
+            };
+            trace(&checkout_path, &pane_ids, "remove_started", None);
+            let outcome = cleanup::remove_confirmed(&request);
+            trace(
+                &checkout_path,
+                &pane_ids,
+                if outcome.is_ok() {
+                    "remove_finished"
+                } else {
+                    "remove_failed"
+                },
+                outcome.as_ref().err().map(String::as_str),
+            );
+            match runtime.lock() {
+                Ok(mut guard) => {
+                    guard.ingest_worktree_removal_result(id, outcome);
+                }
+                Err(error) => {
+                    trace(
+                        &checkout_path,
+                        &pane_ids,
+                        "publish_failed",
+                        Some(&error.to_string()),
+                    );
+                    return;
+                }
             }
+            context.notifier.notify();
         })
         .map(|_| ())
         .map_err(|error| format!("worktree close worker could not be started: {error}"))
@@ -418,21 +453,23 @@ pub fn spawn_worktree_create(
     thread::Builder::new()
         .name("herdr-core-worktree-create".into())
         .spawn(move || {
-            let result =
-                reject_existing_unchecked_out_branch(&request.repository_root, &request.branch)
-                    .and_then(|()| {
-                        create_worktree_observing_purpose(
-                            context.api_connector.as_ref(),
-                            &request,
-                            |path, purpose| {
-                                if let Some(runtime) = context.runtime.upgrade()
-                                    && let Ok(mut guard) = runtime.lock()
-                                {
-                                    guard.begin_created_purpose_write(path, purpose);
-                                }
-                            },
-                        )
-                    });
+            let result = valid_branch_name(&request.repository_root, &request.branch)
+                .and_then(|()| {
+                    reject_existing_unchecked_out_branch(&request.repository_root, &request.branch)
+                })
+                .and_then(|()| {
+                    create_worktree_observing_purpose(
+                        context.api_connector.as_ref(),
+                        &request,
+                        |path, purpose| {
+                            if let Some(runtime) = context.runtime.upgrade()
+                                && let Ok(mut guard) = runtime.lock()
+                            {
+                                guard.begin_created_purpose_write(path, purpose);
+                            }
+                        },
+                    )
+                });
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
                     guard.ingest_task_operation_result(request.id, result);
@@ -441,6 +478,7 @@ pub fn spawn_worktree_create(
                 }
                 context.notifier.notify();
             }
+            start_task_agent(&context, request.id);
         })
         .map(|_| ())
         .map_err(|error| format!("worktree create worker could not be started: {error}"))
@@ -591,6 +629,91 @@ pub struct CheckoutTabRequest {
     pub session_workspace_id: Option<String>,
 }
 
+/// How starting the chosen agent in a task's created pane ended.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TaskAgentOutcome {
+    Started,
+    /// Herdr refused, or the agent is not installed; nothing started.
+    Failed(String),
+    /// Herdr did not answer; the agent may be running. The pane says which.
+    Unknown(String),
+}
+
+/// `agent.start` waits up to this long for the pane's shell; the read waits a
+/// little longer so a slow start is not reported as an unknown one.
+const AGENT_START_TIMEOUT_MS: u64 = 120_000;
+
+/// Starts the agent the task chose, in the pane the task created, and hands
+/// the answer back on its own axis. The creation was already published, so a
+/// failure here never hides the worktree or the pane.
+fn start_task_agent(context: &LiveContext, id: u64) {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return;
+    };
+    let pending = match runtime.lock() {
+        Ok(guard) => guard.pending_task_agent_start(id),
+        Err(_) => return,
+    };
+    let Some((pane_id, kind)) = pending else {
+        return;
+    };
+    let outcome = launch_agent(context.api_connector.as_ref(), id, &pane_id, &kind);
+    if let Ok(mut guard) = runtime.lock() {
+        guard.ingest_task_agent_result(id, outcome);
+    } else {
+        return;
+    }
+    context.notifier.notify();
+}
+
+pub fn spawn_task_agent_start(context: LiveContext, id: u64) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-task-agent-start".into())
+        .spawn(move || start_task_agent(&context, id))
+        .map(|_| ())
+        .map_err(|error| format!("agent start worker could not be started: {error}"))
+}
+
+fn launch_agent(
+    connector: &dyn ApiConnector,
+    id: u64,
+    pane_id: &str,
+    kind: &str,
+) -> TaskAgentOutcome {
+    // Herdr would type the command into the pane's shell and wait for an
+    // agent that can never appear; say so before asking it.
+    if hide_ai::resolve_binary(Path::new(kind)).is_none() {
+        return TaskAgentOutcome::Failed(format!(
+            "{kind} is not installed on the daemon's PATH. Install it, then retry."
+        ));
+    }
+    let params = match wire::agent_start_params(pane_id, &format!("hide-{kind}"), kind, Vec::new())
+    {
+        Ok(params) => params,
+        Err(message) => return TaskAgentOutcome::Failed(message),
+    };
+    match request_with_correlation_id(
+        connector,
+        &format!("herdr-core:task:{id}:agent"),
+        "agent.start",
+        params,
+        Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
+    ) {
+        Ok(value) => match wire::started_agent(value) {
+            Ok(_) => TaskAgentOutcome::Started,
+            Err(message) => TaskAgentOutcome::Unknown(format!(
+                "Herdr answered the agent start in an unexpected shape ({message}). Check the pane before retrying."
+            )),
+        },
+        Err(ApiError::Remote { code, message }) => {
+            TaskAgentOutcome::Failed(format!("Agent could not start: {code}: {message}"))
+        }
+        Err(error) => TaskAgentOutcome::Unknown(format!(
+            "Herdr did not confirm the agent start ({error}). Check the pane before retrying."
+        )),
+    }
+}
+
 pub fn spawn_checkout_tab_create(
     context: LiveContext,
     request: CheckoutTabRequest,
@@ -607,6 +730,7 @@ pub fn spawn_checkout_tab_create(
                 }
                 context.notifier.notify();
             }
+            start_task_agent(&context, request.id);
         })
         .map(|_| ())
         .map_err(|error| format!("checkout tab worker could not be started: {error}"))
@@ -772,6 +896,27 @@ fn same_checkout_path(left: &str, right: &str) -> bool {
     let left = std::fs::canonicalize(left).unwrap_or_else(|_| Path::new(left).to_path_buf());
     let right = std::fs::canonicalize(right).unwrap_or_else(|_| Path::new(right).to_path_buf());
     left == right
+}
+
+/// Git's own rule for a new branch name, asked before anything is created so
+/// an invalid name leaves the repository untouched. A leading `-` is refused
+/// first because Git would read it as an option.
+fn valid_branch_name(repository_root: &str, branch: &str) -> Result<(), String> {
+    if branch.starts_with('-') {
+        return Err(format!("{branch} is not a valid branch name"));
+    }
+    let checked = Command::new("git")
+        .arg("--no-optional-locks")
+        .arg("-C")
+        .arg(repository_root)
+        .args(["check-ref-format", "--branch", branch])
+        .output()
+        .map_err(|error| format!("git could not be run: {error}"))?;
+    if checked.status.success() {
+        Ok(())
+    } else {
+        Err(format!("{branch} is not a valid branch name"))
+    }
 }
 
 fn reject_existing_unchecked_out_branch(repository_root: &str, branch: &str) -> Result<(), String> {

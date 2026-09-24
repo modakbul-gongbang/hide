@@ -2245,3 +2245,244 @@ fn a_session_workspace_shared_by_two_projects_is_not_reused_for_new_tabs() {
         "an exclusive workspace remains reusable"
     );
 }
+
+/// The chosen agent starts after the creation is published, and its answer
+/// lands on its own axis: a failure keeps the created pane and path, and only
+/// a definite failure is offered again.
+#[test]
+fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
+    let mut runtime = runtime();
+    let id = runtime
+        .begin_task_operation(
+            "agent_start",
+            Some("/tmp/hide-agent-task".into()),
+            None,
+            None,
+            Some("claude".into()),
+        )
+        .unwrap();
+    assert!(runtime.ingest_task_operation_result(
+        id,
+        Ok(live::WorktreeTaskOutcome {
+            path: "/tmp/hide-agent-task".into(),
+            pane_id: "w1:p9".into(),
+            purpose_error: None,
+            unconfirmed_purpose_token: None,
+        }),
+    ));
+    let operation = runtime.snapshot().task_operation.clone().unwrap();
+    assert_eq!(operation.phase, "ready");
+    assert_eq!(operation.agent_phase.as_deref(), Some("starting"));
+    assert_eq!(
+        runtime.pending_task_agent_start(id),
+        Some(("w1:p9".to_owned(), "claude".to_owned()))
+    );
+    // An acknowledgement while the agent is still starting keeps the slot.
+    runtime.acknowledge_task_operation(id);
+    assert!(runtime.snapshot().task_operation.is_some());
+    // Nor can another task take the slot while the agent's answer is due.
+    assert!(
+        runtime
+            .begin_task_operation("checkout_purpose", None, None, None, None)
+            .is_err()
+    );
+
+    assert!(runtime.ingest_task_agent_result(
+        id,
+        live::TaskAgentOutcome::Failed("claude is not installed".into()),
+    ));
+    let operation = runtime.snapshot().task_operation.clone().unwrap();
+    assert_eq!(operation.phase, "ready");
+    assert_eq!(operation.pane_id.as_deref(), Some("w1:p9"));
+    assert_eq!(operation.agent_phase.as_deref(), Some("failed"));
+    assert_eq!(
+        operation.agent_message.as_deref(),
+        Some("claude is not installed")
+    );
+    assert_eq!(runtime.pending_task_agent_start(id), None);
+
+    // The pane is not in this runtime's navigator, so the retry says so and
+    // starts nothing.
+    let retry = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "task_agent_retry",
+        "payload": { "id": id }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&retry));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("task_operation.agent_retry_pane_gone")
+    );
+    assert_eq!(
+        runtime
+            .snapshot()
+            .task_operation
+            .as_ref()
+            .and_then(|op| op.agent_phase.as_deref()),
+        Some("failed")
+    );
+    runtime.acknowledge_task_operation(id);
+    assert!(runtime.snapshot().task_operation.is_none());
+}
+
+/// Removal completes only on the core's own worker. A client that claims a
+/// completion names an event the core no longer has, so a removal waiting on
+/// Git cannot be settled from outside.
+#[test]
+fn a_client_cannot_claim_a_worktree_removal_finished() {
+    let mut runtime = runtime();
+    runtime.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+        id: 7,
+        repository_root: "/tmp/hide-removal-repo".into(),
+        checkout_path: "/tmp/hide-removal-repo-linked".into(),
+        expected_head_sha: None,
+        expected_branch: Some("linked".into()),
+        protected_base_branch: Some("main".into()),
+        branch: Some("linked".into()),
+        delete_branch: false,
+        phase: "removing".into(),
+        message: None,
+    });
+    let forged = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "worktree_removal_finished",
+        "payload": { "id": 7, "removed": true, "message": "done" }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&forged));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("event.unknown_kind")
+    );
+    assert_eq!(
+        runtime
+            .snapshot()
+            .worktree_removal
+            .as_ref()
+            .map(|removal| removal.phase.as_str()),
+        Some("removing")
+    );
+    assert!(runtime.ingest_worktree_removal_result(7, Ok("Deleted.".into())));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .worktree_removal
+            .as_ref()
+            .map(|removal| removal.phase.as_str()),
+        Some("finished")
+    );
+    assert!(!runtime.ingest_worktree_removal_result(7, Ok("again".into())));
+}
+
+/// Herdr confirms the panes gone before the navigator applies the close, so
+/// the pane just closed is still listed when the confirmation lands. Only a
+/// pane that was not among those closed stops the removal.
+#[test]
+fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
+    use crate::model::{ProjectWorktreesSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot};
+
+    let mut runtime = runtime();
+    let mut project = workspace(
+        "workspace-1",
+        "hide",
+        "/repo",
+        vec![
+            checkout("workspace-1", "main", "/repo", None),
+            checkout(
+                "workspace-1",
+                "open",
+                "/repo.worktrees/open",
+                Some(pane("w1:p1", "/repo.worktrees/open")),
+            ),
+        ],
+    );
+    project.is_git = true;
+    runtime.snapshot.navigator.workspaces = vec![project];
+    runtime.ingest_worktrees(WorktreeCatalogSnapshot {
+        projects: vec![ProjectWorktreesSnapshot {
+            root_path: "/repo".to_owned(),
+            worktrees: vec![
+                WorktreeSnapshot {
+                    path: "/repo".to_owned(),
+                    branch: Some("main".to_owned()),
+                    is_main: true,
+                    ..WorktreeSnapshot::default()
+                },
+                WorktreeSnapshot {
+                    path: "/repo.worktrees/open".to_owned(),
+                    branch: Some("open".to_owned()),
+                    head_sha: Some("abc".to_owned()),
+                    ..WorktreeSnapshot::default()
+                },
+            ],
+            ..ProjectWorktreesSnapshot::default()
+        }],
+    });
+    let closing = |id: u64| crate::model::WorktreeRemovalSnapshot {
+        id,
+        repository_root: "/repo".into(),
+        checkout_path: "/repo.worktrees/open".into(),
+        expected_head_sha: Some("abc".into()),
+        expected_branch: Some("open".into()),
+        protected_base_branch: Some("main".into()),
+        branch: Some("open".into()),
+        delete_branch: false,
+        phase: "closing".into(),
+        message: None,
+    };
+
+    runtime.snapshot.worktree_removal = Some(closing(1));
+    assert!(runtime.ingest_worktree_close_result(1, &["w1:p1".to_owned()], Ok(())));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .worktree_removal
+            .as_ref()
+            .map(|removal| removal.phase.as_str()),
+        Some("removing")
+    );
+    assert!(runtime.confirmed_worktree_removal(1).is_some());
+
+    runtime.snapshot.worktree_removal = Some(closing(2));
+    assert!(runtime.ingest_worktree_close_result(2, &[], Ok(())));
+    let removal = runtime.snapshot().worktree_removal.clone().unwrap();
+    assert_eq!(removal.phase, "failed");
+    assert!(removal.message.unwrap().contains("A pane appeared"));
+    assert!(runtime.confirmed_worktree_removal(2).is_none());
+}
+
+/// The kind reaches `agent.start`, which runs it in the new pane's shell, so
+/// a creation that names anything but a provider Hide starts is refused
+/// before any worktree exists.
+#[test]
+fn a_worktree_creation_naming_an_unknown_agent_is_refused() {
+    let mut runtime = runtime();
+    let create = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "create_worktree",
+        "payload": { "repository_root": "/repo", "branch": "feature", "agent_kind": "/tmp/run.sh" }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&create));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("worktree.create_unknown_agent")
+    );
+    assert!(runtime.snapshot().task_operation.is_none());
+}

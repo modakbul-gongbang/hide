@@ -1,0 +1,174 @@
+// The selected SSH device as the shell's context (PRD S5 B19). The core
+// already connects to the device, projects its Herdr session with ids scoped
+// to the target, attaches the panes of that Herdr's visible tab, and routes
+// `remote_control` to the exact host after checking every id against the
+// session. This module only reads that projection and builds the events, so
+// the sidebar, the strip, the canvas and every command resolve one context the
+// same way and a remote action can never be built from a local id.
+
+import type { AgentRow, Checkout, Device, RemotePaneLayout, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
+
+export type RemoteContext = {
+  device: Device;
+  /** The core's connection row for the device; null before its first attempt is recorded. */
+  status: RemoteStatus | null;
+  /** The last session the core read from that host; kept while the connection is `stale`. */
+  session: RemoteSession | null;
+};
+
+/**
+ * The SSH device the operator selected, with its connection and session, or
+ * null while this machine is the context.
+ */
+export function remoteContext(rest: SnapshotRest | null): RemoteContext | null {
+  const id = rest?.navigator?.focused_device_id;
+  if (!id || id === "local") return null;
+  const device = rest?.navigator?.devices?.find((row) => row.id === id && row.kind === "remote");
+  if (!device) return null;
+  const status = rest?.status?.remote?.find((row) => row.target_id === id) ?? null;
+  return { device, status, session: status?.session ?? null };
+}
+
+/** Whether a command may go to the host now; the core refuses the rest with `remote.control.not_connected`. */
+export function remoteConnected(context: RemoteContext): boolean {
+  return context.status?.state === "connected" && context.session !== null;
+}
+
+export type RemoteView = {
+  workspace: Workspace;
+  checkout: Checkout;
+  tab: Tab | null;
+  layout: RemotePaneLayout | null;
+  /** The pane that holds keyboard focus on that host, inside `tab`. */
+  focusedPaneId: string | null;
+};
+
+function tabById(session: RemoteSession, tabId: string | null | undefined): { workspace: Workspace; checkout: Checkout; tab: Tab } | null {
+  if (!tabId) return null;
+  for (const workspace of session.workspaces) {
+    for (const checkout of workspace.checkouts) {
+      const tab = checkout.tabs.find((row) => row.id === tabId);
+      if (tab) return { workspace, checkout, tab };
+    }
+  }
+  return null;
+}
+
+/**
+ * What the canvas draws for a remote session. The tab is the one the core
+ * attaches (`remote_terminal_pane_sets`): the host's focused tab, else the
+ * active tab of its focused workspace. Drawing any other tab would show panes
+ * nobody streams, so the web follows the host's focus and moves it with
+ * `remote_control` rather than keeping a selection of its own.
+ */
+export function remoteView(session: RemoteSession | null): RemoteView | null {
+  if (!session) return null;
+  const activeTabId =
+    session.focused_tab_id ?? (session.focused_workspace_id ? session.active_tab_ids[session.focused_workspace_id] : undefined);
+  const found = tabById(session, activeTabId);
+  let workspace = found?.workspace ?? null;
+  let checkout = found?.checkout ?? null;
+  if (!workspace || !checkout) {
+    workspace =
+      session.workspaces.find((row) => row.checkouts.some((candidate) => candidate.id === session.focused_checkout_id)) ??
+      session.workspaces.find((row) => row.id === session.focused_workspace_id) ??
+      session.workspaces[0] ??
+      null;
+    checkout = workspace?.checkouts.find((row) => row.id === session.focused_checkout_id) ?? workspace?.checkouts[0] ?? null;
+  }
+  if (!workspace || !checkout) return null;
+  const tab = found?.tab ?? null;
+  const layout = tab?.id ? (session.pane_layouts.find((row) => row.tab_id === tab.id) ?? null) : null;
+  const inTab = (paneId: string | null | undefined) => (paneId && tab?.panes.some((pane) => pane.id === paneId) ? paneId : null);
+  const focusedPaneId = inTab(session.focused_pane_id) ?? inTab(layout?.focused_pane_id) ?? tab?.panes[0]?.id ?? null;
+  return { workspace, checkout, tab, layout, focusedPaneId };
+}
+
+/**
+ * The target a pane id belongs to, read from the core's connection rows: a
+ * remote pane id is `remote:<target>:pane:<id>` for a target the core knows.
+ * Null means the pane is this machine's.
+ */
+export function remoteTargetOfPane(rest: SnapshotRest | null, paneId: string): string | null {
+  for (const status of rest?.status?.remote ?? []) {
+    if (paneId.startsWith(`remote:${status.target_id}:pane:`)) return status.target_id;
+  }
+  return null;
+}
+
+/** The agents the sidebar lists: the selected host's, or this machine's. */
+export function contextAgents(rest: SnapshotRest | null, localAgents: AgentRow[]): AgentRow[] {
+  const context = remoteContext(rest);
+  return context ? (context.session?.agents ?? NO_AGENTS) : localAgents;
+}
+
+/** The projects the sidebar lists: the selected host's Herdr workspaces, or this machine's projects. */
+export function contextWorkspaces(rest: SnapshotRest | null): Workspace[] {
+  const context = remoteContext(rest);
+  return context ? (context.session?.workspaces ?? NO_WORKSPACES) : (rest?.navigator?.workspaces ?? NO_WORKSPACES);
+}
+
+const NO_AGENTS: AgentRow[] = [];
+const NO_WORKSPACES: Workspace[] = [];
+
+let requestSequence = 0;
+
+/**
+ * A fresh id for one `remote_control` request. The core keeps the ids it has
+ * seen per target and drops a repeat, so a resent frame cannot split twice.
+ */
+export function remoteRequestId(): string {
+  requestSequence += 1;
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `web-${random}-${requestSequence}`;
+}
+
+export type RemoteAction =
+  | { action: "focus_pane"; pane_id: string }
+  | { action: "split_pane"; pane_id: string; direction: "right" | "down"; cwd: string | null }
+  | { action: "toggle_pane_zoom"; pane_id: string }
+  | { action: "close_pane"; pane_id: string; confirmed: boolean }
+  | { action: "focus_workspace"; workspace_id: string }
+  | { action: "focus_tab"; tab_id: string }
+  | { action: "create_tab"; workspace_id: string; cwd: string; label: string }
+  | { action: "close_tab"; tab_id: string; confirmed: boolean };
+
+/** One `remote_control` event for `targetId` (core `RemoteControlPayload`). */
+export function remoteControl(targetId: string, request: RemoteAction, requestId: string = remoteRequestId()) {
+  return { schema_version: 2, kind: "remote_control", payload: { target_id: targetId, request_id: requestId, ...request } };
+}
+
+/** A remote pane's rectangle as CSS percentages of the canvas. */
+export function frameStyle(frame: { x: number; y: number; width: number; height: number }): Record<string, string> {
+  const percent = (value: number) => `${Math.max(0, Math.min(1, value)) * 100}%`;
+  return { left: percent(frame.x), top: percent(frame.y), width: percent(frame.width), height: percent(frame.height) };
+}
+
+/** Why a device row is or is not usable, in the native picker's words (`DevicePickerPresentation.detail`). */
+export function deviceDetail(device: Device): string {
+  const count = `${device.agent_count} ${device.agent_count === 1 ? "agent" : "agents"}`;
+  if (device.kind !== "remote") return `Local · ${count}`;
+  switch (device.state) {
+    case "ready":
+      return `Remote · Connected · ${count}`;
+    case "loading":
+    case "connecting":
+      return "Remote · Connecting…";
+    case "unavailable":
+      return "Remote · Not connected";
+    default:
+      return `Remote · ${device.state}`;
+  }
+}
+
+/** Whether Herdr on the host is new enough to store a purpose (the native `supportsRemotePurpose`). */
+export function supportsRemotePurpose(version: string | null | undefined): boolean {
+  if (!version) return false;
+  const numeric = (version.startsWith("v") ? version.slice(1) : version).split(/[-+]/)[0] ?? "";
+  const parts = numeric.split(".").map((part) => Number.parseInt(part, 10));
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return false;
+  const [major, minor, patch] = parts as [number, number, number];
+  if (major !== 0) return major > 0;
+  if (minor !== 9) return minor > 9;
+  return patch >= 1;
+}

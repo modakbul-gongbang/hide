@@ -187,6 +187,15 @@ enum HideTheme {
     static let terminalBaseFontSize: CGFloat = 14
     static let editorBaseFontSize: CGFloat = 12
     static let accent = Color(red: 211.0 / 255, green: 211.0 / 255, blue: 212.0 / 255)
+    /// The four accents Settings offers. The chosen one is stored as its hex in
+    /// `ui_state.accent_hex`; the web sheet reads these values from the
+    /// generated tokens rather than restating them.
+    enum AccentChoice {
+        static let lime = Color(red: 185.0 / 255, green: 255.0 / 255, blue: 102.0 / 255)
+        static let sky = Color(red: 125.0 / 255, green: 211.0 / 255, blue: 252.0 / 255)
+        static let violet = Color(red: 196.0 / 255, green: 181.0 / 255, blue: 253.0 / 255)
+        static let amber = Color(red: 253.0 / 255, green: 186.0 / 255, blue: 116.0 / 255)
+    }
     static let danger = Color(red: 1.0, green: 0.35, blue: 0.36)
     static let warning = Color(red: 1.0, green: 0.72, blue: 0.28)
     static let agentWorking = Color(red: 0.38, green: 0.65, blue: 1.0)

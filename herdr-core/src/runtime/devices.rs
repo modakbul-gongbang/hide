@@ -194,7 +194,80 @@ impl Runtime {
         if self.snapshot.navigator.focused_device_id.as_deref() == Some(device_id) {
             self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
             self.snapshot.ui_state.focused_device_id = None;
+            self.return_keyboard_to_local_pane();
         }
+    }
+
+    /// The device rows after a registration changed. The projects, their
+    /// tabs and the focus do not depend on device registrations, so they stay
+    /// as the last session projection drew them: rebuilding the whole catalog
+    /// here dropped every checkout's tabs until the next session publish, and
+    /// the canvas read "no tab" after a device was added or removed. The agent
+    /// counts are the projection's too and carry over.
+    pub(super) fn rebuild_device_rows(&mut self) {
+        let counts = self
+            .snapshot
+            .navigator
+            .devices
+            .iter()
+            .map(|device| (device.id.clone(), device.agent_count))
+            .collect::<HashMap<_, _>>();
+        let mut devices = workspace::devices(&self.snapshot.ui_state.device_registrations);
+        for device in &mut devices {
+            if let Some(count) = counts.get(&device.id) {
+                device.agent_count = *count;
+            }
+        }
+        self.snapshot.navigator.devices = devices;
+        self.refresh_device_snapshots();
+    }
+
+    /// A fresh connection attempt for a registered device that is not
+    /// connected: the old coordinator and transports are retired and a new
+    /// one starts, so the row reports this attempt rather than a cached one.
+    /// Nothing on the host is touched, and the operator's device focus stays.
+    pub(super) fn retry_remote_device(&mut self, device_id: &str) -> bool {
+        let Some(registration) = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .find(|registration| registration.id == device_id)
+            .cloned()
+        else {
+            self.set_error(
+                "remote.unknown_target",
+                format!("Device {device_id} is not registered"),
+                false,
+            );
+            return true;
+        };
+        if self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .any(|status| status.target_id == device_id && status.state == "connected")
+        {
+            self.set_error(
+                "remote.retry_connected",
+                format!("Device {device_id} is already connected"),
+                false,
+            );
+            return true;
+        }
+        let focused_device = self.snapshot.navigator.focused_device_id.clone();
+        let persisted_focus = self.snapshot.ui_state.focused_device_id.clone();
+        self.disconnect_remote_device(device_id);
+        self.snapshot.navigator.focused_device_id = focused_device;
+        self.snapshot.ui_state.focused_device_id = persisted_focus;
+        self.push_diagnostic(
+            "device.retry",
+            format!("Reconnecting SSH device {device_id}"),
+        );
+        self.connect_remote_device(&registration);
+        self.refresh_device_snapshots();
+        true
     }
 
     pub(crate) fn take_retired_remote_syncs(&mut self) -> Vec<session_sync::SessionSyncHandle> {
