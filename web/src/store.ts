@@ -32,6 +32,8 @@ export type DirectoryList = {
   entries: DirectoryEntry[];
   truncated: boolean;
 };
+/** A device folder its helper could not list now (`directory_unavailable`); the reason is the helper's. */
+export type DirectoryUnavailable = { device_id: string; root_path: string; code: string; message: string };
 export type PathRefusal = { kind: string; path: string; reason: string };
 export type DirectoryChanged = { path: string };
 export type FileIndexEntry = { path: string; relative_path: string };
@@ -56,6 +58,7 @@ export type Frame = {
     find?: PaneFind;
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
+    Partial<DirectoryUnavailable> &
     Partial<PathRefusal> &
     Partial<DirectoryChanged> &
     Partial<FileIndexResult>;
@@ -106,6 +109,8 @@ type Store = {
   listings: Record<string, DirectoryList>;
   /** The last path hided refused; cleared when the input changes. */
   pathRefusal: PathRefusal | null;
+  /** The last device folder that could not be listed, until a listing for it arrives. */
+  directoryUnavailable: DirectoryUnavailable | null;
   /** The ⌘P palette's last answer, keyed by the query it answered. */
   fileIndex: FileIndexResult | null;
   /** The last attachment the daemon refused, drawn as one line over its pane (B15). */
@@ -180,6 +185,7 @@ export const useShellStore = create<Store>((set, get) => ({
   directoryList: null,
   listings: {},
   pathRefusal: null,
+  directoryUnavailable: null,
   fileIndex: null,
   attachmentRefusal: null,
   savingTabs: new Set<string>(),
@@ -241,12 +247,30 @@ export const useShellStore = create<Store>((set, get) => ({
         truncated: payload.truncated ?? false,
       };
       if (listing.kind === "file_list") {
-        set({ listings: withListing(get().listings, listing) });
+        // A listing belongs to the device that answered it; one for a device
+        // no longer selected would show its rows under this device's paths.
+        if ((payload.device_id ?? "local") !== (get().rest?.navigator?.focused_device_id ?? "local")) return [];
+        const unavailable = get().directoryUnavailable;
+        set({
+          listings: withListing(get().listings, listing),
+          directoryUnavailable: unavailable?.root_path === listing.root_path ? null : unavailable,
+        });
       } else if (listing.kind === "remote_file_list") {
         set({ directoryList: listing });
       } else {
         get().noteDiagnostic(`directory_list without a known kind=${listing.kind || "none"}`);
       }
+      return [];
+    }
+    if (frame.type === "directory_unavailable") {
+      set({
+        directoryUnavailable: {
+          device_id: payload.device_id ?? "",
+          root_path: payload.root_path ?? "",
+          code: payload.code ?? "",
+          message: payload.message ?? "",
+        },
+      });
       return [];
     }
     if (frame.type === "path_refused") {
@@ -319,9 +343,12 @@ export const useShellStore = create<Store>((set, get) => ({
       if (lastError && lastError.occurred_at !== previous?.status?.last_error?.occurred_at) {
         diagnostics.push(`${lastError.kind}: ${lastError.message}`);
       }
+      // Listings are one device's folders; switching devices starts empty.
+      const deviceChanged = (rest.navigator?.focused_device_id ?? "local") !== (previous?.navigator?.focused_device_id ?? "local");
       set({
         rest,
         agents,
+        ...(deviceChanged ? { listings: {}, directoryUnavailable: null } : {}),
         ...withDiagnostics(get().diagnostics, get().diagnosticsDropped, diagnostics),
         viewGeneration: frame.type === "snapshot" ? get().viewGeneration + 1 : get().viewGeneration,
         ...cursors,

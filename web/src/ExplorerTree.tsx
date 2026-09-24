@@ -15,7 +15,7 @@ import {
   selectionAfterRemoval,
   type ExplorerRow,
 } from "./explorer";
-import { changesFor, focusedCheckout } from "./snapshot";
+import { changesFor, explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type ExplorerDraft } from "./ui";
 import { expandedUnderRoot, watchedFolders } from "./watch";
@@ -68,11 +68,16 @@ function baseName(path: string): string {
 }
 
 export function ExplorerTree({ actions }: { actions: Actions }) {
-  const checkout = useShellStore((s) => focusedCheckout(s.rest));
+  const checkout = useShellStore((s) => explorerContext(s.rest).checkout);
+  const device = useShellStore((s) => explorerContext(s.rest).device);
   const rootPath = checkout?.path ?? null;
-  const expandedPaths = useShellStore((s) => s.rest?.ui_state?.expanded_paths ?? EMPTY_PATHS);
+  const expandedPaths = useShellStore((s) => explorerContext(s.rest).expanded ?? EMPTY_PATHS);
   const listings = useShellStore((s) => s.listings);
-  const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
+  // Git decorations and file changes are this machine's until the device's
+  // helper serves Git and mutations (S5.5 slices 5-6); a device's tree reads.
+  const local = device === "local";
+  const changes = useShellStore((s) => (local ? changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null) : null));
+  const unavailable = useShellStore((s) => (s.directoryUnavailable && s.directoryUnavailable.device_id === device ? s.directoryUnavailable : null));
   const selectedPath = useShellStore((s) => s.rest?.ui_state?.selected_path ?? null);
   const pathRefusal = useShellStore((s) => s.pathRefusal);
   const operation = useShellStore((s) => s.rest?.explorer_operation ?? null);
@@ -246,7 +251,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     // because in a terminal it is ^U (S2 passthrough).
     if (event.key === "Backspace" && event.metaKey) {
       event.preventDefault();
-      if (row) requestTrash(row);
+      if (row && local) requestTrash(row);
       return;
     }
     switch (event.key) {
@@ -286,6 +291,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   const refused = pathRefusal?.kind === "file_list" && pathRefusal.path === rootPath ? pathRefusal.reason : null;
   const rootListing = listings[rootPath];
+  const rootUnavailable = unavailable?.root_path === rootPath ? unavailable : null;
   const failure = operation?.phase === "failed" && operation.message ? operation : null;
 
   const anchorTop = (path: string): number | null => {
@@ -323,7 +329,24 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           {refused}
         </div>
       ) : null}
-      {!rootListing && !refused ? (
+      {unavailable ? (
+        <div className="flex items-center gap-sm border-b border-divider px-md py-sm text-caption text-warning" data-explorer-unavailable={unavailable.code}>
+          <span className="min-w-0 flex-1 break-words">
+            {unavailable.root_path === rootPath ? "This checkout" : baseName(unavailable.root_path)} could not be listed: {unavailable.message}
+          </span>
+          <button
+            type="button"
+            className="text-secondary hover:text-primary"
+            onClick={() => {
+              pending.current.clear();
+              setRefreshTick((tick) => tick + 1);
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {!rootListing && !refused && !rootUnavailable ? (
         <div className="px-md py-sm text-caption text-muted" data-explorer-state="loading">
           Loading…
         </div>
@@ -340,7 +363,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           onContextMenu={(event) => {
             if (event.target !== event.currentTarget && (event.target as HTMLElement).closest("[data-explorer-row]")) return;
             event.preventDefault();
-            setMenu({ path: rootPath, isDirectory: true, x: event.clientX, y: event.clientY });
+            if (local) setMenu({ path: rootPath, isDirectory: true, x: event.clientX, y: event.clientY });
           }}
         >
           <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
@@ -380,9 +403,10 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                     pending.current.delete(row.path);
                     actions.setExpandedPaths([...expandedPaths.filter((path) => path !== row.path), row.path]);
                   }}
+                  movable={local}
                   onContextMenu={(event) => {
                     event.preventDefault();
-                    setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
+                    if (local) setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
                   }}
                   onDragStart={() => {
                     dragPath.current = row.path;
@@ -533,6 +557,7 @@ function ExplorerRowView({
   onOpen,
   onRefresh,
   onContextMenu,
+  movable,
   onDragStart,
   onDrop,
 }: {
@@ -544,6 +569,8 @@ function ExplorerRowView({
   onOpen: (row: ExplorerRow, preview: boolean) => void;
   onRefresh: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
+  /** Whether the row can be dragged onto a folder; a device's tree reads only for now. */
+  movable: boolean;
   onDragStart: () => void;
   onDrop: (from: string | null) => void;
 }) {
@@ -556,7 +583,7 @@ function ExplorerRowView({
       aria-expanded={row.isDirectory ? row.expanded : undefined}
       aria-label={rowAccessibilityLabel(row)}
       title={rowTitle(row, rootPath)}
-      draggable
+      draggable={movable}
       data-explorer-row={row.path}
       data-selected={selected ? "true" : "false"}
       data-decoration={row.decoration?.status ?? ""}

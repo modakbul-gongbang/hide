@@ -376,8 +376,8 @@ impl SessionReplica {
                         }
                     })
                     .collect::<Vec<_>>();
-                // A remote context has no file tabs, so its strip is the Herdr
-                // tab list in Herdr's order and nothing else.
+                // The Herdr half of the strip in Herdr's order; the runtime
+                // appends the device's file tabs (`join_device_editor_tabs`).
                 let strip = StripTabSnapshot::from_herdr_tabs(&tabs);
                 let active_tab_id = Some(remote_tab_id(target_id, &workspace.active_tab_id))
                     .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));

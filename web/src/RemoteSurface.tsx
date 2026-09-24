@@ -1,16 +1,19 @@
 import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/controls";
+import { EditorSurface } from "./Editor";
+import { FindBar } from "./Overlays";
 import { RemotePaneCanvas } from "./PaneGrid";
 import { remoteView } from "./remote";
 import { canRetryDevice, deviceLine } from "./settings";
-import { focusedRemoteDevice } from "./snapshot";
+import { focusedRemoteDevice, remoteEditorTab } from "./snapshot";
 import { useShellStore } from "./store";
 import { RemoteTabBar } from "./TabBar";
 
 // The center of the shell while an SSH device is selected (PRD S5 B19): that
-// host's visible tab, drawn from the session the core projected over SSH, or
-// the connection's own state when there is no session to draw. Nothing here
+// host's visible tab, drawn from the session the core projected over SSH, or a
+// file of that device the operator opened in the checkout the host has in
+// front, or the connection's own state when there is no session to draw. Nothing here
 // reads this machine's tabs, so a remote screen cannot act on a local pane.
 
 export function RemoteSurface({ actions }: { actions: Actions }) {
@@ -18,6 +21,7 @@ export function RemoteSurface({ actions }: { actions: Actions }) {
   const status = useShellStore((s) => (device ? (s.rest?.status?.remote?.find((row) => row.target_id === device.id) ?? null) : null));
   const session = status?.session ?? null;
   const view = useMemo(() => remoteView(session), [session]);
+  const showingFile = useShellStore((s) => (view ? remoteEditorTab(s.editor, view.checkout) !== null : false));
   if (!device) return null;
   const connected = status?.state === "connected";
   if (!view) {
@@ -62,7 +66,14 @@ export function RemoteSurface({ actions }: { actions: Actions }) {
         </div>
       )}
       <RemoteTabBar view={view} actions={actions} />
-      <RemotePaneCanvas view={view} connected={connected} dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
+      {showingFile ? (
+        <>
+          <FindBar actions={actions} />
+          <EditorSurface actions={actions} />
+        </>
+      ) : (
+        <RemotePaneCanvas view={view} connected={connected} dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
+      )}
     </>
   );
 }

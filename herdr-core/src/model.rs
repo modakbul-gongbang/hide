@@ -1438,6 +1438,11 @@ pub struct UiStateSnapshot {
     #[serde(default)]
     pub sessions_mode_by_project: BTreeMap<String, SessionsMode>,
     pub expanded_paths: Vec<String>,
+    /// Folders expanded in each SSH device's Explorer, by device id; this
+    /// machine's are `expanded_paths`. A path means something only on its
+    /// own device, so two devices' same path never share a row (S5.5 B2).
+    #[serde(default)]
+    pub device_expanded_paths: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
     /// Sidebar workspaces (checkout paths) whose agent rows are hidden.
@@ -1586,6 +1591,7 @@ impl Default for UiStateSnapshot {
             right_panel_section: RightPanelSection::default(),
             sessions_mode_by_project: BTreeMap::new(),
             expanded_paths: Vec::new(),
+            device_expanded_paths: BTreeMap::new(),
             collapsed_workspace_ids: Vec::new(),
             collapsed_checkout_ids: Vec::new(),
             expanded_inactive_checkout_project_paths: Vec::new(),

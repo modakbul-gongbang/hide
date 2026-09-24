@@ -2,7 +2,7 @@ import { memo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
 import type { RemoteView } from "./remote";
-import { editorFor, focusedCheckout, type AsyncOperation, type Checkout, type EditorSnapshot, type StripTab } from "./snapshot";
+import { editorFor, focusedCheckout, remoteEditorTab, type AsyncOperation, type Checkout, type EditorSnapshot, type StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 
 // The tab bar draws the focused checkout's strip (PRD S2 B3, S3 B3/B4). Every
@@ -37,37 +37,48 @@ const ignore = () => {};
 
 /**
  * A selected SSH device's strip: the Herdr tabs of the workspace its host has
- * focused. Selecting, adding and closing go to that host (`remote_control`);
- * the order is Herdr's there, so a remote tab is not dragged.
+ * focused, then the device files opened in that checkout, in the order the
+ * core gave (`join_device_editor_tabs`). A terminal tab is selected, added and
+ * closed on that host (`remote_control`); a file tab is the core's own. The
+ * order is Herdr's there, so a remote tab is not dragged.
  */
 export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Actions }) {
   const operations = useShellStore((s) => s.rest?.status?.async_operations ?? NONE);
+  const editor = useShellStore((s) => s.editor);
+  const savingTabs = useShellStore((s) => s.savingTabs);
+  const bufferWarnings = useShellStore((s) => s.bufferWarnings);
   const { checkout } = view;
+  const showing = remoteEditorTab(editor, checkout);
+  const dirty = new Set((editor?.tabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel" role="tablist" data-tab-bar={checkout.id} data-remote-tab-bar="true">
-      {checkout.tabs.map((tab) =>
-        tab.id ? (
+      {checkout.strip.map((entry) => {
+        if (entry.kind !== "herdr" && entry.kind !== "file") return null;
+        const isFile = entry.kind === "file";
+        const fileTab = isFile ? editor?.tabs.find((tab) => tab.id === entry.source_id) : null;
+        const active = isFile ? showing?.id === entry.source_id : !showing && entry.source_id === view.tab?.id;
+        return (
           <TabButton
-            key={tab.id}
-            entry={{ id: tab.id, kind: "herdr", source_id: tab.id, label: tab.label ?? tab.id, preview: false }}
-            identity={tab.label ?? tab.id}
-            active={tab.id === view.tab?.id}
-            dirty={false}
-            saving={false}
-            tabOnly={false}
-            closing={closingSuffix(tab.id, "tab.close", operations)}
+            key={entry.id}
+            entry={entry}
+            identity={fileTab ? `File: ${fileTab.path}${entry.preview ? " · Preview" : ""}` : entry.label}
+            active={active}
+            dirty={dirty.has(entry.source_id)}
+            saving={savingTabs.has(entry.source_id)}
+            tabOnly={bufferWarnings.has(entry.source_id)}
+            closing={!isFile && closingSuffix(entry.source_id, "tab.close", operations)}
             dragging={false}
             over={false}
-            onSelect={() => actions.focusTab(tab.id as string)}
-            onDoubleClick={ignore}
-            onClose={() => actions.closeTab(tab.id as string)}
+            onSelect={() => (isFile ? actions.focusFileTab(entry.source_id) : actions.focusTab(entry.source_id))}
+            onDoubleClick={() => { if (isFile) actions.keepOpenFile(entry.source_id); }}
+            onClose={() => (isFile ? actions.closeFileTab(entry.source_id) : actions.closeTab(entry.source_id))}
             onPointerDown={ignore}
             onPointerMove={ignore}
             onPointerEnter={ignore}
             onPointerUp={ignore}
           />
-        ) : null,
-      )}
+        );
+      })}
       <button
         type="button"
         className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-secondary hover:bg-elevated hover:text-primary"

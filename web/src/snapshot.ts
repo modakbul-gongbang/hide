@@ -478,6 +478,8 @@ export type SnapshotRest = {
     pane_text_scales?: Record<string, number>;
     editor_text_scale?: number;
     expanded_paths?: string[];
+    /** Each SSH device's expanded Explorer folders; this machine's are `expanded_paths`. */
+    device_expanded_paths?: Record<string, string[]>;
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;
@@ -522,12 +524,44 @@ export function focusedCheckout(rest: SnapshotRest | null): Checkout | null {
   return null;
 }
 
+/**
+ * Every project the core's catalog carries: this machine's and registered ones
+ * in the navigator, then each device's Herdr session. The core looks a
+ * checkout up in the same two places (`catalog_checkout`); device ids are
+ * scoped, so one id never names checkouts on two machines.
+ */
+export function catalogWorkspaces(rest: SnapshotRest | null): Workspace[] {
+  return [
+    ...(rest?.navigator?.workspaces ?? []),
+    ...(rest?.status?.remote ?? []).flatMap((remote) => remote.session?.workspaces ?? []),
+  ];
+}
+
 export function checkoutById(rest: SnapshotRest | null, id: string): Checkout | null {
-  for (const workspace of rest?.navigator?.workspaces ?? []) {
+  for (const workspace of catalogWorkspaces(rest)) {
     const checkout = workspace.checkouts.find((c) => c.id === id);
     if (checkout) return checkout;
   }
   return null;
+}
+
+/** The device a catalog checkout lives on; `local` for this machine's. */
+export function deviceOfCheckout(rest: SnapshotRest | null, id: string): string {
+  return catalogWorkspaces(rest).find((workspace) => workspace.checkouts.some((c) => c.id === id))?.device_id ?? "local";
+}
+
+/**
+ * The checkout the operator is looking at: this machine's focus while it is
+ * the selected device, otherwise that device's own Herdr focus, which the core
+ * follows (`front_checkout`).
+ */
+export function frontCheckout(rest: SnapshotRest | null): Checkout | null {
+  const device = focusedRemoteDevice(rest);
+  if (!device) return focusedCheckout(rest);
+  const session = rest?.status?.remote?.find((remote) => remote.target_id === device.id)?.session;
+  const id = session?.focused_checkout_id;
+  if (!id) return null;
+  return session?.workspaces.flatMap((workspace) => workspace.checkouts).find((c) => c.id === id) ?? null;
 }
 
 export function visibleTab(checkout: Checkout | null): Tab | null {
@@ -549,6 +583,16 @@ export function editorFor(editor: EditorSnapshot | null): EditorSnapshot | null 
   return editor?.active_tab_id ? editor : null;
 }
 
+/**
+ * The device file the editor shows in `checkout`, or null when the host's
+ * terminal tab does. The core keeps one active editor tab across devices, so
+ * a tab of another checkout is not this surface's.
+ */
+export function remoteEditorTab(editor: EditorSnapshot | null, checkout: Checkout): EditorTabSnapshot | null {
+  const tab = activeEditorTab(editor);
+  return tab && tab.kind === "file" && tab.workspace_id === checkout.workspace_id && tab.checkout_id === checkout.id ? tab : null;
+}
+
 /** The editor tab the core says is showing, or null when the terminal does. */
 export function activeEditorTab(editor: EditorSnapshot | null): EditorTabSnapshot | null {
   const active = editorFor(editor);
@@ -563,7 +607,24 @@ export function editorTabFor(editor: EditorSnapshot | null, tabId: string): Edit
 
 /** The expanded checkout folders the core reports, as a set the tree walks. */
 export function expandedPathSet(rest: SnapshotRest | null): Set<string> {
-  return new Set(rest?.ui_state?.expanded_paths ?? []);
+  return new Set(explorerContext(rest).expanded);
+}
+
+const NO_PATHS: string[] = [];
+
+/**
+ * What the Explorer draws: the selected device, the checkout in front on it,
+ * and that device's expanded folders. A path is only ever read against its
+ * own device, so the same path on two machines never shares a row (S5.5 B2).
+ */
+export function explorerContext(rest: SnapshotRest | null): { device: string; checkout: Checkout | null; expanded: string[] } {
+  const device = focusedRemoteDevice(rest)?.id ?? "local";
+  const state = rest?.ui_state;
+  return {
+    device,
+    checkout: frontCheckout(rest),
+    expanded: (device === "local" ? state?.expanded_paths : state?.device_expanded_paths?.[device]) ?? NO_PATHS,
+  };
 }
 
 /** The changes of the checkout a listing belongs to, or null when they are another checkout's. */

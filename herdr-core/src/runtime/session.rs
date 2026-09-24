@@ -753,6 +753,15 @@ impl Runtime {
         }
         order.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
         pending.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
+        for session in self
+            .snapshot
+            .status
+            .remote
+            .iter_mut()
+            .filter_map(|remote| remote.session.as_mut())
+        {
+            join_device_editor_tabs(session, editor_tabs);
+        }
         // A rebuilt entry starts without its agent; name it before the strip
         // is published so a fresh tab never draws as a bare number first.
         sync_strip_agent_identity(
@@ -1246,7 +1255,8 @@ impl Runtime {
         }
         let mut observed_session = None;
         match fetched {
-            Ok(session) => {
+            Ok(mut session) => {
+                join_device_editor_tabs(&mut session, &self.snapshot.editor.tabs);
                 if status.state != "connected" || status.message.is_some() {
                     status.state = "connected".to_owned();
                     status.message = None;

@@ -55,6 +55,27 @@ fn conversation_agent_kind(kind: &str) -> bool {
     )
 }
 
+/// A device checkout's strip: its Herdr tabs in the host's order, then the
+/// editor tabs opened on it. Herdr orders the host's tabs and the core does
+/// not reorder a device's strip, so the file tabs follow in opening order.
+fn join_device_editor_tabs(session: &mut RemoteSessionSnapshot, editor_tabs: &[EditorTabSnapshot]) {
+    for workspace in &mut session.workspaces {
+        for checkout in &mut workspace.checkouts {
+            checkout
+                .strip
+                .retain(|entry| entry.kind == StripTabKind::Herdr);
+            checkout.strip.extend(
+                editor_tabs
+                    .iter()
+                    .filter(|tab| {
+                        tab.workspace_id == checkout.workspace_id && tab.checkout_id == checkout.id
+                    })
+                    .map(StripTabSnapshot::editor),
+            );
+        }
+    }
+}
+
 /// Places one checkout's tab strip.
 ///
 /// The strip is a sequence of slots. A slot an entry already held it keeps, so

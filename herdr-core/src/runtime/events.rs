@@ -470,6 +470,9 @@ pub(super) struct UiStateUpdatePayload {
     #[serde(default)]
     pub(super) right_panel_section: Option<String>,
     pub(super) expanded_paths: Vec<String>,
+    /// Absent keeps the devices' expansion: the Swift shell does not carry it.
+    #[serde(default)]
+    pub(super) device_expanded_paths: Option<BTreeMap<String, Vec<String>>>,
     #[serde(default)]
     pub(super) collapsed_workspace_ids: Vec<String>,
     #[serde(default)]
@@ -819,7 +822,7 @@ pub(super) enum Event {
     PathRename(PathRenamePayload),
     PathMove(PathMovePayload),
     PathTrash(PathTrashPayload),
-    UiStateUpdate(UiStateUpdatePayload),
+    UiStateUpdate(Box<UiStateUpdatePayload>),
     SessionsRefresh,
     SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
@@ -977,7 +980,9 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "path_rename" => decode!(PathRenamePayload, PathRename),
         "path_move" => decode!(PathMovePayload, PathMove),
         "path_trash" => decode!(PathTrashPayload, PathTrash),
-        "ui_state_update" => decode!(UiStateUpdatePayload, UiStateUpdate),
+        "ui_state_update" => serde_json::from_value::<Box<UiStateUpdatePayload>>(payload)
+            .map(Event::UiStateUpdate)
+            .map_err(|_| invalid_payload(&kind)),
         "sessions_refresh" => Ok(Event::SessionsRefresh),
         "sessions_set_mode" => decode!(SessionsModePayload, SessionsSetMode),
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
@@ -2666,6 +2671,7 @@ impl Runtime {
                 true
             }
             Event::UiStateUpdate(payload) => {
+                let payload = *payload;
                 if let Some(visible) = payload.usage_window_visible {
                     self.usage_window_visible = visible;
                 }
@@ -2700,6 +2706,9 @@ impl Runtime {
                         .unwrap_or(current.right_panel_section),
                     sessions_mode_by_project: current.sessions_mode_by_project,
                     expanded_paths: payload.expanded_paths,
+                    device_expanded_paths: payload
+                        .device_expanded_paths
+                        .unwrap_or(current.device_expanded_paths),
                     collapsed_workspace_ids: payload.collapsed_workspace_ids,
                     collapsed_checkout_ids: payload
                         .collapsed_checkout_ids

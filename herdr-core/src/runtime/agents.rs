@@ -576,6 +576,17 @@ impl Runtime {
             }
         };
 
+        // A terminal tab chosen on the device's strip takes the surface from
+        // a device file the editor shows, as a local tab does (`focus_tab`).
+        if matches!(
+            action,
+            RemoteControlAction::FocusTab { .. }
+                | RemoteControlAction::CreateTab { .. }
+                | RemoteControlAction::FocusWorkspace { .. }
+        ) && self.active_editor_tab_on_device(&target_id)
+        {
+            self.deactivate_editor_tab();
+        }
         let creation_key = remote_tab_creation_key(&target_id, &action);
         if let Some(key) = creation_key.as_ref()
             && !self.remote_tab_creations_in_flight.insert(key.clone())

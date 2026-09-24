@@ -34,15 +34,16 @@ export function RightPanel({ actions }: { actions: Actions }) {
           ⌘⇧B
         </button>
       </div>
-      {remoteLabel ? (
-        // Remote file viewing is not part of the web shell (PRD S5 Non-goals);
-        // the tree and History would otherwise show this machine's checkout
-        // behind the selected device.
-        <p className="p-md text-caption text-muted" data-right-panel-remote="true">
-          Files on {remoteLabel} are not available from the web shell. Switch to this machine to browse its checkouts.
-        </p>
-      ) : section === "explorer" ? (
+      {section === "explorer" ? (
+        // The tree reads the selected device's checkout through its helper.
         <ExplorerTree actions={actions} />
+      ) : remoteLabel ? (
+        // History reads this machine's Git until the device's helper serves
+        // Git; showing it here would put this machine's changes behind the
+        // selected device.
+        <p className="p-md text-caption text-muted" data-right-panel-remote="true">
+          History for {remoteLabel} is not available yet. Its files are in the Explorer.
+        </p>
       ) : (
         <HistoryList actions={actions} />
       )}

@@ -7,7 +7,7 @@ import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
 import { remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
-import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
+import { activeEditorTab, checkoutById, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -169,21 +169,46 @@ export function createActions(dispatch: DispatchFn) {
     // Highlighting a row needs a tree to highlight it in, so the reveal shows
     // the panel the core's own `reveal_path` would show.
     const state = rest()?.ui_state;
-    const root = rest()?.navigator?.root_path;
+    const context = explorerContext(rest());
+    const root = context.checkout?.path;
     if (!state || !root || !path.startsWith(`${root}/`)) {
       showExplorerPanel();
       return;
     }
     const parts = path.slice(root.length + 1).split("/");
     parts.pop();
-    const expanded = new Set(state.expanded_paths ?? []);
+    const expanded = new Set(context.expanded);
     for (let depth = 1; depth <= parts.length; depth += 1) {
       const ancestor = `${root}/${parts.slice(0, depth).join("/")}`;
       expanded.add(ancestor);
     }
     // ui_state_update replaces the whole core state. Two updates based on one
     // snapshot race, and the second would hide the panel again.
-    updateUiState({ right_panel_visible: true, right_panel_section: "explorer", expanded_paths: [...expanded] });
+    updateUiState({ right_panel_visible: true, right_panel_section: "explorer", ...expandedPatch(context.device, [...expanded]) });
+  };
+
+  /** The ui_state field that holds one device's expanded folders. */
+  const expandedPatch = (device: string, paths: string[]) =>
+    device === "local"
+      ? { expanded_paths: paths }
+      : { device_expanded_paths: { ...(rest()?.ui_state?.device_expanded_paths ?? {}), [device]: paths } };
+
+  /** The checkout the Explorer and the palette act on, on the selected device. */
+  const explorerHere = () => {
+    const context = explorerContext(rest());
+    return context.checkout ? { checkout: context.checkout, device: context.device } : null;
+  };
+
+  /** `file_open` for a path in the checkout in front, naming its device. */
+  const openInFront = (path: string, preview: boolean, what: string) => {
+    const here = explorerHere();
+    if (!here) return diagnostic(`${what}: no focused checkout`);
+    revealAncestors(path);
+    dispatch({
+      schema_version: 2,
+      kind: "file_open",
+      payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview, ...(here.device === "local" ? {} : { device_id: here.device }) },
+    });
   };
 
   /** The contents a save or a close would send for one file tab, or null. */
@@ -634,17 +659,10 @@ export function createActions(dispatch: DispatchFn) {
     /** A palette pick opens in the checkout's preview tab (B12) and closes the palette. */
     openIndexEntry(path: string) {
       ui().closeOverlay();
-      const here = current();
-      if (!here) return diagnostic("file_open: no focused checkout");
-      revealAncestors(path);
       // The core's selected_path may already be this file from an earlier
       // open, so the row is highlighted from the pick itself (B3).
       ui().setExplorerSelection(path);
-      dispatch({
-        schema_version: 2,
-        kind: "file_open",
-        payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview: true },
-      });
+      openInFront(path, true, "file_open");
     },
 
     createWorkspace(path: string, label: string) {
@@ -657,24 +675,18 @@ export function createActions(dispatch: DispatchFn) {
 
     /** One checkout folder's children, answered by hided as a `directory_list`. */
     listChildren(root: string, path: string) {
-      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path } });
+      const device = explorerContext(rest()).device;
+      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path, ...(device === "local" ? {} : { device_id: device }) } });
     },
 
-    /** The core owns which folders the tree has expanded; this replaces the set. */
+    /** The core owns which folders the tree has expanded, per device; this replaces the selected device's set. */
     setExpandedPaths(paths: string[]) {
-      updateUiState({ expanded_paths: paths });
+      updateUiState(expandedPatch(explorerContext(rest()).device, paths));
     },
 
     /** A single click opens the checkout's preview slot; a double click pins it. */
     openFile(path: string, preview: boolean) {
-      const here = current();
-      if (!here) return diagnostic("file_open: no focused checkout");
-      revealAncestors(path);
-      dispatch({
-        schema_version: 2,
-        kind: "file_open",
-        payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview },
-      });
+      openInFront(path, preview, "file_open");
     },
 
     /** ⌘⇧K: the showing preview tab becomes an ordinary tab. */

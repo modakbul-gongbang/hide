@@ -26,6 +26,8 @@ struct StoredUiState {
     sessions_mode_by_project: BTreeMap<String, SessionsMode>,
     expanded_paths: Vec<String>,
     #[serde(default)]
+    device_expanded_paths: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
     collapsed_workspace_ids: Vec<String>,
     #[serde(default)]
     collapsed_checkout_ids: Vec<String>,
@@ -148,6 +150,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             right_panel_section: stored.right_panel_section,
             sessions_mode_by_project: stored.sessions_mode_by_project,
             expanded_paths: stored.expanded_paths,
+            device_expanded_paths: stored.device_expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
             collapsed_checkout_ids: stored.collapsed_checkout_ids,
             expanded_inactive_checkout_project_paths: stored
@@ -196,6 +199,7 @@ pub fn save(
         right_panel_section: state.right_panel_section,
         sessions_mode_by_project: state.sessions_mode_by_project.clone(),
         expanded_paths: state.expanded_paths.clone(),
+        device_expanded_paths: state.device_expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
         collapsed_checkout_ids: state.collapsed_checkout_ids.clone(),
         expanded_inactive_checkout_project_paths: state

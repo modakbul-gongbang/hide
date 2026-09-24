@@ -146,6 +146,21 @@ impl Runtime {
             .zip(session.focused_checkout_id.as_deref())
     }
 
+    /// Whether the editor is showing a tab of a checkout on `device`.
+    pub(super) fn active_editor_tab_on_device(&self, device: &str) -> bool {
+        let Some(tab) = self
+            .snapshot
+            .editor
+            .active_tab_id
+            .as_deref()
+            .and_then(|id| self.snapshot.editor.tabs.iter().find(|tab| tab.id == id))
+        else {
+            return false;
+        };
+        self.catalog_checkout(&tab.workspace_id, &tab.checkout_id)
+            .is_some_and(|(workspace, _)| workspace.device_id == device)
+    }
+
     pub(super) fn front_checkout_owned(&self) -> Option<(String, String)> {
         self.front_checkout()
             .map(|(workspace, checkout)| (workspace.to_owned(), checkout.to_owned()))

@@ -702,3 +702,70 @@ fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
     let document = runtime.snapshot.editor.document.as_ref().unwrap();
     assert_eq!(document.contents_utf8.as_deref(), Some("local\n"));
 }
+
+/// A device file tab is drawn in that device checkout's strip, after the
+/// host's Herdr tabs, and a session sync that brings only Herdr's tabs keeps
+/// it there without announcing a change on every poll.
+#[test]
+fn a_device_file_tab_joins_the_device_strip_and_survives_session_syncs() {
+    let f = Fixture::new();
+    let session = {
+        let mut runtime = f.shared.lock().unwrap();
+        let remote = runtime.snapshot.navigator.workspaces.remove(0);
+        let session = RemoteSessionSnapshot {
+            workspaces: vec![remote],
+            agents: Vec::new(),
+            active_tab_ids: Default::default(),
+            focused_workspace_id: Some(WORKSPACE.to_owned()),
+            focused_checkout_id: Some(CHECKOUT.to_owned()),
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: Vec::new(),
+        };
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: DEVICE.to_owned(),
+            state: "connected".to_owned(),
+            message: None,
+            herdr_version: None,
+            session: Some(session.clone()),
+            files: RemoteFileListSnapshot::idle(),
+        });
+        runtime.snapshot.navigator.focused_device_id = Some(DEVICE.to_owned());
+        runtime.snapshot.navigator.focused_workspace_id = None;
+        runtime.snapshot.navigator.focused_checkout_id = None;
+        session
+    };
+    f.open_and_wait("a.txt");
+    let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &f.path("a.txt"));
+    let strip_ids = |runtime: &Runtime| {
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .workspaces[0]
+            .checkouts[0]
+            .strip
+            .iter()
+            .map(|entry| (entry.kind, entry.source_id.clone()))
+            .collect::<Vec<_>>()
+    };
+    let mut runtime = f.shared.lock().unwrap();
+    assert_eq!(
+        strip_ids(&runtime),
+        vec![(StripTabKind::File, tab_id.clone())]
+    );
+    assert_eq!(
+        runtime.snapshot.editor.active_tab_id.as_deref(),
+        Some(tab_id.as_str())
+    );
+
+    runtime.ingest_remote_session(DEVICE, Ok(session.clone()));
+    assert_eq!(
+        strip_ids(&runtime),
+        vec![(StripTabKind::File, tab_id.clone())]
+    );
+    assert!(
+        !runtime.ingest_remote_session(DEVICE, Ok(session)),
+        "an unchanged host session is not a change"
+    );
+}
