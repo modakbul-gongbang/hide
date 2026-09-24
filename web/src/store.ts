@@ -54,8 +54,24 @@ export type Frame = {
     Partial<FileIndexResult>;
 };
 
+/** What the daemon says about itself after a handshake (hided `daemon` frame). */
+export type DaemonInfo = {
+  version: string;
+  schema_version: number;
+  pid: number;
+  started_at_unix: string;
+  state_dir: string;
+  core_state_path: string;
+  herdr_bin_path: string | null;
+  herdr_socket_path: string | null;
+  keep_alive: boolean;
+  idle_secs: number;
+};
+
 type Store = {
   connection: ConnectionState;
+  /** The daemon this page is connected to; null until the first handshake. */
+  daemon: DaemonInfo | null;
   revision: number;
   terminalSequence: number;
   /** The core's rest section, structurally shared across frames (`share.ts`). */
@@ -140,6 +156,7 @@ function withDiagnostics(
 
 export const useShellStore = create<Store>((set, get) => ({
   connection: "connecting",
+  daemon: null,
   revision: 0,
   terminalSequence: 0,
   rest: null,
@@ -246,6 +263,10 @@ export const useShellStore = create<Store>((set, get) => ({
       return [];
     }
     if (frame.type === "open_external_result") return [];
+    if (frame.type === "daemon") {
+      set({ daemon: frame.payload as unknown as DaemonInfo });
+      return [];
+    }
     if (frame.type === "file_index_result") {
       set({
         fileIndex: {

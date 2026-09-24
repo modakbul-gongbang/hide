@@ -2,6 +2,9 @@ import { memo } from "react";
 import type { Actions } from "./actions";
 import { NewWorkspace } from "./NewWorkspace";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
+import { RowMenu } from "./RowMenu";
+import { displayBrowser } from "./shortcuts";
+import { checkoutMenu, projectMenu, type MenuItem } from "./workspaceManage";
 import type { AgentRow, Checkout, InactiveProjectGroup, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore } from "./ui";
@@ -38,6 +41,16 @@ export function Sidebar({ actions }: { actions: Actions }) {
         ))}
         <span className="flex-1" />
         <span className="text-muted">⌘E</span>
+        <button
+          type="button"
+          aria-label={`Settings (${displayBrowser("settings")})`}
+          title={`Settings (${displayBrowser("settings")})`}
+          data-open-settings="true"
+          className="text-muted hover:text-primary focus-visible:text-primary"
+          onClick={() => actions.openSettings()}
+        >
+          ⚙
+        </button>
       </div>
       {status ? (
         <div className="border-b border-divider px-md py-sm text-caption text-muted">{status}</div>
@@ -197,25 +210,32 @@ function WorkspaceRows({
   const inset = level === "child" ? "pl-[var(--size-lineage-indent)]" : "";
   return (
     <li data-project={workspace.id} className={inset}>
-      <button
-        type="button"
-        data-project-row={workspace.id}
-        className="flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated"
-        onClick={() => actions.focusProject(workspace.id)}
+      <RowMenu
+        label={`${workspace.label} actions`}
+        items={projectMenu(workspace)}
+        onSelect={(item) => runProjectItem(actions, workspace, item)}
+        data-project-menu={workspace.id}
       >
-        <span className="flex w-full items-baseline gap-xs text-body text-primary">
-          <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
-          {workspace.pinned ? (
-            <span className="text-micro uppercase text-muted" data-pinned="true">
-              pinned
-            </span>
-          ) : null}
-        </span>
-        <span className="text-caption text-muted">{activityLabel(workspace, agents, Date.now())}</span>
-      </button>
+        <button
+          type="button"
+          data-project-row={workspace.id}
+          className="flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated"
+          onClick={() => actions.focusProject(workspace.id)}
+        >
+          <span className="flex w-full items-baseline gap-xs text-body text-primary">
+            <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
+            {workspace.pinned ? (
+              <span className="text-micro uppercase text-muted" data-pinned="true">
+                pinned
+              </span>
+            ) : null}
+          </span>
+          <span className="text-caption text-muted">{activityLabel(workspace, agents, Date.now())}</span>
+        </button>
+      </RowMenu>
       <ul>
         {active.map((checkout) => (
-          <CheckoutRowView key={checkout.id} checkout={checkout} focused={checkout.id === focusedCheckoutId} actions={actions} />
+          <CheckoutRowView key={checkout.id} workspace={workspace} checkout={checkout} focused={checkout.id === focusedCheckoutId} actions={actions} />
         ))}
         {inactive.length > 0 ? (
           <li>
@@ -233,7 +253,7 @@ function WorkspaceRows({
         ) : null}
         {workspace.inactive_checkouts.expanded
           ? inactive.map((checkout) => (
-              <CheckoutRowView key={checkout.id} checkout={checkout} focused={checkout.id === focusedCheckoutId} actions={actions} />
+              <CheckoutRowView key={checkout.id} workspace={workspace} checkout={checkout} focused={checkout.id === focusedCheckoutId} actions={actions} />
             ))
           : null}
       </ul>
@@ -242,10 +262,12 @@ function WorkspaceRows({
 }
 
 const CheckoutRowView = memo(function CheckoutRowView({
+  workspace,
   checkout,
   focused,
   actions,
 }: {
+  workspace: Workspace;
   checkout: Checkout;
   focused: boolean;
   actions: Actions;
@@ -253,32 +275,49 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const badge = checkout.pull_request ? pullRequestBadge(checkout.pull_request) : null;
   return (
     <li>
-      <button
-        type="button"
-        data-checkout={checkout.id}
-        aria-current={focused ? "true" : undefined}
-        className={`flex w-full flex-col items-start px-md py-xs pl-[var(--size-lineage-indent)] text-left ${
-          focused ? "bg-elevated text-primary" : "text-secondary hover:bg-elevated"
-        }`}
-        onClick={() => actions.focusCheckout(checkout.workspace_id, checkout.id)}
+      <RowMenu
+        label={`${checkout.branch ?? checkout.label} actions`}
+        items={checkoutMenu(workspace, checkout)}
+        onSelect={(item) => runCheckoutItem(workspace, checkout, item)}
+        data-checkout-menu={checkout.id}
       >
-        <span className="flex w-full items-baseline gap-xs text-body">
-          <span className="w-[var(--size-checkout-icon)] font-mono text-caption text-muted" aria-hidden="true">
-            {checkout.is_worktree ? "⑂" : "◆"}
+        <button
+          type="button"
+          data-checkout={checkout.id}
+          aria-current={focused ? "true" : undefined}
+          className={`flex w-full flex-col items-start px-md py-xs pl-[var(--size-lineage-indent)] text-left ${
+            focused ? "bg-elevated text-primary" : "text-secondary hover:bg-elevated"
+          }`}
+          onClick={() => actions.focusCheckout(checkout.workspace_id, checkout.id)}
+        >
+          <span className="flex w-full items-baseline gap-xs text-body">
+            <span className="w-[var(--size-checkout-icon)] font-mono text-caption text-muted" aria-hidden="true">
+              {checkout.is_worktree ? "⑂" : "◆"}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{checkout.branch ?? checkout.label}</span>
+            {badge ? (
+              <span className={`text-micro ${badge.color}`} data-pr-badge={badge.label}>
+                #{checkout.pull_request?.number} {badge.label}
+              </span>
+            ) : null}
           </span>
-          <span className="min-w-0 flex-1 truncate">{checkout.branch ?? checkout.label}</span>
-          {badge ? (
-            <span className={`text-micro ${badge.color}`} data-pr-badge={badge.label}>
-              #{checkout.pull_request?.number} {badge.label}
+          {checkout.purpose?.text ? (
+            <span className="w-full truncate pl-[var(--size-checkout-icon)] text-caption text-muted" data-purpose={checkout.purpose.origin}>
+              {checkout.purpose.text}
             </span>
           ) : null}
-        </span>
-        {checkout.purpose?.text ? (
-          <span className="w-full truncate pl-[var(--size-checkout-icon)] text-caption text-muted" data-purpose={checkout.purpose.origin}>
-            {checkout.purpose.text}
-          </span>
-        ) : null}
-      </button>
+        </button>
+      </RowMenu>
     </li>
   );
 });
+
+function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
+  if (item === "pin" || item === "unpin") return actions.setPinned(workspace.id, item === "pin");
+  if (item === "new_worktree") useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
+}
+
+function runCheckoutItem(workspace: Workspace, checkout: Checkout, item: MenuItem["id"]) {
+  if (item === "set_purpose") useUiStore.getState().setWorkspaceDialog({ kind: "purpose", workspaceId: workspace.id, checkoutId: checkout.id });
+  if (item === "delete_worktree") useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: workspace.id, checkoutId: checkout.id });
+}

@@ -18,7 +18,13 @@ export type PendingClose = {
   affected: string[];
 };
 
-export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "search";
+export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "search" | "settings";
+
+/** A project or checkout management dialog, named by the row that opened it. */
+export type WorkspaceDialog =
+  | { kind: "new_worktree"; workspaceId: string }
+  | { kind: "purpose"; workspaceId: string; checkoutId: string }
+  | { kind: "delete_worktree"; workspaceId: string; checkoutId: string };
 
 /** A held-modifier cycle over recent tabs or projects; committed when ⌥ is released. */
 export type Cycle = {
@@ -61,6 +67,25 @@ type UiStore = {
   cycle: Cycle | null;
   /** A notice the operator can act on; `refreshable` offers `refresh_status` (activity unknown). */
   notice: { text: string; refreshable: boolean } | null;
+  /** The management dialog a sidebar menu opened, or null. */
+  workspaceDialog: WorkspaceDialog | null;
+  /**
+   * The task and removal this page started, so their later answers (an agent
+   * start after the creation dialog closed, a removal that finished after its
+   * dialog was hidden) are reported here and another page's are not.
+   */
+  watchedTask: number | null;
+  /** The pane a creation made, to be focused once the snapshot lists it (B13). */
+  focusWhenListed: string | null;
+  watchedRemoval: { path: string; afterId: number } | null;
+  /** True while a Shortcuts row is recording: the window listener then runs no command. */
+  recordingShortcut: boolean;
+  /**
+   * Escape handlers of the layers open inside an overlay, innermost last. The
+   * window listener answers Escape with the innermost one first, so a nested
+   * confirmation closes before the sheet behind it.
+   */
+  escapeLayers: (() => void)[];
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
@@ -72,6 +97,13 @@ type UiStore = {
   setPendingClose: (pending: PendingClose | null) => void;
   setCycle: (cycle: Cycle | null) => void;
   setNotice: (notice: { text: string; refreshable: boolean } | null) => void;
+  setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
+  setWatchedTask: (id: number | null) => void;
+  setFocusWhenListed: (paneId: string | null) => void;
+  setWatchedRemoval: (removal: { path: string; afterId: number } | null) => void;
+  setRecordingShortcut: (recording: boolean) => void;
+  /** Registers an Escape layer and returns its removal. */
+  pushEscape: (handler: () => void) => () => void;
 };
 
 export const useUiStore = create<UiStore>((set, get) => ({
@@ -84,6 +116,12 @@ export const useUiStore = create<UiStore>((set, get) => ({
   pendingClose: null,
   cycle: null,
   notice: null,
+  workspaceDialog: null,
+  watchedTask: null,
+  focusWhenListed: null,
+  watchedRemoval: null,
+  recordingShortcut: false,
+  escapeLayers: [],
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
@@ -100,4 +138,13 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setPendingClose: (pendingClose) => set({ pendingClose }),
   setCycle: (cycle) => set({ cycle }),
   setNotice: (notice) => set({ notice }),
+  setWorkspaceDialog: (workspaceDialog) => set({ workspaceDialog }),
+  setWatchedTask: (watchedTask) => set({ watchedTask }),
+  setFocusWhenListed: (focusWhenListed) => set({ focusWhenListed }),
+  setWatchedRemoval: (watchedRemoval) => set({ watchedRemoval }),
+  setRecordingShortcut: (recordingShortcut) => set({ recordingShortcut }),
+  pushEscape: (handler) => {
+    set({ escapeLayers: [...get().escapeLayers, handler] });
+    return () => set({ escapeLayers: get().escapeLayers.filter((layer) => layer !== handler) });
+  },
 }));

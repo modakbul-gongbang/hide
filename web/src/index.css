@@ -19,6 +19,8 @@
 }
 
 :root {
+  /* Dark is the only theme: native scrollbars and form controls follow it. */
+  color-scheme: dark;
   /* Font stacks are not numeric tokens; the terminal reads this one at mount. */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 }

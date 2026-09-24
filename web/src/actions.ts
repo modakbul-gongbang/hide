@@ -6,7 +6,7 @@ import { deleteBuffer } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
-import { activeEditorTab, checkoutById, editorFor, focusedCheckout, visibleTab, type Checkout, type Tab } from "./snapshot";
+import { activeEditorTab, checkoutById, editorFor, focusedCheckout, focusedRemoteDevice, visibleTab, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -33,13 +33,35 @@ export function createActions(dispatch: DispatchFn) {
    * The core's ui state with one patch applied. The event replaces the whole
    * state rather than merging it, so every field the snapshot carries rides
    * along; a field the web omits would fall back to the core's default and
-   * erase a value another surface owns.
+   * erase a value another surface owns. The two registration lists are the
+   * exception: their own events (`register_device`, `workspace_pin_set`, …)
+   * own them and the core keeps them when they are absent, so an echo of an
+   * older snapshot can never undo a registration that landed after it.
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
     if (!state) return;
-    dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...state, ...patch } });
+    const { workspace_registrations: _workspaces, device_registrations: _devices, ...owned } = state;
+    void _workspaces;
+    void _devices;
+    dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
   };
+
+  /**
+   * Whether a local pane or tab command may go out. With an SSH device
+   * selected the local tabs are not on screen, and the web shell has no
+   * remote pane control yet, so the command is refused here and says so
+   * rather than acting on this machine (PRD S5 B19).
+   */
+  const localPaneControl = (command: string): boolean => {
+    const device = focusedRemoteDevice(rest());
+    if (!device) return true;
+    ui().setNotice({ text: `${device.label} is selected. ${command} is not available for a remote device from the web shell; nothing was sent.`, refreshable: false });
+    return false;
+  };
+
+  /** The id of the core's task slot now, so a request can tell its own answer from an older one. */
+  const taskIdNow = () => rest()?.task_operation?.id ?? 0;
 
   const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"]) => {
     const decision = closeDecision(kind, panes, useShellStore.getState().agents);
@@ -197,8 +219,94 @@ export function createActions(dispatch: DispatchFn) {
   return {
     dispatch,
     revealAncestors,
+    taskIdNow,
+
+    openSettings() {
+      ui().openOverlay("settings");
+    },
+
+    setAccent(hex: string) {
+      updateUiState({ accent_hex: hex });
+    },
+
+    setFontSize(size: number) {
+      updateUiState({ font_size: size });
+    },
+
+    /** The browser host's pane chords, replaced as a whole; the Swift host's map is untouched. */
+    setBrowserShortcuts(bindings: Record<string, string>) {
+      updateUiState({ browser_shortcut_bindings: bindings });
+    },
+
+    /** Whether this page is looking at the Agents tab; the daemon owns the core's flag. */
+    observeAgents(observing: boolean) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { observing } });
+    },
+
+    chooseAi(provider: string, model?: string) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: model === undefined ? { provider } : { provider, model } });
+    },
+
+    installHook(runtimeId: string) {
+      dispatch({ schema_version: 2, kind: "install_agent_hooks", payload: { runtime_id: runtimeId } });
+    },
+
+    registerDevice(id: string, label: string, alias: string) {
+      dispatch({ schema_version: 2, kind: "register_device", payload: { id, label, ssh_alias: alias } });
+    },
+
+    testDevice(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "test_device", payload: { device_id: deviceId } });
+    },
+
+    retryDevice(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "retry_connect", payload: { target_id: deviceId } });
+    },
+
+    removeDevice(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "remove_device", payload: { device_id: deviceId } });
+    },
+
+    focusDevice(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
+    },
+
+    setPinned(workspaceId: string, pinned: boolean) {
+      dispatch({ schema_version: 2, kind: "workspace_pin_set", payload: { workspace_id: workspaceId, pinned } });
+    },
+
+    createWorktree(request: { repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {
+      dispatch({
+        schema_version: 2,
+        kind: "create_worktree",
+        payload: {
+          repository_root: request.repositoryRoot,
+          branch: request.branch,
+          base_branch: request.baseBranch,
+          agent_kind: request.agentKind,
+          purpose: request.purpose,
+        },
+      });
+    },
+
+    setPurpose(checkoutId: string, text: string) {
+      dispatch({ schema_version: 2, kind: "set_checkout_purpose", payload: { checkout_id: checkoutId, text } });
+    },
+
+    removeWorktree(checkoutPath: string, deleteBranch: boolean) {
+      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { checkout_path: checkoutPath, delete_branch: deleteBranch } });
+    },
+
+    retryTaskAgent(id: number) {
+      dispatch({ schema_version: 2, kind: "task_agent_retry", payload: { id } });
+    },
+
+    focusPane(paneId: string) {
+      dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
+    },
 
     createTab() {
+      if (!localPaneControl("New tab")) return;
       const here = current();
       if (!here) return diagnostic("create_tab: no focused checkout");
       dispatch({
@@ -229,6 +337,7 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closeTab(tabId?: string) {
+      if (!localPaneControl("Close tab")) return;
       // The strip shows a file tab while the editor is up, so the close chord
       // closes what the operator sees rather than the terminal tab behind it.
       const fileTab = activeEditorTab(useShellStore.getState().editor);
@@ -241,6 +350,7 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closePane(paneId?: string) {
+      if (!localPaneControl("Close pane")) return;
       const here = current();
       const id = paneId ?? useShellStore.getState().focusedPaneId;
       if (!here?.tab || !id) return diagnostic("close_pane: no focused pane");
@@ -275,6 +385,7 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     reopenClosed() {
+      if (!localPaneControl("Reopen closed tab")) return;
       const recent = rest()?.recent_closed;
       if (!recent?.can_reopen) {
         diagnostic(`reopen_closed: nothing to reopen${recent?.reopen_blocked_reason ? ` (${recent.reopen_blocked_reason})` : ""}`);
@@ -284,6 +395,7 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     split(direction: "right" | "down") {
+      if (!localPaneControl("Split")) return;
       const here = current();
       const paneId = useShellStore.getState().focusedPaneId;
       const pane = here?.tab?.panes.find((row) => row.id === paneId);
@@ -296,6 +408,7 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     toggleZoom() {
+      if (!localPaneControl("Zoom pane")) return;
       const paneId = useShellStore.getState().focusedPaneId;
       if (!paneId) return diagnostic("toggle_zoom: no focused pane");
       dispatch({ schema_version: 2, kind: "toggle_zoom", payload: { pane_id: paneId } });
@@ -304,6 +417,7 @@ export function createActions(dispatch: DispatchFn) {
     /** ⌘= / ⌘- / ⌘0 scale whichever surface is showing: the document when an
      * editor tab owns the canvas, else the focused terminal pane. */
     textScale(direction: "in" | "out" | "reset") {
+      if (!localPaneControl("Text size")) return;
       if (editorFor(useShellStore.getState().editor)) {
         dispatch({ schema_version: 2, kind: "editor_text_scale", payload: { direction } });
         return;
@@ -371,6 +485,7 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     openFind() {
+      if (!localPaneControl("Find in pane")) return;
       ui().openOverlay("find");
     },
 

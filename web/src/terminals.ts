@@ -144,6 +144,22 @@ export function focusTerminal(paneId: string) {
   }
 }
 
+/**
+ * Gives keyboard focus back after a sheet or dialog closes. A terminal gets it
+ * through `focusTerminal` on the pane the core says is focused, never by
+ * re-focusing the textarea that held it: that focus would be reported as the
+ * operator moving to that pane, and undo a move the dialog itself caused (a
+ * created worktree's pane). Any other element simply takes focus back.
+ */
+export function restoreFocus(previous: HTMLElement | null) {
+  if (previous?.closest(".xterm")) {
+    const paneId = useShellStore.getState().focusedPaneId;
+    if (paneId) focusTerminal(paneId);
+    return;
+  }
+  if (previous?.isConnected) previous.focus();
+}
+
 /** Pane ids that currently hold an instance, shown or parked (measurement and e2e seam). */
 export function liveTerminalIds(): string[] {
   return [...instances.keys()];

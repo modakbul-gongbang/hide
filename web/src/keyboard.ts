@@ -7,7 +7,7 @@
 
 import type { Actions } from "./actions";
 import { recentCheckoutOrder, recentTabOrder } from "./recent";
-import { matchBrowser, type CommandId } from "./shortcuts";
+import { matchBrowser, resolvedRegistry, type CommandId } from "./shortcuts";
 import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
@@ -108,6 +108,8 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.textScale("reset");
       case "shortcuts":
         return actions.openShortcuts();
+      case "settings":
+        return actions.openSettings();
       case "move_to_trash":
         return;
       default: {
@@ -119,6 +121,9 @@ export function installKeyboard(actions: Actions): () => void {
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.isComposing || event.keyCode === 229) return;
+    // A Shortcuts row that is recording owns the next chord, Escape included:
+    // no command runs while the operator is showing the recorder a key.
+    if (ui().recordingShortcut) return;
     if (event.key === "Escape") {
       // An Escape the shell answers is consumed here: the pane's textarea is
       // still the focused element under the sheet or a cycle, and xterm
@@ -129,6 +134,12 @@ export function installKeyboard(actions: Actions): () => void {
       };
       if (ui().cycle) {
         ui().setCycle(null);
+        consume();
+        return;
+      }
+      const innermost = ui().escapeLayers.at(-1);
+      if (innermost) {
+        innermost();
         consume();
         return;
       }
@@ -144,7 +155,7 @@ export function installKeyboard(actions: Actions): () => void {
       }
       return;
     }
-    const command = matchBrowser(event);
+    const command = matchBrowser(event, resolvedRegistry(useShellStore.getState().rest?.ui_state?.browser_shortcut_bindings).registry);
     if (!command) return;
     event.preventDefault();
     event.stopPropagation();

@@ -12,11 +12,14 @@ import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
 import { RightPanel } from "./RightPanel";
+import { SettingsGate } from "./SettingsSheet";
+import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { checkoutById, editorFor, focusedCheckout } from "./snapshot";
+import { checkoutById, editorFor, focusedCheckout, focusedRemoteDevice } from "./snapshot";
 import { useShellStore } from "./store";
 import { TabBar } from "./TabBar";
+import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { useUiStore } from "./ui";
 import { connectShell, type DispatchFn } from "./ws";
@@ -69,6 +72,20 @@ export function App() {
       session.close();
     };
   }, [actions]);
+
+  // Appearance is the core's: the stored accent replaces the accent token and
+  // the stored interface size scales the interface text tokens, so a reload
+  // restores both from the snapshot (B4). A value outside what the sheet
+  // offers leaves the token default rather than drawing a guess.
+  const accentHex = useShellStore((s) => usableAccent(s.rest?.ui_state?.accent_hex));
+  const fontSize = useShellStore((s) => usableFontSize(s.rest?.ui_state?.font_size));
+  useEffect(() => {
+    const root = document.documentElement.style;
+    if (accentHex) root.setProperty("--color-accent", accentHex);
+    else root.removeProperty("--color-accent");
+    if (fontSize) root.setProperty("--interface-scale", String(fontSize / FONT_SIZE_BASE));
+    else root.removeProperty("--interface-scale");
+  }, [accentHex, fontSize]);
 
   // A reconnect cancels an in-flight drag or cycle; the registration text
   // stays because its component is not remounted (PRD S2 B14).
@@ -145,12 +162,11 @@ export function App() {
     <div className="relative flex h-full flex-col bg-background text-primary">
       <ConnectionBadge />
       <NoticeBar actions={actions} />
+      <WorkspaceNotices actions={actions} />
       <div className="flex min-h-0 flex-1">
         <Sidebar actions={actions} />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <TabBar actions={actions} />
-          <FindBar actions={actions} />
-          <Canvas actions={actions} />
+          <MainSurface actions={actions} />
         </main>
         <RightPanel actions={actions} />
       </div>
@@ -159,6 +175,8 @@ export function App() {
       <ConfirmTrash actions={actions} />
       <Palette actions={actions} />
       <ShortcutSheetGate actions={actions} />
+      <SettingsGate actions={actions} />
+      <WorkspaceDialogs actions={actions} />
     </div>
   );
 }
@@ -166,6 +184,34 @@ export function App() {
 function ShortcutSheetGate({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overlay === "shortcuts");
   return open ? <ShortcutSheet actions={actions} /> : null;
+}
+
+/** This machine's tabs, or the selected SSH device's context in their place (B19). */
+function MainSurface({ actions }: { actions: Actions }) {
+  const remote = useShellStore((s) => focusedRemoteDevice(s.rest));
+  if (remote) return <RemoteDeviceSurface actions={actions} label={remote.label} alias={remote.ssh_alias} state={remote.state} message={remote.message} />;
+  return (
+    <>
+      <TabBar actions={actions} />
+      <FindBar actions={actions} />
+      <Canvas actions={actions} />
+    </>
+  );
+}
+
+function RemoteDeviceSurface({ actions, label, alias, state, message }: { actions: Actions; label: string; alias: string | null; state: string; message: string | null }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-sm p-xl text-body text-secondary" data-remote-device-surface={label}>
+      <h2 className="text-title font-semibold text-primary">
+        {label} <span className="font-mono text-caption text-muted">{alias}</span>
+      </h2>
+      <p>{state === "ready" ? "Connected." : `Not connected${message ? `: ${message}` : "."}`}</p>
+      <p>The web shell does not control a remote device's panes yet. Nothing here is sent to this machine or to {label}.</p>
+      <button type="button" className="text-primary underline" onClick={() => actions.focusDevice("local")} data-use-local-device="true">
+        Show this machine
+      </button>
+    </div>
+  );
 }
 
 /**

@@ -62,6 +62,28 @@ export type StripTab = {
   preview: boolean;
 };
 
+/** The removal gate the core computed for a linked worktree (`WorktreeDeletionGateSnapshot`). */
+export type DeletionGate = {
+  blocked_reason: string | null;
+  warnings: string[];
+  button_label: string;
+  can_delete_branch: boolean;
+};
+
+/** The parts of the core's worktree row the removal confirmation reads. */
+export type WorktreeRow = {
+  path: string;
+  branch: string | null;
+  head_sha: string | null;
+  is_main: boolean;
+  missing: boolean;
+  dirty: boolean;
+  changed_file_count: number;
+  pane_count: number;
+  running_agent_count: number;
+  deletion_gate: DeletionGate;
+};
+
 export type Checkout = {
   id: string;
   workspace_id: string;
@@ -72,6 +94,8 @@ export type Checkout = {
   is_worktree: boolean;
   exists: boolean;
   has_panes: boolean;
+  /** The worktree row behind a Git checkout, or null for a plain folder. */
+  worktree?: WorktreeRow | null;
   pull_request: PullRequest | null;
   tabs: Tab[];
   active_tab_id: string | null;
@@ -84,6 +108,11 @@ export type Workspace = {
   label: string;
   path: string;
   device_id: string;
+  /** Set for a project on a registered SSH device; local projects carry null. */
+  remote_target_id?: string | null;
+  is_git?: boolean;
+  default_branch?: string | null;
+  branches?: string[];
   registered: boolean;
   temporary: boolean;
   pinned: boolean;
@@ -248,6 +277,111 @@ export type ChangesSnapshot = {
   unavailable_reason: string | null;
 };
 
+export type DeviceTestStage = { stage: string; state: string; detail: string };
+
+export type Device = {
+  id: string;
+  label: string;
+  /** `local` for the daemon's own machine, `remote` for an SSH device. */
+  kind: string;
+  /** `local`, or for an SSH device `ready`, `unavailable` or `disabled`. */
+  state: string;
+  message: string | null;
+  ssh_alias: string | null;
+  agent_count: number;
+  test: { state: string; checked_at_unix_ms: number | null; stages: DeviceTestStage[] } | null;
+};
+
+export type RemoteStatus = {
+  target_id: string;
+  state: string;
+  message: string | null;
+  herdr_version: string | null;
+};
+
+export type HerdrStatus = {
+  state?: string;
+  socket_path?: string | null;
+  message?: string | null;
+  expected_protocol?: number | null;
+  received_protocol?: number | null;
+  received_version?: string | null;
+};
+
+export type EnvironmentStatus = {
+  key: string;
+  required: boolean;
+  format: string;
+  state: string;
+  absent_behavior: string;
+  message: string;
+};
+
+export type CoreDiagnostic = { kind: string; message: string; occurred_at: number };
+
+export type AiProvider = {
+  id: string;
+  label: string;
+  /** `ready`, `needs_login`, `not_installed`, `unavailable`, `unsupported`, or `unread`. */
+  state: string;
+  headline: string;
+  message: string | null;
+  model: string;
+  models: string[];
+  models_unavailable_reason: string | null;
+};
+
+export type BackgroundAi = {
+  provider: string;
+  chosen: boolean;
+  providers: AiProvider[];
+  unavailable_reason: string | null;
+};
+
+export type AgentHookRuntime = {
+  id: string;
+  label: string;
+  path: string;
+  headline: string;
+  installed: boolean;
+  offers_install: boolean;
+};
+
+export type AgentHooks = {
+  runtimes: AgentHookRuntime[];
+  sessions_predating_install: { pane_id: string; label: string; message: string }[];
+  last_report_failure: string | null;
+};
+
+/** The core's one task slot: a worktree creation, an agent start, a purpose write. */
+export type TaskOperation = {
+  id: number;
+  kind: string;
+  /** `working`, `ready` or `failed`. */
+  phase: string;
+  repository_root: string | null;
+  branch: string | null;
+  base_branch: string | null;
+  path: string | null;
+  pane_id: string | null;
+  agent_kind: string | null;
+  message: string | null;
+  /** `starting`, `started`, `failed` or `unknown`; null when no agent was chosen. */
+  agent_phase: string | null;
+  agent_message: string | null;
+};
+
+/** One worktree deletion: `closing` panes, `removing` on the core's worker, then `finished` or `failed`. */
+export type WorktreeRemoval = {
+  id: number;
+  repository_root: string;
+  checkout_path: string;
+  branch: string | null;
+  delete_branch: boolean;
+  phase: string;
+  message: string | null;
+};
+
 export type SnapshotRest = {
   navigator?: {
     focused_workspace_id?: string | null;
@@ -259,7 +393,12 @@ export type SnapshotRest = {
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
+    devices?: Device[];
+    focused_device_id?: string | null;
   };
+  connection?: { kind: string; state: string; target_id: string | null };
+  task_operation?: TaskOperation | null;
+  worktree_removal?: WorktreeRemoval | null;
   tab?: Tab;
   zoomed?: string | null;
   focused?: { pane_id?: string | null };
@@ -275,10 +414,18 @@ export type SnapshotRest = {
     expanded_paths?: string[];
     selected_path?: string | null;
     selected_pane_id?: string | null;
+    accent_hex?: string;
+    font_size?: number;
+    browser_shortcut_bindings?: Record<string, string>;
     [key: string]: unknown;
   };
   status?: {
-    herdr?: { state?: string; message?: string | null };
+    herdr?: HerdrStatus;
+    remote?: RemoteStatus[];
+    environment?: EnvironmentStatus[];
+    agent_hooks?: AgentHooks;
+    background_ai?: BackgroundAi;
+    diagnostics?: CoreDiagnostic[];
     async_operations?: AsyncOperation[];
     /** The core's most recent failure; the shell logs its detail (B5). */
     last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number } | null;
@@ -286,6 +433,18 @@ export type SnapshotRest = {
   recent_closed?: RecentClosed;
   explorer_operation?: ExplorerOperation | null;
 };
+
+/**
+ * The SSH device the operator selected, or null while this machine is the
+ * context. With one selected, the local tabs are not what the operator is
+ * looking at, so the shell neither draws them nor sends them pane commands
+ * (PRD S5 B19), the way the native shell's remote context works.
+ */
+export function focusedRemoteDevice(rest: SnapshotRest | null): Device | null {
+  const id = rest?.navigator?.focused_device_id;
+  if (!id || id === "local") return null;
+  return rest?.navigator?.devices?.find((device) => device.id === id && device.kind === "remote") ?? null;
+}
 
 export function focusedCheckout(rest: SnapshotRest | null): Checkout | null {
   const id = rest?.navigator?.focused_checkout_id;
