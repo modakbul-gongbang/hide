@@ -364,12 +364,19 @@ impl Runtime {
 
     /// Whether a file of this Workspace can be read now. Only the daemon
     /// installs file roots; the Swift shell reads by path and never waits.
+    /// A device's files are read through its helper, so its Workspace waits
+    /// for the helper rather than marking every file unavailable while it
+    /// starts; `ingest_host_established` asks again once it is ready.
     fn view_root_ready(&self, key: &WorkspaceKey) -> bool {
-        key.0 != workspace::LOCAL_DEVICE_ID
-            || self
-                .file_roots
-                .as_ref()
-                .is_none_or(|roots| roots.pinned_root(Path::new(&key.1)).is_some())
+        if key.0 != workspace::LOCAL_DEVICE_ID {
+            return matches!(
+                self.device_hosts.get(&key.0).map(|host| &host.phase),
+                Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none()
+            );
+        }
+        self.file_roots
+            .as_ref()
+            .is_none_or(|roots| roots.pinned_root(Path::new(&key.1)).is_some())
     }
 
     fn publish_workspace_view(&mut self, front: Option<&WorkspaceKey>) {
@@ -420,7 +427,19 @@ impl Runtime {
             self.snapshot.editor.tabs.clone(),
             self.snapshot.editor.active_tab_id.clone(),
         );
-        let live = store.live.clone();
+        // A Workspace still reading its restored tabs back is recorded once
+        // they land: recording it now would save the list without them, and
+        // a quit before the reads finish would lose them from the file.
+        let restoring: HashSet<WorkspaceKey> = self
+            .document_restores()
+            .filter_map(|(workspace_id, checkout_id)| self.workspace_key(workspace_id, checkout_id))
+            .collect();
+        let live: HashSet<WorkspaceKey> = store
+            .live
+            .iter()
+            .filter(|key| !restoring.contains(*key))
+            .cloned()
+            .collect();
         let mut lists: HashMap<WorkspaceKey, Vec<ViewTabRecord>> = HashMap::new();
         let mut active: Option<(WorkspaceKey, ViewTabRecord)> = None;
         // A Workspace the catalog cannot place right now (a device that is
@@ -473,7 +492,9 @@ impl Runtime {
                 changed = true;
             }
         }
-        store.recorded = Some(current);
+        if restoring.is_empty() {
+            store.recorded = Some(current);
+        }
         if changed {
             self.persist_workspace_views();
         }

@@ -149,6 +149,14 @@ impl Runtime {
         })
     }
 
+    /// The checkouts that still have a restored View tab being read back.
+    pub(super) fn document_restores(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.document_opens
+            .values()
+            .filter(|open| open.restore.is_some())
+            .map(|open| (open.workspace_id.as_str(), open.checkout_id.as_str()))
+    }
+
     /// The checkout the operator is looking at: this machine's focus while
     /// it is the selected device, otherwise the selected device's Herdr
     /// session focus, which the core follows rather than keeps (B31).
