@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, identity, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
+import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, draftStorageHold, flushBuffer, identity, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { PatchView } from "./editor/PatchView";
 import { clearDraft, latestDraft, noteDraft } from "./editor/draft";
@@ -184,6 +184,18 @@ function EditorBody({
   const checked = useRef(false);
   const autosave = useRef<number | undefined>(undefined);
   const connection = useShellStore((s) => s.connection);
+  // A draft store that refused a write holds every other clean document
+  // read-only until there is room again (B44); only open tabs count, so a
+  // closed tab's old refusal does not hold the editor forever.
+  const storageFull = useShellStore((s) => (s.editor?.tabs ?? []).some((row) => s.bufferWarnings.has(row.id)));
+  const unstored = useShellStore((s) => s.bufferWarnings.has(tab.id));
+  const hold = draftStorageHold({ storageFull, unstored, dirty: document?.dirty ?? false });
+  // A saved document needs no stored draft, so its tab-only mark goes with
+  // the save, and with it the hold on every other document.
+  const clean = document ? !document.dirty : false;
+  useEffect(() => {
+    if (clean) useShellStore.getState().noteBufferWarning(tab.id, false);
+  }, [clean, tab.id]);
 
   const autosaveDue = () => {
     const current = latest.current;
@@ -314,6 +326,17 @@ function EditorBody({
           {document.readonly_reason}
         </div>
       ) : null}
+      {hold === "held" ? (
+        <div role="status" className="border-b border-divider px-md py-xs text-caption text-warning" data-editor-draft-hold="held">
+          Unsaved drafts cannot be stored right now (their storage is full at 512 MiB or this browser's quota, or unavailable), so this document stays read-only until the unstored draft is saved, exported or discarded. Stored drafts are never removed to make room.
+        </div>
+      ) : null}
+      {hold === "unstored" ? (
+        <div role="status" className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-draft-hold="unstored">
+          <span className="min-w-0 flex-1">This draft is not stored: draft storage is full or unavailable, so it lives in this tab only. Save or export it; the next edit is stored again once there is room.</span>
+          <ExportDraftButton tabId={tab.id} path={tab.path} />
+        </div>
+      ) : null}
       {document.conflict ? (
         <ConflictBar tabId={tab.id} draftKey={draftKey} path={tab.path} removed={document.conflict.disk_revision === null} actions={actions} />
       ) : null}
@@ -326,6 +349,7 @@ function EditorBody({
         wrap={tab.wrap}
         live={document.document_kind === "markdown" && tab.markdown_live}
         findRequest={findRequest}
+        held={hold === "held"}
         onDraft={(contents) => {
           noteDraft(tab.id, contents); 
           // A buffer that cannot be stored keeps the edit alive and says so on

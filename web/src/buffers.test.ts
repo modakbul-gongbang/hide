@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bufferDecision, bufferFor, identity, recoveryBuffers, tabBufferKey, type BufferKey, type StoredBuffer } from "./buffers";
+import { bufferDecision, bufferFor, draftStorageHold, identity, recoveryBuffers, tabBufferKey, type BufferKey, type StoredBuffer } from "./buffers";
 import { draftPlace } from "./DraftRecovery";
 import type { SnapshotRest } from "./snapshot";
 
@@ -57,6 +57,15 @@ describe("draft reconciliation", () => {
 
   it("keeps a draft for a document the editor is not showing", () => {
     expect(bufferDecision(buffer(KEY, "x"), null)).toBe("keep");
+  });
+});
+
+describe("a full draft store (B44)", () => {
+  it("keeps the unstored tab editable and holds every other clean document", () => {
+    expect(draftStorageHold({ storageFull: true, unstored: true, dirty: true })).toBe("unstored");
+    expect(draftStorageHold({ storageFull: true, unstored: false, dirty: false })).toBe("held");
+    expect(draftStorageHold({ storageFull: true, unstored: false, dirty: true })).toBeNull();
+    expect(draftStorageHold({ storageFull: false, unstored: false, dirty: false })).toBeNull();
   });
 });
 

@@ -313,6 +313,19 @@ export async function moveBuffer(from: BufferKey, to: BufferKey): Promise<"moved
   });
 }
 
+/**
+ * What a full draft store means for one editor tab (PRD S5.5 B44). A tab
+ * whose draft could not be stored keeps editing, since its only copy is in
+ * this tab and saving or exporting it is how the operator gets out; every
+ * other clean document is held read-only, so no new edit is made that could
+ * not be kept. Nothing stored is evicted to make room, on any device.
+ */
+export function draftStorageHold(input: { storageFull: boolean; unstored: boolean; dirty: boolean }): "unstored" | "held" | null {
+  if (input.unstored) return "unstored";
+  if (input.storageFull && !input.dirty) return "held";
+  return null;
+}
+
 export async function allBuffers(): Promise<StoredBuffer[]> {
   const rows = await withStore<StoredBuffer[]>("readonly", (store) => store.getAll() as IDBRequest<StoredBuffer[]>);
   return rows.result ?? [];

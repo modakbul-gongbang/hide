@@ -312,6 +312,57 @@ test("a refused save keeps the tab dirty and takes the saving mark off", async (
   }
 });
 
+test("a draft that cannot be stored stays editable and holds other documents read-only until it is saved (S5.5 B44)", async ({ page }) => {
+  // No IndexedDB behaves as a full draft store: every write is refused.
+  const fixture = await openCheckout(page, (page) =>
+    page.addInitScript(() => Object.defineProperty(window, "indexedDB", { value: undefined, configurable: true })),
+  );
+  const { repo, file, sent, lastSent } = fixture;
+  try {
+    // A refused save keeps the edit unsaved, so its only copy is this tab.
+    fs.chmodSync(file, 0o444);
+    const content = page.locator("[data-editor-body] .cm-content");
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 44;\n");
+    await expect(page.locator('[data-editor-draft-hold="unstored"]')).toBeVisible();
+    await expect(page.locator('[data-tab-kind="file"][data-tab-only="true"]')).toHaveCount(1);
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+
+    // Export hands the unstored draft to the browser's download.
+    const download = page.waitForEvent("download");
+    await page.locator('[data-editor-draft-hold="unstored"] [data-export-draft]').click();
+    const exported = await download;
+    expect(fs.readFileSync(await exported.path(), "utf8")).toBe("export const answer = 44;\n");
+    await screenshot(page, "s55-draft-unstored");
+
+    // Another document opens held read-only: typing changes nothing.
+    await page.locator(`[data-explorer-row="${repo}/README.md"]`).dblclick();
+    await expect(page.locator("[data-editor-body] .cm-content")).toContainText("# repo");
+    await expect(page.locator('[data-editor-draft-hold="held"]')).toBeVisible();
+    const draftsBefore = sent.get("file_draft") ?? 0;
+    await page.locator("[data-editor-body] .cm-content").click();
+    await page.keyboard.type("typed while held");
+    await expect(page.locator("[data-editor-body] .cm-content")).not.toContainText("typed while held");
+    expect(sent.get("file_draft") ?? 0).toBe(draftsBefore);
+    await screenshot(page, "s55-draft-held");
+
+    // Saving the unstored draft ends the hold.
+    fs.chmodSync(file, 0o644);
+    await page.locator('[data-tab-kind="file"][data-tab-only="true"]').click();
+    await expect(page.locator('[data-editor-draft-hold="unstored"]')).toBeVisible();
+    await page.keyboard.press("Meta+KeyS");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 44;\n");
+    await expect(page.locator("[data-editor-draft-hold]")).toHaveCount(0);
+    await page.locator('[data-tab-kind="file"]', { hasText: "README.md" }).click();
+    await expect(page.locator("[data-editor-draft-hold]")).toHaveCount(0);
+    expect(lastSent.get("file_save")).toMatchObject({ path: file });
+  } finally {
+    fs.chmodSync(file, 0o644);
+    close(fixture);
+  }
+});
+
 test("a deleted open file reports a failed save without losing its draft", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { file, sent } = fixture;
