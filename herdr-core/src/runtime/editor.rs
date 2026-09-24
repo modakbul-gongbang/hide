@@ -181,12 +181,14 @@ impl Runtime {
         checkout_id: &str,
         path: &str,
     ) -> Result<PreparedFileTab, String> {
+        // A tab that could not read its file reads it again on the next open.
         if let Some(tab_id) = self.snapshot.editor.tabs.iter().find_map(|tab| {
             (tab.kind == EditorTabKind::File
                 && tab.workspace_id == workspace_id
                 && tab.checkout_id == checkout_id
-                && tab.path == path)
-                .then(|| tab.id.clone())
+                && tab.path == path
+                && tab.unavailable_reason.is_none())
+            .then(|| tab.id.clone())
         }) {
             return Ok(PreparedFileTab::Open(tab_id));
         }

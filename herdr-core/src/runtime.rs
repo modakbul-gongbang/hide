@@ -1215,7 +1215,13 @@ impl Runtime {
             });
         }
         let workspace_views = options.workspace_views_path.as_ref().map(|path| {
-            let (store, diagnostic) = WorkspaceViewStore::open(PathBuf::from(path));
+            let (store, diagnostic) = WorkspaceViewStore::open(
+                PathBuf::from(path),
+                (
+                    snapshot.ui_state.right_panel_visible,
+                    snapshot.ui_state.right_panel_section,
+                ),
+            );
             if let Some((kind, message)) = diagnostic {
                 crate::diagnostic!(serde_json::json!({
                     "component": "workspace_views",
@@ -1505,6 +1511,10 @@ impl Runtime {
             .then(|| AreaIntent::of(&event))
             .flatten();
         let high_frequency = event.is_terminal_io();
+        let chooses_workspace = matches!(
+            event,
+            Event::FocusCheckout(_) | Event::FocusPane(_) | Event::FocusTab(_)
+        );
         let changed = self.apply(event) || cleared_error;
         // The areas follow the event that moved the screen, in the same
         // frame (D-08); terminal input and output never move them, so they
@@ -1514,6 +1524,9 @@ impl Runtime {
                 && self.snapshot.status.last_error.is_none()
             {
                 self.apply_area_intent(intent);
+            }
+            if chooses_workspace && self.snapshot.status.last_error.is_none() {
+                self.mark_front_chosen();
             }
             self.sync_workspace_view();
         }

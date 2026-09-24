@@ -1216,7 +1216,8 @@ fn a_device_workspaces_view_tabs_wait_for_its_helper_after_a_restart() {
             },
         });
         runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
-        let mut store = WorkspaceViewStore::open(views_dir.path().join("views.json")).0;
+        let mut store =
+            WorkspaceViewStore::open(views_dir.path().join("views.json"), Default::default()).0;
         let record = ViewTabRecord {
             path: f.path("a.txt"),
             kind: ViewTabKind::File,

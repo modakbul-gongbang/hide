@@ -29,11 +29,19 @@ pub(super) struct WorkspaceViewStore {
     /// The editor state the last sync recorded, so an unchanged editor costs
     /// one comparison rather than a pass over the catalog.
     recorded: Option<(Vec<EditorTabSnapshot>, Option<String>)>,
+    /// The Workspace the operator last chose, in this process or before it
+    /// started: the one the app opens on (D-11); none on a first run.
+    resumable: Option<WorkspaceKey>,
+    /// The right panel the settings file held at start. The snapshot's panel
+    /// follows the front Workspace's tools, a projection the settings file
+    /// never takes (D-10).
+    saved_panel: (bool, RightPanelSection),
     /// Set when an unreadable file could not be moved aside: nothing is ever
     /// written over it.
     frozen: bool,
     save_pending: bool,
     save_active: bool,
+    save_worker: Option<thread::JoinHandle<()>>,
 }
 
 /// What an event asks of the front Workspace's areas once it has moved the
@@ -51,7 +59,9 @@ pub(super) enum AreaIntent {
 impl AreaIntent {
     pub(super) fn of(event: &Event) -> Option<Self> {
         match event {
-            Event::FileOpen(_) | Event::FileFocus(_) | Event::ChangesSelect(_) => Some(Self::Views),
+            Event::FileOpen(_) | Event::FileFocus(_) => Some(Self::Views),
+            // A deselect opens nothing.
+            Event::ChangesSelect(payload) if payload.path.is_some() => Some(Self::Views),
             Event::RevealPath(_) => Some(Self::RevealInViews),
             Event::FocusPane(_) | Event::FocusTab(_) => Some(Self::Agents),
             // A device focus lands where the device's Herdr moves, so
@@ -80,7 +90,12 @@ pub(super) struct WorkspaceViewPayload {
 }
 
 impl WorkspaceViewStore {
-    pub(super) fn open(path: PathBuf) -> (Self, Option<(&'static str, String)>) {
+    /// `saved_panel` is the right panel the older settings file holds, which
+    /// is written back unchanged (D-10).
+    pub(super) fn open(
+        path: PathBuf,
+        saved_panel: (bool, RightPanelSection),
+    ) -> (Self, Option<(&'static str, String)>) {
         let (views, outcome) = workspace_views::load(&path, unix_milliseconds());
         let (frozen, diagnostic) = match outcome {
             workspace_views::LoadOutcome::Loaded | workspace_views::LoadOutcome::Missing => {
@@ -111,6 +126,12 @@ impl WorkspaceViewStore {
                 ),
             },
         };
+        let resumable = views
+            .workspaces
+            .iter()
+            .filter(|view| view.last_used_unix_ms > 0)
+            .max_by_key(|view| view.last_used_unix_ms)
+            .map(|view| (view.device_id.clone(), view.path.clone()));
         (
             Self {
                 path,
@@ -118,9 +139,12 @@ impl WorkspaceViewStore {
                 live: HashSet::new(),
                 front: None,
                 recorded: None,
+                resumable,
+                saved_panel,
                 frozen,
                 save_pending: false,
                 save_active: false,
+                save_worker: None,
             },
             diagnostic,
         )
@@ -228,6 +252,24 @@ impl Runtime {
         }
     }
 
+    /// The operator chose the Workspace in front: it is the one a reload or a
+    /// restart opens on (D-11). A front that only Herdr's own focus moved is
+    /// not, so a first run the operator spent on Main starts there again.
+    pub(super) fn mark_front_chosen(&mut self) {
+        if let Some(key) = self.front_workspace_key() {
+            self.mark_workspace_chosen(&key);
+        }
+    }
+
+    pub(super) fn mark_workspace_chosen(&mut self, key: &WorkspaceKey) {
+        let Some(store) = self.workspace_views.as_mut() else {
+            return;
+        };
+        store.resumable = Some(key.clone());
+        store.views.entry(&key.0, &key.1).last_used_unix_ms = unix_milliseconds();
+        self.persist_workspace_views();
+    }
+
     /// Applies what the event that just ran asks of the front Workspace.
     pub(super) fn apply_area_intent(&mut self, intent: AreaIntent) {
         if let Some(key) = self.front_workspace_key() {
@@ -295,7 +337,7 @@ impl Runtime {
         };
         let root = key.1.trim_end_matches('/');
         if let Some(path) = payload.reveal.as_deref()
-            && !path.starts_with(&format!("{root}/"))
+            && crate::files::path_inside_root(Path::new(root), Path::new(path), false).is_err()
         {
             self.set_error(
                 "workspace_view.reveal_outside",
@@ -343,32 +385,32 @@ impl Runtime {
         let root = key.1.trim_end_matches('/');
         let folders = reveal_expansion_paths(root, path, false);
         let expanded = self.expanded_paths_on(&key.0);
+        let mut unfolded = false;
         for folder in folders {
             if !expanded.contains(&folder) {
                 expanded.push(folder);
+                unfolded = true;
             }
         }
-        self.persist_current_ui_state();
-        true
+        if unfolded {
+            self.persist_current_ui_state();
+        }
+        unfolded
     }
 
     /// Brings the snapshot, the editor and the file in line with the front
     /// Workspace. It runs after every event that can move the screen and
     /// before every snapshot read, so a front moved by Herdr or by a device's
-    /// own focus is followed too. With nothing changed it costs a key lookup
-    /// and one comparison of the editor's tabs.
+    /// own focus is followed too. With nothing changed it costs a catalog
+    /// lookup of the front key, one comparison of the editor's tabs, and a
+    /// copy of the published scalars.
     pub(super) fn sync_workspace_view(&mut self) {
         let Some(store) = self.workspace_views.as_ref() else {
             return;
         };
         let front = self.front_workspace_key();
         if front != store.front {
-            let store = self.workspace_views.as_mut().expect("checked above");
-            store.front = front.clone();
-            if let Some(key) = front.as_ref() {
-                store.views.entry(&key.0, &key.1).last_used_unix_ms = unix_milliseconds();
-            }
-            self.persist_workspace_views();
+            self.workspace_views.as_mut().expect("checked above").front = front.clone();
         }
         self.restore_front_when_ready();
         if front.is_some() {
@@ -388,10 +430,16 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_ref() else {
             return false;
         };
+        // The restore opens into the live front, so it runs only while that is
+        // the Workspace the last sync saw; a front that moved since waits for
+        // the sync, which records it first.
         let Some(key) = store.front.clone() else {
             return false;
         };
-        if store.live.contains(&key) || !self.view_root_ready(&key) {
+        if self.front_workspace_key().as_ref() != Some(&key)
+            || store.live.contains(&key)
+            || !self.view_root_ready(&key)
+        {
             return false;
         }
         self.workspace_views
@@ -403,9 +451,7 @@ impl Runtime {
         true
     }
 
-    /// Whether a file of this Workspace can be read now. Only the daemon
-    /// installs file roots; the Swift shell reads by path and never waits.
-    /// A device's files are read through its helper, so its Workspace waits
+    /// Whether a file of this Workspace can be read now. A device's files are read through its helper, so its Workspace waits
     /// for the helper rather than marking every file unavailable while it
     /// starts, and for its catalog, which moves the device's checkouts into
     /// their Projects: a tab restored before that names a Workspace the
@@ -426,39 +472,50 @@ impl Runtime {
                 .is_some_and(|status| status.catalog.state == "ready");
             return helper_ready && catalog_ready;
         }
+        // Only the daemon keeps separate View areas, and it pins roots after
+        // its first snapshot read: a read before that would go around the
+        // pinned root, so the Workspace waits for it.
         self.file_roots
             .as_ref()
-            .is_none_or(|roots| roots.pinned_root(Path::new(&key.1)).is_some())
+            .is_some_and(|roots| roots.pinned_root(Path::new(&key.1)).is_some())
     }
 
     fn publish_workspace_view(&mut self, front: Option<&WorkspaceKey>) {
         let Some(store) = self.workspace_views.as_ref() else {
             return;
         };
-        let view = front.map(|(device, path)| {
-            store
-                .views
-                .get(device, path)
-                .cloned()
-                .unwrap_or_else(|| WorkspaceView::new(device, path))
-        });
-        self.snapshot.workspace_view = view.as_ref().map(|view| WorkspaceViewSnapshot {
+        // Only the scalars are copied: this runs on every snapshot read.
+        let fresh;
+        let view = match front {
+            Some((device, path)) => Some(match store.views.get(device, path) {
+                Some(view) => view,
+                None => {
+                    fresh = WorkspaceView::new(device, path);
+                    &fresh
+                }
+            }),
+            None => None,
+        };
+        let published = view.map(|view| WorkspaceViewSnapshot {
             device_id: view.device_id.clone(),
             path: view.path.clone(),
             mode: view.mode,
             explorer: view.explorer,
             changes: view.changes,
             agent_share: view.agent_share,
+            resumed: front == store.resumable.as_ref(),
         });
+        self.snapshot.workspace_view = published;
         // The one global panel every existing reader gates on (the Changes
         // reader, the device Explorer watch) follows the front Workspace's
         // tools, so those readers keep one owner (A5). The Explorer wins the
         // section while both show, because its decorations need Changes too.
-        if let Some(view) = view {
-            self.snapshot.ui_state.right_panel_visible = view.explorer || view.changes;
-            if view.explorer {
+        if let Some(view) = self.snapshot.workspace_view.as_ref() {
+            let (explorer, changes) = (view.explorer, view.changes);
+            self.snapshot.ui_state.right_panel_visible = explorer || changes;
+            if explorer {
                 self.snapshot.ui_state.right_panel_section = RightPanelSection::Explorer;
-            } else if view.changes {
+            } else if changes {
                 self.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
             }
         }
@@ -626,6 +683,82 @@ impl Runtime {
             "device": key.0,
             "tabs": restored,
         }));
+        self.settle_restored_order(&workspace_id, &checkout_id);
+    }
+
+    /// Once the last restored tab of a checkout has landed, puts its View
+    /// tabs back in the order they were saved: each read lands when it
+    /// finishes, so they arrive in any order (B19). Tabs the file did not
+    /// name keep their place after the restored ones.
+    pub(super) fn settle_restored_order(&mut self, workspace_id: &str, checkout_id: &str) {
+        if self
+            .document_restores()
+            .any(|(workspace, checkout)| workspace == workspace_id && checkout == checkout_id)
+        {
+            return;
+        }
+        let Some(records) =
+            self.workspace_key(workspace_id, checkout_id)
+                .and_then(|(device, path)| {
+                    self.workspace_views
+                        .as_ref()?
+                        .views
+                        .get(&device, &path)
+                        .map(|view| view.tabs.clone())
+                })
+        else {
+            return;
+        };
+        let slots: Vec<usize> = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| {
+                tab.workspace_id == workspace_id
+                    && tab.checkout_id == checkout_id
+                    && matches!(tab.kind, EditorTabKind::File | EditorTabKind::Diff)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let mut ordered: Vec<EditorTabSnapshot> = slots
+            .iter()
+            .map(|index| self.snapshot.editor.tabs[*index].clone())
+            .collect();
+        ordered.sort_by_key(|tab| {
+            let record = record_of(tab);
+            records
+                .iter()
+                .position(|saved| saved.same_target(&record))
+                .unwrap_or(usize::MAX)
+        });
+        let strip_ids: Vec<String> = ordered
+            .iter()
+            .map(|tab| StripTabSnapshot::editor(tab).id)
+            .collect();
+        if ordered
+            .iter()
+            .zip(&slots)
+            .all(|(tab, index)| self.snapshot.editor.tabs[*index].id == tab.id)
+        {
+            return;
+        }
+        for (index, tab) in slots.iter().zip(ordered) {
+            self.snapshot.editor.tabs[*index] = tab;
+        }
+        if let Some(order) = self.checkout_tab_order.get_mut(checkout_id) {
+            let wanted: HashSet<&String> = strip_ids.iter().collect();
+            let mut next = strip_ids.iter();
+            for entry in order.iter_mut() {
+                if wanted.contains(entry)
+                    && let Some(id) = next.next()
+                {
+                    *entry = id.clone();
+                }
+            }
+        }
+        self.rebuild_tab_strips();
     }
 
     /// A View tab whose file could not be read back after a restart.
@@ -710,14 +843,64 @@ impl Runtime {
                     }
                 }
             });
-        if let Err(error) = spawned {
-            let store = self.workspace_views.as_mut().expect("checked above");
-            store.save_active = false;
-            self.set_error(
-                "workspace_views.save_failed",
-                format!("Workspace view state save worker could not start: {error}"),
-                true,
-            );
+        let store = self.workspace_views.as_mut().expect("checked above");
+        match spawned {
+            // A finished worker's handle is replaced; the one that may still
+            // be writing is joined when the core is dropped.
+            Ok(worker) => store.save_worker = Some(worker),
+            Err(error) => {
+                store.save_active = false;
+                self.set_error(
+                    "workspace_views.save_failed",
+                    format!("Workspace view state save worker could not start: {error}"),
+                    true,
+                );
+            }
+        }
+    }
+
+    /// The UI state the settings file takes: the snapshot's, with the right
+    /// panel the file already held while the panel is a projection.
+    pub(super) fn ui_state_to_save(&self) -> UiStateSnapshot {
+        let mut state = self.snapshot.ui_state.clone();
+        if let Some(store) = self.workspace_views.as_ref() {
+            (state.right_panel_visible, state.right_panel_section) = store.saved_panel;
+        }
+        state
+    }
+
+    pub(crate) fn take_workspace_views_save_worker(&mut self) -> Option<thread::JoinHandle<()>> {
+        self.workspace_views.as_mut()?.save_worker.take()
+    }
+
+    /// Forgets what Hide remembered about a removed device's Workspaces.
+    pub(super) fn forget_device_views(&mut self, device_id: &str) {
+        let Some(store) = self.workspace_views.as_mut() else {
+            return;
+        };
+        let before = store.views.workspaces.len();
+        store
+            .views
+            .workspaces
+            .retain(|view| view.device_id != device_id);
+        store.live.retain(|(device, _)| device != device_id);
+        if store
+            .front
+            .as_ref()
+            .is_some_and(|(device, _)| device == device_id)
+        {
+            store.front = None;
+        }
+        if store
+            .resumable
+            .as_ref()
+            .is_some_and(|(device, _)| device == device_id)
+        {
+            store.resumable = None;
+        }
+        store.recorded = None;
+        if store.views.workspaces.len() != before {
+            self.persist_workspace_views();
         }
     }
 }

@@ -1751,6 +1751,7 @@ impl Runtime {
                     .filter(|tab| tab.checkout_id.starts_with(&scope))
                     .count();
                 self.retire_device_editor_tabs(&payload.device_id);
+                self.forget_device_views(&payload.device_id);
                 self.rebuild_device_rows();
                 self.rebuild_tab_strips();
                 self.persist_current_ui_state();

@@ -383,6 +383,7 @@ impl Runtime {
                     request.preview,
                     failure.message(),
                 );
+                self.settle_restored_order(&request.workspace_id, &request.checkout_id);
                 return true;
             }
             Err(failure) => {
@@ -398,6 +399,43 @@ impl Runtime {
                 return true;
             }
         };
+        // A restored tab that said its file was unavailable takes the file now
+        // that it could be read, and shows it like any open would (B20).
+        if !request.reload
+            && request.restore.is_none()
+            && let Some(tab) = self
+                .snapshot
+                .editor
+                .tabs
+                .iter_mut()
+                .find(|tab| tab.id == tab_id && tab.unavailable_reason.is_some())
+        {
+            tab.unavailable_reason = None;
+            self.replace_document(tab_id, document, place);
+            let prepared = PreparedFileTab::Open(tab_id.to_owned());
+            if let Some(reveal) = &request.reveal
+                && self.front_checkout_owned() == reveal.front
+            {
+                self.settle_reveal(
+                    &request.workspace_id,
+                    &request.checkout_id,
+                    &request.path,
+                    Some(prepared),
+                );
+            } else if self.front_checkout()
+                == Some((request.workspace_id.as_str(), request.checkout_id.as_str()))
+            {
+                self.show_file_tab(
+                    prepared,
+                    &request.workspace_id,
+                    &request.checkout_id,
+                    &request.path,
+                    request.preview,
+                );
+            }
+            self.persist_current_ui_state();
+            return true;
+        }
         let open = self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id);
         if let Some(reveal) = &request.reveal
             && !open
@@ -422,6 +460,9 @@ impl Runtime {
             return true;
         }
         if open {
+            if request.restore.is_some() {
+                self.settle_restored_order(&request.workspace_id, &request.checkout_id);
+            }
             return true;
         }
         if let Some(active) = request.restore {
@@ -446,6 +487,7 @@ impl Runtime {
             {
                 self.set_error("file.focus_failed", message, false);
             }
+            self.settle_restored_order(&request.workspace_id, &request.checkout_id);
             return true;
         }
         let in_front = self.front_checkout()

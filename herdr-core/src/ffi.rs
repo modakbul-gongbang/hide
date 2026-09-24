@@ -145,6 +145,16 @@ impl Drop for HerdrCore {
         if let Some(worker) = attachment_worker {
             let _ = worker.join();
         }
+        // A layout or View tab changed just before quitting is on disk before
+        // the process goes (B19).
+        let views_worker = { lock_recover(&self.runtime).take_workspace_views_save_worker() };
+        if let Some(worker) = views_worker
+            && worker.join().is_err()
+        {
+            crate::diagnostic!(
+                serde_json::json!({"component":"workspace_views", "kind":"save.join_failed"})
+            );
+        }
         let worker = { lock_recover(&self.runtime).take_state_save_worker() };
         if let Some(worker) = worker
             && worker.join().is_err()

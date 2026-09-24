@@ -82,6 +82,10 @@ pub struct WorkspaceViewSnapshot {
     pub explorer: bool,
     pub changes: bool,
     pub agent_share: f32,
+    /// Whether this is the Workspace the operator last chose, now or before a
+    /// restart, which the shell opens on; any other front starts on Main
+    /// (D-11).
+    pub resumed: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]

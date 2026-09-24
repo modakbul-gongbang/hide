@@ -558,7 +558,11 @@ fn change_failure(operation: &ExplorerOperation, error: HostCallError) -> String
 /// Component-wise, so `/repo-other` is outside `/repo`; lexical, so a
 /// symlink that escapes the root is not followed here and cannot be
 /// created here either.
-fn path_inside_root(root: &Path, path: &Path, allow_root: bool) -> Result<PathBuf, String> {
+pub(crate) fn path_inside_root(
+    root: &Path,
+    path: &Path,
+    allow_root: bool,
+) -> Result<PathBuf, String> {
     if !root.is_absolute() {
         return Err("The workspace root is not an absolute path".to_owned());
     }

@@ -977,7 +977,7 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
         ChangeNotifier::noop(),
     ));
     let views = tempfile::tempdir().unwrap();
-    let mut store = WorkspaceViewStore::open(views.path().join("views.json")).0;
+    let mut store = WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0;
     store.views.entry(TARGET, &t.main).mode = ViewMode::Views;
     store.views.entry(TARGET, &t.linked).mode = ViewMode::Views;
     runtime.workspace_views = Some(store);

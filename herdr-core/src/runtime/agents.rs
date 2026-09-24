@@ -730,6 +730,7 @@ impl Runtime {
         }
         if let Some(key) = agents_area_key {
             self.apply_area_intent_to(&key, AreaIntent::Agents);
+            self.mark_workspace_chosen(&key);
         }
         true
     }
@@ -1529,7 +1530,7 @@ impl Runtime {
             // Standalone runtimes have no shared mutex or worker context.
             return persistence::save(
                 &self.state_path,
-                &self.snapshot.ui_state,
+                &self.ui_state_to_save(),
                 &self
                     .terminal_sizes
                     .iter()
@@ -1558,7 +1559,7 @@ impl Runtime {
                         guard.state_save_pending = false;
                         (
                             guard.state_path.clone(),
-                            guard.snapshot.ui_state.clone(),
+                            guard.ui_state_to_save(),
                             guard
                                 .terminal_sizes
                                 .iter()
