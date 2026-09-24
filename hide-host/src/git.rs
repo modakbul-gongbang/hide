@@ -238,12 +238,22 @@ impl<'a> GitDirectory<'a> {
     }
 }
 
+/// Every Git call ends within the deadline: a hung `git` would otherwise hold
+/// one of the helper's few workers for good (D-15).
 fn git_output(git: GitDirectory<'_>, arguments: &[&str]) -> HostResult<std::process::Output> {
-    git.command()
-        .args(arguments)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| HostError::new(ErrorCode::Io, format!("git could not be run: {error}")))
+    let mut command = git.command();
+    command.args(arguments);
+    crate::worktrees::output_within(&mut command, crate::worktrees::GIT_DEADLINE)
+        .map_err(|error| HostError::new(ErrorCode::Io, format!("git could not be run: {error}")))?
+        .ok_or_else(|| {
+            HostError::new(
+                ErrorCode::Io,
+                format!(
+                    "git did not finish within {} seconds and was stopped",
+                    crate::worktrees::GIT_DEADLINE.as_secs()
+                ),
+            )
+        })
 }
 
 fn git_text(git: GitDirectory<'_>, arguments: &[&str]) -> HostResult<String> {
@@ -617,6 +627,56 @@ fn bounded(path: String, text: Result<(String, bool), String>) -> Diff {
     }
 }
 
+/// Waits for `child` without holding its lock between checks, so the
+/// watchdog can take it to stop the child meanwhile.
+fn wait_unlocked(
+    child: &std::sync::Mutex<std::process::Child>,
+) -> std::io::Result<std::process::ExitStatus> {
+    loop {
+        if let Some(status) = child
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_wait()?
+        {
+            return Ok(status);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Stops a child that is still running at its deadline.
+struct Watchdog {
+    finished: std::sync::mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<bool>,
+}
+
+impl Watchdog {
+    fn start(
+        child: std::sync::Arc<std::sync::Mutex<std::process::Child>>,
+        deadline: std::time::Duration,
+    ) -> Self {
+        let (finished, finished_rx) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            if finished_rx.recv_timeout(deadline) != Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            {
+                return false;
+            }
+            let mut child = child
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            matches!(child.try_wait(), Ok(None)) && child.kill().is_ok()
+        });
+        Self { finished, thread }
+    }
+
+    /// Ends the watch once the child has been waited for; whether it had to
+    /// stop the child.
+    fn finish(self) -> bool {
+        let _ = self.finished.send(());
+        self.thread.join().unwrap_or(false)
+    }
+}
+
 /// Captures at most one patch's wire budget plus a UTF-8 boundary, killing a
 /// diff that exceeds it rather than first buffering an arbitrarily large file.
 /// Stderr is drained concurrently so it cannot block a child that is
@@ -640,6 +700,19 @@ fn git_diff_text(
         .map_err(|error| format!("git could not be run: {error}"))?;
     let mut stdout = child.stdout.take().expect("piped Git stdout");
     let mut stderr = child.stderr.take().expect("piped Git stderr");
+    // A diff that has not finished by the deadline is stopped, which closes
+    // its output and ends the read below (D-15).
+    let child = std::sync::Arc::new(std::sync::Mutex::new(child));
+    let watchdog = Watchdog::start(
+        std::sync::Arc::clone(&child),
+        crate::worktrees::GIT_DEADLINE,
+    );
+    let kill = || {
+        let _ = child
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .kill();
+    };
     let stderr_reader = std::thread::spawn(move || {
         let mut kept = Vec::new();
         let mut chunk = [0; 8192];
@@ -664,19 +737,25 @@ fn git_diff_text(
                 bytes.extend_from_slice(&chunk[..count.min(remaining)]);
                 if count > remaining {
                     truncated = true;
-                    let _ = child.kill();
+                    kill();
                     break;
                 }
             }
             Err(error) => {
                 read_error = Some(error);
-                let _ = child.kill();
+                kill();
                 break;
             }
         }
     }
     drop(stdout);
-    let status = child.wait();
+    let status = wait_unlocked(&child);
+    if watchdog.finish() {
+        return Err(format!(
+            "git diff did not finish within {} seconds and was stopped",
+            crate::worktrees::GIT_DEADLINE.as_secs()
+        ));
+    }
     let stderr = stderr_reader
         .join()
         .map_err(|_| "git diff error output could not be read".to_owned())?
@@ -694,6 +773,35 @@ fn git_diff_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D-15: a child still running at its deadline is stopped, and one that
+    /// finished first is left alone.
+    #[test]
+    fn a_child_past_its_deadline_is_stopped() {
+        let slow = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let slow = std::sync::Arc::new(std::sync::Mutex::new(slow));
+        let watchdog = Watchdog::start(
+            std::sync::Arc::clone(&slow),
+            std::time::Duration::from_millis(100),
+        );
+        let started = std::time::Instant::now();
+        let status = wait_unlocked(&slow).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(!status.success());
+        assert!(watchdog.finish());
+
+        let quick = std::process::Command::new("true").spawn().unwrap();
+        let quick = std::sync::Arc::new(std::sync::Mutex::new(quick));
+        let watchdog = Watchdog::start(
+            std::sync::Arc::clone(&quick),
+            std::time::Duration::from_secs(30),
+        );
+        assert!(wait_unlocked(&quick).unwrap().success());
+        assert!(!watchdog.finish());
+    }
 
     #[test]
     fn porcelain_records_project_the_presented_statuses() {

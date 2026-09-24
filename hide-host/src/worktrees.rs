@@ -299,12 +299,16 @@ pub fn describe(
         .as_deref()
         .and_then(|base| resolvable_base(&listed.path, base))
         .and_then(|base| {
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(&listed.path)
-                .args(["merge-base", "--is-ancestor", "HEAD", &base])
-                .output()
-                .ok()?;
+            let output = output_within(
+                Command::new("git").arg("-C").arg(&listed.path).args([
+                    "merge-base",
+                    "--is-ancestor",
+                    "HEAD",
+                    &base,
+                ]),
+                GIT_DEADLINE,
+            )
+            .ok()??;
             match output.status.code() {
                 Some(0) => Some(true),
                 Some(1) => Some(false),
@@ -655,6 +659,24 @@ pub fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// `Command::output` within [`GIT_DEADLINE`], for the branch checks.
+trait WithinDeadline {
+    fn output_within_deadline(&mut self) -> Result<std::process::Output, String>;
+}
+
+impl WithinDeadline for Command {
+    fn output_within_deadline(&mut self) -> Result<std::process::Output, String> {
+        output_within(self, GIT_DEADLINE)
+            .map_err(|error| format!("git could not be run: {error}"))?
+            .ok_or_else(|| {
+                format!(
+                    "git did not finish within {} seconds and was stopped",
+                    GIT_DEADLINE.as_secs()
+                )
+            })
+    }
+}
+
 /// Runs `command` to completion, or kills it at `deadline` and answers
 /// `None`. Both pipes are drained on their own threads the whole time, so a
 /// child whose output outgrows the pipe buffer is never left blocked on a
@@ -736,8 +758,8 @@ pub fn check_new_branch(repository_root: &Path, branch: &str) -> HostResult<()> 
         .arg("-C")
         .arg(repository_root)
         .args(["check-ref-format", "--branch", branch])
-        .output()
-        .map_err(|error| io_error(format!("git could not be run: {error}")))?;
+        .output_within_deadline()
+        .map_err(io_error)?;
     if !checked.status.success() {
         return Err(invalid());
     }
@@ -747,8 +769,8 @@ pub fn check_new_branch(repository_root: &Path, branch: &str) -> HostResult<()> 
         .arg("-C")
         .arg(repository_root)
         .args(["show-ref", "--verify", "--quiet", &reference])
-        .output()
-        .map_err(|error| io_error(format!("git could not be run: {error}")))?;
+        .output_within_deadline()
+        .map_err(io_error)?;
     if !exists.status.success() {
         return match exists.status.code() {
             Some(1) => Ok(()),
@@ -771,8 +793,8 @@ pub fn check_new_branch(repository_root: &Path, branch: &str) -> HostResult<()> 
         .arg("-C")
         .arg(repository_root)
         .args(["branch", "--", branch])
-        .output()
-        .map_err(|error| io_error(format!("git could not be run: {error}")))?;
+        .output_within_deadline()
+        .map_err(io_error)?;
     if refusal.status.success() {
         return Err(io_error(
             "git branch existence check unexpectedly succeeded".into(),
