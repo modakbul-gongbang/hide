@@ -90,7 +90,9 @@ fn a_write_that_lands_between_the_check_and_the_exchange_is_kept() {
         b"mine",
         &revision_of(b"old"),
         &mut |stage, _, _| {
-            assert_eq!(stage, SaveStage::BeforeExchange);
+            if stage != SaveStage::BeforeExchange {
+                return;
+            }
             fs::write(&path, "theirs, written in place").unwrap();
         },
     )
@@ -103,6 +105,38 @@ fn a_write_that_lands_between_the_check_and_the_exchange_is_kept() {
     assert!(leftovers(&f.checkout).is_empty());
 }
 
+/// A third writer that renames over the path while this save puts the second
+/// writer's file back: the swap back then displaces the third writer's file,
+/// which has to survive beside the path rather than be removed as this save's
+/// own leftover.
+#[test]
+fn a_third_writer_during_the_swap_back_keeps_its_file() {
+    let f = fixture("a.txt", "old");
+    let path = f.checkout.join("a.txt");
+    let error = save_observed(
+        f.root.dir(),
+        Path::new("a.txt"),
+        b"mine",
+        &revision_of(b"old"),
+        &mut |stage, _, _| match stage {
+            SaveStage::BeforeExchange => fs::write(&path, "theirs").unwrap(),
+            SaveStage::BeforeSwapBack => {
+                let staged = f.checkout.join("third-editor.tmp");
+                fs::write(&staged, "third").unwrap();
+                fs::rename(&staged, &path).unwrap();
+            }
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Conflict);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "theirs");
+    let kept: Vec<String> = leftovers(&f.checkout)
+        .iter()
+        .map(|name| fs::read_to_string(f.checkout.join(name)).unwrap())
+        .collect();
+    assert_eq!(kept, vec!["third".to_owned()], "{error:?}");
+}
+
 /// Editors that save by rename replace the inode rather than writing it.
 #[test]
 fn a_file_replaced_by_rename_in_the_window_is_kept() {
@@ -113,7 +147,10 @@ fn a_file_replaced_by_rename_in_the_window_is_kept() {
         Path::new("a.txt"),
         b"mine",
         &revision_of(b"old"),
-        &mut |_, _, _| {
+        &mut |stage, _, _| {
+            if stage != SaveStage::BeforeExchange {
+                return;
+            }
             let staged = f.checkout.join("other-editor.tmp");
             fs::write(&staged, "theirs, renamed over").unwrap();
             fs::rename(&staged, &path).unwrap();
@@ -135,7 +172,11 @@ fn a_file_deleted_in_the_window_is_not_recreated() {
         Path::new("a.txt"),
         b"mine",
         &revision_of(b"old"),
-        &mut |_, _, _| fs::remove_file(&path).unwrap(),
+        &mut |stage, _, _| {
+            if stage == SaveStage::BeforeExchange {
+                fs::remove_file(&path).unwrap();
+            }
+        },
     )
     .unwrap_err();
     assert_ne!(error.code, ErrorCode::InvalidRequest);
@@ -155,7 +196,10 @@ fn a_checkout_replaced_during_the_save_does_not_redirect_it() {
         Path::new("a.txt"),
         b"mine",
         &revision_of(b"old"),
-        &mut |_, _, _| {
+        &mut |stage, _, _| {
+            if stage != SaveStage::BeforeExchange {
+                return;
+            }
             fs::rename(&f.checkout, &moved).unwrap();
             fs::create_dir(&f.checkout).unwrap();
             fs::write(f.checkout.join("a.txt"), "impostor").unwrap();
@@ -208,13 +252,7 @@ fn a_link_inside_the_checkout_saves_its_target_and_a_link_out_of_it_is_refused()
     .unwrap();
     for path in ["escape/secret.txt", "secret-link.txt"] {
         let error = save(f.root.dir(), Path::new(path), b"x", &revision_of(b"secret")).unwrap_err();
-        assert!(
-            matches!(
-                error.code,
-                ErrorCode::OutsideRoot | ErrorCode::PermissionDenied
-            ),
-            "{path}: {error:?}"
-        );
+        assert_eq!(error.code, ErrorCode::OutsideRoot, "{path}: {error:?}");
     }
     assert_eq!(
         fs::read_to_string(outside.join("secret.txt")).unwrap(),
@@ -282,7 +320,10 @@ fn a_revision_read_waits_for_a_save_in_progress_in_the_folder() {
         Path::new("a.txt"),
         b"mine",
         &revision_of(b"old"),
-        &mut |_, _, _| {
+        &mut |stage, _, _| {
+            if stage != SaveStage::BeforeExchange {
+                return;
+            }
             let checkout = checkout.clone();
             reader = Some(std::thread::spawn(move || {
                 let root = Root::open(&checkout).unwrap();

@@ -64,6 +64,9 @@ pub enum SaveStage {
     /// The original was checked and the temporary file is written; the
     /// exchange has not happened.
     BeforeExchange,
+    /// The exchange displaced a file other than the expected one, and this
+    /// save is about to swap it back.
+    BeforeSwapBack,
 }
 
 /// Saves `contents` to `relative` under `dir` if the file there still holds
@@ -135,9 +138,26 @@ pub fn save_observed(
     let displaced = read_revision(&parent, &temporary);
     if displaced.as_deref().ok() != Some(expected_revision) {
         let actual = displaced.ok();
+        observe(SaveStage::BeforeSwapBack, &parent, &name);
         return match exchange(&parent, &temporary, &name) {
             Ok(()) => {
-                let _ = parent.remove_file(Path::new(&temporary));
+                // The swap back normally leaves this save's own bytes under
+                // the temporary name. If a third writer replaced the path in
+                // between, the temporary now holds that writer's file, which
+                // is kept rather than removed.
+                if read_revision(&parent, &temporary).as_deref().ok()
+                    == Some(revision_of(contents).as_str())
+                {
+                    let _ = parent.remove_file(Path::new(&temporary));
+                } else {
+                    return Err(HostError::new(
+                        ErrorCode::Conflict,
+                        format!(
+                            "The file changed on disk twice while it was being saved; the other versions are kept, one beside it as {}, and the draft was preserved",
+                            temporary.to_string_lossy()
+                        ),
+                    ));
+                }
                 Err(HostError::conflict(
                     actual,
                     "The file changed on disk while it was being saved; the other version was kept and the draft was preserved",

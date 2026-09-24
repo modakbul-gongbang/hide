@@ -63,14 +63,15 @@ impl HostError {
     /// Maps an I/O failure to a code; `what` is the operator-facing sentence.
     pub fn io(error: &io::Error, what: impl Into<String>) -> Self {
         let code = match error.kind() {
+            // cap-std reports a path that would leave the directory as a
+            // permission failure carrying this text; name it for what it is,
+            // before the permission arm can claim it.
+            _ if error.to_string().contains("outside of the filesystem") => ErrorCode::OutsideRoot,
             io::ErrorKind::NotFound => ErrorCode::NotFound,
             io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
             io::ErrorKind::AlreadyExists => ErrorCode::AlreadyExists,
             io::ErrorKind::NotADirectory => ErrorCode::NotADirectory,
             _ if error.raw_os_error() == Some(libc::ENOTDIR) => ErrorCode::NotADirectory,
-            // cap-std reports a path that would leave the directory as a
-            // permission failure carrying this text; name it for what it is.
-            _ if error.to_string().contains("outside of the filesystem") => ErrorCode::OutsideRoot,
             _ => ErrorCode::Io,
         };
         Self::new(code, what)
