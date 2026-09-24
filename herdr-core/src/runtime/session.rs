@@ -808,6 +808,7 @@ impl Runtime {
             .as_ref()
             .map(|(workspace_id, _)| workspace_id.clone());
         self.snapshot.navigator.root_path = focused.map(|(_, path)| path);
+        self.sync_changes_root_path();
         self.sync_active_tab_projection();
         // Every catalog rebuild and every focus change lands here, so this is
         // the one place the pull-request badges and the summary card have to
@@ -1894,6 +1895,7 @@ impl Runtime {
         self.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
         self.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
         self.snapshot.navigator.root_path = Some(checkout_path);
+        self.sync_changes_root_path();
         self.refresh_inactive_groups();
         self.remeasure_disk();
         self.deactivate_editor_tab();
@@ -3419,6 +3421,7 @@ impl Runtime {
         self.snapshot.navigator.focused_workspace_id = Some(workspace_id.to_owned());
         self.snapshot.navigator.focused_checkout_id = Some(checkout_id.to_owned());
         self.snapshot.navigator.root_path = Some(checkout_path);
+        self.sync_changes_root_path();
         self.refresh_inactive_groups();
         // Selecting a checkout measures it, and selecting the one already
         // selected measures it again - that is the card's cheapest refresh

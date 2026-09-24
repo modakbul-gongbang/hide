@@ -1,5 +1,249 @@
 use super::*;
 
+/// A registered folder below a Git root keeps the live History request and
+/// the web's root identity on that folder. The reader's direct scope test is
+/// insufficient if the catalog hands the runtime the repository root.
+#[test]
+fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
+    let temporary = tempfile::tempdir().expect("fixture root");
+    let repository = temporary.path().canonicalize().unwrap();
+    let registered = repository.join("registered");
+    std::fs::create_dir(&registered).unwrap();
+    let git = |arguments: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repository)
+            .args(arguments)
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "git {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "user.name", "Fixture"]);
+    git(&["config", "user.email", "fixture@example.invalid"]);
+    for (name, content) in [
+        ("registered/inside.txt", "base inside\n"),
+        ("registered/deleted.txt", "deleted content\n"),
+        ("registered/rename-old.txt", "rename inside\n"),
+        ("outside-source.txt", "outside source content\n"),
+        ("outside.txt", "outside base\n"),
+    ] {
+        std::fs::write(repository.join(name), content).unwrap();
+    }
+    git(&["add", "."]);
+    git(&["commit", "-qm", "base"]);
+    git(&["switch", "-q", "-c", "feature"]);
+    git(&["mv", "outside-source.txt", "registered/incoming.txt"]);
+    std::fs::write(registered.join("inside.txt"), "committed inside\n").unwrap();
+    std::fs::write(repository.join("outside.txt"), "committed outside\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-qm", "feature"]);
+    git(&[
+        "mv",
+        "registered/rename-old.txt",
+        "registered/rename-new.txt",
+    ]);
+    std::fs::write(registered.join("inside.txt"), "working inside\n").unwrap();
+    std::fs::remove_file(registered.join("deleted.txt")).unwrap();
+    std::fs::write(repository.join("outside.txt"), "working outside\n").unwrap();
+
+    let registration = workspace::registration(
+        registered.to_str().unwrap(),
+        "Nested",
+        workspace::LOCAL_DEVICE_ID,
+    )
+    .unwrap();
+    let mut runtime = runtime();
+    runtime.snapshot.ui_state.workspace_registrations = vec![registration];
+    runtime.rebuild_catalog();
+    let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
+    assert_eq!(checkout.path, repository.to_string_lossy());
+    checkout.base_branch = Some("main".to_owned());
+    // An occupied Herdr workspace is keyed by its Git root while the
+    // registration retains the narrower folder as its actual scope.
+    runtime.snapshot.navigator.workspaces[0].path = repository.to_string_lossy().into_owned();
+    runtime.sync_changes_root_path();
+    runtime.snapshot.ui_state.right_panel_visible = true;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
+    assert_eq!(
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        registered.to_str()
+    );
+    let request = runtime.changes_request().expect("local History request");
+    assert_eq!(request.root_path, registered);
+    assert_eq!(request.checkout_path, repository);
+    let mut reader = crate::changes::ChangesReader::new();
+    let listed = reader.read_if_due(Some(request)).unwrap();
+    assert_eq!(
+        listed
+            .entries
+            .iter()
+            .map(|entry| entry.relative_path.as_str())
+            .collect::<Vec<_>>(),
+        ["deleted.txt", "inside.txt", "rename-new.txt"]
+    );
+    assert_eq!(
+        listed
+            .committed
+            .iter()
+            .map(|entry| entry.relative_path.as_str())
+            .collect::<Vec<_>>(),
+        ["incoming.txt", "inside.txt"]
+    );
+    assert!(
+        listed
+            .entries
+            .iter()
+            .chain(&listed.committed)
+            .all(|entry| entry.path.starts_with(registered.to_str().unwrap()))
+    );
+    assert!(
+        listed
+            .committed
+            .iter()
+            .find(|entry| entry.relative_path == "incoming.txt")
+            .unwrap()
+            .previous_relative_path
+            .is_none()
+    );
+    assert!(runtime.ingest_changes(listed));
+
+    let selected = registered
+        .join("incoming.txt")
+        .to_string_lossy()
+        .into_owned();
+    let event = serde_json::to_vec(&serde_json::json!({"schema_version":2,"kind":"changes_select","payload":{"path":selected,"committed":true,"preview":true}})).unwrap();
+    assert!(runtime.dispatch_json(&event));
+    let selected = reader.read_if_due(runtime.changes_request()).unwrap();
+    let diff = selected.diff.expect("in-scope branch diff");
+    assert!(diff.text.contains("outside source content"));
+    assert!(!diff.text.contains("outside-source.txt"));
+    assert!(!diff.text.contains("outside.txt"));
+
+    let deleted = registered
+        .join("deleted.txt")
+        .to_string_lossy()
+        .into_owned();
+    let mut request = runtime.changes_request().unwrap();
+    request.selected_path = Some(deleted);
+    request.selected_committed = false;
+    let deleted = reader.read_if_due(Some(request)).unwrap().diff.unwrap();
+    assert!(deleted.text.contains("deleted content"));
+
+    // A focus event publishes its new History identity in the same frame.
+    // Retain the previous snapshot to model a coordinator read still in flight.
+    let local = runtime.snapshot.navigator.workspaces[0].clone();
+    let local_id = local.id.clone();
+    let local_checkout_id = local.checkouts[0].id.clone();
+    let mut remote = local.clone();
+    remote.id = "remote-collision".to_owned();
+    remote.remote_target_id = Some("remote-device".to_owned());
+    remote.checkouts[0].id = "remote-checkout".to_owned();
+    remote.checkouts[0].workspace_id = remote.id.clone();
+    let mut sibling = local;
+    sibling.id = "sibling-local".to_owned();
+    sibling.path = repository.to_string_lossy().into_owned();
+    sibling.registered = false;
+    sibling.checkouts[0].id = "sibling-checkout".to_owned();
+    sibling.checkouts[0].workspace_id = sibling.id.clone();
+    runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .extend([remote, sibling]);
+    let focus = |runtime: &mut Runtime, workspace_id: &str, checkout_id: &str| {
+        let event = serde_json::to_vec(&serde_json::json!({"schema_version":2,"kind":"focus_checkout","payload":{"workspace_id":workspace_id,"checkout_id":checkout_id}})).unwrap();
+        assert!(runtime.dispatch_json(&event));
+    };
+    focus(&mut runtime, "remote-collision", "remote-checkout");
+    assert!(runtime.snapshot.navigator.changes_root_path.is_none());
+    assert!(runtime.changes_request().is_none());
+    assert_eq!(
+        runtime.snapshot.changes.root_path.as_deref(),
+        registered.to_str()
+    );
+    focus(&mut runtime, "sibling-local", "sibling-checkout");
+    assert_eq!(
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        repository.to_str()
+    );
+    assert_eq!(runtime.changes_request().unwrap().root_path, repository);
+    focus(&mut runtime, &local_id, &local_checkout_id);
+    assert_eq!(
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        registered.to_str()
+    );
+
+    // A delayed whole-state write can carry an older focus anchor. It must
+    // update checkout, workspace and History identity together.
+    let update_focus = |runtime: &mut Runtime, checkout_id: &str| {
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "collapsed_workspace_ids": [],
+                "focused_checkout_id": checkout_id,
+                "right_panel_visible": true,
+                "right_panel_section": "changes"
+            }
+        }))
+        .unwrap();
+        assert!(runtime.dispatch_json(&event));
+    };
+    focus(&mut runtime, "sibling-local", "sibling-checkout");
+    update_focus(&mut runtime, &local_checkout_id);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
+        Some(local_id.as_str())
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.root_path.as_deref(),
+        repository.to_str()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        registered.to_str()
+    );
+    assert_eq!(runtime.changes_request().unwrap().root_path, registered);
+    update_focus(&mut runtime, "remote-checkout");
+    assert_eq!(
+        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
+        Some("remote-collision")
+    );
+    assert!(runtime.snapshot.navigator.changes_root_path.is_none());
+    assert!(runtime.changes_request().is_none());
+}
+
+#[test]
+fn remote_checkout_with_a_local_path_collision_has_no_history_request() {
+    let repository = tempfile::tempdir().unwrap();
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(repository.path())
+        .args(["init", "-q"])
+        .status()
+        .unwrap();
+    let registration = workspace::registration(
+        repository.path().to_str().unwrap(),
+        "Remote",
+        "remote-device",
+    )
+    .unwrap();
+    let mut runtime = runtime();
+    runtime.snapshot.ui_state.workspace_registrations = vec![registration];
+    runtime.rebuild_catalog();
+    runtime.snapshot.ui_state.right_panel_visible = true;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
+    assert!(runtime.snapshot.navigator.root_path.is_some());
+    assert!(runtime.snapshot.navigator.changes_root_path.is_none());
+    assert!(runtime.changes_request().is_none());
+}
+
 /// The catalog before the worktree reader has answered.
 /// Reconciling a session with a precomputed catalog runs no git at all.
 ///

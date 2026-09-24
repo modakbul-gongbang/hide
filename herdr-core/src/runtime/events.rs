@@ -1311,6 +1311,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
                 self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
                 self.snapshot.navigator.root_path = Some(cwd.clone());
+                self.sync_changes_root_path();
                 self.deactivate_editor_tab();
                 self.persist_current_ui_state();
                 let action = match session_workspace_id {
@@ -1395,6 +1396,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(payload.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(payload.checkout_id.clone());
                 self.snapshot.navigator.root_path = Some(checkout_path);
+                self.sync_changes_root_path();
                 self.refresh_inactive_groups();
                 self.visible_tab_ids
                     .insert(payload.checkout_id.clone(), payload.tab_id.clone());
@@ -2053,6 +2055,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_workspace_id = Some(tab.workspace_id);
                 self.snapshot.navigator.focused_checkout_id = Some(tab.checkout_id);
                 self.snapshot.navigator.root_path = Some(checkout.path);
+                self.sync_changes_root_path();
                 self.select_terminal_pane(pane_id);
                 self.operator_focused_pane_id = None;
                 self.refresh_pane_read_state();
@@ -2604,6 +2607,17 @@ impl Runtime {
                     self.snapshot.changes.diff = None;
                     return true;
                 };
+                if self.snapshot.changes.root_path.as_deref()
+                    != self.snapshot.navigator.changes_root_path.as_deref()
+                    || self.snapshot.navigator.changes_root_path.is_none()
+                {
+                    self.set_error(
+                        "diff.invalid_context",
+                        "History no longer belongs to the selected local checkout",
+                        false,
+                    );
+                    return true;
+                }
                 let entries = if payload.committed {
                     &self.snapshot.changes.committed
                 } else {
@@ -2637,7 +2651,11 @@ impl Runtime {
                 let tab_id =
                     Self::diff_tab_id(&workspace_id, &checkout_id, &path, payload.committed);
                 if self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id.as_str()) {
-                    return false;
+                    return if payload.preview {
+                        false
+                    } else {
+                        self.promote_editor_tab(&tab_id)
+                    };
                 }
                 self.show_diff_tab(
                     &workspace_id,
@@ -2774,6 +2792,9 @@ impl Runtime {
                     self.snapshot.ui_state.focused_device_id.clone();
                 self.snapshot.navigator.focused_checkout_id =
                     self.snapshot.ui_state.focused_checkout_id.clone();
+                // UI-state writes can carry a focus anchor after a checkout
+                // event. Reconcile the whole navigator identity in this frame.
+                self.resync_navigator_focus();
                 self.refresh_inactive_groups();
                 self.reconcile_remote_terminal_selection();
                 Self::apply_workspace_expansion(

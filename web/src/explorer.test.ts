@@ -45,6 +45,7 @@ function changes(entries: [string, ChangedFileStatus][]): ChangesSnapshot {
     base_branch: null,
     selected_path: null,
     selected_committed: false,
+    diff: null,
     unavailable_reason: null,
   };
 }
@@ -118,6 +119,17 @@ describe("explorerRows", () => {
 });
 
 describe("git decorations", () => {
+  it("places a registered subfolder's changed file under its actual Explorer path", () => {
+    const scoped = changes([["inside.txt", "modified"]]);
+    scoped.root_path = `${ROOT}/registered`;
+    scoped.entries[0]!.path = `${ROOT}/registered/inside.txt`;
+    const decorations = gitDecorations(scoped, ROOT);
+    expect(decorationFor(decorations, `${ROOT}/registered`, ROOT, true)?.status).toBe("modified");
+    expect(decorationFor(decorations, `${ROOT}/registered/inside.txt`, ROOT, false)?.status).toBe("modified");
+    expect(decorationFor(decorations, `${ROOT}/inside.txt`, ROOT, false)).toBeNull();
+    expect(gitDecorations(scoped, "/another-checkout").files.size).toBe(0);
+  });
+
   it("gives a file the letter Git names its status with", () => {
     const decorations = gitDecorations(changes([["src/a.ts", "modified"]]), ROOT);
     expect(decorationFor(decorations, `${ROOT}/src/a.ts`, ROOT, false)).toEqual({

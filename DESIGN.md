@@ -690,6 +690,9 @@ Loading, missing authentication, query failure and stale results remain explicit
 History is a compact navigation list; activating a row opens a read-only diff as a central editor tab instead of dividing the panel vertically.
 Diff tabs use the editor's monospaced content scale, fixed old and new line-number columns, semantic added and removed tints, and horizontal scrolling for long lines.
 Their scroll canvas fills the editor viewport, with short diffs anchored at the top left and long diffs growing beyond it for scrolling.
+The web right panel presents Explorer and History as two section choices under the core's selected section and visibility state.
+History rows retain the Seti file mark, a separate status letter and available line counts, with the full path, rename origin and comparison group in their tooltip and accessibility name.
+Diff tabs use a distinct type mark and keep the same preview and Keep Open behavior as file tabs.
 Text file tabs use a fixed line-number ruler and preserve source whitespace through non-wrapping horizontal scrolling.
 The ruler clips all drawing to its own bounds, and text loaded into an initially empty editor retains the editor's monospaced content font.
 Syntax selection comes from the core's filename-aware language result, including extensionless configuration files and JSON-family extensions.

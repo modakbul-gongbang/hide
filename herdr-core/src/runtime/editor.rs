@@ -495,6 +495,7 @@ impl Runtime {
         self.snapshot.navigator.focused_workspace_id = Some(tab.workspace_id);
         self.snapshot.navigator.focused_checkout_id = Some(tab.checkout_id);
         self.snapshot.navigator.root_path = Some(checkout.path);
+        self.sync_changes_root_path();
         self.select_terminal_pane(pane_id);
         self.operator_focused_pane_id = None;
         self.refresh_pane_read_state();

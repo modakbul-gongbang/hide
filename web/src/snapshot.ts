@@ -244,6 +244,7 @@ export type ChangesSnapshot = {
   base_branch: string | null;
   selected_path: string | null;
   selected_committed: boolean;
+  diff: { path: string; text: string; notice: string | null } | null;
   unavailable_reason: string | null;
 };
 
@@ -253,6 +254,8 @@ export type SnapshotRest = {
     focused_checkout_id?: string | null;
     /** The focused checkout's root, which the Explorer reveals under. */
     root_path?: string | null;
+    /** History's registered-folder scope; it may be narrower than root_path. */
+    changes_root_path?: string | null;
     workspaces?: Workspace[];
     inactive_projects?: InactiveProjectGroup[];
     agents?: AgentRow[];
@@ -340,8 +343,7 @@ export function expandedPathSet(rest: SnapshotRest | null): Set<string> {
 
 /** The changes of the checkout a listing belongs to, or null when they are another checkout's. */
 export function changesFor(changes: ChangesSnapshot | null, rootPath: string | null): ChangesSnapshot | null {
-  if (!changes || !rootPath) return null;
-  if (changes.root_path && changes.root_path !== rootPath) return null;
+  if (!changes || !rootPath || changes.root_path !== rootPath) return null;
   return changes;
 }
 

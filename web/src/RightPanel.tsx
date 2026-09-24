@@ -1,36 +1,38 @@
 import type { Actions } from "./actions";
 import { ExplorerTree } from "./ExplorerTree";
+import { HistoryList } from "./HistoryList";
 import { useShellStore } from "./store";
 
-// The right panel (D-13): the Explorer's home, drawn where the core's
-// `right_panel_visible` and `right_panel_section` say. The core owns both, so
-// this reads them and dispatches the change the operator asked for; the
-// panel's other sections arrive with S4 and S5, which is why only the
-// Explorer section has a body.
+// Core UI state owns section and visibility. Switching sections does not
+// touch the editor, focused pane or Explorer expansion state.
 
 export function RightPanel({ actions }: { actions: Actions }) {
   const visible = useShellStore((s) => s.rest?.ui_state?.right_panel_visible ?? false);
-  const section = useShellStore((s) => s.rest?.ui_state?.right_panel_section ?? null);
-  if (!visible || section !== "explorer") return null;
+  const section = useShellStore((s) => s.rest?.ui_state?.right_panel_section ?? "explorer");
+  if (!visible || (section !== "explorer" && section !== "changes")) return null;
   return (
     <aside
       className="flex h-full w-[var(--size-panel-ideal)] shrink-0 flex-col bg-panel text-primary"
-      data-right-panel="explorer"
-      data-right-panel-section="explorer"
+      aria-label="Right panel"
+      data-right-panel={section}
+      data-right-panel-section={section}
     >
-      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm px-md text-caption">
-        <span data-right-panel-title="true">Explorer</span>
+      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xs px-md text-caption">
+        <button type="button" aria-pressed={section === "explorer"} className={section === "explorer" ? "text-primary" : "text-muted hover:text-secondary"} onClick={() => actions.showRightPanelSection("explorer")}>Explorer</button>
+        <button type="button" aria-pressed={section === "changes"} className={section === "changes" ? "text-primary" : "text-muted hover:text-secondary"} onClick={() => actions.showRightPanelSection("changes")}>History</button>
         <span className="flex-1" />
         <button
           type="button"
           data-right-panel-collapse="true"
+          aria-label="Hide right panel"
+          title="Hide right panel (⌘⇧B)"
           className="text-muted hover:text-secondary"
           onClick={() => actions.toggleRightPanel()}
         >
           ⌘⇧B
         </button>
       </div>
-      <ExplorerTree actions={actions} />
+      {section === "explorer" ? <ExplorerTree actions={actions} /> : <HistoryList actions={actions} />}
     </aside>
   );
 }
