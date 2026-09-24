@@ -78,6 +78,12 @@ pub struct AppState {
     pub shutdown: Arc<Notify>,
     pub ui_dir: Option<PathBuf>,
     pub version: &'static str,
+    /// Which connections are looking at the Settings agents tab; the daemon
+    /// owns the core's one observation flag on their behalf.
+    pub demand: Arc<crate::demand::ObservationDemand>,
+    /// What the Settings General tab reads about this daemon, sent once after
+    /// a handshake. No token, no environment beyond the paths it names.
+    pub daemon_info: Arc<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,6 +281,15 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
     let mut directory_changes = state.watch.subscribe();
+    let daemon = json!({"type": "daemon", "payload": state.daemon_info.as_ref()});
+    if socket
+        .send(Message::Text(daemon.to_string().into()))
+        .await
+        .is_err()
+    {
+        client_gone(&state, connection);
+        return;
+    }
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
@@ -414,6 +429,9 @@ fn handle_client_text(
                 .discard(&payload_str(&event, "request_id"));
             return Ok(ClientAction::Replies(Vec::new()));
         }
+        Some("ai_settings") => {
+            return handle_ai_settings(state, event, connection);
+        }
         Some("open_external") => {
             // This token-authenticated socket can be reached through an SSH
             // tunnel. The browser cannot prove it is on the daemon's host,
@@ -439,6 +457,67 @@ fn handle_client_text(
         .core
         .dispatch(bytes)
         .map(|()| ClientAction::Replies(Vec::new()))
+}
+
+/// Splits an `ai_settings` event: the observation hint is this connection's
+/// demand and reaches the core only when the aggregate changes; a provider or
+/// model choice goes to the core as it came.
+fn handle_ai_settings(
+    state: &AppState,
+    mut event: Value,
+    connection: u64,
+) -> Result<ClientAction, String> {
+    let observing = event
+        .get_mut("payload")
+        .and_then(Value::as_object_mut)
+        .and_then(|payload| payload.remove("observing"));
+    match observing {
+        Some(Value::Bool(observing)) => {
+            if let Some(aggregate) = state.demand.set(connection, observing) {
+                dispatch_observation(state, connection, aggregate);
+            }
+        }
+        Some(Value::Null) | None => {}
+        Some(_) => return Err("ai_settings.observing must be a boolean".to_owned()),
+    }
+    let carries_choice = event
+        .get("payload")
+        .and_then(Value::as_object)
+        .is_some_and(|payload| !payload.is_empty());
+    if carries_choice {
+        let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
+        state.core.dispatch(bytes)?;
+    }
+    Ok(ClientAction::Replies(Vec::new()))
+}
+
+fn dispatch_observation(state: &AppState, connection: u64, observing: bool) {
+    eprintln!(
+        "{}",
+        json!({
+            "component": "hided",
+            "kind": "settings.observation",
+            "connection": connection,
+            "observing": observing,
+            "observers": state.demand.observers(),
+        })
+    );
+    let event = json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "ai_settings",
+        "payload": {"observing": observing},
+    });
+    if let Err(error) = state.core.dispatch(event.to_string().into_bytes()) {
+        eprintln!(
+            "{}",
+            json!({
+                "component": "hided",
+                "kind": "settings.observation_failed",
+                "connection": connection,
+                "message": error,
+            })
+        );
+    }
 }
 
 /// Opens a checkout file with the host OS handler, or with the program
@@ -1310,6 +1389,9 @@ async fn send_snapshot(
 
 fn client_gone(state: &AppState, connection: u64) {
     state.attachments.release(connection);
+    if let Some(observing) = state.demand.release(connection) {
+        dispatch_observation(state, connection, observing);
+    }
     let remaining = state
         .clients
         .fetch_sub(1, Ordering::SeqCst)

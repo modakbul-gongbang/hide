@@ -166,13 +166,32 @@ async fn valid_handshake_receives_snapshot() {
     let (_dir, running) = start().await;
     let mut socket = connect(running.port, None).await;
     socket.send(handshake(&running.token, 2)).await.unwrap();
-    let message = socket.next().await.unwrap().unwrap();
-    let Message::Text(text) = message else {
-        panic!("expected text snapshot");
-    };
-    let value: Value = serde_json::from_str(&text).unwrap();
+    let value = first_frame(&mut socket).await;
     assert_eq!(value["type"], "snapshot");
     assert_eq!(value["payload"]["schema_version"], 2);
+    running.stop();
+}
+
+/// Settings reads the daemon from this frame: what it is, where its state
+/// lives and which Herdr it attaches with. The token never travels back.
+#[tokio::test]
+async fn the_daemon_describes_itself_before_the_first_snapshot() {
+    let (dir, running) = start().await;
+    let mut socket = connect(running.port, None).await;
+    socket.send(handshake(&running.token, 2)).await.unwrap();
+    let Message::Text(text) = socket.next().await.unwrap().unwrap() else {
+        panic!("expected a text frame");
+    };
+    let daemon: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(daemon["type"], "daemon");
+    assert_eq!(daemon["payload"]["schema_version"], 2);
+    assert_eq!(daemon["payload"]["pid"], std::process::id());
+    assert_eq!(
+        daemon["payload"]["core_state_path"],
+        dir.path().join("core-state.json").display().to_string()
+    );
+    assert!(!text.contains(&running.token), "the token is never echoed");
+    assert_eq!(first_frame(&mut socket).await["type"], "snapshot");
     running.stop();
 }
 
@@ -194,11 +213,18 @@ async fn first_frame(
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
 ) -> Value {
-    let message = socket.next().await.unwrap().unwrap();
-    let Message::Text(text) = message else {
-        panic!("expected a text frame");
-    };
-    serde_json::from_str(&text).unwrap()
+    loop {
+        let message = socket.next().await.unwrap().unwrap();
+        let Message::Text(text) = message else {
+            panic!("expected a text frame");
+        };
+        let frame: Value = serde_json::from_str(&text).unwrap();
+        // The daemon's own description precedes the first state frame; the
+        // state tests read past it and `the_daemon_describes_itself_*` checks it.
+        if frame["type"] != "daemon" {
+            return frame;
+        }
+    }
 }
 
 #[tokio::test]

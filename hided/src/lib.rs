@@ -3,6 +3,7 @@ pub mod boundary;
 pub mod cli;
 pub mod coexist;
 pub mod core;
+pub mod demand;
 pub mod env;
 pub mod index;
 pub mod opener;
@@ -160,6 +161,19 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             find_ui_dir()
         },
         version: VERSION,
+        demand: Arc::new(demand::ObservationDemand::default()),
+        daemon_info: Arc::new(serde_json::json!({
+            "version": VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "pid": std::process::id(),
+            "started_at_unix": state.started_at.clone(),
+            "state_dir": env.state_dir.display().to_string(),
+            "core_state_path": env.state_dir.join("core-state.json").display().to_string(),
+            "herdr_bin_path": env.herdr_bin_path.as_ref().map(|path| path.display().to_string()),
+            "herdr_socket_path": env.herdr_socket_path.clone(),
+            "keep_alive": env.keep_alive,
+            "idle_secs": env.idle_secs,
+        })),
     };
     let env_state_dir = env.state_dir.clone();
     // Seeded before the server accepts a client, so an Explorer event can

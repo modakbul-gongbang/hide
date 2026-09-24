@@ -21,14 +21,32 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
+        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
+      }
+    },
+    "daemonInfo": {
+      "description": "Payload of the daemon frame, sent once after a valid handshake and before the first snapshot: what the Settings General tab shows about the daemon. It never carries the token or environment values other than the paths named here; herdr_bin_path and herdr_socket_path are null when the daemon has none. The daemon also owns the core's one Settings observation flag: a client's `ai_settings` event with `observing` records only that connection's demand, the flag follows the first observer in and the last one out, and a connection that closes releases its demand.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "schema_version", "pid", "started_at_unix", "state_dir", "core_state_path", "herdr_bin_path", "herdr_socket_path", "keep_alive", "idle_secs"],
+      "properties": {
+        "version": { "type": "string" },
+        "schema_version": { "type": "integer", "const": 2 },
+        "pid": { "type": "integer" },
+        "started_at_unix": { "type": "string" },
+        "state_dir": { "type": "string" },
+        "core_state_path": { "type": "string" },
+        "herdr_bin_path": { "type": ["string", "null"] },
+        "herdr_socket_path": { "type": ["string", "null"] },
+        "keep_alive": { "type": "boolean" },
+        "idle_secs": { "type": "integer" }
       }
     },
     "directoryChanged": {
