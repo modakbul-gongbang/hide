@@ -518,6 +518,8 @@ function DevicesTab({ actions }: { actions: Actions }) {
   const [removing, setRemoving] = useState<Device | null>(null);
   const [allowing, setAllowing] = useState<Device | null>(null);
   const [revoking, setRevoking] = useState<Device | null>(null);
+  // The removal waits for the device's drafts to be stored (B26, B44).
+  const [removalBusy, setRemovalBusy] = useState(false);
   const [actedAt, setActedAt] = useState<number | null>(null);
   const deviceError = useErrorSince(actedAt, ["device.", "remote."]);
   const rows = devices ?? [];
@@ -692,15 +694,21 @@ function DevicesTab({ actions }: { actions: Actions }) {
               <Button onClick={() => setRemoving(null)}>Keep device</Button>
               <Button
                 appearance="danger"
-                disabled={unstored.length > 0}
+                disabled={unstored.length > 0 || removalBusy}
                 data-device-remove-go="true"
                 onClick={() => {
+                  const target = removing;
                   setActedAt(Date.now());
-                  actions.removeDevice(removing.id);
-                  setRemoving(null);
+                  setRemovalBusy(true);
+                  // A draft that failed to store while it was flushed keeps
+                  // the dialog open, where its note now names it.
+                  void actions.removeDevice(target.id).then((kept) => {
+                    setRemovalBusy(false);
+                    if (kept.length === 0) setRemoving((current) => (current?.id === target.id ? null : current));
+                  });
                 }}
               >
-                Remove {removing.label}
+                {removalBusy ? "Storing drafts…" : `Remove ${removing.label}`}
               </Button>
             </div>
           </div>

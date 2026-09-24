@@ -295,6 +295,12 @@ export function flushBuffer(key: BufferKey): Promise<void> {
   });
 }
 
+/** The stored draft of one document once every write queued for it has landed. */
+export async function settledBuffer(key: BufferKey): Promise<StoredBuffer | null> {
+  await flushBuffer(key);
+  return bufferFor(await allBuffers(), key);
+}
+
 /** Retarget an unsaved draft in one transaction after its old writes settle. */
 export async function moveBuffer(from: BufferKey, to: BufferKey): Promise<"moved" | "missing" | "failed"> {
   await flushBuffer(from);
@@ -356,11 +362,18 @@ export function storedDraftOnClose(stored: StoredBuffer | null, document: { cont
  * the draft is then kept for recovery.
  */
 export function closeWithSaveOutcome(
-  watch: { tabId: string; hostId: string | null | undefined; device: string },
-  next: { connection: string; hostId: string | null | undefined; tabIds: string[]; deviceIds: string[] },
+  watch: { tabId: string; hostId: string | null | undefined; device: string; errorAt: number | null },
+  next: { connection: string; hostId: string | null | undefined; tabIds: string[]; deviceIds: string[]; error: { kind: string; occurred_at: number } | null },
 ): "wait" | "landed" | "keep" {
   if (next.connection !== "live" || next.hostId !== watch.hostId) return "keep";
-  if (next.tabIds.includes(watch.tabId)) return "wait";
+  if (next.tabIds.includes(watch.tabId)) {
+    // A save failure reported after the close was asked for, while the tab
+    // is still there, is taken as this close refused: the watch ends and the
+    // draft stays, so a later removal of the tab cannot pass for it landing.
+    // Another tab's failure read this way only keeps a draft, never loses one.
+    const failed = next.error !== null && next.error.occurred_at !== watch.errorAt && next.error.kind.startsWith("file.save_");
+    return failed ? "keep" : "wait";
+  }
   if (watch.device !== "local" && !next.deviceIds.includes(watch.device)) return "keep";
   return "landed";
 }

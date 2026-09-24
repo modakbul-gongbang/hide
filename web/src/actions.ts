@@ -2,8 +2,9 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import { allBuffers, bufferFor, closeWithSaveOutcome, deleteBuffer, flushBuffer, storedDraftOnClose, tabBufferKey, type BufferKey } from "./buffers";
+import { closeWithSaveOutcome, deleteBuffer, flushBuffer, settledBuffer, storedDraftOnClose, tabBufferKey, type BufferKey } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
+import { unstoredDeviceDrafts } from "./settings";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
@@ -308,13 +309,19 @@ export function createActions(dispatch: DispatchFn) {
       // core closes the tab only after its save landed clean, and a close it
       // refuses, or a tab that leaves for another reason, keeps the recovery
       // copy (D-14).
-      const watch = { tabId, hostId: state.daemon?.host_id, device: deviceOfCheckout(state.rest, tab.checkout_id) };
+      const watch = {
+        tabId,
+        hostId: state.daemon?.host_id,
+        device: deviceOfCheckout(state.rest, tab.checkout_id),
+        errorAt: state.rest?.status?.last_error?.occurred_at ?? null,
+      };
       const unsubscribe = useShellStore.subscribe((next) => {
         const outcome = closeWithSaveOutcome(watch, {
           connection: next.connection,
           hostId: next.daemon?.host_id,
           tabIds: (next.editor?.tabs ?? []).map((row) => row.id),
           deviceIds: (next.rest?.navigator?.devices ?? []).map((row) => row.id),
+          error: next.rest?.status?.last_error ?? null,
         });
         if (outcome === "wait") return;
         unsubscribe();
@@ -323,9 +330,11 @@ export function createActions(dispatch: DispatchFn) {
     } else if (draftKey) {
       // Nothing rides this close, but a stored draft may still hold work this
       // page never loaded; it goes only when it matches what the core holds.
+      // It is read once this tab's queued write has landed, so an edit
+      // typed just before the close is judged rather than left behind.
       const known = document ? { contents_utf8: document.contents_utf8, dirty: document.dirty } : null;
-      void allBuffers().then((buffers) => {
-        const decision = storedDraftOnClose(bufferFor(buffers, draftKey), known);
+      void settledBuffer(draftKey).then((stored) => {
+        const decision = storedDraftOnClose(stored, known);
         if (decision === "delete") void deleteBuffer(draftKey);
         else if (decision === "keep") diagnostic(`file_close: the stored draft of ${tab.path} is kept as a recovery item`);
       });
@@ -396,16 +405,24 @@ export function createActions(dispatch: DispatchFn) {
     /**
      * The core closes the device's file tabs without saving, so every draft of
      * them this browser is still writing lands first and stays as a recovery
-     * item (B26).
+     * item (B26). A draft that could not be stored then (B44) would be lost
+     * with its tab, so nothing is sent and its path is returned instead.
      */
-    async removeDevice(deviceId: string) {
+    async removeDevice(deviceId: string): Promise<string[]> {
       const state = useShellStore.getState();
       const keys = (state.editor?.tabs ?? [])
         .filter((tab) => tab.checkout_id.startsWith(`remote:${deviceId}:`))
         .map((tab) => tabBufferKey(state.daemon?.host_id, state.rest, tab))
         .filter((key): key is BufferKey => key !== null);
       await Promise.all(keys.map((key) => flushBuffer(key)));
+      const flushed = useShellStore.getState();
+      const unstored = unstoredDeviceDrafts(deviceId, flushed.editor?.tabs ?? [], flushed.bufferWarnings);
+      if (unstored.length > 0) {
+        diagnostic(`remove_device: ${deviceId} kept because ${unstored.length} draft(s) could not be stored`);
+        return unstored;
+      }
       dispatch({ schema_version: 2, kind: "remove_device", payload: { device_id: deviceId } });
+      return [];
     },
 
     focusDevice(deviceId: string) {

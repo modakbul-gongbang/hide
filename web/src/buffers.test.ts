@@ -112,6 +112,16 @@ describe("draft recovery (B10-B12)", () => {
     expect(draftPlace(legacy("", "/repo/a.ts"), HOST, rest())).toMatchObject({ kind: "none" });
   });
 
+  it("reads a closing tab's stored draft only after its queued write settled", async () => {
+    const { queueBuffer, settledBuffer } = await import("./buffers");
+    const key = { ...KEY, path: "/repo/typed-before-close.ts" };
+    let settled: boolean | null | undefined;
+    queueBuffer(key, "typed", (ok) => { settled = ok; });
+    expect(settled).toBeUndefined();
+    await settledBuffer(key);
+    expect(settled).not.toBeUndefined();
+  });
+
   it("is a no-op without IndexedDB, and says a write did not land", async () => {
     const { allBuffers, deleteBuffer, queueBuffer } = await import("./buffers");
     const landed = await new Promise<boolean | null>((resolve) => queueBuffer(KEY, "x", resolve));
@@ -133,9 +143,14 @@ describe("a stored draft when its tab closes (S5.5 B10-B12, B44)", () => {
   });
 
   it("goes after a close with a save only when that close landed", () => {
-    const watch = { tabId: "t", hostId: "host-a", device: "mac" };
-    const next = { connection: "live", hostId: "host-a", tabIds: [] as string[], deviceIds: ["mac"] };
+    const watch = { tabId: "t", hostId: "host-a", device: "mac", errorAt: 5 };
+    const next = { connection: "live", hostId: "host-a", tabIds: [] as string[], deviceIds: ["mac"], error: { kind: "file.save_failed", occurred_at: 5 } };
     expect(closeWithSaveOutcome(watch, { ...next, tabIds: ["t"] })).toBe("wait");
+    // A save failure after the close was asked for, with the tab still
+    // there, is that close refused: the watch ends and the draft is kept, so
+    // a later removal of the tab cannot count as the close landing.
+    expect(closeWithSaveOutcome(watch, { ...next, tabIds: ["t"], error: { kind: "file.save_conflict", occurred_at: 9 } })).toBe("keep");
+    expect(closeWithSaveOutcome(watch, { ...next, tabIds: ["t"], error: { kind: "device.test_failed", occurred_at: 9 } })).toBe("wait");
     expect(closeWithSaveOutcome(watch, next)).toBe("landed");
     expect(closeWithSaveOutcome(watch, { ...next, deviceIds: [] })).toBe("keep");
     expect(closeWithSaveOutcome(watch, { ...next, connection: "reconnecting" })).toBe("keep");

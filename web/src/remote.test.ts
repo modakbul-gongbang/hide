@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createActions } from "./actions";
 import { deviceCatalogLine, remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
-import type { Device, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
-import { useShellStore } from "./store";
+import { queueBuffer, tabBufferKey } from "./buffers";
+import type { Device, EditorSnapshot, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
+import { useShellStore, type DaemonInfo } from "./store";
 import { useUiStore } from "./ui";
 
 const LOCAL_PANE = "w1:p1";
@@ -267,5 +268,36 @@ describe("deviceCatalogLine", () => {
     expect(line(status("connected", session(), { state: "unavailable", message: "Allow the helper in Settings", refused: [] }))?.text).toContain("Allow the helper in Settings");
     expect(line(status("connected", session(), { state: "ready", message: null, refused: [{ path: "/gone", message: "missing" }] }))?.state).toBe("partial");
     expect(line(status("connected", session(), { state: "ready", message: null, refused: [] }))).toBeNull();
+  });
+});
+
+describe("removing a device (S5.5 B26, B44)", () => {
+  const TAB = "remote:studio:file:a";
+  const withTab = () => {
+    seed(rest("studio"));
+    useShellStore.setState({
+      daemon: { host_id: "host-a" } as unknown as DaemonInfo,
+      editor: { tabs: [{ id: TAB, checkout_id: "remote:studio:checkout:w9", path: "/home/remote/app/a.ts" }] } as unknown as EditorSnapshot,
+      bufferWarnings: new Set<string>(),
+    });
+  };
+
+  it("sends nothing while a draft of its tabs could not be stored, and names it", async () => {
+    withTab();
+    const key = tabBufferKey("host-a", useShellStore.getState().rest, { checkout_id: "remote:studio:checkout:w9", path: "/home/remote/app/a.ts" });
+    expect(key).not.toBeNull();
+    // The tab's last edit is still queued when the removal is asked for, and
+    // storing it fails during the flush the removal waits for.
+    queueBuffer(key!, "typed", (ok) => useShellStore.getState().noteBufferWarning(TAB, ok === false));
+    const { sent, actions } = recorder();
+    await expect(actions.removeDevice("studio")).resolves.toEqual(["/home/remote/app/a.ts"]);
+    expect(sent.filter((event) => event.kind === "remove_device")).toEqual([]);
+  });
+
+  it("is sent once every draft of its tabs is stored", async () => {
+    withTab();
+    const { sent, actions } = recorder();
+    await expect(actions.removeDevice("studio")).resolves.toEqual([]);
+    expect(sent.filter((event) => event.kind === "remove_device")).toEqual([{ kind: "remove_device", payload: { device_id: "studio" }, schema_version: 2 }]);
   });
 });
