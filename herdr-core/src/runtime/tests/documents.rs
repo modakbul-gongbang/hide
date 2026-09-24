@@ -934,3 +934,64 @@ fn reload_and_save_do_not_overtake_each_other_on_one_tab() {
         "outside\n"
     );
 }
+
+/// B19, B22: a device checkout's History is read by that device's helper,
+/// and an answer for the same path on another device is never shown: moving
+/// to this machine's checkout at that path drops the device's list in the
+/// same frame, and a device read that lands afterwards is refused.
+#[test]
+fn a_device_checkouts_history_comes_from_its_helper_and_stays_with_its_device() {
+    let f = Fixture::new();
+    let git = |arguments: &[&str]| {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&f.root)
+                .args(arguments)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    git(&["init", "-q"]);
+    let mut runtime = f.shared.lock().unwrap();
+    runtime.snapshot.ui_state.right_panel_visible = true;
+    runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
+    runtime.sync_changes_root_path();
+    let request = runtime.changes_request().unwrap();
+    assert_eq!(request.root.device_id, DEVICE);
+    let device_answer = || crate::changes::ChangesAnswer {
+        key: Some(request.key()),
+        changes: crate::changes::read(&request),
+    };
+    let listed = device_answer();
+    assert_eq!(listed.changes.unavailable_reason, None);
+    assert_eq!(listed.changes.entries[0].relative_path, "a.txt");
+    assert!(runtime.ingest_changes(listed));
+
+    let local_id = "workspace:local-same-path";
+    let local_checkout = "checkout:local-same-path";
+    let path = f.root.to_string_lossy().into_owned();
+    runtime.snapshot.navigator.workspaces.push(workspace(
+        local_id,
+        "Local",
+        &path,
+        vec![checkout(local_id, local_checkout, &path, None)],
+    ));
+    runtime.snapshot.navigator.focused_workspace_id = Some(local_id.to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some(local_checkout.to_owned());
+    runtime.sync_changes_root_path();
+    assert_eq!(
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        Some(path.as_str())
+    );
+    assert_eq!(
+        runtime.snapshot.changes,
+        crate::model::ChangesSnapshot::default()
+    );
+    assert!(!runtime.ingest_changes(device_answer()));
+    assert_eq!(
+        runtime.snapshot.changes,
+        crate::model::ChangesSnapshot::default()
+    );
+}

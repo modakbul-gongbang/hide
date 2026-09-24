@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
-import { changesFor, focusedCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
+import { changesFor, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
 import { useShellStore } from "./store";
 
 const STATUS: Record<ChangedFileStatus, { mark: string; label: string; color: string }> = {
@@ -60,7 +60,7 @@ function ChangeRow({ entry, committed, selected, actions }: {
 type Item = { kind: "group"; committed: boolean; title: string; count: number } | { kind: "row"; committed: boolean; entry: ChangedFileSnapshot };
 
 export function HistoryList({ actions }: { actions: Actions }) {
-  const checkout = useShellStore((s) => focusedCheckout(s.rest));
+  const checkout = useShellStore((s) => frontCheckout(s.rest));
   const rootPath = useShellStore((s) => s.rest?.navigator?.changes_root_path ?? null);
   const changes = useShellStore((s) => changesFor(s.changes, rootPath));
   const [expanded, setExpanded] = useState({ working: true, committed: true });
@@ -86,7 +86,7 @@ export function HistoryList({ actions }: { actions: Actions }) {
     overscan: 12,
   });
   if (!checkout) return <p className="px-md py-sm text-caption text-muted" data-history-state="no-workspace">Open a workspace to see History.</p>;
-  if (!rootPath) return <p className="px-md py-sm text-caption text-muted" data-history-state="local-only">History is available for local checkouts.</p>;
+  if (!rootPath) return <p className="px-md py-sm text-caption text-muted" data-history-state="no-folder">History has no folder for this checkout.</p>;
   if (!changes) return <p className="px-md py-sm text-caption text-muted" data-history-state="loading">Reading changes…</p>;
   if (changes.unavailable_reason) return <p className="px-md py-sm text-caption text-warning" data-history-state="unavailable">History is unavailable for this checkout. Reopen History to retry.</p>;
   if (items.length === 0) {

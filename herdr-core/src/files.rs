@@ -1,10 +1,9 @@
-use std::fs::{self, File};
-use std::io;
+use std::fs::File;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
+use cap_std::fs::Dir;
 use hide_host::document::Document;
 use hide_host::protocol::{Call, RevisionNow, RootRef};
 use hide_host::save::Saved;
@@ -14,9 +13,10 @@ use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::model::EditorDocumentSnapshot;
 
 /// Opened checkout roots supplied by the daemon after its registration check.
-/// The Swift shell uses the ambient path calls below; both shells share the
-/// document and explorer logic, while the daemon's paths resolve through
-/// these directory capabilities when the actual I/O runs.
+/// Each root's identity pins the folder every host request names; the opened
+/// handle is held so that identity cannot be reused by another folder while
+/// the daemon runs. The Swift shell supplies none, and its requests pin the
+/// root when they first open it.
 type PinnedIdentity = (PathBuf, Option<(u64, u64)>);
 
 #[derive(Clone, Debug, Default)]
@@ -73,73 +73,12 @@ impl FileRoots {
                 identity.map(|(device, inode)| (root.clone(), RootIdentity { device, inode }))
             })
     }
-
-    fn relative<'a>(&'a self, path: &'a Path) -> io::Result<(&'a Dir, &'a Path)> {
-        self.roots
-            .iter()
-            .filter_map(|(root, dir)| path.strip_prefix(root).ok().map(|rest| (root, dir, rest)))
-            .max_by_key(|(root, _, _)| root.components().count())
-            .map(|(_, dir, rest)| (dir.as_ref(), rest))
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "path is outside registered checkout",
-                )
-            })
-    }
-
-    pub(crate) fn open(&self, path: &Path, write: bool) -> io::Result<File> {
-        let (dir, relative) = self.relative(path)?;
-        let mut options = CapOpenOptions::new();
-        options.read(true).write(write);
-        #[cfg(unix)]
-        {
-            use cap_std::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
-        }
-        dir.open_with(relative, &options)
-            .map(|file| file.into_std())
-    }
-
-    /// Narrow an already opened checkout to one registered subfolder. This
-    /// open is resolved through the existing capability, not an ambient path.
-    pub(crate) fn scoped(&self, path: &Path) -> io::Result<Self> {
-        let file = self.open(path, false)?;
-        if !file.metadata()?.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotADirectory,
-                "History scope is not a directory",
-            ));
-        }
-        Ok(Self::from_opened(vec![(path.to_path_buf(), file)]))
-    }
-
-    /// A pathname may have been replaced after its directory capability was
-    /// opened. Git still uses pathnames, so History must reject a different
-    /// ambient directory before combining Git output with handle-based reads.
-    pub(crate) fn matches_ambient_root(&self, path: &Path) -> bool {
-        self.roots
-            .iter()
-            .find(|(root, _)| root == path)
-            .and_then(|(_, dir)| dir.dir_metadata().ok())
-            .zip(fs::metadata(path).ok())
-            .is_some_and(|(opened, ambient)| same_directory_identity(&opened, &ambient))
-    }
-
-    #[cfg(unix)]
-    pub(crate) fn opened_root_fd(&self, path: &Path) -> Option<std::os::fd::RawFd> {
-        use std::os::fd::AsRawFd;
-        self.roots
-            .iter()
-            .find(|(root, _)| root == path)
-            .map(|(_, dir)| dir.as_raw_fd())
-    }
 }
 
 /// A checkout as document work reaches it: the device it is on, its root
 /// path there, and the root's identity when hided pinned it at
 /// registration. Without one, the open reads it and the document keeps it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DocumentRoot {
     pub device_id: String,
     pub path: String,
@@ -616,29 +555,6 @@ fn change_failure(operation: &ExplorerOperation, error: HostCallError) -> String
     }
 }
 
-#[cfg(unix)]
-fn same_directory_identity(root: &cap_std::fs::Metadata, other: &fs::Metadata) -> bool {
-    use cap_std::fs::MetadataExt as _;
-    use std::os::unix::fs::MetadataExt as _;
-    root.dev() == other.dev() && root.ino() == other.ino()
-}
-
-#[cfg(windows)]
-fn same_directory_identity(root: &cap_std::fs::Metadata, other: &fs::Metadata) -> bool {
-    use cap_std::fs::MetadataExt as _;
-    use std::os::windows::fs::MetadataExt as _;
-    root.volume_serial_number()
-        .zip(root.file_index())
-        .is_some_and(|identity| {
-            Some(identity) == other.volume_serial_number().zip(other.file_index())
-        })
-}
-
-#[cfg(not(any(unix, windows)))]
-fn same_directory_identity(_root: &cap_std::fs::Metadata, _other: &fs::Metadata) -> bool {
-    true
-}
-
 /// The path as given when it is absolute, normal, and inside `root`.
 /// Component-wise, so `/repo-other` is outside `/repo`; lexical, so a
 /// symlink that escapes the root is not followed here and cannot be
@@ -689,6 +605,7 @@ fn valid_item_name(name: &str) -> Result<&str, String> {
 pub(crate) mod tests {
     use super::*;
     use crate::model::DocumentKind;
+    use std::fs;
     use std::time::UNIX_EPOCH;
 
     #[test]

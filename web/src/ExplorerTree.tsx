@@ -73,11 +73,9 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   const rootPath = checkout?.path ?? null;
   const expandedPaths = useShellStore((s) => explorerContext(s.rest).expanded ?? EMPTY_PATHS);
   const listings = useShellStore((s) => s.listings);
-  // Git decorations and file changes are this machine's until the device's
-  // helper serves Git (S5.5 slice 6); a device's tree takes the same changes
-  // as this machine's, made by that device's helper.
-  const local = device === "local";
-  const changes = useShellStore((s) => (local ? changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null) : null));
+  // Git decorations come from the checkout's own host on either device; the
+  // core drops a list read for another device before this could show it.
+  const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   const unavailable = useShellStore((s) => (s.directoryUnavailable && s.directoryUnavailable.device_id === device ? s.directoryUnavailable : null));
   const selectedPath = useShellStore((s) => s.rest?.ui_state?.selected_path ?? null);
   const pathRefusal = useShellStore((s) => s.pathRefusal);

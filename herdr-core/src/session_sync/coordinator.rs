@@ -69,8 +69,9 @@ fn run_coordinator(
     // Kept for the counter sweep below, which runs on a fresh snapshot.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
     let mut usage_reader = usage_paths.map(crate::usage::ProviderUsageReader::new);
-    // Git reads describe this machine's checkouts, so only the local
-    // coordinator runs one.
+    // The changes view follows the checkout in front on any device and reads
+    // it through that device's host, so one reader, on the local
+    // coordinator, serves them all.
     let mut changes_reader = context.is_local().then(crate::changes::ChangesReader::new);
     // A listening port is this machine's, so only the local coordinator looks.
     let mut ports_reader = context.is_local().then(crate::ports::PortsReader::new);
@@ -281,8 +282,8 @@ fn run_coordinator(
             }
 
             if let Some(reader) = changes_reader.as_mut() {
-                // The request is read under a brief lock; the `git` calls that
-                // answer it happen after the guard is dropped.
+                // The request is read under a brief lock; the host call that
+                // answers it runs on the reader's own thread.
                 let Some(request) = read_changes_request(&context) else {
                     stop_subscription(&mut subscription);
                     return;
@@ -1026,7 +1027,7 @@ fn read_changes_request(
     Some(request)
 }
 
-fn publish_changes(context: &SessionSyncContext, changes: crate::model::ChangesSnapshot) -> bool {
+fn publish_changes(context: &SessionSyncContext, changes: crate::changes::ChangesAnswer) -> bool {
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };

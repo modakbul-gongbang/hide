@@ -2603,7 +2603,7 @@ impl Runtime {
                 {
                     self.set_error(
                         "diff.invalid_context",
-                        "History no longer belongs to the selected local checkout",
+                        "History no longer belongs to the selected checkout",
                         false,
                     );
                     return true;
@@ -2621,16 +2621,9 @@ impl Runtime {
                     );
                     return true;
                 }
-                let Some(workspace_id) = self.snapshot.navigator.focused_workspace_id.clone()
-                else {
-                    self.set_error(
-                        "diff.invalid_context",
-                        "A diff tab requires the selected workspace and checkout",
-                        false,
-                    );
-                    return true;
-                };
-                let Some(checkout_id) = self.snapshot.navigator.focused_checkout_id.clone() else {
+                // The checkout in front on the selected device, whose History
+                // this is, owns the diff tab.
+                let Some((workspace_id, checkout_id)) = self.front_checkout_owned() else {
                     self.set_error(
                         "diff.invalid_context",
                         "A diff tab requires the selected workspace and checkout",

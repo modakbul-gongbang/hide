@@ -774,6 +774,8 @@ pub struct Runtime {
     /// answer from an attempt made before a device was removed and added
     /// again under the same id cannot match the new attempt.
     last_host_generation: u64,
+    /// The device and folder `snapshot.changes` was read for.
+    changes_published_key: Option<crate::changes::ChangesKey>,
     /// Each device's session as its Herdr reported it, before its projects
     /// are grouped from the helper's facts (`device_catalog`).
     device_raw_sessions: HashMap<String, RemoteSessionSnapshot>,
@@ -1144,6 +1146,7 @@ impl Runtime {
             remote_device_tests: HashMap::new(),
             device_hosts: HashMap::new(),
             last_host_generation: 0,
+            changes_published_key: None,
             device_raw_sessions: HashMap::new(),
             device_facts: HashMap::new(),
             local_host: Arc::new(crate::host_access::InProcessHost),

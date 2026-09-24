@@ -628,11 +628,11 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     selectChange(path: string, committed: boolean, preview: boolean) {
-      const here = current();
+      const here = explorerContext(rest()).checkout;
       const changes = useShellStore.getState().changes;
       const scope = rest()?.navigator?.changes_root_path;
       if (!here || !scope || changes?.root_path !== scope ||
-          (scope !== here.checkout.path && !scope.startsWith(`${here.checkout.path}/`))) {
+          (scope !== here.path && !scope.startsWith(`${here.path}/`))) {
         return diagnostic("changes_select: checkout is unavailable");
       }
       const group = committed ? changes.committed : changes.entries;

@@ -30,13 +30,61 @@ fn remote_purpose_unavailable_reason(version: Option<&str>) -> String {
 }
 
 impl Runtime {
-    pub fn changes_request(&self) -> Option<crate::changes::ChangesRequest> {
-        let changes_list_visible = self.snapshot.ui_state.right_panel_visible
-            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Changes;
-        let explorer_visible = self.snapshot.ui_state.right_panel_visible
-            && self.snapshot.ui_state.right_panel_section == RightPanelSection::Explorer;
-        let active_diff = self
-            .snapshot
+    /// What the changes view needs read, or `None` while nothing on screen
+    /// shows it. The checkout in front may be on this machine or on a device;
+    /// either is read by its own host.
+    pub fn changes_request(&mut self) -> Option<crate::changes::ChangesRequest> {
+        let (workspace_id, checkout_id, root_path) = self.changes_target()?;
+        let root = self.document_root(&workspace_id, &checkout_id).ok()?;
+        let channel = self
+            .changes_channel(&root.device_id)
+            .map(crate::changes::ChannelRef);
+        let active_diff = self.active_diff_tab();
+        let selected_path = active_diff
+            .map(|tab| tab.path.clone())
+            .or_else(|| self.snapshot.changes.selected_path.clone());
+        let selected_committed = active_diff
+            .and_then(|tab| tab.diff_committed)
+            .unwrap_or(self.snapshot.changes.selected_committed);
+        // The base comes from the checkout row, so the committed group and
+        // the card's `↑A ↓B` are measured against the same branch; a device
+        // checkout has none, and its host uses the repository default.
+        let base_branch = self
+            .catalog_checkout(&workspace_id, &checkout_id)
+            .and_then(|(_, checkout)| checkout.base_branch.clone());
+        Some(crate::changes::ChangesRequest {
+            root,
+            channel,
+            root_path,
+            selected_path,
+            selected_committed,
+            base_branch,
+        })
+    }
+
+    /// The device and folder the changes view is about now, the fence every
+    /// answer passes.
+    pub(crate) fn changes_key(&self) -> Option<crate::changes::ChangesKey> {
+        self.changes_target()?;
+        self.front_changes_key()
+    }
+
+    /// The device and folder History describes for the checkout in front,
+    /// whether or not anything shows it now.
+    fn front_changes_key(&self) -> Option<crate::changes::ChangesKey> {
+        let (workspace_id, checkout_id) = self.front_checkout()?;
+        let (workspace, _) = self.catalog_checkout(workspace_id, checkout_id)?;
+        Some(crate::changes::ChangesKey {
+            device_id: workspace.device_id.clone(),
+            root_path: self
+                .focused_changes_root_path()?
+                .to_string_lossy()
+                .into_owned(),
+        })
+    }
+
+    fn active_diff_tab(&self) -> Option<&EditorTabSnapshot> {
+        self.snapshot
             .editor
             .active_tab_id
             .as_deref()
@@ -46,28 +94,46 @@ impl Runtime {
                     .tabs
                     .iter()
                     .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::Diff)
-            });
-        if !changes_list_visible && !explorer_visible && active_diff.is_none() {
+            })
+    }
+
+    fn changes_target(&self) -> Option<(String, String, PathBuf)> {
+        let section_visible = |section| {
+            self.snapshot.ui_state.right_panel_visible
+                && self.snapshot.ui_state.right_panel_section == section
+        };
+        if !section_visible(RightPanelSection::Changes)
+            && !section_visible(RightPanelSection::Explorer)
+            && self.active_diff_tab().is_none()
+        {
             return None;
         }
-        let (_, checkout) = self.focused_local_checkout()?;
+        let (workspace_id, checkout_id) = self.front_checkout_owned()?;
         let root_path = self.focused_changes_root_path()?;
-        let selected_path = active_diff
-            .map(|tab| tab.path.clone())
-            .or_else(|| self.snapshot.changes.selected_path.clone());
-        let selected_committed = active_diff
-            .and_then(|tab| tab.diff_committed)
-            .unwrap_or(self.snapshot.changes.selected_committed);
-        Some(crate::changes::ChangesRequest {
-            root_path,
-            file_roots: self.file_roots.clone(),
-            checkout_path: PathBuf::from(&checkout.path),
-            selected_path,
-            selected_committed,
-            // The base comes from the checkout row, so the committed group and
-            // the card's `↑A ↓B` are measured against the same branch.
-            base_branch: checkout.base_branch.clone(),
-        })
+        Some((workspace_id, checkout_id, root_path))
+    }
+
+    /// The host the changes view reads through. A device's helper is asked
+    /// for once when the view first needs it; a helper that failed is not
+    /// asked again on every refresh, and the view says why until the
+    /// operator's next action retries it.
+    fn changes_channel(
+        &mut self,
+        device_id: &str,
+    ) -> Result<Arc<dyn crate::host_access::HostChannel>, String> {
+        if device_id != workspace::LOCAL_DEVICE_ID && !self.device_hosts.contains_key(device_id) {
+            self.start_device_host(device_id);
+        }
+        match self.device_hosts.get(device_id).map(|host| &host.phase) {
+            _ if device_id == workspace::LOCAL_DEVICE_ID => Ok(Arc::clone(&self.local_host)),
+            Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
+                Ok(Arc::clone(host))
+            }
+            _ => Err(self
+                .host_snapshot(device_id)
+                .message
+                .unwrap_or_else(|| "The device helper is not ready".to_owned())),
+        }
     }
 
     /// A registration can name a folder inside its Git checkout. The
@@ -75,15 +141,17 @@ impl Runtime {
     /// root after Herdr occupies it, so use the registration's own path.
     /// Linked worktree rows use their own checkout root.
     pub(super) fn focused_changes_root_path(&self) -> Option<PathBuf> {
-        let (workspace, checkout) = self.focused_local_checkout()?;
+        let (workspace_id, checkout_id) = self.front_checkout()?;
+        let (workspace, checkout) = self.catalog_checkout(workspace_id, checkout_id)?;
         let checkout_root = PathBuf::from(&checkout.path);
-        if workspace.registered {
-            let registered = self
+        if workspace.registered
+            && let Some(registered) = self
                 .snapshot
                 .ui_state
                 .workspace_registrations
                 .iter()
-                .find(|registration| registration.id == workspace.id)?;
+                .find(|registration| registration.id == workspace.id)
+        {
             let registered = PathBuf::from(&registered.path);
             if registered.starts_with(&checkout_root) {
                 return Some(registered);
@@ -99,6 +167,14 @@ impl Runtime {
         self.snapshot.navigator.changes_root_path = self
             .focused_changes_root_path()
             .map(|path| path.to_string_lossy().into_owned());
+        // The same folder on another device is another checkout: a projection
+        // read on the one left behind is dropped in this same frame rather
+        // than shown under the new device until the next read lands (B22).
+        let front = self.front_changes_key();
+        if self.changes_published_key.is_some() && self.changes_published_key != front {
+            self.snapshot.changes = crate::model::ChangesSnapshot::default();
+            self.changes_published_key = None;
+        }
     }
 
     pub fn worktrees_request(&self) -> crate::worktrees::WorktreeRequest {
@@ -1813,13 +1889,12 @@ impl Runtime {
     /// Accepts a projection only while it still describes the checkout the
     /// runtime is asking about, so a slow read against a checkout the operator
     /// has already left cannot overwrite the current one.
-    pub fn ingest_changes(&mut self, changes: crate::model::ChangesSnapshot) -> bool {
-        let expected = self
-            .changes_request()
-            .map(|request| request.root_path.to_string_lossy().into_owned());
-        if expected != changes.root_path {
+    pub fn ingest_changes(&mut self, answer: crate::changes::ChangesAnswer) -> bool {
+        if answer.key != self.changes_key() {
             return false;
         }
+        let changes = answer.changes;
+        self.changes_published_key = answer.key;
         if self.snapshot.changes == changes {
             return false;
         }
