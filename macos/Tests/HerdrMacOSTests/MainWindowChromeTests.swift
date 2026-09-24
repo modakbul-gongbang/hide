@@ -4,14 +4,29 @@ import Testing
 
 @testable import HerdrMacOS
 
+/// Where SwiftUI placed the probe's first row, in window coordinates.
+///
+/// Read from SwiftUI's own geometry rather than from the hosting view's
+/// subviews: since macOS 26 a hosting view draws plain SwiftUI content in
+/// layers with no subview per row, so a subview frame there is `.zero` and
+/// says nothing about where the row is.
+@MainActor
+private final class FirstRowFrame {
+    var value: CGRect?
+}
+
 /// Stands in for the shell: a first row of a known height, then the rest.
 /// Where that first row lands is what says whether the titlebar band is gone.
 private struct ChromeProbeContent: View {
     static let firstRowHeight: CGFloat = 32
 
+    let firstRow: FirstRowFrame
+
     var body: some View {
         VStack(spacing: 0) {
-            Color.red.frame(height: Self.firstRowHeight)
+            Color.red
+                .frame(height: Self.firstRowHeight)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { firstRow.value = $0 }
             Color.blue
         }
     }
@@ -22,14 +37,16 @@ private struct ChromeProbeContent: View {
 @Suite("Main window chrome")
 @MainActor
 struct MainWindowChromeTests {
-    private func chromedWindow() -> (NSWindow, NSHostingView<ChromeProbeContent>) {
+    private func chromedWindow(
+        firstRow: FirstRowFrame = FirstRowFrame()
+    ) -> (NSWindow, NSHostingView<ChromeProbeContent>) {
         let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        let hosting = MainWindowChrome.apply(to: window, content: ChromeProbeContent())
+        let hosting = MainWindowChrome.apply(to: window, content: ChromeProbeContent(firstRow: firstRow))
         return (window, hosting)
     }
 
@@ -45,8 +62,9 @@ struct MainWindowChromeTests {
         #expect(window.title == "hide")
     }
 
-    @Test func theContentFillsTheWindowToItsTopEdge() {
-        let (window, hosting) = chromedWindow()
+    @Test func theContentFillsTheWindowToItsTopEdge() throws {
+        let recorded = FirstRowFrame()
+        let (window, hosting) = chromedWindow(firstRow: recorded)
 
         #expect(window.contentView === hosting)
         // AppKit computes this from the style mask, so it is the window
@@ -59,9 +77,10 @@ struct MainWindowChromeTests {
         #expect(hosting.frame.height == window.frame.height)
         // The one that catches a real regression: clearing the safe area
         // after the view joins the window is accepted and does nothing, and
-        // the first row would start 28pt down with no other symptom.
+        // the first row would start a titlebar's height down with no other
+        // symptom.
         hosting.layoutSubtreeIfNeeded()
-        let firstRow = hosting.subviews.first?.frame ?? .zero
+        let firstRow = try #require(recorded.value)
         #expect(firstRow.origin.y == 0)
         #expect(firstRow.height == ChromeProbeContent.firstRowHeight)
     }

@@ -51,5 +51,25 @@ fi
 archive_digest="$(LC_ALL=C shasum -a 256 "$archive")"
 archive_digest="${archive_digest%% *}"
 
+# A machine with the Command Line Tools and no Xcode keeps swift-testing's
+# `Testing.framework` and its support libraries under the tools' own Developer
+# folders, which SwiftPM puts on neither the compiler's framework search path
+# nor the test runner's rpath there, so every test target fails to import
+# `Testing`. Only on such a machine the test run names those two folders; with
+# Xcode selected, as on the CI runners, the command is unchanged. Nothing is
+# filtered or skipped either way.
+toolchain_flags=()
+clt=/Library/Developer/CommandLineTools
+if [[ "$mode" == "test" && "$(xcode-select -p 2>/dev/null || true)" == "$clt" \
+    && -d "$clt/Library/Developer/Frameworks/Testing.framework" ]]; then
+    frameworks="$clt/Library/Developer/Frameworks"
+    libraries="$clt/Library/Developer/usr/lib"
+    toolchain_flags=(
+        -Xswiftc "-F$frameworks" -Xlinker "-F$frameworks"
+        -Xlinker -rpath -Xlinker "$frameworks" -Xlinker -rpath -Xlinker "$libraries"
+    )
+fi
+
 exec swift "$mode" --package-path macos --disable-keychain --disable-sandbox \
-    -Xswiftc -D -Xswiftc "HERDR_CORE_${archive_digest}" "$@"
+    -Xswiftc -D -Xswiftc "HERDR_CORE_${archive_digest}" \
+    ${toolchain_flags[@]+"${toolchain_flags[@]}"} "$@"
