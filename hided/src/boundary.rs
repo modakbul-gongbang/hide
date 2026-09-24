@@ -39,7 +39,6 @@
 //! retain the checked path for UI identity, while actual file I/O uses opened
 //! checkout-root capabilities supplied from this boundary.
 
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::fs;
@@ -101,158 +100,6 @@ fn root_identity(metadata: &fs::Metadata) -> Option<RootIdentity> {
 #[cfg(not(any(unix, windows)))]
 fn root_identity(_metadata: &fs::Metadata) -> Option<RootIdentity> {
     None
-}
-
-#[cfg(unix)]
-fn for_each_opened_directory_name(
-    file: &fs::File,
-    mut visit: impl FnMut(OsString) -> bool,
-) -> io::Result<()> {
-    use std::ffi::CStr;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-
-    // fdopendir owns its descriptor, so duplicate the verified handle and
-    // retain the original until enumeration finishes.
-    let duplicated = unsafe { libc::dup(file.as_raw_fd()) };
-    if duplicated < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let stream = unsafe { libc::fdopendir(duplicated) };
-    if stream.is_null() {
-        let error = io::Error::last_os_error();
-        unsafe { libc::close(duplicated) };
-        return Err(error);
-    }
-    struct Directory(*mut libc::DIR);
-    impl Drop for Directory {
-        fn drop(&mut self) {
-            unsafe { libc::closedir(self.0) };
-        }
-    }
-    let stream = Directory(stream);
-    loop {
-        let item = unsafe { libc::readdir(stream.0) };
-        if item.is_null() {
-            break;
-        }
-        let bytes = unsafe { CStr::from_ptr((*item).d_name.as_ptr()) }.to_bytes();
-        if bytes != b"." && bytes != b".." && !visit(std::ffi::OsStr::from_bytes(bytes).to_owned())
-        {
-            break;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn for_each_opened_directory_name(
-    file: &fs::File,
-    mut visit: impl FnMut(OsString) -> bool,
-) -> io::Result<()> {
-    use std::os::windows::ffi::OsStringExt;
-    use std::os::windows::io::AsRawHandle;
-
-    #[repr(C)]
-    struct DirectoryInfo {
-        next_entry_offset: u32,
-        file_index: u32,
-        times_and_sizes: [u64; 6],
-        attributes: u32,
-        file_name_length: u32,
-        ea_size: u32,
-        short_name_length: i8,
-        short_name: [u16; 12],
-        file_id: u64,
-        file_name: [u16; 1],
-    }
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetFileInformationByHandleEx(
-            handle: *mut std::ffi::c_void,
-            information_class: i32,
-            buffer: *mut std::ffi::c_void,
-            buffer_size: u32,
-        ) -> i32;
-    }
-    const FILE_ID_BOTH_DIRECTORY_INFO: i32 = 10;
-    const ERROR_NO_MORE_FILES: i32 = 18;
-    const NAME_OFFSET: usize = std::mem::offset_of!(DirectoryInfo, file_name);
-    let mut buffer = [0u64; 8192];
-    loop {
-        // SAFETY: the buffer is writable and the handle remains owned by file.
-        let ok = unsafe {
-            GetFileInformationByHandleEx(
-                file.as_raw_handle(),
-                FILE_ID_BOTH_DIRECTORY_INFO,
-                buffer.as_mut_ptr().cast(),
-                (buffer.len() * 8) as u32,
-            )
-        };
-        if ok == 0 {
-            let error = io::Error::last_os_error();
-            return if error.raw_os_error() == Some(ERROR_NO_MORE_FILES) {
-                Ok(())
-            } else {
-                Err(error)
-            };
-        }
-        let bytes =
-            unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), buffer.len() * 8) };
-        let mut offset = 0usize;
-        loop {
-            if offset % std::mem::align_of::<DirectoryInfo>() != 0
-                || offset + std::mem::size_of::<DirectoryInfo>() > bytes.len()
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid directory entry",
-                ));
-            }
-            let entry = unsafe { &*(bytes.as_ptr().add(offset).cast::<DirectoryInfo>()) };
-            let name_bytes = entry.file_name_length as usize;
-            if name_bytes % 2 != 0 || offset + NAME_OFFSET + name_bytes > bytes.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid directory name",
-                ));
-            }
-            let name = unsafe {
-                std::slice::from_raw_parts(
-                    bytes.as_ptr().add(offset + NAME_OFFSET).cast::<u16>(),
-                    name_bytes / 2,
-                )
-            };
-            if name != [b'.' as u16]
-                && name != [b'.' as u16, b'.' as u16]
-                && !visit(OsString::from_wide(name))
-            {
-                return Ok(());
-            }
-            let next = entry.next_entry_offset as usize;
-            if next == 0 {
-                break;
-            }
-            if next < NAME_OFFSET + name_bytes || offset + next >= bytes.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid directory offset",
-                ));
-            }
-            offset += next;
-        }
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn for_each_opened_directory_name(
-    _file: &fs::File,
-    _visit: impl FnMut(OsString) -> bool,
-) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "directory handle enumeration unavailable",
-    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -500,6 +347,17 @@ pub struct Boundary {
     /// core's first snapshot arrives, so Explorer work that arrives before it
     /// is refused as `outside_checkout` rather than acted on.
     roots: RwLock<Vec<RegisteredRoot>>,
+    /// Checkout roots on SSH devices, as the core's catalog names them. They
+    /// are another machine's paths: this boundary only admits the pair a
+    /// device listing names, and the device's helper confines the work.
+    device_roots: RwLock<Vec<DeviceRoot>>,
+}
+
+/// One checkout on an SSH device: the device and the root path there.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceRoot {
+    pub device_id: String,
+    pub path: String,
 }
 
 impl Boundary {
@@ -517,6 +375,7 @@ impl Boundary {
             home: real,
             home_as_given: home.to_path_buf(),
             roots: RwLock::new(Vec::new()),
+            device_roots: RwLock::new(Vec::new()),
         })
     }
 
@@ -575,6 +434,23 @@ impl Boundary {
             "{}",
             serde_json::json!({"component": "hided", "kind": "boundary.roots", "roots": count})
         );
+    }
+
+    /// Replaces the device checkout roots with the catalog's.
+    pub fn set_device_roots(&self, roots: Vec<DeviceRoot>) {
+        *self
+            .device_roots
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = roots;
+    }
+
+    /// Whether `root` is a checkout the catalog carries for `device_id`.
+    pub fn is_device_root(&self, device_id: &str, root: &str) -> bool {
+        self.device_roots
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .any(|known| known.device_id == device_id && known.path == root)
     }
 
     fn roots_for_read(&self) -> RwLockReadGuard<'_, Vec<RegisteredRoot>> {
@@ -994,137 +870,35 @@ impl Boundary {
     pub fn list_children(&self, root: &Path, raw: &str) -> Result<Listing, Refusal> {
         let registered = self.registered_root(root)?;
         let dir = self.resolve_below(root, raw)?;
-        let opened = open_under_root(&registered, &dir, true).map_err(|error| {
-            if error.kind() == io::ErrorKind::InvalidData {
-                Refusal::OutsideCheckout
-            } else if error.raw_os_error() == Some(libc::ENOTDIR) {
-                Refusal::NotADirectory
-            } else {
-                Refusal::NotFound
-            }
-        })?;
-        let metadata = opened.metadata().map_err(|_| Refusal::NotFound)?;
-        if !metadata.is_dir() {
-            return Err(Refusal::NotADirectory);
-        }
-        let opened_path = opened_file_path(&opened).map_err(|_| Refusal::OutsideCheckout)?;
-        if !opened_path.starts_with(&registered.real_path) {
-            return Err(Refusal::OutsideCheckout);
-        }
-        let mut entries = Vec::new();
-        let mut truncated = false;
-        for_each_opened_directory_name(&opened, |name| {
-            let Some(name) = name.to_str() else {
-                return true;
-            };
-            if name == GIT_DIR_NAME {
-                return true;
-            }
-            let Some(is_directory) = child_kind(&registered.real_path, &dir.join(name)) else {
-                return true;
-            };
-            if entries.len() == LIST_CAP {
-                truncated = true;
-                return false;
-            }
-            entries.push(Entry {
-                name: name.to_owned(),
-                path: dir.join(name).display().to_string(),
-                is_directory,
-            });
-            true
-        })
-        .map_err(|_| Refusal::NotFound)?;
-        entries.sort_by(|left, right| {
-            right
-                .is_directory
-                .cmp(&left.is_directory)
-                .then_with(|| natural_cmp(&left.name, &right.name))
-        });
+        let anchor = open_under_root(&registered, &registered.source.path, true)
+            .map_err(|_| Refusal::OutsideCheckout)?;
+        let relative = dir
+            .strip_prefix(&registered.source.path)
+            .map_err(|_| Refusal::OutsideCheckout)?;
+        let checkout = cap_std::fs::Dir::from_std_file(anchor);
+        let listed = hide_host::list::require_directory(&checkout, relative)
+            .and_then(|()| hide_host::list::list(&checkout, relative, &registered.real_path))
+            .map_err(|error| match error.code {
+                hide_host::ErrorCode::NotADirectory => Refusal::NotADirectory,
+                hide_host::ErrorCode::OutsideRoot | hide_host::ErrorCode::InvalidPath => {
+                    Refusal::OutsideCheckout
+                }
+                _ => Refusal::NotFound,
+            })?;
         Ok(Listing {
             root_path: dir.display().to_string(),
-            entries,
-            truncated,
+            entries: listed
+                .entries
+                .into_iter()
+                .map(|entry| Entry {
+                    path: dir.join(&entry.name).display().to_string(),
+                    name: entry.name,
+                    is_directory: entry.is_directory,
+                })
+                .collect(),
+            truncated: listed.truncated,
         })
     }
-}
-
-/// The one name the Explorer hides: the repository's own directory. Every
-/// other hidden name is a row the approved line shows.
-const GIT_DIR_NAME: &str = ".git";
-
-/// Whether a child of `root` is a directory (`true`) or a file (`false`), or
-/// `None` when it is not a row the Explorer shows: a symlink whose target
-/// leaves the root, one that resolves to nothing, and anything that is neither
-/// a file nor a directory (a socket, a fifo, a device).
-fn child_kind(root: &Path, path: &Path) -> Option<bool> {
-    let real = path.canonicalize().ok()?;
-    if !real.starts_with(root) {
-        return None;
-    }
-    let metadata = fs::metadata(&real).ok()?;
-    if metadata.is_dir() {
-        Some(true)
-    } else if metadata.is_file() {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-/// The order the Swift Explorer shows names in, as far as this daemon needs it:
-/// case-insensitive, with a run of digits compared as a number, so `file2`
-/// sorts before `file10`. `localizedStandardCompare` is the rule the approved
-/// line names and this is that rule's comparable part; a tie keeps the order the
-/// directory was read in.
-pub(crate) fn natural_cmp(left: &str, right: &str) -> Ordering {
-    let mut left = left.chars().flat_map(char::to_lowercase).peekable();
-    let mut right = right.chars().flat_map(char::to_lowercase).peekable();
-    loop {
-        match (left.peek().copied(), right.peek().copied()) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some(l), Some(r)) if l.is_ascii_digit() && r.is_ascii_digit() => {
-                let left_run = take_digits(&mut left);
-                let right_run = take_digits(&mut right);
-                let order = number_order(&left_run, &right_run);
-                if order != Ordering::Equal {
-                    return order;
-                }
-            }
-            (Some(l), Some(r)) => {
-                left.next();
-                right.next();
-                let order = l.cmp(&r);
-                if order != Ordering::Equal {
-                    return order;
-                }
-            }
-        }
-    }
-}
-
-/// The digits at the front of an iterator, consumed.
-fn take_digits(iter: &mut std::iter::Peekable<impl Iterator<Item = char>>) -> String {
-    let mut run = String::new();
-    while let Some(digit) = iter.peek().copied() {
-        if !digit.is_ascii_digit() {
-            break;
-        }
-        run.push(digit);
-        iter.next();
-    }
-    run
-}
-
-/// Two digit runs by their value: the run with fewer significant digits is the
-/// smaller number, and equal lengths compare as text. Leading zeros do not
-/// count, so `007` and `7` are the same number.
-fn number_order(left: &str, right: &str) -> Ordering {
-    let left = left.trim_start_matches('0');
-    let right = right.trim_start_matches('0');
-    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
 }
 
 #[cfg(all(test, unix))]
@@ -1273,18 +1047,6 @@ mod tests {
                 .list_children(&root, &s(&root.join("src")))
                 .is_ok()
         );
-    }
-
-    #[test]
-    fn names_sort_case_insensitively_and_by_the_value_of_a_digit_run() {
-        let mut names = vec!["File10.txt", "file2.txt", "beta", "Beta2", "alpha"];
-        names.sort_by(|left, right| natural_cmp(left, right));
-        assert_eq!(
-            names,
-            vec!["alpha", "beta", "Beta2", "file2.txt", "File10.txt"]
-        );
-        assert_eq!(natural_cmp("007", "7"), Ordering::Equal);
-        assert_eq!(natural_cmp("a", "a "), Ordering::Less);
     }
 
     #[test]

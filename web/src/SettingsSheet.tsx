@@ -17,11 +17,14 @@ import {
   deviceIdFor,
   deviceLine,
   diagnosticsText,
+  helperConsentTerms,
   herdrLine,
+  hostLine,
   offeredModels,
   providerLine,
   environmentTone,
   shown,
+  socketProblem,
   usableAccent,
   usableFontSize,
   type SettingsTab,
@@ -484,9 +487,12 @@ function DevicesTab({ actions }: { actions: Actions }) {
   const focused = useShellStore((s) => s.rest?.navigator?.focused_device_id ?? "local");
   const remote = useShellStore((s) => s.rest?.status?.remote);
   const [removing, setRemoving] = useState<Device | null>(null);
+  const [allowing, setAllowing] = useState<Device | null>(null);
+  const [revoking, setRevoking] = useState<Device | null>(null);
   const [actedAt, setActedAt] = useState<number | null>(null);
   const deviceError = useErrorSince(actedAt, ["device.", "remote."]);
   const rows = devices ?? [];
+  const localRoot = rows.find((device) => device.kind !== "remote")?.host?.helper_root ?? null;
   const remoteRows = rows.filter((device) => device.kind === "remote");
   return (
     <>
@@ -506,6 +512,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
               detail={
                 <>
                   {device.kind === "remote" && device.state !== "ready" && device.message ? <Note tone="warn">{device.message}</Note> : null}
+                  {device.kind === "remote" ? <DeviceHelper device={device} /> : null}
                   {device.test ? <DeviceTest test={device.test} /> : null}
                 </>
               }
@@ -543,6 +550,28 @@ function DevicesTab({ actions }: { actions: Actions }) {
                       Retry
                     </Button>
                   ) : null}
+                  {device.host?.consent === "granted" && device.host.state !== "identity_changed" ? (
+                    <>
+                      {device.host.state === "unavailable" ? (
+                        <Button
+                          onClick={() => {
+                            setActedAt(Date.now());
+                            actions.retryDeviceHost(device.id);
+                          }}
+                          data-device-host-retry={device.id}
+                        >
+                          Retry helper
+                        </Button>
+                      ) : null}
+                      <Button appearance="quiet" onClick={() => setRevoking(device)} data-device-host-revoke={device.id}>
+                        Revoke helper…
+                      </Button>
+                    </>
+                  ) : (
+                    <Button onClick={() => setAllowing(device)} data-device-host-allow={device.id}>
+                      Allow helper…
+                    </Button>
+                  )}
                   <Button appearance="quiet" onClick={() => setRemoving(device)} data-device-remove={device.id}>
                     Remove…
                   </Button>
@@ -554,7 +583,58 @@ function DevicesTab({ actions }: { actions: Actions }) {
         {remoteRows.length === 0 ? <Row label={<Note>No SSH device is registered. The daemon's own machine is always available.</Note>} /> : null}
         {deviceError ? <Row label={<Note tone="error" data-device-error="true">{deviceError}</Note>} /> : null}
       </Group>
-      <AddDevice actions={actions} devices={rows} />
+      <AddDevice actions={actions} devices={rows} helperRoot={localRoot} />
+      {allowing ? (
+        <Dialog label={`Allow Hide's helper on ${allowing.label}`} onClose={() => setAllowing(null)} data-device-host-allow-confirm={allowing.id}>
+          <div className="p-lg">
+            <h2 className="mb-xs text-title font-semibold">Allow Hide's helper on {allowing.label}?</h2>
+            {allowing.host?.state === "identity_changed" ? (
+              <p className="mb-sm text-body text-warning">
+                {allowing.ssh_alias} now answers as a different SSH identity than the one this consent was given to. Allow only if you expect that change.
+              </p>
+            ) : null}
+            <HelperTerms helperRoot={allowing.host?.helper_root ?? localRoot} />
+            <div className="mt-md flex justify-end gap-sm">
+              <Button onClick={() => setAllowing(null)}>Not now</Button>
+              <Button
+                appearance="prominent"
+                data-device-host-allow-go="true"
+                onClick={() => {
+                  setActedAt(Date.now());
+                  actions.setDeviceHostConsent(allowing.id, true);
+                  setAllowing(null);
+                }}
+              >
+                Allow helper
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      ) : null}
+      {revoking ? (
+        <Dialog label={`Revoke Hide's helper on ${revoking.label}`} role="alertdialog" initialFocus="container" onClose={() => setRevoking(null)} data-device-host-revoke-confirm={revoking.id}>
+          <div className="p-lg">
+            <h2 className="mb-xs text-title font-semibold">Revoke Hide's helper on {revoking.label}?</h2>
+            <p className="mb-md text-body text-secondary">
+              Hide stops starting new file, Git and worktree work on {revoking.ssh_alias}. A save already sent is read back before its tab says anything; your drafts and the files on the device are not deleted, and neither is the installed helper.
+            </p>
+            <div className="flex justify-end gap-sm">
+              <Button onClick={() => setRevoking(null)}>Keep allowed</Button>
+              <Button
+                appearance="danger"
+                data-device-host-revoke-go="true"
+                onClick={() => {
+                  setActedAt(Date.now());
+                  actions.setDeviceHostConsent(revoking.id, false);
+                  setRevoking(null);
+                }}
+              >
+                Revoke helper
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      ) : null}
       {removing ? (
         <Dialog label={`Remove ${removing.label}`} role="alertdialog" initialFocus="container" onClose={() => setRemoving(null)} data-device-remove-confirm={removing.id}>
           <div className="p-lg">
@@ -583,6 +663,30 @@ function DevicesTab({ actions }: { actions: Actions }) {
   );
 }
 
+/** Whether file and Git work may run on a device, where its helper lives, and the identity the consent is bound to. */
+function DeviceHelper({ device }: { device: Device }) {
+  const host = device.host;
+  const line = hostLine(host);
+  return (
+    <div className="mt-xs space-y-xxs" data-device-host={`${device.id}:${host?.state ?? "unknown"}`}>
+      <Status tone={line.tone}>{line.text}</Status>
+      {host?.consent === "granted" && host.helper_root ? <p className="break-all font-mono text-caption text-muted">installs to {host.helper_root}</p> : null}
+      {host?.bound_identity ? <p className="break-all font-mono text-caption text-muted">bound to {host.bound_identity}</p> : null}
+      {host && host.state !== "ready" && host.message ? <Note tone={line.tone === "muted" ? "muted" : "warn"}>{host.message}</Note> : null}
+    </div>
+  );
+}
+
+function HelperTerms({ helperRoot }: { helperRoot: string | null }) {
+  return (
+    <ul className="list-disc space-y-xs pl-md text-body text-secondary" data-helper-terms="true">
+      {helperConsentTerms(helperRoot).map((term) => (
+        <li key={term}>{term}</li>
+      ))}
+    </ul>
+  );
+}
+
 function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
   const tone = test.state === "running" ? "pending" : test.state === "passed" ? "ok" : "warn";
   // A finished test names when it ran: it is that attempt's result, and it
@@ -605,9 +709,10 @@ function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
   );
 }
 
-function AddDevice({ actions, devices }: { actions: Actions; devices: Device[] }) {
+function AddDevice({ actions, devices, helperRoot }: { actions: Actions; devices: Device[]; helperRoot: string | null }) {
   const [label, setLabel] = useState("");
   const [alias, setAlias] = useState("");
+  const [socket, setSocket] = useState("");
   const [submitted, setSubmitted] = useState<{ id: string; at: number } | null>(null);
   const error = useErrorSince(submitted?.at ?? null, ["device."]);
   const problem = alias ? aliasProblem(alias) : null;
@@ -616,14 +721,18 @@ function AddDevice({ actions, devices }: { actions: Actions; devices: Device[] }
     if (!added) return;
     setLabel("");
     setAlias("");
+    setSocket("");
     setSubmitted(null);
   }, [added]);
   const pending = submitted !== null && !added && error === null;
-  const submit = () => {
-    if (!label.trim() || aliasProblem(alias)) return;
+  const blocked = pending || !label.trim() || !alias.trim() || problem !== null || socketProblem(socket) !== null;
+  // Registering is where the helper is agreed to (PRD S5.5 B50): the terms
+  // are on the form, and the operator picks one of the two outcomes.
+  const submit = (hostConsent: boolean) => {
+    if (blocked) return;
     const id = deviceIdFor(alias, devices.map((device) => device.id));
     setSubmitted({ id, at: Date.now() });
-    actions.registerDevice(id, label.trim(), alias.trim());
+    actions.registerDevice(id, label.trim(), alias.trim(), { hostConsent, herdrSocketPath: socket.trim() || null });
   };
   return (
     <Group title="Add device" note="Use an alias already in the daemon machine's ~/.ssh/config. Hide connects right away and shows the result on the row.">
@@ -638,16 +747,27 @@ function AddDevice({ actions, devices }: { actions: Actions; devices: Device[] }
           aria-label="SSH alias"
           className="w-[var(--size-settings-control-w)]"
           onChange={(event) => setAlias(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
-            if (event.key === "Enter") submit();
-          }}
           data-device-alias="true"
         />
       </Row>
+      <Row label="Herdr socket" detail={socketProblem(socket) ? <Note tone="warn">{socketProblem(socket)}</Note> : <Note>Optional. Leave empty for the device's default Herdr server.</Note>}>
+        <Field
+          value={socket}
+          disabled={pending}
+          placeholder="default server"
+          aria-label="Herdr socket on the device"
+          className="w-[var(--size-settings-control-w)]"
+          onChange={(event) => setSocket(event.target.value)}
+          data-device-socket="true"
+        />
+      </Row>
+      <Row label={<span className="text-secondary">Hide's helper</span>} detail={<HelperTerms helperRoot={helperRoot} />} />
       <Row label="">
-        <Button appearance="prominent" disabled={pending || !label.trim() || !alias.trim() || problem !== null} onClick={submit} data-add-device="true">
-          {pending ? "Adding…" : "Add device"}
+        <Button appearance="quiet" disabled={blocked} onClick={() => submit(false)} data-add-device-without-helper="true">
+          Add without files
+        </Button>
+        <Button appearance="prominent" disabled={blocked} onClick={() => submit(true)} data-add-device="true">
+          {pending ? "Adding…" : "Allow helper and add"}
         </Button>
       </Row>
     </Group>

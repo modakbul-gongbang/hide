@@ -1,14 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
 mod attachments;
 mod devices;
+mod documents;
 mod editor;
 mod events;
+mod hosts;
 mod issues;
 mod memory;
 mod operations;
@@ -736,6 +738,21 @@ pub struct Runtime {
     /// The last connection test of each device, kept apart from the device
     /// rows because those are rebuilt with every catalog.
     remote_device_tests: HashMap<String, crate::model::DeviceTestSnapshot>,
+    /// Each device's helper connection and the consent it runs under.
+    device_hosts: HashMap<String, hosts::DeviceHost>,
+    /// This machine's file host: the helper's dispatch, run in place.
+    local_host: Arc<dyn crate::host_access::HostChannel>,
+    /// Where each open file tab's saves go.
+    document_places: HashMap<String, crate::files::DocumentPlace>,
+    /// Each file tab's save in flight, the newest draft waiting behind it,
+    /// and a save whose answer was lost.
+    document_saves: HashMap<String, documents::SaveSlot>,
+    /// Remote reads not yet shown as tabs, by tab id, with the generation
+    /// that fences a late answer.
+    document_opens: HashMap<String, documents::OpenRequest>,
+    next_document_generation: u64,
+    host_packages: crate::remote::host::HelperPackages,
+    host_helper_root: String,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
@@ -1026,6 +1043,7 @@ struct RuntimeWorkerContext {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
+        let (host_packages, host_helper_root) = Self::helper_packages_from(&options);
         let mut snapshot = Snapshot::initial(&options);
         snapshot.status.environment = environment.statuses;
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
@@ -1077,6 +1095,14 @@ impl Runtime {
             remote_connections: HashMap::new(),
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
+            device_hosts: HashMap::new(),
+            local_host: Arc::new(crate::host_access::InProcessHost),
+            document_places: HashMap::new(),
+            document_saves: HashMap::new(),
+            document_opens: HashMap::new(),
+            next_document_generation: 0,
+            host_packages,
+            host_helper_root,
             live: None,
             remote_controls: HashMap::new(),
             remote_terminals: HashMap::new(),

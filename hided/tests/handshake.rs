@@ -20,6 +20,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         bind: "127.0.0.1:0".parse().unwrap(),
         idle_secs: 600,
         open_command: None,
+        host_helper_root: None,
     };
     (dir, env)
 }

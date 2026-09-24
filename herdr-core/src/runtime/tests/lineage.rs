@@ -158,6 +158,8 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         herdr_socket_path: None,
         herdr_bin_path: None,
         app_state_path: runtime.state_path.to_string_lossy().into_owned(),
+        host_helper_dir: None,
+        host_helper_root: None,
     };
     let restarted = Runtime::new(
         options,

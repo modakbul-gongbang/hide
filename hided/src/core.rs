@@ -1,9 +1,10 @@
 //! Owner-thread wrapper around `herdr_core::Core`.
 
-use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+use herdr_core::host_access::HostChannel;
 use herdr_core::{Core, CoreOptions};
 use tokio::sync::broadcast;
 
@@ -19,6 +20,10 @@ enum Command {
     Dispatch {
         event: Vec<u8>,
         reply: Sender<Result<(), String>>,
+    },
+    DeviceChannel {
+        device_id: String,
+        reply: Sender<Result<Arc<dyn HostChannel>, String>>,
     },
     Snapshot {
         have_revision: u64,
@@ -73,6 +78,19 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped dispatch reply".to_owned())?
+    }
+
+    /// Where a device's file work runs; see `Core::device_channel`.
+    pub fn device_channel(&self, device_id: &str) -> Result<Arc<dyn HostChannel>, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::DeviceChannel {
+                device_id: device_id.to_owned(),
+                reply,
+            })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped device-channel reply".to_owned())?
     }
 
     pub fn snapshot(
@@ -133,6 +151,9 @@ fn owner_loop(
             Command::Dispatch { event, reply } => {
                 let _ = core.dispatch_bytes(&event);
                 let _ = reply.send(Ok(()));
+            }
+            Command::DeviceChannel { device_id, reply } => {
+                let _ = reply.send(core.device_channel(&device_id));
             }
             Command::Snapshot {
                 have_revision,

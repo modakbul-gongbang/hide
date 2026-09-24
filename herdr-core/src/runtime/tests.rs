@@ -7,6 +7,8 @@ use crate::fake_herdr::FakeHerdr;
 mod agents_settings_remote;
 #[path = "tests/devices.rs"]
 mod devices;
+#[path = "tests/documents.rs"]
+mod documents;
 #[path = "tests/editor_preview.rs"]
 mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
@@ -286,6 +288,8 @@ fn runtime() -> Runtime {
             ))
             .to_string_lossy()
             .into_owned(),
+        host_helper_dir: None,
+        host_helper_root: None,
     };
     Runtime::new(
         options,

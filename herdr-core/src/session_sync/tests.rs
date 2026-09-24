@@ -178,6 +178,8 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
+            host_helper_dir: None,
+            host_helper_root: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
@@ -568,6 +570,8 @@ fn official_remote_session_coordinator_probe() {
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
+            host_helper_dir: None,
+            host_helper_root: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),

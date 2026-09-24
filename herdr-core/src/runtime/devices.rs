@@ -88,8 +88,11 @@ impl Runtime {
                         error.diagnostic().reason
                     )
                 })?;
-            let client =
-                Arc::new(RusshRemoteClient::new(alias).map_err(|error| error.to_string())?);
+            let client = Arc::new(
+                RusshRemoteClient::new(alias)
+                    .map_err(|error| error.to_string())?
+                    .with_herdr_socket(registration.herdr_socket_path.clone()),
+            );
             let connector: Arc<dyn hide_herdr_client::ApiConnector> =
                 Arc::new(client.herdr_api_connector());
             Ok::<_, String>((client, connector))
@@ -157,14 +160,15 @@ impl Runtime {
             }
         };
         self.remote_connections.insert(
-            device_id,
+            device_id.clone(),
             RemoteDeviceConnection {
                 client,
                 sync,
                 test_in_flight: false,
             },
         );
-        changed || self.refresh_device_snapshots()
+        let host_changed = self.start_device_host(&device_id);
+        changed || host_changed || self.refresh_device_snapshots()
     }
 
     /// Forgets everything the core holds for a device: its coordinator,
@@ -172,6 +176,7 @@ impl Runtime {
     /// coordinator is joined later, off the lock, by whoever drains
     /// `take_retired_remote_syncs`.
     pub(super) fn disconnect_remote_device(&mut self, device_id: &str) {
+        self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)
             && let Some(sync) = connection.sync
         {
@@ -430,6 +435,40 @@ impl Runtime {
                 device.state = state.to_owned();
                 device.message = message;
                 device.test = test;
+                changed = true;
+            }
+        }
+        let helper_root = Some(self.host_helper_root());
+        if let Some(local) = self
+            .snapshot
+            .navigator
+            .devices
+            .iter_mut()
+            .find(|device| device.kind != "remote")
+            && local.host.helper_root != helper_root
+        {
+            local.host.helper_root = helper_root;
+            changed = true;
+        }
+        let ids = self
+            .snapshot
+            .navigator
+            .devices
+            .iter()
+            .filter(|device| device.kind == "remote")
+            .map(|device| device.id.clone())
+            .collect::<Vec<_>>();
+        for id in ids {
+            let host = self.host_snapshot(&id);
+            if let Some(device) = self
+                .snapshot
+                .navigator
+                .devices
+                .iter_mut()
+                .find(|device| device.id == id)
+                && device.host != host
+            {
+                device.host = host;
                 changed = true;
             }
         }

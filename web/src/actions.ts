@@ -223,10 +223,9 @@ export function createActions(dispatch: DispatchFn) {
       payload: {
         tab_id: tab.id,
         path: tab.path,
+        // The core checks the save against the revision it read when it
+        // opened the file; the shell sends only the draft.
         contents_utf8: contents,
-        // The core falls back to the modification time it recorded when it
-        // opened the file, which is the timestamp this save compares against.
-        expected_modified_at_unix_ms: showing?.id === tab.id ? state.editor?.document?.opened_modified_at_unix_ms ?? null : null,
       },
     });
     if (sent === false) return false;
@@ -256,7 +255,7 @@ export function createActions(dispatch: DispatchFn) {
     }
     const pending =
       contents !== null
-        ? { tab_id: tab.id, path: tab.path, contents_utf8: contents, expected_modified_at_unix_ms: null }
+        ? { tab_id: tab.id, path: tab.path, contents_utf8: contents }
         : null;
     const root = checkoutById(state.rest, tab.checkout_id)?.path ?? "";
     if (pending) {
@@ -308,8 +307,21 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "install_agent_hooks", payload: { runtime_id: runtimeId } });
     },
 
-    registerDevice(id: string, label: string, alias: string) {
-      dispatch({ schema_version: 2, kind: "register_device", payload: { id, label, ssh_alias: alias } });
+    registerDevice(id: string, label: string, alias: string, options: { hostConsent: boolean; herdrSocketPath: string | null }) {
+      dispatch({
+        schema_version: 2,
+        kind: "register_device",
+        payload: { id, label, ssh_alias: alias, host_consent: options.hostConsent, herdr_socket_path: options.herdrSocketPath },
+      });
+    },
+
+    /** Gives or withdraws the one consent for Hide's helper on a device (PRD S5.5 B50-B52). */
+    setDeviceHostConsent(deviceId: string, allow: boolean) {
+      dispatch({ schema_version: 2, kind: "device_host_consent", payload: { device_id: deviceId, allow } });
+    },
+
+    retryDeviceHost(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "device_host_retry", payload: { device_id: deviceId } });
     },
 
     testDevice(deviceId: string) {

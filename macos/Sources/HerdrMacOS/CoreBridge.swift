@@ -1114,7 +1114,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             "tab_id": tabID,
             "path": path,
             "contents_utf8": contents,
-            "expected_modified_at_unix_ms": editor.openedModifiedAt.map { NSNumber(value: $0) as Any } ?? NSNull(),
         ])
     }
 
@@ -1126,7 +1125,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         pendingFileSave?.cancel()
         pendingFileSavePayload = [
             "tab_id": tabID, "path": path, "contents_utf8": contents,
-            "expected_modified_at_unix_ms": editor.openedModifiedAt.map { NSNumber(value: $0) as Any } ?? NSNull(),
         ]
         pendingFileSave = Task { @MainActor [weak self] in
             do { try await Task.sleep(for: .milliseconds(450)) } catch { return }

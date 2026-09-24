@@ -21,12 +21,12 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "error", "directory_list", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
+        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "error", "directory_list", "directory_unavailable", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
       }
@@ -81,12 +81,13 @@
       "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "not_a_file", "invalid_path"]
     },
     "directoryList": {
-      "description": "Payload of a directory_list frame. kind names the event that asked: a `remote_file_list` for the `local` target lists the visible subdirectories of root_path under $HOME, and a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed (a request of `~` lists home and answers with its path). is_directory is what the Explorer draws and opens by; a `remote_file_list` answer carries directories only, so every entry in it is one. truncated is true past the listing cap.",
+      "description": "Payload of a directory_list frame. kind names the event that asked: a `remote_file_list` for the `local` target lists the visible subdirectories of root_path under $HOME, and a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed (a request of `~` lists home and answers with its path). is_directory is what the Explorer draws and opens by; a `remote_file_list` answer carries directories only, so every entry in it is one. truncated is true past the listing cap. device_id names the machine the listing came from: absent for this daemon's own machine, and an SSH device's id for a `file_list` that named that device, whose paths are that device's and are never read here.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "root_path", "entries", "truncated"],
       "properties": {
         "kind": { "type": "string", "enum": ["remote_file_list", "file_list"] },
+        "device_id": { "type": "string", "minLength": 1 },
         "root_path": { "type": "string" },
         "entries": {
           "type": "array",
@@ -102,6 +103,19 @@
           }
         },
         "truncated": { "type": "boolean" }
+      }
+    },
+    "directoryUnavailable": {
+      "description": "Payload of a directory_unavailable frame: a `file_list` for a checkout on an SSH device that did not come back as a listing. code says what the Explorer offers next: `not_ready` (no helper connection: consent missing or withdrawn, or the device unreachable; nothing was sent), `busy` (the device's request queue is full; nothing was sent), `unknown` (the request was sent and no answer arrived), or `refused` (the helper answered with a refusal such as a replaced root or a missing folder). message is the sentence to show, and root_path is the folder that was asked for.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "device_id", "root_path", "code", "message"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["file_list"] },
+        "device_id": { "type": "string", "minLength": 1 },
+        "root_path": { "type": "string" },
+        "code": { "type": "string", "enum": ["not_ready", "busy", "unknown", "refused"] },
+        "message": { "type": "string" }
       }
     },
     "pathRefused": {

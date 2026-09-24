@@ -126,6 +126,11 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .as_ref()
             .map(|path| path.display().to_string()),
         app_state_path: env.state_dir.join("core-state.json").display().to_string(),
+        // The device helper packages ship beside this binary.
+        host_helper_dir: std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
+        host_helper_root: env.host_helper_root.clone(),
     };
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
     let core = CoreHandle::spawn(options)?;
@@ -294,6 +299,7 @@ fn apply_snapshot(
 ) {
     let roots = roots_from_value(value);
     boundary.set_roots(roots.clone());
+    boundary.set_device_roots(device_roots_from_value(value));
     if let Err(error) = core.set_file_roots(boundary.opened_roots()) {
         eprintln!(
             "{}",
@@ -422,6 +428,41 @@ fn roots_from_value(value: &Value) -> Vec<Root> {
                 checkout_id: id.to_owned(),
                 path: std::path::PathBuf::from(path),
             });
+        }
+    }
+    roots
+}
+
+/// The checkouts a snapshot carries on SSH devices: the device and the root
+/// path there, which only that device's helper reads.
+fn device_roots_from_value(value: &Value) -> Vec<boundary::DeviceRoot> {
+    let Some(workspaces) = value
+        .pointer("/rest/navigator/workspaces")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut roots = Vec::new();
+    for workspace in workspaces {
+        let Some(device_id) = workspace
+            .get("device_id")
+            .and_then(Value::as_str)
+            .filter(|device| *device != herdr_core::workspace::LOCAL_DEVICE_ID)
+        else {
+            continue;
+        };
+        for checkout in workspace
+            .get("checkouts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(path) = checkout.get("path").and_then(Value::as_str) {
+                roots.push(boundary::DeviceRoot {
+                    device_id: device_id.to_owned(),
+                    path: path.to_owned(),
+                });
+            }
         }
     }
     roots

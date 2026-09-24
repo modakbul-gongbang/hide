@@ -222,10 +222,16 @@ export type EditorTabSnapshot = {
   preview: boolean;
 };
 
-/** The disk state that makes a save a choice rather than a write. */
+/** The disk state that makes a save a choice rather than a write: the draft's base revision and what the file holds now (null when it was removed). */
 export type EditorConflictSnapshot = {
-  disk_modified_at_unix_ms: number;
-  opened_modified_at_unix_ms: number;
+  opened_revision: string;
+  disk_revision: string | null;
+};
+
+/** A save without a known result yet: `saving`, `unknown` (the answer was lost) or `checking` (being read back). */
+export type EditorSaveSnapshot = {
+  state: "saving" | "unknown" | "checking";
+  message: string | null;
 };
 
 export type EditorDocumentSnapshot = {
@@ -234,17 +240,24 @@ export type EditorDocumentSnapshot = {
   document_kind: DocumentKind;
   contents_utf8: string | null;
   opened_modified_at_unix_ms: number | null;
+  /** The content revision (`sha256:<hex>`) the draft is based on; present for an editable document. */
+  revision: string | null;
   dirty: boolean;
   /** Why an editable document takes no edits: its size or its permissions. */
   readonly_reason: string | null;
   conflict: EditorConflictSnapshot | null;
+  save: EditorSaveSnapshot | null;
 };
 
 /** The core's editor section: its tabs, which one shows, and that tab's document. */
+/** A file a device is still reading; its tab shows when the answer arrives. */
+export type EditorOpeningSnapshot = { workspace_id: string; checkout_id: string; path: string };
+
 export type EditorSnapshot = {
   tabs: EditorTabSnapshot[];
   active_tab_id: string | null;
   document: EditorDocumentSnapshot | null;
+  opening?: EditorOpeningSnapshot[];
 };
 
 /** The six working-tree states the core presents (ChangedFileStatus). */
@@ -279,6 +292,24 @@ export type ChangesSnapshot = {
 
 export type DeviceTestStage = { stage: string; state: string; detail: string };
 
+/**
+ * Where a device's file and Git work runs (`DeviceHostSnapshot`). consent is
+ * `this_machine`, `none`, `granted` or `outdated`; state is `ready`,
+ * `connecting`, `not_allowed`, `identity_changed`, `unsupported` or
+ * `unavailable`, with message saying why and what to do.
+ */
+export type DeviceHost = {
+  consent: "this_machine" | "none" | "granted" | "outdated";
+  helper_root: string | null;
+  contract: number;
+  bound_identity: string | null;
+  granted_at_unix_ms: number | null;
+  state: "ready" | "connecting" | "not_allowed" | "identity_changed" | "unsupported" | "unavailable";
+  message: string | null;
+  platform: string | null;
+  helper_path: string | null;
+};
+
 export type Device = {
   id: string;
   label: string;
@@ -288,8 +319,11 @@ export type Device = {
   state: string;
   message: string | null;
   ssh_alias: string | null;
+  /** The Herdr socket the registration names on the device; null reads its default server. */
+  herdr_socket_path?: string | null;
   agent_count: number;
   test: { state: string; checked_at_unix_ms: number | null; stages: DeviceTestStage[] } | null;
+  host?: DeviceHost;
 };
 
 /** One pane's rectangle in a remote tab, as fractions of the tab's area (`RemotePaneLayoutFrame`). */

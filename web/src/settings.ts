@@ -3,7 +3,7 @@
 // Nothing here reads the store, so every rule is tested without a browser.
 
 import type { DaemonInfo } from "./store";
-import type { AiProvider, CoreDiagnostic, Device, EnvironmentStatus, HerdrStatus, RemoteStatus } from "./snapshot";
+import type { AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, RemoteStatus } from "./snapshot";
 
 export type SettingsTab = "general" | "appearance" | "agents" | "devices" | "shortcuts";
 
@@ -78,6 +78,48 @@ export function deviceLine(device: Device, remote: RemoteStatus | undefined): { 
   if (device.state === "disabled") return { text: "disabled", tone: "warn" };
   if (remote?.state === "not_connected" || remote?.state === "connecting") return { text: "connecting…", tone: "pending" };
   return { text: "not connected", tone: "warn" };
+}
+
+/** The helper line a device row carries: whether file and Git work may run there, and why not. */
+export function hostLine(host: DeviceHost | undefined): { text: string; tone: "ok" | "warn" | "pending" | "muted" | "local" } {
+  if (!host || host.consent === "this_machine") return { text: "files and Git run on this daemon's machine", tone: "local" };
+  switch (host.state) {
+    case "ready":
+      return { text: `helper ready${host.platform ? ` (${host.platform})` : ""}`, tone: "ok" };
+    case "connecting":
+      return { text: "starting the helper…", tone: "pending" };
+    case "not_allowed":
+      return { text: host.consent === "outdated" ? "helper needs a new consent" : "helper not allowed", tone: "muted" };
+    case "identity_changed":
+      return { text: "device identity changed", tone: "warn" };
+    case "unsupported":
+      return { text: "helper unsupported here", tone: "warn" };
+    default:
+      return { text: "helper unavailable", tone: "warn" };
+  }
+}
+
+/**
+ * What the operator agrees to when Hide's helper is allowed on a device
+ * (PRD S5.5 B50): where it is installed, when it runs, what an update may do,
+ * and what it never does. The same words back the add form and the row's Allow.
+ */
+export function helperConsentTerms(helperRoot: string | null): string[] {
+  return [
+    `Hide copies one helper program into ${helperRoot ?? "the helper folder in the device account's home"} on the device, and replaces it there when this version of Hide needs a newer one.`,
+    "It runs only while Hide holds the SSH connection and serves file, Git and worktree work for projects registered on that device. Nothing stays resident and nothing starts at login.",
+    "It changes no hook, AI or shell settings there, and every move to the Trash or worktree removal still asks you for its target each time.",
+    "A wider permission or a different SSH identity asks again; revoking stops new work and deletes no draft or remote file.",
+  ];
+}
+
+/** A device Herdr socket must be an absolute single-line path on that device, or left empty. */
+export function socketProblem(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+  // eslint-disable-next-line no-control-regex
+  if (!trimmed.startsWith("/") || trimmed === "/" || /[\u0000-\u001f]/.test(trimmed)) return "Enter an absolute socket path on the device, such as /Users/me/.config/herdr/herdr.sock.";
+  return null;
 }
 
 /** Whether Retry is offered: a registered SSH device that is not connected and not mid-attempt. */

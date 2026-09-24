@@ -1,35 +1,28 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::Duration;
 
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
+use hide_host::document::Document;
+use hide_host::protocol::{Call, RevisionNow, RootOpened, RootRef};
+use hide_host::save::Saved;
+use hide_host::{ErrorCode, RootIdentity};
 
-use crate::model::{DocumentKind, EditorConflictSnapshot, EditorDocumentSnapshot};
-
-/// The largest file the editor reads into a document. Past it the shell
-/// offers the OS default handler instead (PRD S3 D-12).
-const MAX_EDITABLE_BYTES: u64 = 16 * 1024 * 1024;
-
-/// The first bytes of every PDF, whatever the file is called.
-const PDF_SIGNATURE: &[u8] = b"%PDF-";
-
-/// The image kinds the shell decodes with the platform image loader. The core
-/// does not decode images, so the extension is the decision; the loader
-/// reports a file that is not what its name says.
-const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "tiff", "heic", "avif"];
+use crate::host_access::{HostCallError, HostChannel, call_as};
+use crate::model::EditorDocumentSnapshot;
 
 /// Opened checkout roots supplied by the daemon after its registration check.
 /// The Swift shell uses the ambient path calls below; both shells share the
 /// document and explorer logic, while the daemon's paths resolve through
 /// these directory capabilities when the actual I/O runs.
-type RootIdentity = (PathBuf, Option<(u64, u64)>);
+type PinnedIdentity = (PathBuf, Option<(u64, u64)>);
 
 #[derive(Clone, Debug, Default)]
 pub struct FileRoots {
     roots: Arc<Vec<(PathBuf, Arc<Dir>)>>,
-    identities: Arc<Vec<RootIdentity>>,
+    identities: Arc<Vec<PinnedIdentity>>,
 }
 
 impl PartialEq for FileRoots {
@@ -67,6 +60,18 @@ impl FileRoots {
             roots: Arc::new(opened),
             identities: Arc::new(identities),
         }
+    }
+
+    /// The registered root that holds `path`, with the identity hided
+    /// pinned when it opened it; the deepest one when roots nest.
+    pub(crate) fn pinned_root(&self, path: &Path) -> Option<(PathBuf, RootIdentity)> {
+        self.identities
+            .iter()
+            .filter(|(root, _)| path.starts_with(root))
+            .max_by_key(|(root, _)| root.components().count())
+            .and_then(|(root, identity)| {
+                identity.map(|(device, inode)| (root.clone(), RootIdentity { device, inode }))
+            })
     }
 
     fn relative<'a>(&'a self, path: &'a Path) -> io::Result<(&'a Dir, &'a Path)> {
@@ -143,223 +148,246 @@ impl FileRoots {
     }
 }
 
-fn open_handle(path: &Path, roots: Option<&FileRoots>, write: bool) -> io::Result<File> {
-    match roots {
-        Some(roots) => roots.open(path, write),
-        None if write => OpenOptions::new().read(true).write(true).open(path),
-        None => File::open(path),
-    }
+/// A checkout as document work reaches it: the device it is on, its root
+/// path there, and the root's identity when hided pinned it at
+/// registration. Without one, the open reads it and the document keeps it.
+#[derive(Clone, Debug)]
+pub struct DocumentRoot {
+    pub device_id: String,
+    pub path: String,
+    pub identity: Option<RootIdentity>,
 }
 
-#[cfg(test)]
-pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
-    open_with_roots(path, None)
+/// Where an open document lives. Every save and settle read names this
+/// exact root, so a checkout replaced after the open refuses them instead
+/// of writing into whatever took its path (PRD S5.5 B7, B13). The channel is
+/// looked up by device each time, so a save after a reconnect goes to the
+/// new helper connection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DocumentPlace {
+    pub device_id: String,
+    pub root: RootRef,
+    pub relative: String,
 }
 
-pub fn open_with_roots(
-    path: &Path,
-    roots: Option<&FileRoots>,
-) -> Result<EditorDocumentSnapshot, String> {
-    let mut file = open_handle(path, roots, false)
-        .map_err(|_| "The selected file could not be read".to_owned())?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| "The selected file could not be read".to_owned())?;
-    if !metadata.is_file() {
-        return Err("Only existing regular files can be opened".to_owned());
-    }
-    let modified = modified_milliseconds(&metadata)?;
-    let language = language_for(path);
-    let document = |document_kind, contents_utf8, readonly_reason| EditorDocumentSnapshot {
-        path: path.to_string_lossy().into_owned(),
-        language: language.clone(),
-        document_kind,
-        contents_utf8,
-        opened_modified_at_unix_ms: Some(modified),
-        dirty: false,
-        readonly_reason,
-        conflict: None,
-    };
-
-    // An image or a PDF is drawn from disk by the shell, so its size is not
-    // the editor's concern and its bytes are never carried in the snapshot.
-    if has_image_extension(path) {
-        return Ok(document(DocumentKind::Image, None, None));
-    }
-    if starts_with_pdf_signature(&mut file)? {
-        return Ok(document(DocumentKind::Pdf, None, None));
-    }
-    if metadata.len() > MAX_EDITABLE_BYTES {
-        return Ok(document(
-            DocumentKind::Text,
-            None,
-            Some("Files larger than 16 MB are preview-only".to_owned()),
-        ));
-    }
-    file.seek(SeekFrom::Start(0))
-        .map_err(|_| "The selected file contents could not be read".to_owned())?;
-    let mut bytes = Vec::new();
-    file.take(MAX_EDITABLE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "The selected file contents could not be read".to_owned())?;
-    if bytes.len() as u64 > MAX_EDITABLE_BYTES {
-        return Ok(document(
-            DocumentKind::Text,
-            None,
-            Some("Files larger than 16 MB are preview-only".to_owned()),
-        ));
-    }
-    let Ok(contents) = String::from_utf8(bytes) else {
-        return Ok(document(DocumentKind::Binary, None, None));
-    };
-    let kind = if language.as_deref() == Some("markdown") {
-        DocumentKind::Markdown
-    } else {
-        DocumentKind::Text
-    };
-    let reason = metadata
-        .permissions()
-        .readonly()
-        .then(|| "The file is read-only on disk; editing is disabled".to_owned());
-    Ok(document(kind, Some(contents), reason))
+#[derive(Debug)]
+pub enum OpenFailure {
+    /// The file is not there.
+    Missing,
+    Failed(String),
 }
 
-fn has_image_extension(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            IMAGE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
-        })
-}
-
-/// Reads only the signature's worth of bytes: a PDF is recognised by its
-/// content so that a file with no extension opens as one, and a large PDF is
-/// not read whole to find that out.
-fn starts_with_pdf_signature(file: &mut File) -> Result<bool, String> {
-    let mut header = [0u8; PDF_SIGNATURE.len()];
-    let mut filled = 0;
-    while filled < header.len() {
-        match file.read(&mut header[filled..]) {
-            Ok(0) => break,
-            Ok(read) => filled += read,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(_) => return Err("The selected file contents could not be read".to_owned()),
+impl OpenFailure {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Missing => "The file no longer exists".to_owned(),
+            Self::Failed(message) => message.clone(),
         }
     }
-    Ok(&header[..filled] == PDF_SIGNATURE)
+}
+
+/// What one save came to. `Unknown` is the only answer that does not say
+/// what is on disk: the caller settles it by reading the revision again and
+/// never by sending the write a second time (B14).
+#[derive(Debug)]
+pub enum SaveOutcome {
+    Saved(Saved),
+    Conflict {
+        disk_revision: Option<String>,
+        message: String,
+    },
+    Refused(String),
+    Unknown(String),
+}
+
+const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
+const SAVE_TIMEOUT: Duration = Duration::from_secs(60);
+const REVISION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `absolute` spelled under `root`, as the host protocol names a path.
+pub fn relative_under(root: &str, absolute: &str) -> Result<String, String> {
+    let root = root.trim_end_matches('/');
+    let rest = absolute
+        .strip_prefix(root)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|rest| !rest.is_empty())
+        .ok_or_else(|| "The file is not inside its checkout".to_owned())?;
+    hide_host::relative_path(rest).map_err(|error| error.message)?;
+    Ok(rest.to_owned())
+}
+
+/// `relative_under` for a file on this machine, which a shell may spell
+/// through a link to the checkout's folder (`/var` for `/private/var`): the
+/// folder holding the file is resolved, never the file itself, so a link
+/// inside the checkout is still opened as the link.
+fn local_relative(root: &str, absolute: &str) -> Result<String, String> {
+    relative_under(root, absolute).or_else(|refused| {
+        let absolute = Path::new(absolute);
+        let resolved = absolute
+            .parent()
+            .and_then(|folder| folder.canonicalize().ok())
+            .zip(absolute.file_name())
+            .map(|(folder, name)| folder.join(name))
+            .zip(Path::new(root).canonicalize().ok());
+        match resolved {
+            Some((absolute, root)) => {
+                relative_under(&root.to_string_lossy(), &absolute.to_string_lossy())
+            }
+            None => Err(refused),
+        }
+    })
+}
+
+/// Opens the document at `absolute` in `root`, as a snapshot and the place
+/// its saves go to. Blocks on the channel.
+pub fn open_document(
+    channel: &dyn HostChannel,
+    root: &DocumentRoot,
+    absolute: &str,
+) -> Result<(EditorDocumentSnapshot, DocumentPlace), OpenFailure> {
+    let relative = if channel.in_process() {
+        local_relative(&root.path, absolute)
+    } else {
+        relative_under(&root.path, absolute)
+    }
+    .map_err(OpenFailure::Failed)?;
+    let identity = match root.identity {
+        Some(identity) => identity,
+        None => {
+            call_as::<RootOpened>(
+                channel,
+                Call::RootOpen {
+                    root: root.path.clone(),
+                },
+                OPEN_TIMEOUT,
+            )
+            .map_err(open_failure)?
+            .identity
+        }
+    };
+    let place = DocumentPlace {
+        device_id: root.device_id.clone(),
+        root: RootRef {
+            path: root.path.clone(),
+            identity,
+        },
+        relative,
+    };
+    let document: Document = call_as(
+        channel,
+        Call::OpenDocument {
+            root: place.root.clone(),
+            path: place.relative.clone(),
+        },
+        OPEN_TIMEOUT,
+    )
+    .map_err(open_failure)?;
+    Ok((document_snapshot(absolute, document), place))
+}
+
+fn open_failure(error: HostCallError) -> OpenFailure {
+    match error {
+        HostCallError::Refused(error) if error.code == ErrorCode::NotFound => OpenFailure::Missing,
+        HostCallError::Refused(error) => {
+            OpenFailure::Failed(format!("The file could not be opened: {}", error.message))
+        }
+        other => OpenFailure::Failed(format!("The file could not be opened: {other}")),
+    }
+}
+
+fn document_snapshot(absolute: &str, document: Document) -> EditorDocumentSnapshot {
+    EditorDocumentSnapshot {
+        path: absolute.to_owned(),
+        language: document.language,
+        document_kind: document.kind,
+        contents_utf8: document.contents,
+        opened_modified_at_unix_ms: Some(document.modified_at_unix_ms),
+        revision: document.revision,
+        dirty: false,
+        readonly_reason: document.readonly_reason,
+        conflict: None,
+        save: None,
+    }
 }
 
 pub fn update_draft(editor: &mut EditorDocumentSnapshot, contents: String) -> Result<(), String> {
-    if !editor.document_kind.is_editable() {
-        return Err(
-            "The current file is not a text document; the draft was not changed".to_owned(),
-        );
-    }
-    if editor.readonly_reason.is_some() {
-        return Err("The current file is read-only; the draft was not changed".to_owned());
-    }
+    check_editable(editor, "the draft was not changed")?;
     editor.dirty = editor.contents_utf8.as_deref() != Some(contents.as_str());
     editor.contents_utf8 = Some(contents);
     Ok(())
 }
 
-#[cfg(test)]
-pub fn save(
-    editor: &mut EditorDocumentSnapshot,
-    path: &Path,
-    contents: String,
-    expected_modified_at_unix_ms: Option<u64>,
-) -> Result<(), String> {
-    save_with_roots(editor, path, contents, expected_modified_at_unix_ms, None)
-}
-
-pub fn save_with_roots(
-    editor: &mut EditorDocumentSnapshot,
-    path: &Path,
-    contents: String,
-    expected_modified_at_unix_ms: Option<u64>,
-    roots: Option<&FileRoots>,
-) -> Result<(), String> {
-    if editor.path != path.to_string_lossy() {
-        return Err("The save target does not match the open document".to_owned());
-    }
+/// Refuses a document that takes no draft; `consequence` finishes the
+/// sentence the operator reads.
+pub fn check_editable(editor: &EditorDocumentSnapshot, consequence: &str) -> Result<(), String> {
     if !editor.document_kind.is_editable() {
-        return Err("The current file is not a text document; the draft was preserved".to_owned());
+        return Err(format!(
+            "The current file is not a text document; {consequence}"
+        ));
     }
     if editor.readonly_reason.is_some() {
-        return Err("The current file is read-only; the draft was preserved".to_owned());
+        return Err(format!("The current file is read-only; {consequence}"));
     }
-    let mut output = open_handle(path, roots, true).map_err(|_| {
-        "The existing file could not be inspected; the draft was preserved".to_owned()
-    })?;
-    let metadata = output.metadata().map_err(|_| {
-        "The existing file could not be inspected; the draft was preserved".to_owned()
-    })?;
-    if !metadata.is_file() {
-        return Err(
-            "The save target is no longer a regular file; the draft was preserved".to_owned(),
-        );
+    if editor.revision.is_none() {
+        return Err(format!(
+            "The file's revision was never read, so a save cannot be checked; {consequence}"
+        ));
     }
-    let disk_modified = modified_milliseconds(&metadata)?;
-    let mut disk_bytes = Vec::new();
-    (&mut output)
-        .take(MAX_EDITABLE_BYTES + 1)
-        .read_to_end(&mut disk_bytes)
-        .map_err(|_| "The existing file could not be read; the draft was preserved".to_owned())?;
-    if disk_bytes.len() as u64 > MAX_EDITABLE_BYTES {
-        return Err("The file grew beyond the editable size; the draft was preserved".to_owned());
-    }
-
-    if disk_bytes == contents.as_bytes() {
-        editor.contents_utf8 = Some(contents);
-        editor.opened_modified_at_unix_ms = Some(disk_modified);
-        editor.dirty = false;
-        editor.conflict = None;
-        return Ok(());
-    }
-
-    let opened_modified = expected_modified_at_unix_ms
-        .or(editor.opened_modified_at_unix_ms)
-        .unwrap_or(disk_modified);
-    if disk_modified != opened_modified {
-        editor.contents_utf8 = Some(contents);
-        editor.dirty = true;
-        editor.conflict = Some(EditorConflictSnapshot {
-            disk_modified_at_unix_ms: disk_modified,
-            opened_modified_at_unix_ms: opened_modified,
-        });
-        return Err("The file changed on disk; choose Reload or Keep Editing".to_owned());
-    }
-
-    output
-        .seek(SeekFrom::Start(0))
-        .and_then(|_| output.set_len(0))
-        .map_err(|_| {
-            "The file could not be opened for writing; the draft was preserved".to_owned()
-        })?;
-    output
-        .write_all(contents.as_bytes())
-        .and_then(|_| output.sync_all())
-        .map_err(|_| "The file could not be saved; the draft was preserved".to_owned())?;
-    let modified = output
-        .metadata()
-        .ok()
-        .and_then(|metadata| modified_milliseconds(&metadata).ok())
-        .unwrap_or(disk_modified);
-    editor.contents_utf8 = Some(contents);
-    editor.opened_modified_at_unix_ms = Some(modified);
-    editor.dirty = false;
-    editor.conflict = None;
     Ok(())
 }
 
-pub fn reload_with_roots(
-    editor: &mut EditorDocumentSnapshot,
-    roots: Option<&FileRoots>,
-) -> Result<(), String> {
-    let path = editor.path.clone();
-    *editor = open_with_roots(Path::new(&path), roots)?;
-    Ok(())
+/// Saves `contents` at `place` if the file there still holds `expected`.
+/// Blocks on the channel.
+pub fn save_document(
+    channel: &dyn HostChannel,
+    place: &DocumentPlace,
+    contents: &str,
+    expected: &str,
+) -> SaveOutcome {
+    match call_as::<Saved>(
+        channel,
+        Call::Save {
+            root: place.root.clone(),
+            path: place.relative.clone(),
+            contents: contents.to_owned(),
+            expected_revision: expected.to_owned(),
+        },
+        SAVE_TIMEOUT,
+    ) {
+        Ok(saved) => SaveOutcome::Saved(saved),
+        Err(HostCallError::Refused(error)) if error.code == ErrorCode::Conflict => {
+            SaveOutcome::Conflict {
+                disk_revision: error.actual_revision,
+                message: error.message,
+            }
+        }
+        Err(HostCallError::Refused(error)) => SaveOutcome::Refused(error.message),
+        Err(HostCallError::NotConnected(reason)) => SaveOutcome::Refused(format!(
+            "{reason}; nothing was sent and the draft was preserved"
+        )),
+        Err(error @ HostCallError::Busy) => SaveOutcome::Refused(error.to_string()),
+        Err(HostCallError::Unknown(reason)) => SaveOutcome::Unknown(reason),
+    }
+}
+
+/// The file's revision now, or `None` when it is gone; read after any save
+/// in its folder has finished. Blocks on the channel.
+pub fn revision_now(
+    channel: &dyn HostChannel,
+    place: &DocumentPlace,
+) -> Result<Option<String>, HostCallError> {
+    match call_as::<RevisionNow>(
+        channel,
+        Call::Revision {
+            root: place.root.clone(),
+            path: place.relative.clone(),
+        },
+        REVISION_TIMEOUT,
+    ) {
+        Ok(now) => Ok(Some(now.revision)),
+        Err(HostCallError::Refused(error)) if error.code == ErrorCode::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// One change the explorer asks the filesystem for.
@@ -995,53 +1023,12 @@ fn valid_item_name(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-fn modified_milliseconds(metadata: &fs::Metadata) -> Result<u64, String> {
-    metadata
-        .modified()
-        .map_err(|_| "File modification time is unavailable".to_owned())?
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .map_err(|_| "File modification time is invalid".to_owned())
-}
-
-fn language_for(path: &Path) -> Option<String> {
-    let name = path.file_name()?.to_str()?;
-    let whole_name = match name.to_ascii_lowercase().as_str() {
-        ".gitignore" | ".gitattributes" | ".dockerignore" | ".npmignore" => Some("bash"),
-        ".env" | ".editorconfig" => Some("ini"),
-        "makefile" | "gnumakefile" => Some("makefile"),
-        "dockerfile" => Some("dockerfile"),
-        "gemfile" | "rakefile" => Some("ruby"),
-        "cmakelists.txt" => Some("cmake"),
-        _ => None,
-    };
-    if let Some(language) = whole_name {
-        return Some(language.to_owned());
-    }
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())?;
-    let language = match extension.as_str() {
-        "rs" => "rust",
-        "js" | "mjs" | "cjs" | "jsx" => "javascript",
-        "ts" | "tsx" => "typescript",
-        "json" | "jsonc" | "jsonl" => "json",
-        "md" | "markdown" | "mdown" => "markdown",
-        "sh" | "bash" | "zsh" | "fish" => "bash",
-        "toml" | "ini" | "cfg" => "ini",
-        "py" | "pyw" => "python",
-        "htm" => "html",
-        "scss" | "sass" | "less" => "css",
-        _ => extension.as_str(),
-    };
-    Some(language.to_owned())
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::model::DocumentKind;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::UNIX_EPOCH;
 
     static NEXT_EXPLORER_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -1053,143 +1040,15 @@ pub(crate) mod tests {
             document_kind: DocumentKind::Text,
             contents_utf8: Some("old".to_owned()),
             opened_modified_at_unix_ms: Some(1),
+            revision: Some(hide_host::document::revision_of(b"old")),
             dirty: false,
             readonly_reason: None,
             conflict: None,
+            save: None,
         };
         update_draft(&mut editor, "new".to_owned()).unwrap();
         assert!(editor.dirty);
         assert_eq!(editor.contents_utf8.as_deref(), Some("new"));
-    }
-
-    fn kind_fixture(name: &str, bytes: &[u8]) -> PathBuf {
-        let root = explorer_fixture();
-        let path = root.join(name);
-        fs::write(&path, bytes).unwrap();
-        path
-    }
-
-    /// D-02: a PDF is its signature, not its name, so it opens as one with
-    /// any extension or none; the snapshot carries no bytes for it and no
-    /// read-only reason, because the kind already says it takes no edits.
-    #[test]
-    fn a_pdf_is_recognised_by_its_signature_whatever_it_is_called() {
-        for name in ["report.pdf", "report", "report.txt"] {
-            let path = kind_fixture(name, b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n");
-            let document = open(&path).unwrap();
-            assert_eq!(document.document_kind, DocumentKind::Pdf, "{name}");
-            assert_eq!(document.contents_utf8, None, "{name}");
-            assert_eq!(document.readonly_reason, None, "{name}");
-            fs::remove_dir_all(path.parent().unwrap()).unwrap();
-        }
-    }
-
-    /// B3 has a file called `.pdf` that is not one: the kind follows the
-    /// bytes, so the shell draws it as what it is rather than failing a
-    /// PDF decode it was never going to pass.
-    #[test]
-    fn a_file_named_pdf_without_the_signature_is_not_a_pdf() {
-        let text = kind_fixture("notes.pdf", b"just text");
-        assert_eq!(open(&text).unwrap().document_kind, DocumentKind::Text);
-        let binary = kind_fixture("blob.pdf", &[0xFF, 0xFE, 0x00, 0x80]);
-        let document = open(&binary).unwrap();
-        assert_eq!(document.document_kind, DocumentKind::Binary);
-        assert_eq!(document.contents_utf8, None);
-        assert_eq!(document.readonly_reason, None);
-        for path in [text, binary] {
-            fs::remove_dir_all(path.parent().unwrap()).unwrap();
-        }
-    }
-
-    /// D-02: images keep the extension decision the shell used to make, and
-    /// the empty-signature case (a zero-byte file) is plain text.
-    #[test]
-    fn images_markdown_text_and_empty_files_take_their_kinds() {
-        let cases: [(&str, &[u8], DocumentKind); 6] = [
-            ("shot.PNG", &[0x89, b'P', b'N', b'G'], DocumentKind::Image),
-            ("photo.heic", b"", DocumentKind::Image),
-            ("README.md", b"# hi", DocumentKind::Markdown),
-            ("notes.mdown", b"# hi", DocumentKind::Markdown),
-            ("main.rs", b"fn main() {}", DocumentKind::Text),
-            ("empty", b"", DocumentKind::Text),
-        ];
-        for (name, bytes, expected) in cases {
-            let path = kind_fixture(name, bytes);
-            let document = open(&path).unwrap();
-            assert_eq!(document.document_kind, expected, "{name}");
-            assert_eq!(
-                document.contents_utf8.is_some(),
-                expected.is_editable(),
-                "{name}"
-            );
-            fs::remove_dir_all(path.parent().unwrap()).unwrap();
-        }
-    }
-
-    /// D-01: the size reason stays on a text document; a non-text kind
-    /// refuses a draft on its own, before the read-only reason is asked.
-    #[test]
-    fn non_text_kinds_refuse_drafts_and_saves() {
-        let path = kind_fixture("report.pdf", b"%PDF-1.4");
-        let mut document = open(&path).unwrap();
-        let refused = update_draft(&mut document, "edited".to_owned()).unwrap_err();
-        assert!(refused.contains("not a text document"), "{refused}");
-        assert_eq!(document.contents_utf8, None);
-        assert!(!document.dirty);
-        let refused = save(&mut document, &path, "edited".to_owned(), None).unwrap_err();
-        assert!(refused.contains("not a text document"), "{refused}");
-        assert_eq!(fs::read(&path).unwrap(), b"%PDF-1.4");
-        fs::remove_dir_all(path.parent().unwrap()).unwrap();
-    }
-
-    #[test]
-    fn viewer_languages_cover_extensionless_configuration_and_json() {
-        assert_eq!(
-            language_for(Path::new(".gitignore")).as_deref(),
-            Some("bash")
-        );
-        assert_eq!(
-            language_for(Path::new("Makefile")).as_deref(),
-            Some("makefile")
-        );
-        assert_eq!(
-            language_for(Path::new("settings.jsonc")).as_deref(),
-            Some("json")
-        );
-        assert_eq!(
-            language_for(Path::new("manifest.json")).as_deref(),
-            Some("json")
-        );
-        assert_eq!(language_for(Path::new("LICENSE")), None);
-    }
-
-    #[test]
-    fn a_document_past_the_editable_cap_opens_as_a_preview() {
-        let root = explorer_fixture();
-        let big = root.join("big.txt");
-        // Sparse: the file reports the size without holding the bytes.
-        File::create(&big)
-            .unwrap()
-            .set_len(MAX_EDITABLE_BYTES + 1)
-            .unwrap();
-        let document = open(&big).unwrap();
-        assert_eq!(document.document_kind, DocumentKind::Text);
-        assert_eq!(document.contents_utf8, None);
-        assert_eq!(
-            document.readonly_reason.as_deref(),
-            Some("Files larger than 16 MB are preview-only")
-        );
-        let at_cap = root.join("at-cap.txt");
-        File::create(&at_cap)
-            .unwrap()
-            .set_len(MAX_EDITABLE_BYTES)
-            .unwrap();
-        let document = open(&at_cap).unwrap();
-        assert!(
-            document.contents_utf8.is_some(),
-            "the cap itself is editable"
-        );
-        fs::remove_dir_all(&root).ok();
     }
 
     fn explorer_fixture() -> PathBuf {
@@ -1208,9 +1067,28 @@ pub(crate) mod tests {
         root
     }
 
+    /// Opens `path` on this machine the way the runtime does, with the
+    /// parent folder as the checkout root.
+    pub(crate) fn open_local(path: &Path) -> (EditorDocumentSnapshot, DocumentPlace) {
+        let root = DocumentRoot {
+            device_id: crate::workspace::LOCAL_DEVICE_ID.to_owned(),
+            path: path.parent().unwrap().to_string_lossy().into_owned(),
+            identity: None,
+        };
+        open_document(
+            &crate::host_access::InProcessHost,
+            &root,
+            &path.to_string_lossy(),
+        )
+        .expect("fixture document")
+    }
+
+    /// A checkout whose path is replaced after a document opened refuses
+    /// the save: it lands neither in the impostor nor, silently, in the
+    /// moved original, and explorer work keeps using the pinned handle.
     #[cfg(unix)]
     #[test]
-    fn opened_checkout_root_keeps_reads_and_saves_inside_after_path_swap() {
+    fn a_checkout_replaced_after_the_open_refuses_the_save_and_writes_nowhere() {
         use std::os::unix::fs::symlink;
         let sandbox = tempfile::tempdir().unwrap();
         let root = sandbox.path().join("checkout");
@@ -1220,7 +1098,19 @@ pub(crate) mod tests {
         fs::write(root.join("note.txt"), "inside").unwrap();
         fs::write(outside.join("note.txt"), "outside").unwrap();
         let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
-        let mut document = open_with_roots(&root.join("note.txt"), Some(&roots)).unwrap();
+        let (pinned_path, identity) = roots.pinned_root(&root.join("note.txt")).unwrap();
+        let document_root = DocumentRoot {
+            device_id: "local".to_owned(),
+            path: pinned_path.to_string_lossy().into_owned(),
+            identity: Some(identity),
+        };
+        let channel = crate::host_access::InProcessHost;
+        let (document, place) = open_document(
+            &channel,
+            &document_root,
+            &root.join("note.txt").to_string_lossy(),
+        )
+        .unwrap();
         assert_eq!(document.contents_utf8.as_deref(), Some("inside"));
         let create = ExplorerOperation::create(
             ExplorerOperationKind::FileCreate,
@@ -1231,24 +1121,76 @@ pub(crate) mod tests {
         .unwrap();
         fs::rename(&root, sandbox.path().join("moved")).unwrap();
         symlink(&outside, &root).unwrap();
-        save_with_roots(
-            &mut document,
-            &root.join("note.txt"),
-            "edited".to_owned(),
-            None,
-            Some(&roots),
-        )
-        .unwrap();
+        match save_document(
+            &channel,
+            &place,
+            "edited",
+            document.revision.as_deref().unwrap(),
+        ) {
+            SaveOutcome::Refused(message) => assert!(message.contains("replaced"), "{message}"),
+            other => panic!("a replaced checkout must refuse the save: {other:?}"),
+        }
         apply_explorer_operation_with_roots(&create, Some(&roots)).unwrap();
         assert_eq!(
             fs::read_to_string(sandbox.path().join("moved/note.txt")).unwrap(),
-            "edited"
+            "inside"
         );
         assert!(sandbox.path().join("moved/created.txt").is_file());
         assert!(!outside.join("created.txt").exists());
         assert_eq!(
             fs::read_to_string(outside.join("note.txt")).unwrap(),
             "outside"
+        );
+    }
+
+    #[test]
+    fn a_path_outside_the_checkout_is_refused_before_anything_is_sent() {
+        for (root, path) in [
+            ("/repo", "/repository/a.txt"),
+            ("/repo", "/repo"),
+            ("/repo", "/repo/../etc/passwd"),
+            ("/repo/", "/other/a.txt"),
+        ] {
+            assert!(relative_under(root, path).is_err(), "{root} {path}");
+        }
+        assert_eq!(
+            relative_under("/repo/", "/repo/src/a.rs").unwrap(),
+            "src/a.rs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_local_file_spelled_through_a_link_to_its_checkout_opens_under_that_spelling() {
+        use std::os::unix::fs::symlink;
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().canonicalize().unwrap().join("checkout");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/a.txt"), "a").unwrap();
+        symlink(&root, sandbox.path().join("alias")).unwrap();
+        let spelled = sandbox.path().join("alias/src/a.txt");
+        let root_path = DocumentRoot {
+            device_id: crate::workspace::LOCAL_DEVICE_ID.to_owned(),
+            path: root.to_string_lossy().into_owned(),
+            identity: None,
+        };
+        let (document, place) = open_document(
+            &crate::host_access::InProcessHost,
+            &root_path,
+            &spelled.to_string_lossy(),
+        )
+        .unwrap();
+        assert_eq!(document.path, spelled.to_string_lossy());
+        assert_eq!(place.relative, "src/a.txt");
+        let outside = sandbox.path().join("alias/../elsewhere.txt");
+        fs::write(sandbox.path().join("elsewhere.txt"), "b").unwrap();
+        assert!(
+            open_document(
+                &crate::host_access::InProcessHost,
+                &root_path,
+                &outside.to_string_lossy(),
+            )
+            .is_err()
         );
     }
 

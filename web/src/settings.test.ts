@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceIdFor, deviceLine, diagnosticsText, herdrLine, offeredModels, redact, usableAccent, usableFontSize } from "./settings";
-import type { AiProvider, Device } from "./snapshot";
+import { ACCENT_CHOICES, canRetryDevice, deviceIdFor, deviceLine, diagnosticsText, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize } from "./settings";
+import type { AiProvider, Device, DeviceHost } from "./snapshot";
 
 const device = (patch: Partial<Device>): Device => ({
   id: "studio",
@@ -99,5 +99,35 @@ describe("settings rules", () => {
     expect(text).not.toContain(token);
     expect(text).not.toContain("abc123");
     expect(redact("password=hunter2 ok")).toBe("password=[redacted] ok");
+  });
+
+  it("says whether a device's helper may run and never reads a refusal as ready", () => {
+    const host = (patch: Partial<DeviceHost>): DeviceHost => ({
+      consent: "granted",
+      helper_root: "~/.local/share/hide/host-helper",
+      contract: 1,
+      bound_identity: null,
+      granted_at_unix_ms: 1,
+      state: "ready",
+      message: null,
+      platform: "macos aarch64",
+      helper_path: null,
+      ...patch,
+    });
+    expect(hostLine(host({})).tone).toBe("ok");
+    expect(hostLine(host({ consent: "none", state: "not_allowed" }))).toEqual({ text: "helper not allowed", tone: "muted" });
+    expect(hostLine(host({ consent: "outdated", state: "not_allowed" })).text).toBe("helper needs a new consent");
+    expect(hostLine(host({ state: "identity_changed" })).tone).toBe("warn");
+    expect(hostLine(host({ state: "unavailable" })).tone).toBe("warn");
+    expect(hostLine(host({ consent: "this_machine" })).tone).toBe("local");
+  });
+
+  it("names the install root in the consent and refuses a relative device socket", () => {
+    expect(helperConsentTerms("/opt/hide")[0]).toContain("/opt/hide");
+    expect(socketProblem("")).toBeNull();
+    expect(socketProblem("/tmp/herdr.sock")).toBeNull();
+    expect(socketProblem("herdr.sock")).not.toBeNull();
+    expect(socketProblem("/")).not.toBeNull();
+    expect(socketProblem("/tmp/a\nb")).not.toBeNull();
   });
 });

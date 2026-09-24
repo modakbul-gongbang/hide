@@ -22,6 +22,7 @@ pub const HIDE_PORT: &str = "HIDE_PORT";
 pub const HIDE_IDLE_SECS: &str = "HIDE_IDLE_SECS";
 pub const HOME: &str = "HOME";
 pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
+pub const HIDE_HOST_HELPER_ROOT: &str = "HIDE_HOST_HELPER_ROOT";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -85,6 +86,12 @@ pub const REGISTRY: &[EnvKey] = &[
         absent_behavior: "The host OS handler opens it (macOS `open`, Windows ShellExecuteW association, Linux `xdg-open`)",
     },
     EnvKey {
+        key: HIDE_HOST_HELPER_ROOT,
+        required: false,
+        format: "absolute path, or a path under the device's home spelled `~/...`, with no `.` or `..` segment",
+        absent_behavior: "The device helper installs under ~/.local/share/hide/host-helper on each consented device; a different value is a different consent scope, so every device asks again (isolated verification sets it to a temporary folder)",
+    },
+    EnvKey {
         key: HOME,
         required: true,
         format: "absolute home-directory path",
@@ -108,6 +115,9 @@ pub struct Env {
     pub idle_secs: u64,
     /// Optional test/operator-selected host opener, validated before serving.
     pub open_command: Option<PathBuf>,
+    /// Where the device helper is installed on each SSH device; part of the
+    /// consent scope the operator agrees to (PRD S5.5 D-23).
+    pub host_helper_root: Option<String>,
 }
 
 #[derive(Debug)]
@@ -249,6 +259,16 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         Some(value) => Some(PathBuf::from(value)),
         None => None,
     };
+    let host_helper_root = match read(HIDE_HOST_HELPER_ROOT) {
+        Some(value) if !valid_helper_root(&value) => {
+            errors.push(EnvError {
+                key: HIDE_HOST_HELPER_ROOT,
+                kind: "invalid",
+            });
+            None
+        }
+        other => other,
+    };
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -262,7 +282,26 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         bind: SocketAddr::from(([127, 0, 0, 1], port)),
         idle_secs,
         open_command,
+        host_helper_root,
     })
+}
+
+/// A helper root names a folder on another machine, so it is checked for
+/// shape only: absolute or under that machine's home, one line, and no
+/// segment that could climb out of what the operator agreed to.
+fn valid_helper_root(value: &str) -> bool {
+    let rest = if let Some(rest) = value.strip_prefix("~/") {
+        rest
+    } else if let Some(rest) = value.strip_prefix('/') {
+        rest
+    } else {
+        return false;
+    };
+    !rest.is_empty()
+        && !value.chars().any(char::is_control)
+        && rest
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
 fn valid_program_path(path: &Path) -> bool {
@@ -355,6 +394,35 @@ mod tests {
         ])
         .unwrap_err();
         assert_eq!(err[0].key, HIDE_VITE_ORIGIN);
+    }
+
+    #[test]
+    fn helper_root_is_absolute_or_under_home_and_never_climbs() {
+        for bad in [
+            "relative/dir",
+            "~",
+            "~/",
+            "/",
+            "/a/../b",
+            "~/a/./b",
+            "/a//b",
+            "/a\nb",
+        ] {
+            let err =
+                from_map(&[("HOME", "/Users/example"), (HIDE_HOST_HELPER_ROOT, bad)]).unwrap_err();
+            assert_eq!(err[0].key, HIDE_HOST_HELPER_ROOT, "{bad}");
+        }
+        for good in ["~/.cache/hide-test/helper", "/tmp/hide-verify/helper"] {
+            let env =
+                from_map(&[("HOME", "/Users/example"), (HIDE_HOST_HELPER_ROOT, good)]).unwrap();
+            assert_eq!(env.host_helper_root.as_deref(), Some(good));
+        }
+        assert_eq!(
+            from_map(&[("HOME", "/Users/example")])
+                .unwrap()
+                .host_helper_root,
+            None
+        );
     }
 
     #[test]

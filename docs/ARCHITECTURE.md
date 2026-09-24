@@ -271,7 +271,7 @@ Closing mirrors the Swift flow in `web/src/close.ts`: an unknown activity status
 
 ### Settings and workspace management in the web shell
 
-Settings (`web/src/SettingsSheet.tsx`, rules in `web/src/settings.ts`) opens from the sidebar's gear or ⌥, and carries the native sheet's sections less Pet: General reads the `daemon` frame and `status.{herdr,environment,diagnostics}`, Appearance writes `accent_hex` and `font_size` through `ui_state_update`, Agents reads `status.{background_ai,agent_hooks}` and sends `ai_settings` and `install_agent_hooks`, Devices sends `register_device`, `test_device`, `retry_connect`, `focus_device` and `remove_device` (the sidebar's device switcher sends `focus_device` too), and Shortcuts writes `browser_shortcut_bindings`.
+Settings (`web/src/SettingsSheet.tsx`, rules in `web/src/settings.ts`) opens from the sidebar's gear or ⌥, and carries the native sheet's sections less Pet: General reads the `daemon` frame and `status.{herdr,environment,diagnostics}`, Appearance writes `accent_hex` and `font_size` through `ui_state_update`, Agents reads `status.{background_ai,agent_hooks}` and sends `ai_settings` and `install_agent_hooks`, Devices sends `register_device` (with the helper consent the add form asks for and an optional device Herdr socket), `device_host_consent`, `device_host_retry`, `test_device`, `retry_connect`, `focus_device` and `remove_device` (the sidebar's device switcher sends `focus_device` too), and Shortcuts writes `browser_shortcut_bindings`.
 Every row shows what the snapshot says; an edit is pending until the snapshot carries it, and a refusal is matched to the edit by the core's `last_error` kind and time.
 Copy diagnostics carries versions, paths, states and the core's recent diagnostics, redacts anything token-shaped, and has no terminal output or pane input among its inputs.
 `retry_connect` is a new connection attempt: it retires the device's coordinator and transports and connects again from its registration, keeping the device focus, and a connected device refuses it.
@@ -352,6 +352,7 @@ Terminal attachments (`hided/src/attachments.rs`) are the bytes-in path: the bro
 Both the id and the name are flattened to one path component, one id and one path identify one stage, a stage whose bytes do not match its declared size is dropped at eof, every arriving byte is charged to a 256 MiB staged budget with a 60-second grace on a fresh commit, hided's own attachments directory starts empty each run, staged files and their directories stay private (0600/0700), a stage commits only into the root its mode opened, a completed stage leaves the open-upload cap and a connection's uncommitted stages are released when it goes, and the shell's own attachment events are the daemon's to send: a client that sends `terminal_attachment`, `terminal_attachment_ready` or `terminal_attachment_action` is answered with an error frame and it never reaches the core, because those events name arbitrary paths.
 A clipboard image stages at the exact path the core reads it from, and hided reports `terminal_attachment_ready` itself.
 The caps are 20 MiB per file and 40 MiB and 8 files per batch, checked here and again in the core; a refusal is one line over the pane (B15).
+A `file_list`, `file_open`, `reveal_path` or `file_save` that names a `device_id` other than `local` is not a path on this machine, so it skips this boundary: the device's helper judges it against the pinned root, and hided answers that device's `file_list` itself from the helper, or with `directory_unavailable` and a code (`not_ready`, `busy`, `unknown`, `refused`) when it cannot.
 Every frame and reason code lives in `contracts/hided-ws.schema.json`.
 
 ### The Explorer, editor and viewers
@@ -373,6 +374,27 @@ Image, PDF and video viewers read hided's bytes; the web decides video from the 
 Unsaved buffers live in IndexedDB (`web/src/buffers.ts`), keyed by checkout root and real path: an open document's buffer is restored on reconnect, a closed one is discarded with a diagnostic, a rename or move carries the buffer to the new path, and one nobody claimed for 14 days goes on the next start; a buffer that cannot be stored leaves editing alone and marks its tab "kept in this tab only" (B8, D-14).
 The v3 database upgrade keeps shipped v1 path-keyed drafts until a live core tab supplies their checkout root, and copies completion-build v2 root-keyed drafts into the current store in one upgrade transaction.
 Edits are coalesced to one active and one pending committed write per document with a bounded total queue; a move retires the old identity in the same transaction that claims the new one.
+
+### Device file hosts and document saves
+
+`hide-host` is the one file authority for a checkout on any machine (PRD S5.5 D-05): opening a root and pinning its identity, listing a folder, reading a document with its content revision, and saving it.
+The daemon's own machine runs it in process (`host_access::InProcessHost`); an SSH device runs the same code as `hide-host-helper serve`, which speaks one JSON line per request over an exec channel of a dedicated SSH connection (`remote/host.rs`).
+Both are a `HostChannel`, so the core's document code (`files.rs`, `runtime/documents.rs`) and hided's listing (`boundary.rs`, `server.rs::device_listing`) make the same call whichever device the checkout is on, and neither keeps a second copy of the root, link or listing rules.
+A helper runs only with the operator's consent for that device (D-20, D-23): `register_device` with `host_consent` or a later `device_host_consent` records it on the registration with the consent contract and the install root (`HIDE_HOST_HELPER_ROOT`, default `~/.local/share/hide/host-helper`), and the first connection binds it to the SSH user, host, port and host key that answered.
+A different identity (`identity_changed`) or a build whose contract or root differs (`outdated`) starts nothing until the operator allows it again; revoking closes the helper and starts no new work, and deletes no draft, remote file or installed helper.
+The helper is uploaded and replaced only when the device lacks this build's bytes, runs only while its connection lives, and is never started by anything but a file or Git request; there is no resident process and nothing at login.
+The daemon ships one helper build per device platform (`HelperPackages`); a device whose platform has no package is `unsupported` with that reason, and another platform's build is never substituted.
+The product's device platforms are macOS on arm64 and x86_64; the S5.5 verification covered two arm64 Macs, and x86_64 packaging is not finished.
+Admission per device is four running and thirty-two waiting requests; past that a request is refused as `busy`, never dropped.
+
+A document is pinned at open to its device, its root path with the identity the host reported, and its path relative to that root (`DocumentPlace`), and every save goes back through that pin: a root that was replaced since is refused, and a save after a reconnect goes to the new helper.
+The draft's base is a content revision (`sha256:<hex>`), not a modification time.
+A save is exchange-and-verify, not a compare-and-swap (`hide-host/src/save.rs` states exactly what it guarantees): the file is hashed against the base, the draft is written beside it and exchanged in one atomic rename (`RENAME_SWAP`, `RENAME_EXCHANGE`), and the displaced file is hashed again; a change that landed in between is exchanged back and the save is a conflict, so a change complete at the path is never overwritten and the original is never left truncated.
+A filesystem with no atomic exchange refuses the save and the draft stays, exportable from the conflict or unknown bar.
+Saves and revision reads in one folder hold an advisory lock, exclusive and shared, so Hide's own read-back waits for a save still running in a helper whose connection already ended.
+One save runs per document and only the newest draft waits behind it.
+A save whose answer was lost to a timeout or a dropped connection is `unknown`: it is never resent, further saves wait, and when the device's helper is ready the file is read back: the draft's revision means it saved, the base's means it did not (`file.save_not_applied`), anything else is a conflict.
+A local path is judged inside its checkout after resolving the folder that holds it, so a shell that spells `/var` for `/private/var` still opens it, while the document keeps the path as the shell sent it.
 
 ### The shortcut registry
 

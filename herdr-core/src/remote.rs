@@ -42,9 +42,14 @@ use crate::remote_files::{FileService, RemoteFileService};
 use hide_herdr_client::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 
 mod attachments;
+pub mod host;
 
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
+/// The prefixes a host-key refusal starts with, so a caller can tell a
+/// changed key from a missing one without parsing the rest of the sentence.
+pub const HOST_KEY_CHANGED: &str = "host key changed";
+pub const HOST_KEY_UNKNOWN: &str = "host key unknown";
 const DEFAULT_REMOTE_TERM: &str = "xterm-256color";
 
 /// Environment names read by this module. Values remain in the process
@@ -1040,8 +1045,12 @@ pub enum RemoteReadCommand {
         root: String,
     },
     /// `herdr status server --json`: the host's own answer to where its
-    /// server socket is and whether the server is up.
-    HerdrServerStatus,
+    /// server socket is and whether the server is up. `socket` is the socket
+    /// the device registration names, when it names one; otherwise the host's
+    /// default server answers.
+    HerdrServerStatus {
+        socket: Option<String>,
+    },
 }
 
 /// Where a non-login SSH exec finds `herdr` on the remote host: the
@@ -1053,22 +1062,40 @@ impl RemoteReadCommand {
     fn operation_id(&self) -> &'static str {
         match self {
             Self::GitStatus { .. } => "remote-git-status",
-            Self::HerdrServerStatus => "remote-herdr-status",
+            Self::HerdrServerStatus { .. } => "remote-herdr-status",
         }
     }
 
     fn stage(&self) -> RemoteStage {
         match self {
             Self::GitStatus { .. } => RemoteStage::Git,
-            Self::HerdrServerStatus => RemoteStage::Herdr,
+            Self::HerdrServerStatus { .. } => RemoteStage::Herdr,
         }
     }
 
     fn command_line(&self) -> RemoteResult<String> {
         match self {
-            Self::HerdrServerStatus => Ok(format!(
+            Self::HerdrServerStatus { socket: None } => Ok(format!(
                 "PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json"
             )),
+            Self::HerdrServerStatus {
+                socket: Some(socket),
+            } => {
+                if !valid_remote_socket_path(socket) {
+                    return Err(remote_error(
+                        self.operation_id(),
+                        socket,
+                        self.stage(),
+                        "the device's Herdr socket must be an absolute single-line path",
+                        false,
+                        false,
+                    ));
+                }
+                Ok(format!(
+                    "HERDR_SOCKET_PATH={} PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json",
+                    shell_quote(socket)
+                ))
+            }
             Self::GitStatus { root } => {
                 if !root.starts_with('/')
                     || root
@@ -1131,7 +1158,7 @@ pub fn parse_herdr_server_status(
     host_id: &str,
     output: &RemoteCommandOutput,
 ) -> RemoteResult<RemoteHerdrServerStatus> {
-    let operation_id = RemoteReadCommand::HerdrServerStatus.operation_id();
+    let operation_id = RemoteReadCommand::HerdrServerStatus { socket: None }.operation_id();
     if output.exit_status == EXIT_COMMAND_NOT_FOUND {
         return Err(remote_error(
             operation_id,
@@ -1201,6 +1228,9 @@ pub struct RusshRemoteClient {
     /// server restarted under another path or version is found again on the
     /// next attempt instead of failing forever on the remembered one.
     herdr_status: Arc<Mutex<Option<RemoteHerdrServerStatus>>>,
+    /// The Herdr socket the device registration names, for a host whose
+    /// server does not listen at its default path.
+    herdr_socket: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1519,7 +1549,15 @@ impl RusshRemoteClient {
             host,
             runtime: Arc::new(runtime),
             herdr_status: Arc::new(Mutex::new(None)),
+            herdr_socket: None,
         })
+    }
+
+    /// Talks to the Herdr server at `socket` on the host instead of the one
+    /// at its default path.
+    pub fn with_herdr_socket(mut self, socket: Option<String>) -> Self {
+        self.herdr_socket = socket;
+        self
     }
 
     pub fn host(&self) -> &SshAlias {
@@ -1532,7 +1570,9 @@ impl RusshRemoteClient {
         if let Some(status) = lock_recover(&self.herdr_status).clone() {
             return Ok(status.socket);
         }
-        let output = self.exec_read_only(RemoteReadCommand::HerdrServerStatus)?;
+        let output = self.exec_read_only(RemoteReadCommand::HerdrServerStatus {
+            socket: self.herdr_socket.clone(),
+        })?;
         let status = parse_herdr_server_status(&self.host.host_id, &output)?;
         let socket = status.socket.clone();
         *lock_recover(&self.herdr_status) = Some(status);
@@ -2893,6 +2933,9 @@ struct KnownHostHandler {
     known_hosts_file: PathBuf,
     local_forward: Option<SocketAddr>,
     forward_error: Option<Arc<Mutex<Option<String>>>>,
+    /// Receives the SHA-256 fingerprint of a host key known_hosts accepted,
+    /// the identity a device's helper consent is bound to.
+    observed_key: Option<Arc<Mutex<Option<String>>>>,
 }
 
 impl KnownHostHandler {
@@ -2903,7 +2946,13 @@ impl KnownHostHandler {
             known_hosts_file: host.known_hosts_file.clone(),
             local_forward,
             forward_error: None,
+            observed_key: None,
         }
+    }
+
+    fn with_observed_key(mut self, observed_key: Arc<Mutex<Option<String>>>) -> Self {
+        self.observed_key = Some(observed_key);
+        self
     }
 
     fn with_forward_error(mut self, forward_error: Arc<Mutex<Option<String>>>) -> Self {
@@ -2920,15 +2969,38 @@ impl Handler for KnownHostHandler {
         server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         let public_key = server_public_key.public_key();
-        let trusted =
-            check_known_hosts_path(&self.host, self.port, &public_key, &self.known_hosts_file)
-                .map_err(|error| anyhow!("known_hosts verification failed: {error}"))?;
+        // A changed key and an unknown one need different actions from the
+        // operator, so they are named differently (PRD S5.5 B38); neither is
+        // ever accepted here.
+        let trusted = match check_known_hosts_path(
+            &self.host,
+            self.port,
+            &public_key,
+            &self.known_hosts_file,
+        ) {
+            Ok(trusted) => trusted,
+            Err(russh::keys::Error::KeyChanged { line }) => {
+                return Err(anyhow!(
+                    "{HOST_KEY_CHANGED}: the host key for {}:{} differs from known_hosts line {line}; verify the device before updating known_hosts",
+                    self.host,
+                    self.port
+                ));
+            }
+            Err(error) => return Err(anyhow!("known_hosts verification failed: {error}")),
+        };
         if !trusted {
             return Err(anyhow!(
-                "server key is not present in known_hosts for {}:{}",
+                "{HOST_KEY_UNKNOWN}: server key is not present in known_hosts for {}:{}; connect once with ssh to review and record it",
                 self.host,
                 self.port
             ));
+        }
+        if let Some(observed) = self.observed_key.as_ref() {
+            *lock_recover(observed) = Some(
+                public_key
+                    .fingerprint(russh::keys::HashAlg::Sha256)
+                    .to_string(),
+            );
         }
         Ok(true)
     }
@@ -3788,6 +3860,11 @@ impl RemoteConnectionRegistry {
     }
 }
 
+/// A socket path a device registration may name: absolute, one line.
+pub fn valid_remote_socket_path(path: &str) -> bool {
+    path.starts_with('/') && path.len() > 1 && !path.bytes().any(|byte| byte.is_ascii_control())
+}
+
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -3920,13 +3997,36 @@ mod tests {
 
     #[test]
     fn herdr_server_status_command_runs_without_a_login_shell() {
-        let command = RemoteReadCommand::HerdrServerStatus
+        let command = RemoteReadCommand::HerdrServerStatus { socket: None }
             .command_line()
             .expect("status command");
         assert_eq!(
             command,
             "PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr status server --json"
         );
+    }
+
+    #[test]
+    fn a_registered_herdr_socket_is_asked_for_by_name_and_quoted() {
+        let command = RemoteReadCommand::HerdrServerStatus {
+            socket: Some("/tmp/hide verify/herdr.sock".to_owned()),
+        }
+        .command_line()
+        .expect("status command");
+        assert_eq!(
+            command,
+            "HERDR_SOCKET_PATH='/tmp/hide verify/herdr.sock' PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin\" herdr status server --json"
+        );
+        for invalid in ["relative.sock", "/tmp/a\nb.sock", "/"] {
+            assert!(
+                RemoteReadCommand::HerdrServerStatus {
+                    socket: Some(invalid.to_owned())
+                }
+                .command_line()
+                .is_err(),
+                "{invalid:?}"
+            );
+        }
     }
 
     #[test]

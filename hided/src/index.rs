@@ -79,7 +79,7 @@ pub fn rank(paths: &[String], query: &str, limit: usize) -> Vec<(String, i64)> {
         right
             .1
             .cmp(&left.1)
-            .then_with(|| crate::boundary::natural_cmp(&left.0, &right.0))
+            .then_with(|| hide_host::list::natural_cmp(&left.0, &right.0))
     });
     scored.truncate(limit);
     scored
@@ -271,7 +271,7 @@ fn build(root: &Path, opened: File) -> IndexData {
             }
         }
     }
-    paths.sort_by(|left, right| crate::boundary::natural_cmp(left, right));
+    paths.sort_by(|left, right| hide_host::list::natural_cmp(left, right));
     IndexData { paths, truncated }
 }
 

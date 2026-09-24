@@ -183,6 +183,24 @@ pub(super) struct RegisterDevicePayload {
     pub(super) id: String,
     pub(super) label: String,
     pub(super) ssh_alias: String,
+    /// The device's Herdr socket when its server is not at the default path.
+    #[serde(default)]
+    pub(super) herdr_socket_path: Option<String>,
+    /// The operator allowed Hide's helper on the device in the same form
+    /// (PRD S5.5 B50); absent or false registers it without file access.
+    #[serde(default)]
+    pub(super) host_consent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DeviceHostConsentPayload {
+    pub(super) device_id: String,
+    pub(super) allow: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct DeviceHostRetryPayload {
+    pub(super) device_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -383,7 +401,6 @@ pub(super) struct FileSavePayload {
     pub(super) tab_id: String,
     pub(super) path: String,
     pub(super) contents_utf8: String,
-    pub(super) expected_modified_at_unix_ms: Option<u64>,
 }
 
 /// A new file or folder: the folder it goes in and the name it takes. The
@@ -770,6 +787,8 @@ pub(super) enum Event {
     WorkspacePinSet(WorkspacePinSetPayload),
     RemoveWorkspace(RemoveWorkspacePayload),
     RegisterDevice(RegisterDevicePayload),
+    DeviceHostConsent(DeviceHostConsentPayload),
+    DeviceHostRetry(DeviceHostRetryPayload),
     RemoveDevice(RemoveDevicePayload),
     TestDevice(TestDevicePayload),
     CreatePane(CreatePanePayload),
@@ -927,6 +946,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "workspace_pin_set" => decode!(WorkspacePinSetPayload, WorkspacePinSet),
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
         "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
+        "device_host_consent" => decode!(DeviceHostConsentPayload, DeviceHostConsent),
+        "device_host_retry" => decode!(DeviceHostRetryPayload, DeviceHostRetry),
         "remove_device" => decode!(RemoveDevicePayload, RemoveDevice),
         "test_device" => decode!(TestDevicePayload, TestDevice),
         "create_pane" => decode!(CreatePanePayload, CreatePane),
@@ -1553,6 +1574,23 @@ impl Runtime {
             }
             Event::WorkspacePinSet(payload) => self.set_workspace_pinned(payload),
             Event::RemoveWorkspace(payload) => self.remove_workspace(payload),
+            Event::DeviceHostConsent(payload) => {
+                self.set_host_consent(payload.device_id.trim(), payload.allow)
+            }
+            Event::DeviceHostRetry(payload) => {
+                let device_id = payload.device_id.trim().to_owned();
+                if self.device_registration_exists(&device_id) {
+                    self.close_device_host(&device_id, "retry requested");
+                    self.start_device_host(&device_id);
+                } else {
+                    self.set_error(
+                        "device.host.unknown_device",
+                        format!("Device {device_id} is not registered"),
+                        false,
+                    );
+                }
+                true
+            }
             Event::RegisterDevice(payload) => {
                 let id = payload.id.trim().to_owned();
                 let label = payload.label.trim().to_owned();
@@ -1561,6 +1599,23 @@ impl Runtime {
                     self.set_error(
                         "device.invalid",
                         "Device id, label, and SSH alias are required",
+                        false,
+                    );
+                    return true;
+                }
+                let herdr_socket_path = payload
+                    .herdr_socket_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .map(str::to_owned);
+                if herdr_socket_path
+                    .as_deref()
+                    .is_some_and(|path| !crate::remote::valid_remote_socket_path(path))
+                {
+                    self.set_error(
+                        "device.invalid",
+                        "The device's Herdr socket must be an absolute path on the device",
                         false,
                     );
                     return true;
@@ -1584,6 +1639,8 @@ impl Runtime {
                     id: id.clone(),
                     label,
                     ssh_alias: Some(ssh_alias.clone()),
+                    herdr_socket_path,
+                    host_consent: payload.host_consent.then(|| self.new_host_consent()),
                 };
                 self.snapshot
                     .ui_state
@@ -2135,125 +2192,24 @@ impl Runtime {
                 }
                 true
             }
-            Event::FileSave(payload) => {
-                let Some(tab) = self
-                    .snapshot
-                    .editor
-                    .tabs
-                    .iter()
-                    .find(|tab| tab.id == payload.tab_id && tab.path == payload.path)
-                else {
-                    self.set_error("file.save_rejected", "The save target is not open", false);
-                    return true;
-                };
-                let tab_id = tab.id.clone();
-                let Some(document) = self.editor_documents.get_mut(&tab_id) else {
-                    self.set_error(
-                        "file.save_rejected",
-                        "The save target has no document state",
-                        false,
-                    );
-                    return true;
-                };
-                document.contents_utf8 = Some(payload.contents_utf8.clone());
-                document.dirty = true;
-                self.sync_file_tab_dirty(&tab_id);
-                self.sync_active_editor_document();
-                let Some(context) = self.worker_context.clone() else {
-                    self.set_error(
-                        "file.save_worker_unavailable",
-                        "The file save worker is unavailable; the draft was preserved",
-                        true,
-                    );
-                    return true;
-                };
-                let path = payload.path;
-                let save_tab_id = tab_id.clone();
-                let contents = payload.contents_utf8;
-                let expected_modified_at = payload.expected_modified_at_unix_ms;
-                let mut editor = self
-                    .editor_documents
-                    .get(&tab_id)
-                    .cloned()
-                    .expect("the save document was validated");
-                let file_roots = self.file_roots.clone();
-                match thread::Builder::new()
-                    .name("herdr-core-file-save".to_owned())
-                    .spawn(move || {
-                        let result = files::save_with_roots(
-                            &mut editor,
-                            Path::new(&path),
-                            contents.clone(),
-                            expected_modified_at,
-                            file_roots.as_ref(),
-                        );
-                        let Some(runtime) = context.runtime.upgrade() else {
-                            return;
-                        };
-                        let changed = match runtime.lock() {
-                            Ok(mut guard) => guard.ingest_file_save_result(
-                                save_tab_id,
-                                path,
-                                contents,
-                                editor,
-                                result,
-                            ),
-                            Err(_) => return,
-                        };
-                        drop(runtime);
-                        if changed {
-                            context.notifier.notify();
-                        }
-                    }) {
-                    Ok(_) => true,
-                    Err(error) => {
-                        self.set_error(
-                            "file.save_worker_failed",
-                            format!("The file save worker could not start: {error}"),
-                            true,
-                        );
-                        true
-                    }
-                }
-            }
+            Event::FileSave(payload) => self.request_file_save(payload, false),
             Event::FileConflict(payload) => {
                 let Some(tab_id) = self.snapshot.editor.active_tab_id.clone() else {
                     self.set_error("file.conflict_without_tab", "No file tab is active", false);
                     return true;
                 };
-                let Some(document) = self.editor_documents.get_mut(&tab_id) else {
-                    self.set_error(
-                        "file.conflict_without_document",
-                        "The active file tab has no document state",
-                        false,
-                    );
-                    return true;
-                };
                 match payload.action.as_str() {
-                    "reload" => {
-                        match files::reload_with_roots(document, self.file_roots.as_ref()) {
-                            Ok(()) => {
-                                self.sync_file_tab_dirty(&tab_id);
-                                self.sync_active_editor_document();
-                            }
-                            Err(message) => self.set_error("file.reload_failed", message, true),
-                        }
+                    "reload" => self.reload_document(&tab_id),
+                    "keep_editing" => self.keep_editing_document(&tab_id),
+                    _ => {
+                        self.set_error(
+                            "file.invalid_conflict_action",
+                            "Conflict action must be reload or keep_editing",
+                            false,
+                        );
+                        true
                     }
-                    "keep_editing" => {
-                        if let Some(conflict) = document.conflict.as_ref() {
-                            document.opened_modified_at_unix_ms =
-                                Some(conflict.disk_modified_at_unix_ms);
-                        }
-                        document.conflict = None;
-                        self.sync_active_editor_document();
-                    }
-                    _ => self.set_error(
-                        "file.invalid_conflict_action",
-                        "Conflict action must be reload or keep_editing",
-                        false,
-                    ),
                 }
-                true
             }
             Event::FileCreate(payload) => self.start_explorer_operation(
                 |root| {

@@ -1356,7 +1356,6 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
     let tab_id = opened["editor"]["active_tab_id"]
         .as_str()
         .expect("active file tab");
-    let modified = opened["editor"]["document"]["opened_modified_at_unix_ms"].clone();
     dispatch(
         core,
         json!({
@@ -1365,8 +1364,7 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
             "payload": {
                 "tab_id": tab_id,
                 "path": path,
-                "contents_utf8": contents,
-                "expected_modified_at_unix_ms": modified
+                "contents_utf8": contents
             }
         }),
     );

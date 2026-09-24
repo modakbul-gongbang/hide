@@ -1,0 +1,25 @@
+[package]
+name = "hide-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The file host contract: operations on an opened checkout root that Hide
+# performs on the machine that owns the files. hided and the core call it in
+# process for this machine; `hide-host-helper` serves the same functions over
+# an SSH exec channel on a registered device (PRD S5.5 D-05, D-20).
+
+[[bin]]
+name = "hide-host-helper"
+path = "src/bin/hide-host-helper.rs"
+
+[dependencies]
+base64 = "=0.23.1"
+cap-std = "=4.0.3"
+libc = "=0.2.189"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+
+[dev-dependencies]
+tempfile = "=3.27.0"

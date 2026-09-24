@@ -132,6 +132,8 @@ fn runtime_with_remote_enabled() -> Runtime {
             ))
             .to_string_lossy()
             .into_owned(),
+        host_helper_dir: None,
+        host_helper_root: None,
     };
     Runtime::new(
         options,

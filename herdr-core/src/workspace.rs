@@ -28,8 +28,19 @@ pub fn local_device() -> DeviceSnapshot {
         state: "ready".to_owned(),
         message: None,
         ssh_alias: None,
+        herdr_socket_path: None,
         agent_count: 0,
         test: None,
+        host: crate::model::DeviceHostSnapshot {
+            consent: "this_machine".to_owned(),
+            state: "ready".to_owned(),
+            platform: Some(format!(
+                "{} {}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            )),
+            ..Default::default()
+        },
     }
 }
 
@@ -50,8 +61,10 @@ pub fn devices(registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
                 state: if remote { "unavailable" } else { "available" }.to_owned(),
                 message: None,
                 ssh_alias: registration.ssh_alias.clone(),
+                herdr_socket_path: registration.herdr_socket_path.clone(),
                 agent_count: 0,
                 test: None,
+                host: crate::model::DeviceHostSnapshot::default(),
             });
         }
     }

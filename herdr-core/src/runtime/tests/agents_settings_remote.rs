@@ -77,8 +77,10 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         state: "unavailable".to_owned(),
         message: None,
         ssh_alias: Some("mini".to_owned()),
+        herdr_socket_path: None,
         agent_count: 0,
         test: None,
+        host: Default::default(),
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: "mini".to_owned(),

@@ -372,6 +372,8 @@ mod tests {
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: "/tmp/hide-project-context-test-state.json".to_owned(),
+            host_helper_dir: None,
+            host_helper_root: None,
         })
         .navigator;
         navigator.workspaces = workspaces;

@@ -283,7 +283,7 @@ struct EditorViewerOverlay: View {
                 Button("Keep editing") { model.core.resolveConflict("keep_editing") }
                     .buttonStyle(HideTextButtonStyle(appearance: .quiet))
             }
-            Text("Opened \(conflict.openedModifiedAt), disk \(conflict.diskModifiedAt)")
+            Text("Opened \(CoreEditorConflict.short(conflict.openedRevision)), disk \(conflict.diskRevision.map(CoreEditorConflict.short) ?? "removed")")
                 .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
                 .foregroundStyle(HideTheme.secondary)
         }

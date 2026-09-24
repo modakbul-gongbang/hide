@@ -17,6 +17,7 @@ mod fork;
 mod git_dir;
 mod github;
 pub mod herdr_contract;
+pub mod host_access;
 pub mod issues;
 pub mod live;
 mod model;

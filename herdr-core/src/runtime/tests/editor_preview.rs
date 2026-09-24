@@ -532,7 +532,7 @@ fn reveal_and_reopen_open_ordinary_tabs() {
     assert!(runtime.ingest_reopen_result(
         &request,
         Ok(live::FileReopenResultOrHerdr::File(
-            live::FileReopenResult::Opened(files::open(&target).expect("fixture document"))
+            live::FileReopenResult::Opened(Box::new(files::tests::open_local(&target)))
         )),
     ));
     assert_eq!(

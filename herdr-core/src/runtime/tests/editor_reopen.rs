@@ -997,7 +997,7 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
     });
     runtime.editor_documents.insert(
         "file:w:c:lib".to_owned(),
-        files::open(Path::new(&lib)).expect("fixture document"),
+        files::tests::open_local(Path::new(&lib)).0,
     );
 
     assert!(runtime.dispatch_json(&explorer_event(
@@ -1721,9 +1721,9 @@ fn every_consuming_reopen_result_removes_only_its_request_key() {
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("first.rs");
     std::fs::write(&path, "fn main() {}\n").unwrap();
-    let document = crate::files::open(&path).unwrap();
+    let opened = crate::files::tests::open_local(&path);
     assert_newer_close_survives(
-        live::FileReopenResultOrHerdr::File(live::FileReopenResult::Opened(document)),
+        live::FileReopenResultOrHerdr::File(live::FileReopenResult::Opened(Box::new(opened))),
         path.to_str().unwrap(),
     );
     std::fs::remove_dir_all(&root).unwrap();

@@ -281,6 +281,10 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     // A change in a watched folder is announced on this socket beside the
     // snapshot stream; the client re-reads the one folder it names (B2).
     let mut directory_changes = state.watch.subscribe();
+    // Answers a device's helper gives for this client alone (the Explorer's
+    // listing of a device checkout) arrive here from their own tasks, so a
+    // slow device never holds up this socket's snapshot stream.
+    let (device_frames_tx, mut device_frames) = tokio::sync::mpsc::channel::<String>(16);
     let daemon = json!({"type": "daemon", "payload": state.daemon_info.as_ref()});
     if socket
         .send(Message::Text(daemon.to_string().into()))
@@ -331,12 +335,20 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
                 }
             }
+            Some(frame) = device_frames.recv() => {
+                if socket.send(Message::Text(frame.into())).await.is_err() {
+                    break;
+                }
+            }
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
                                 if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() { break; }
+                            }
+                            Ok(ClientAction::DeviceListing(event)) => {
+                                spawn_device_listing(&state, event, device_frames_tx.clone());
                             }
                             outcome => {
                                 let replies = match outcome {
@@ -391,7 +403,25 @@ fn token_matches(offered: &str, expected: &str) -> bool {
 /// binary frames of a `file_bytes` read.
 enum ClientAction {
     FileBytes(Value),
+    /// A `file_list` for a checkout on an SSH device, answered by its helper.
+    DeviceListing(Value),
     Replies(Vec<Message>),
+}
+
+/// The file events a checkout on an SSH device answers through that
+/// device's helper. This machine's checkout roots say nothing about another
+/// machine's paths, so these never meet the local boundary: the core finds the
+/// checkout and its device in its own catalog, and the helper confines the
+/// path to the checkout root it opened.
+const DEVICE_FILE_EVENTS: [&str; 4] = ["file_list", "file_open", "reveal_path", "file_save"];
+
+/// The SSH device a file event names, or `None` for this machine.
+fn event_device(event: &Value) -> Option<String> {
+    event
+        .pointer("/payload/device_id")
+        .and_then(Value::as_str)
+        .filter(|device| !device.is_empty() && *device != herdr_core::workspace::LOCAL_DEVICE_ID)
+        .map(str::to_owned)
 }
 
 fn handle_client_text(
@@ -447,6 +477,17 @@ fn handle_client_text(
         }
         _ => {}
     }
+    let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
+    if DEVICE_FILE_EVENTS.contains(&kind) && event_device(&event).is_some() {
+        if kind == "file_list" {
+            return Ok(ClientAction::DeviceListing(event));
+        }
+        let bytes = serde_json::to_vec(&event).map_err(|error| format!("event encode: {error}"))?;
+        return state
+            .core
+            .dispatch(bytes)
+            .map(|()| ClientAction::Replies(Vec::new()));
+    }
     if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
         return Ok(ClientAction::Replies(vec![Message::Text(
             reply.to_string().into(),
@@ -457,6 +498,90 @@ fn handle_client_text(
         .core
         .dispatch(bytes)
         .map(|()| ClientAction::Replies(Vec::new()))
+}
+
+/// Lists one folder of a device checkout on a blocking task and hands the
+/// answer to the client's socket loop. A client gone by then drops it.
+fn spawn_device_listing(state: &AppState, event: Value, frames: tokio::sync::mpsc::Sender<String>) {
+    let core = Arc::clone(&state.core);
+    let boundary = Arc::clone(&state.boundary);
+    tokio::spawn(async move {
+        let frame = tokio::task::spawn_blocking(move || device_listing(&core, &boundary, &event))
+            .await
+            .unwrap_or_else(|error| {
+                json!({"type": "error", "payload": {}, "message": format!("device listing failed: {error}")})
+            });
+        let _ = frames.send(frame.to_string()).await;
+    });
+}
+
+/// One folder of a checkout on an SSH device. The root has to be a checkout
+/// the core's catalog carries for that device; the folder is spelled under it
+/// and the helper refuses anything that leaves it.
+fn device_listing(core: &CoreHandle, boundary: &Boundary, event: &Value) -> Value {
+    let device = payload_str(event, "device_id");
+    let root = payload_str(event, "root");
+    let raw = payload_str(event, "path");
+    if !boundary.is_device_root(&device, &root) {
+        return refused("file_list", &root, Refusal::OutsideCheckout);
+    }
+    let folder = if raw.is_empty() { root.clone() } else { raw };
+    let relative = if folder == root {
+        String::new()
+    } else {
+        match folder
+            .strip_prefix(root.trim_end_matches('/'))
+            .and_then(|rest| rest.strip_prefix('/'))
+            .filter(|rest| hide_host::relative_path(rest).is_ok())
+        {
+            Some(rest) => rest.to_owned(),
+            None => return refused("file_list", &folder, Refusal::OutsideCheckout),
+        }
+    };
+    let unavailable = |code: &str, message: String| {
+        eprintln!(
+            "{}",
+            json!({
+                "component": "hided",
+                "kind": "device.listing_unavailable",
+                "device": device,
+                "code": code,
+                "message": message,
+            })
+        );
+        json!({"type": "directory_unavailable", "payload": {
+            "kind": "file_list", "device_id": device, "root_path": folder, "code": code, "message": message,
+        }})
+    };
+    let channel = match core.device_channel(&device) {
+        Ok(channel) => channel,
+        Err(message) => return unavailable("not_ready", message),
+    };
+    use herdr_core::host_access::HostCallError;
+    match herdr_core::host_access::list_folder(channel.as_ref(), &root, &relative) {
+        Ok(listing) => {
+            let base = folder.trim_end_matches('/');
+            let entries: Vec<Value> = listing
+                .entries
+                .into_iter()
+                .map(|entry| {
+                    json!({
+                        "path": format!("{base}/{}", entry.name),
+                        "name": entry.name,
+                        "is_directory": entry.is_directory,
+                    })
+                })
+                .collect();
+            json!({"type": "directory_list", "payload": {
+                "kind": "file_list", "device_id": device, "root_path": folder,
+                "entries": entries, "truncated": listing.truncated,
+            }})
+        }
+        Err(HostCallError::NotConnected(message)) => unavailable("not_ready", message),
+        Err(error @ HostCallError::Busy) => unavailable("busy", error.to_string()),
+        Err(HostCallError::Unknown(message)) => unavailable("unknown", message),
+        Err(HostCallError::Refused(error)) => unavailable("refused", error.message),
+    }
 }
 
 /// Splits an `ai_settings` event: the observation hint is this connection's

@@ -304,6 +304,24 @@ impl HerdrCore {
         }
     }
 
+    /// Rust-only: where a device's file work runs, for the daemon's own
+    /// requests that answer outside the snapshot (the Explorer's listing).
+    /// Asking may start the device's helper, which the snapshot announces.
+    pub fn device_channel(
+        &self,
+        device_id: &str,
+    ) -> Result<std::sync::Arc<dyn crate::host_access::HostChannel>, String> {
+        if !check_owner_thread(self, "device_channel") {
+            return Err("the core was called off its owner thread".to_owned());
+        }
+        let result = lock_recover(&self.runtime).device_channel(device_id);
+        // Only a refusal can have started a helper connection.
+        if result.is_err() {
+            notify_change(self);
+        }
+        result
+    }
+
     pub fn snapshot_delta(&self, have_revision: u64, have_terminal_sequence: u64) -> Vec<u8> {
         if !check_owner_thread(self, "snapshot") {
             notify_change(self);

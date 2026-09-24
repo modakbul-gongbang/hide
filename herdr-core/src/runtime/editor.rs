@@ -6,7 +6,13 @@ pub(super) enum PreparedFileTab {
     /// The file was read and needs a tab of its own.
     Read {
         tab_id: String,
-        document: EditorDocumentSnapshot,
+        document: Box<EditorDocumentSnapshot>,
+        place: crate::files::DocumentPlace,
+    },
+    /// A device is being asked for the file; the tab shows when it answers.
+    Reading {
+        root: crate::files::DocumentRoot,
+        channel: std::sync::Arc<dyn crate::host_access::HostChannel>,
     },
 }
 
@@ -120,64 +126,8 @@ impl Runtime {
         }
     }
 
-    pub(super) fn ingest_file_save_result(
-        &mut self,
-        tab_id: String,
-        path: String,
-        contents: String,
-        editor: EditorDocumentSnapshot,
-        result: Result<(), String>,
-    ) -> bool {
-        let is_current_draft = self.is_current_file_draft(&tab_id, &path, &contents);
-        if !is_current_draft {
-            self.push_diagnostic(
-                "file.save_stale",
-                format!("Ignored a completed save for stale draft {path}"),
-            );
-            return true;
-        }
-        self.editor_documents.insert(tab_id.clone(), editor);
-        self.sync_file_tab_dirty(&tab_id);
-        self.sync_active_editor_document();
-        match result {
-            Ok(()) => {
-                self.push_diagnostic("file.save_ready", format!("Saved {path}"));
-            }
-            Err(message) => self.set_error("file.save_failed", message, true),
-        }
-        true
-    }
-
-    pub(super) fn is_current_file_draft(&self, tab_id: &str, path: &str, contents: &str) -> bool {
-        self.snapshot.editor.tabs.iter().any(|tab| {
-            tab.id == tab_id
-                && tab.path == path
-                && self
-                    .editor_documents
-                    .get(tab_id)
-                    .and_then(|document| document.contents_utf8.as_deref())
-                    == Some(contents)
-        })
-    }
-
-    pub(super) fn ingest_file_save_then_close_result(
-        &mut self,
-        tab_id: String,
-        path: String,
-        contents: String,
-        editor: EditorDocumentSnapshot,
-        result: Result<(), String>,
-    ) -> bool {
-        let close_after_save =
-            result.is_ok() && self.is_current_file_draft(&tab_id, &path, &contents);
-        self.ingest_file_save_result(tab_id.clone(), path, contents, editor, result);
-        if close_after_save {
-            self.close_file_tab_now(&tab_id)
-        } else {
-            true
-        }
-    }
-
+    /// A close that waits on its save: the tab closes when the save lands
+    /// and the draft matches what was written.
     pub(super) fn start_file_save_then_close(
         &mut self,
         close_tab_id: String,
@@ -191,89 +141,11 @@ impl Runtime {
             );
             return true;
         }
-        let Some(tab) = self
-            .snapshot
-            .editor
-            .tabs
-            .iter()
-            .find(|tab| tab.id == payload.tab_id && tab.path == payload.path)
-        else {
-            self.set_error(
-                "file.close_unknown_tab",
-                "The save target is not open",
-                false,
-            );
-            return true;
-        };
-        let tab_id = tab.id.clone();
-        let Some(document) = self.editor_documents.get_mut(&tab_id) else {
-            self.set_error(
-                "file.close_save_rejected",
-                "The save target has no document state",
-                false,
-            );
-            return true;
-        };
-        document.contents_utf8 = Some(payload.contents_utf8.clone());
-        document.dirty = true;
-        self.sync_file_tab_dirty(&tab_id);
-        self.sync_active_editor_document();
-        let Some(context) = self.worker_context.clone() else {
-            self.set_error(
-                "file.close_save_worker_unavailable",
-                "The file stayed open because its pending save could not start",
-                true,
-            );
-            return true;
-        };
-        let path = payload.path;
-        let contents = payload.contents_utf8;
-        let expected_modified_at = payload.expected_modified_at_unix_ms;
-        let mut editor = self
-            .editor_documents
-            .get(&tab_id)
-            .cloned()
-            .expect("the close-save document was validated");
-        let file_roots = self.file_roots.clone();
-        match thread::Builder::new()
-            .name("herdr-core-file-save-close".to_owned())
-            .spawn(move || {
-                let result = files::save_with_roots(
-                    &mut editor,
-                    Path::new(&path),
-                    contents.clone(),
-                    expected_modified_at,
-                    file_roots.as_ref(),
-                );
-                let Some(runtime) = context.runtime.upgrade() else {
-                    return;
-                };
-                let changed = match runtime.lock() {
-                    Ok(mut guard) => guard
-                        .ingest_file_save_then_close_result(tab_id, path, contents, editor, result),
-                    Err(_) => return,
-                };
-                drop(runtime);
-                if changed {
-                    context.notifier.notify();
-                }
-            }) {
-            Ok(_) => true,
-            Err(error) => {
-                self.set_error(
-                    "file.close_save_worker_failed",
-                    format!(
-                        "The file stayed open because its pending save could not start: {error}"
-                    ),
-                    true,
-                );
-                true
-            }
-        }
+        self.request_file_save(payload, true)
     }
 
     pub(super) fn prepare_file_tab(
-        &self,
+        &mut self,
         workspace_id: &str,
         checkout_id: &str,
         path: &str,
@@ -287,12 +159,7 @@ impl Runtime {
         }) {
             return Ok(PreparedFileTab::Open(tab_id));
         }
-        files::open_with_roots(Path::new(path), self.file_roots.as_ref()).map(|document| {
-            PreparedFileTab::Read {
-                tab_id: Self::file_tab_id(workspace_id, checkout_id, path),
-                document,
-            }
-        })
+        self.read_file_tab(workspace_id, checkout_id, path)
     }
 
     /// Shows a prepared file tab. `preview` is what the click asked for: a
@@ -315,34 +182,75 @@ impl Runtime {
                 }
                 tab_id
             }
-            PreparedFileTab::Read { tab_id, document } => {
-                self.editor_documents.insert(tab_id.clone(), document);
-                let tab = EditorTabSnapshot {
-                    id: tab_id.clone(),
-                    workspace_id: workspace_id.to_owned(),
-                    checkout_id: checkout_id.to_owned(),
-                    path: path.to_owned(),
-                    label: Path::new(path)
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or(path)
-                        .to_owned(),
-                    kind: EditorTabKind::File,
-                    diff_committed: None,
-                    markdown_live: true,
-                    wrap: false,
-                    dirty: false,
-                    preview,
-                };
-                self.place_editor_tab(tab);
-                tab_id
+            PreparedFileTab::Reading { root, channel } => {
+                self.start_document_open(
+                    root,
+                    channel,
+                    documents::OpenRequestFields {
+                        workspace_id: workspace_id.to_owned(),
+                        checkout_id: checkout_id.to_owned(),
+                        path: path.to_owned(),
+                        preview,
+                        reload: false,
+                    },
+                );
+                self.snapshot.ui_state.selected_path = Some(path.to_owned());
+                return;
+            }
+            read @ PreparedFileTab::Read { .. } => {
+                match self.insert_file_tab(read, workspace_id, checkout_id, path, preview) {
+                    Some(tab_id) => tab_id,
+                    None => return,
+                }
             }
         };
         if let Err(message) = self.activate_editor_tab(&tab_id) {
             self.set_error("file.focus_failed", message, false);
         }
         self.snapshot.ui_state.selected_path = Some(path.to_owned());
+    }
+
+    /// Adds a read document as a tab in its checkout's strip without showing
+    /// it. Returns the tab id, or `None` for a preparation that holds no
+    /// document.
+    pub(super) fn insert_file_tab(
+        &mut self,
+        prepared: PreparedFileTab,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        preview: bool,
+    ) -> Option<String> {
+        let PreparedFileTab::Read {
+            tab_id,
+            document,
+            place,
+        } = prepared
+        else {
+            return None;
+        };
+        self.editor_documents.insert(tab_id.clone(), *document);
+        self.document_places.insert(tab_id.clone(), place);
+        let tab = EditorTabSnapshot {
+            id: tab_id.clone(),
+            workspace_id: workspace_id.to_owned(),
+            checkout_id: checkout_id.to_owned(),
+            path: path.to_owned(),
+            label: Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
+                .unwrap_or(path)
+                .to_owned(),
+            kind: EditorTabKind::File,
+            diff_committed: None,
+            markdown_live: true,
+            wrap: false,
+            dirty: false,
+            preview,
+        };
+        self.place_editor_tab(tab);
+        Some(tab_id)
     }
 
     /// Puts a new editor tab into the strip.
@@ -416,6 +324,7 @@ impl Runtime {
         let tab = self.snapshot.editor.tabs.remove(index);
         let was_active = self.snapshot.editor.active_tab_id.as_deref() == Some(tab.id.as_str());
         self.editor_documents.remove(&tab.id);
+        self.forget_document(&tab.id);
         self.archive_documents.remove(&tab.id);
         self.editor_tab_history.retain(|known| known != &tab.id);
         if was_active {
@@ -2140,19 +2049,30 @@ impl Runtime {
             tab_exists,
             fallback_pane_id,
         };
-        let spawned = if matches!(&request.item, ClosedItem::File { .. }) {
-            self.worker_context
-                .as_ref()
-                .cloned()
-                .ok_or_else(|| "the file worker is unavailable".to_owned())
-                .and_then(|worker| {
-                    live::spawn_file_reopen(
-                        worker.runtime,
-                        worker.notifier,
-                        request,
-                        self.file_roots.clone(),
-                    )
-                })
+        let spawned = if let ClosedItem::File {
+            workspace_id,
+            checkout_id,
+            ..
+        } = &request.item
+        {
+            let located = self
+                .document_root(workspace_id, checkout_id)
+                .and_then(|root| Ok((self.device_channel(&root.device_id)?, root)));
+            located.and_then(|(channel, root)| {
+                self.worker_context
+                    .as_ref()
+                    .cloned()
+                    .ok_or_else(|| "the file worker is unavailable".to_owned())
+                    .and_then(|worker| {
+                        live::spawn_file_reopen(
+                            worker.runtime,
+                            worker.notifier,
+                            request,
+                            root,
+                            channel,
+                        )
+                    })
+            })
         } else {
             self.live
                 .as_ref()
@@ -2192,7 +2112,8 @@ impl Runtime {
             }
             Ok(live::FileReopenResultOrHerdr::File(file)) => {
                 match file {
-                    live::FileReopenResult::Opened(document) => {
+                    live::FileReopenResult::Opened(opened) => {
+                        let (document, place) = *opened;
                         if let ClosedItem::File {
                             workspace_id,
                             checkout_id,
@@ -2203,7 +2124,8 @@ impl Runtime {
                             let tab_id = Self::file_tab_id(workspace_id, checkout_id, path);
                             let prepared = PreparedFileTab::Read {
                                 tab_id: tab_id.clone(),
-                                document,
+                                document: Box::new(document),
+                                place,
                             };
                             self.show_file_tab(prepared, workspace_id, checkout_id, path, false);
                             if let Err(message) = self.focus_editor_tab_context(&tab_id) {

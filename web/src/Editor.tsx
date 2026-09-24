@@ -3,7 +3,7 @@ import type { Actions } from "./actions";
 import { allBuffers, BUFFER_MAX_AGE_MS, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, queueBuffer } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { PatchView } from "./editor/PatchView";
-import { clearDraft, noteDraft } from "./editor/draft";
+import { clearDraft, latestDraft, noteDraft } from "./editor/draft";
 import { activeEditorTab, changesFor, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
 import { downloadFile } from "./fileBytes";
 import { useShellStore } from "./store";
@@ -186,6 +186,8 @@ function EditorBody({
       (current.document_kind === "text" || current.document_kind === "markdown") &&
       !current.readonly_reason &&
       !current.conflict &&
+      // A save whose answer was lost blocks the next one until it is read back.
+      (!current.save || current.save.state === "saving") &&
       current.dirty
     );
   };
@@ -306,7 +308,10 @@ function EditorBody({
           {document.readonly_reason}
         </div>
       ) : null}
-      {document.conflict ? <ConflictBar tabId={tab.id} root={root} path={tab.path} actions={actions} /> : null}
+      {document.conflict ? (
+        <ConflictBar tabId={tab.id} root={root} path={tab.path} removed={document.conflict.disk_revision === null} actions={actions} />
+      ) : null}
+      {document.save && document.save.state !== "saving" ? <SaveUnknownBar tabId={tab.id} path={tab.path} message={document.save.message} /> : null}
       <CodeMirrorEditor
         key={tab.id}
         tabId={tab.id}
@@ -355,10 +360,46 @@ function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
   );
 }
 
-function ConflictBar({ tabId, root, path, actions }: { tabId: string; root: string; path: string; actions: Actions }) {
+/**
+ * Saves the draft the operator sees to a file of their choosing, for a
+ * document whose own save cannot land (B13-B15): the draft leaves through the
+ * browser's download, never through the host's filesystem.
+ */
+function exportDraft(tabId: string, path: string) {
+  const contents = latestDraft(tabId) ?? useShellStore.getState().editor?.document?.contents_utf8 ?? "";
+  const url = URL.createObjectURL(new Blob([contents], { type: "text/plain;charset=utf-8" }));
+  const link = window.document.createElement("a");
+  link.href = url;
+  link.download = `${path.split("/").pop() || "draft"}.draft`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function ExportDraftButton({ tabId, path }: { tabId: string; path: string }) {
+  return (
+    <button type="button" className="text-secondary hover:text-primary" data-export-draft="true" onClick={() => exportDraft(tabId, path)}>
+      Export draft
+    </button>
+  );
+}
+
+/** A save whose answer was lost: nothing is resent, and the file is read back to settle it (B14). */
+function SaveUnknownBar({ tabId, path, message }: { tabId: string; path: string; message: string | null }) {
+  return (
+    <div role="status" className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-save-unknown="true">
+      <span className="min-w-0 flex-1">{message ?? "The last save's result is unknown; reading the file back."} Your draft is preserved.</span>
+      <ExportDraftButton tabId={tabId} path={path} />
+    </div>
+  );
+}
+
+function ConflictBar({ tabId, root, path, removed, actions }: { tabId: string; root: string; path: string; removed: boolean; actions: Actions }) {
   return (
     <div className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-conflict="true">
-      <span className="flex-1">This file changed on disk. Your draft is preserved.</span>
+      <span className="flex-1">
+        {removed ? "This file was removed or could not be read back." : "This file changed on disk."} Your draft is preserved.
+      </span>
+      <ExportDraftButton tabId={tabId} path={path} />
       <button
         type="button"
         className="text-secondary hover:text-primary"
