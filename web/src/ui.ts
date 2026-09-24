@@ -54,6 +54,12 @@ export type PendingTrash = {
   selectAfter: string;
   /** The row's inode when the prompt opened: the host refuses an item that replaced it. */
   inode: number | null;
+  /**
+   * The checkout and device the prompt was opened for. A device's front
+   * checkout follows its own Herdr focus and can move while the prompt is
+   * open, so the confirmation goes to this target, not the one in front then (B34).
+   */
+  target: { root: string; device_id?: string };
 };
 
 type UiStore = {

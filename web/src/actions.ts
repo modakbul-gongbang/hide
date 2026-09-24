@@ -795,20 +795,20 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Opens the trash confirmation; nothing is dispatched until it is confirmed. */
     requestTrash(path: string, name: string, isDirectory: boolean, selectAfter: string, inode: number | null) {
-      ui().setPendingTrash({ path, name, isDirectory, selectAfter, inode });
+      const target = explorerTarget();
+      if (!target) return diagnostic("path_trash: no focused checkout");
+      ui().setPendingTrash({ path, name, isDirectory, selectAfter, inode, target });
     },
 
     confirmTrash() {
       const pending = ui().pendingTrash;
-      const here = explorerTarget();
       ui().setPendingTrash(null);
       if (!pending) return;
-      if (!here) return diagnostic("path_trash: no focused checkout");
       dispatch({
         schema_version: 2,
         kind: "path_trash",
         payload: {
-          ...here,
+          ...pending.target,
           path: pending.path,
           select_after: pending.selectAfter,
           inode: pending.inode,
