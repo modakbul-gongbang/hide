@@ -375,6 +375,7 @@ A clipboard image stages at the exact path the core reads it from, and hided rep
 The caps are 20 MiB per file and 40 MiB and 8 files per batch, checked here and again in the core; a refusal is one line over the pane (B15).
 A `file_list`, `file_open`, `reveal_path` or `file_save` that names a `device_id` other than `local` is not a path on this machine, so it skips this boundary: the device's helper judges it against the pinned root, and hided answers that device's `file_list` itself from the helper, or with `directory_unavailable` and a code (`not_ready`, `busy`, `unknown`, `refused`) when it cannot.
 A device's `file_bytes` names the checkout `root` beside the path: hided admits only a root the catalog carries for that device and asks the helper for one range of at most 4 MiB at a time (`Call::Bytes`, `hide_host::bytes::read`), sending each as the same binary frame before asking for the next, so a device read holds one range in memory as a local one does; every range names the file it came from, and a file that changes between ranges ends the read as `read_failed` rather than joining two files' bytes.
+A helper's range is accepted only as the range asked for (the same offset and file size, never longer, and shorter only where the read ends), so a helper cannot stretch one read into millions of round trips or end it early as if the file were shorter.
 Every frame and reason code lives in `contracts/hided-ws.schema.json`.
 
 ### The Explorer, editor and viewers

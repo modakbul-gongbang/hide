@@ -903,7 +903,10 @@ fn ancestors(resolved: &str) -> Result<Vec<String>, EstablishError> {
             "SFTP resolved the helper folder to an unusable path {resolved:?}"
         )));
     }
-    let parts: Vec<&str> = resolved.split('/').filter(|part| !part.is_empty()).collect();
+    let parts: Vec<&str> = resolved
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
     let mut folders = vec!["/".to_owned()];
     let mut current = String::new();
     for part in parts.iter().take(parts.len().saturating_sub(1)) {

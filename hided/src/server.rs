@@ -1369,32 +1369,25 @@ async fn stream_device_file_bytes(
                 .await
                 .map_err(|_| ());
         }
-        // The helper's answer is untrusted input: it has to be the range that
-        // was asked for, of the same file size, and no longer than asked, or
-        // a misbehaving helper could keep this read going forever.
         let expected_total = *total.get_or_insert(range.total);
-        if range.offset != cursor || range.total != expected_total {
-            return frames
-                .send(file_bytes_error(&request_id, &path, "read_failed"))
-                .await
-                .map_err(|_| ());
-        }
         let Ok(bytes) = range.bytes() else {
             return frames
                 .send(file_bytes_error(&request_id, &path, "read_failed"))
                 .await
                 .map_err(|_| ());
         };
-        if bytes.len() as u64 > wanted {
+        let asked = AskedRange {
+            offset: cursor,
+            length: wanted,
+            end: end_now,
+            total: expected_total,
+        };
+        let Some((taken, eof)) = asked.accept(range.offset, range.total, bytes.len()) else {
             return frames
                 .send(file_bytes_error(&request_id, &path, "read_failed"))
                 .await
                 .map_err(|_| ());
-        }
-        let taken = bytes
-            .len()
-            .min((end_now - range.offset.min(end_now)) as usize);
-        let eof = taken == 0 || range.offset + taken as u64 >= end_now;
+        };
         let header = json!({
             "type": "file_bytes",
             "request_id": request_id,
@@ -1413,6 +1406,36 @@ async fn stream_device_file_bytes(
         if eof {
             return Ok(());
         }
+    }
+}
+
+/// One range a device read asked its helper for.
+struct AskedRange {
+    offset: u64,
+    length: u64,
+    /// Where the whole read ends.
+    end: u64,
+    /// The file size the read started with.
+    total: u64,
+}
+
+impl AskedRange {
+    /// The helper's answer is untrusted input: it has to be the range asked
+    /// for, of the same file size, no longer than asked, and short only where
+    /// the read ends, or a misbehaving helper could stretch one read into
+    /// millions of round trips or end it early as if the file were shorter.
+    /// Returns how many of the answered bytes to send and whether they end
+    /// the read; `None` fails the read.
+    fn accept(&self, offset: u64, total: u64, length: usize) -> Option<(usize, bool)> {
+        if offset != self.offset || total != self.total || length as u64 > self.length {
+            return None;
+        }
+        let taken = length.min(self.end.saturating_sub(offset) as usize);
+        let eof = offset + taken as u64 >= self.end;
+        if !eof && (length as u64) < self.length {
+            return None;
+        }
+        Some((taken, eof))
     }
 }
 
@@ -1955,6 +1978,57 @@ pub fn allowed_origins(port: u16, vite: Option<&str>) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A device range is accepted only as the range asked for: same offset
+    /// and file size, never longer, and short only where the read ends
+    /// (PRD S5.5 B39, B43).
+    #[test]
+    fn a_device_range_answer_is_the_range_asked_for_or_the_read_fails() {
+        const MIB: u64 = 1024 * 1024;
+        let asked = AskedRange {
+            offset: 0,
+            length: 4 * MIB,
+            end: 10 * MIB,
+            total: 10 * MIB,
+        };
+        let full = (4 * MIB) as usize;
+        assert_eq!(asked.accept(0, 10 * MIB, full), Some((full, false)));
+        // One byte per range would take ten million round trips.
+        assert_eq!(asked.accept(0, 10 * MIB, 1), None);
+        // An empty answer before the end is not the end of the file.
+        assert_eq!(asked.accept(0, 10 * MIB, 0), None);
+        assert_eq!(asked.accept(0, 10 * MIB, full + 1), None);
+        assert_eq!(asked.accept(1, 10 * MIB, full), None);
+        assert_eq!(asked.accept(0, 11 * MIB, full), None);
+
+        // The last range is short because the read ends there.
+        let last = AskedRange {
+            offset: 8 * MIB,
+            length: 2 * MIB,
+            end: 10 * MIB,
+            total: 10 * MIB,
+        };
+        assert_eq!(
+            last.accept(8 * MIB, 10 * MIB, (2 * MIB) as usize),
+            Some(((2 * MIB) as usize, true))
+        );
+        // A read of an empty file ends at once.
+        let empty = AskedRange {
+            offset: 0,
+            length: 4 * MIB,
+            end: 0,
+            total: 0,
+        };
+        assert_eq!(empty.accept(0, 0, 0), Some((0, true)));
+        // A read that asked for less than the file ends at its own end.
+        let part = AskedRange {
+            offset: 0,
+            length: 4 * MIB,
+            end: MIB,
+            total: 10 * MIB,
+        };
+        assert_eq!(part.accept(0, 10 * MIB, full), Some((MIB as usize, true)));
+    }
 
     #[test]
     fn a_fresh_client_gets_a_snapshot_and_a_resumed_one_a_delta() {
