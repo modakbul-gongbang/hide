@@ -3,6 +3,7 @@
 // owns (focus, tabs, layout, sidebar visibility) stays in `store.ts`.
 
 import { create } from "zustand";
+import type { Relation } from "./lineage";
 
 export type SidebarMode = "agents" | "projects";
 
@@ -73,6 +74,8 @@ export type PendingTrash = {
 
 type UiStore = {
   screen: Screen | null;
+  /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
+  relation: Relation | null;
   sidebarMode: SidebarMode;
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
@@ -108,6 +111,7 @@ type UiStore = {
    */
   escapeLayers: (() => void)[];
   setScreen: (screen: Screen) => void;
+  setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
@@ -130,6 +134,7 @@ type UiStore = {
 
 export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
+  relation: null,
   sidebarMode: "agents",
   explorerSelection: null,
   editorFindRequest: 0,
@@ -146,6 +151,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   recordingShortcut: false,
   escapeLayers: [],
   setScreen: (screen) => set({ screen }),
+  setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);

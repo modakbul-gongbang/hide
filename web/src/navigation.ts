@@ -69,6 +69,45 @@ export function groupCounts(agents: AgentRow[]): GroupCounts {
   return counts;
 }
 
+export type AgentSection = { group: string; label: string; agents: AgentRow[] };
+
+/**
+ * The Agents explorer's sections (S6 B13): every current agent under Needs
+ * You, Done, Working and Seen, in the core's order within each, with an
+ * empty group left out. A group the core names that this list does not know
+ * is still shown, under its own name, rather than dropping its rows.
+ */
+export function agentSections(agents: AgentRow[]): AgentSection[] {
+  const known = new Set<string>(AGENT_GROUPS.map((row) => row.group));
+  const sections: AgentSection[] = AGENT_GROUPS.map(({ group, label }) => ({ group, label, agents: agents.filter((agent) => agent.group === group) }));
+  for (const agent of agents) {
+    if (known.has(agent.group)) continue;
+    let section = sections.find((row) => row.group === agent.group);
+    if (!section) {
+      section = { group: agent.group, label: agent.group.replace(/_/g, " "), agents: [] };
+      sections.push(section);
+    }
+    section.agents.push(agent);
+  }
+  return sections.filter((section) => section.agents.length > 0);
+}
+
+/** How many live descendants an agent has among the rows the core lists (B13). */
+export function liveDescendants(agent: AgentRow, agents: AgentRow[]): number {
+  const byPane = new Map(agents.map((row) => [row.pane_id, row]));
+  const seen = new Set<string>();
+  const queue = [...(agent.lineage_child_pane_ids ?? [])];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id) || id === agent.pane_id) continue;
+    const row = byPane.get(id);
+    if (!row) continue;
+    seen.add(id);
+    queue.push(...(row.lineage_child_pane_ids ?? []));
+  }
+  return seen.size;
+}
+
 /** The agents of one checkout. */
 export function checkoutAgents(checkout: Checkout, agents: AgentRow[]): AgentRow[] {
   const panes = new Set(checkout.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id)));

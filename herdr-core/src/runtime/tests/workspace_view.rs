@@ -104,10 +104,12 @@ fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
     let (runtime, checkout_id, directory) = strip_checkout("area-intent");
     let mut runtime = with_views(runtime, &views_path("area-intent"));
     with_tabs(&mut runtime, &directory);
-    assert_eq!(mode(&runtime), ViewMode::Together);
+    assert_eq!(
+        mode(&runtime),
+        ViewMode::Agents,
+        "a new Workspace has no View to show yet"
+    );
 
-    layout(&mut runtime, serde_json::json!({"mode": "agents"}));
-    assert_eq!(mode(&runtime), ViewMode::Agents);
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
     assert_eq!(mode(&runtime), ViewMode::Together);
 
@@ -219,6 +221,60 @@ fn a_restart_restores_the_workspace_and_marks_a_missing_file_unavailable() {
         vec![("gone.md".to_owned(), true), ("notes.md".to_owned(), false)]
     );
     assert_eq!(active_label(&restarted).as_deref(), Some("notes.md"));
+}
+
+/// B19: the daemon opens a checkout's root after the first snapshot names
+/// it, so a restore waits for that root instead of reading too early and
+/// marking every saved file unavailable; the tabs it has not restored yet
+/// are not overwritten while it waits.
+#[test]
+fn a_restore_waits_for_the_daemon_to_open_the_checkout_root() {
+    let (runtime, checkout_id, directory) = strip_checkout("waits-for-root");
+    let state = views_path("waits-for-root");
+    let mut runtime = with_views(runtime, &state);
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    drop(runtime);
+
+    let (mut restarted, checkout_id) = tab_order_runtime(&directory.to_string_lossy());
+    assert!(!restarted.set_file_roots(crate::files::FileRoots::from_opened(Vec::new())));
+    let mut restarted = with_views(restarted, &state);
+    let restored = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .filter(|tab| tab.checkout_id == checkout_id)
+            .map(|tab| (tab.label.clone(), tab.unavailable_reason.is_some()))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        restored(&restarted).is_empty(),
+        "nothing is read before the root is open"
+    );
+    restarted.sync_workspace_view();
+    assert_eq!(
+        restarted
+            .workspace_views
+            .as_ref()
+            .and_then(|store| store.views.get("local", &directory.to_string_lossy()))
+            .map(|entry| entry.tabs.len()),
+        Some(1),
+        "the saved tab is kept while the restore waits"
+    );
+
+    let root = std::fs::File::open(&directory).expect("open root");
+    assert!(
+        restarted.set_file_roots(crate::files::FileRoots::from_opened(vec![(
+            directory.clone(),
+            root
+        )]))
+    );
+    assert_eq!(restored(&restarted), vec![("notes.md".to_owned(), false)]);
+    assert!(
+        !restarted.set_file_roots(crate::files::FileRoots::from_opened(Vec::new())),
+        "a Workspace is restored once per process"
+    );
 }
 
 /// D-10: a file this build cannot read is left for the operator and the

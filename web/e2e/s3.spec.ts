@@ -102,14 +102,12 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
     await beforeLoad?.(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
-    // Focus the repository checkout, then show the right panel's Explorer,
-    // which is where the tree lives now (D-13).
+    // Focus the repository checkout: its Workspace opens with the Explorer
+    // among its tools, which is where the tree lives (S6 D-05, B10).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
     await row.click();
     await expect(row).toHaveAttribute("aria-current", "true");
-    await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
-    await page.keyboard.press("Meta+Shift+KeyB");
     await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
 
@@ -472,7 +470,7 @@ test("closing a dirty tab saves the draft instead of dropping it", async ({ page
 
     const tab = page.locator('[data-tab-kind="file"]');
     await tab.hover();
-    await tab.locator('button[aria-label^="Close tab"]').click();
+    await tab.locator('button[aria-label^="Close view"]').click();
     await expect
       .poll(() => (lastSent.get("file_close")?.pending_save as { contents_utf8?: string } | null)?.contents_utf8)
       .toBe(`${SOURCE}X`);
@@ -493,7 +491,7 @@ test("a closed tab's draft is not written back when the file is reopened", async
     await page.keyboard.type("export const answer = 5;\n");
     const tab = page.locator('[data-tab-kind="file"]');
     await tab.hover();
-    await tab.locator('button[aria-label^="Close tab"]').click();
+    await tab.locator('button[aria-label^="Close view"]').click();
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 5;\n");
 
@@ -536,7 +534,7 @@ test("a conflicted background tab is not closed away with its draft", async ({ p
     // the close-save is refused, so the tab stays with the conflict showing.
     const conflicted = page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" });
     await conflicted.hover();
-    await conflicted.locator('button[aria-label^="Close tab"]').click();
+    await conflicted.locator('button[aria-label^="Close view"]').click();
     await expect.poll(() => sent.get("file_close")).toBe(1);
     await expect(page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" })).toHaveCount(1);
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
@@ -876,7 +874,7 @@ test("a preview-only document closes without a save", async ({ page }) => {
 
     // No draft the core would accept exists here, so the close is one step.
     await page.locator('[data-tab-kind="file"]').hover();
-    await page.locator('[data-tab-kind="file"] button[aria-label^="Close tab"]').click();
+    await page.locator('[data-tab-kind="file"] button[aria-label^="Close view"]').click();
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect.poll(() => sent.get("file_close")).toBe(1);
     expect(lastSent.get("file_close")?.pending_save ?? null).toBeNull();
@@ -921,7 +919,8 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
-    // preview tab (B12).
+    // preview tab (B12). The Explorer stays as the operator left it (S6 B10);
+    // the row is revealed for when it is shown.
     await page.keyboard.press("Meta+KeyP");
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
@@ -931,19 +930,21 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     await screenshot(page, "s3-palette-files");
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
-    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
+    await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
+    await page.keyboard.press("Meta+Shift+KeyB");
+    await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);
 
     // ⌘K: the snapshot's projects and checkouts are searched here, and picking
-    // one focuses it (B13).
+    // a checkout focuses its Workspace (B13; a Project opens its Overview, S6 B1).
     const focusBefore = sent.get("focus_checkout") ?? 0;
     await page.keyboard.press("Meta+KeyK");
     const search = page.locator('[data-palette="Search"] [data-palette-input]');
     await expect(search).toBeVisible();
     await search.fill("fixture");
-    const projectRow = page.locator("[data-palette-list] button").filter({ hasText: "fixture" }).first();
+    const projectRow = page.locator("[data-palette-list] button").filter({ hasText: "fixture" }).filter({ hasText: "checkout" }).first();
     await expect(projectRow).toBeVisible();
     await screenshot(page, "s3-palette-search");
     await projectRow.click();
@@ -1220,9 +1221,10 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     await expect.poll(() => sent.get("file_save") ?? 0, { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
 
     // The daemon restarts on the same port and state: its core forgot the
-    // tab and the draft, the host kept its id.
+    // tab and the draft, the host kept its id. Without its Workspace views
+    // file the tab is not restored, as after a build that kept none.
     const hostBefore = fixture.daemon.hostId;
-    const restarted = await fixture.daemon.restart();
+    const restarted = await fixture.daemon.restart((state) => fs.rmSync(path.join(state, "workspace-views.json"), { force: true }));
     fixture.daemon = restarted;
     expect(restarted.hostId).toBe(hostBefore);
     await page.goto(`${restarted.origin}/?probe=1#token=${restarted.token}`);
@@ -1249,6 +1251,33 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 77;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0, { timeout: 10_000 });
     await expect.poll(async () => (await storedDrafts(page)).some((row) => row.path === file), { timeout: 10_000 }).toBe(false);
+  } finally {
+    fs.chmodSync(file, 0o644);
+    close(fixture);
+  }
+});
+
+test("a View tab a daemon restart restores takes its unsaved draft back (S6 B19)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file } = fixture;
+  const original = fs.readFileSync(file, "utf8");
+  try {
+    fs.chmodSync(file, 0o444);
+    const content = page.locator('[data-editor-codemirror] .cm-content');
+    await content.click();
+    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.type("export const answer = 78;\n");
+    await expect.poll(async () => (await storedDrafts(page)).find((row) => row.path === file)?.contents, { timeout: 5_000 }).toBe("export const answer = 78;\n");
+
+    fixture.daemon = await fixture.daemon.restart();
+    await page.goto(`${fixture.daemon.origin}/?probe=1#token=${fixture.daemon.token}`);
+    // The Workspace brings the tab back and the draft returns into it,
+    // unsaved; nothing reached the disk and nothing asks for recovery.
+    await expect(page.locator('[data-view-area] [data-tab-kind="file"]')).toHaveCount(1, { timeout: 20_000 });
+    await expect(content).toContainText("answer = 78", { timeout: 20_000 });
+    await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
+    await expect(page.locator("[data-draft-recovery]")).toHaveCount(0);
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
   } finally {
     fs.chmodSync(file, 0o644);
     close(fixture);

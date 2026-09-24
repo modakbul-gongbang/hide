@@ -6,8 +6,9 @@ import { closeWithSaveOutcome, deleteBuffer, flushBuffer, settledBuffer, storedD
 import { closeDecision, statusUnknownNotice } from "./close";
 import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { latestDraft, noteSent } from "./editor/draft";
+import { relationState } from "./lineage";
 import { lastCheckoutOf } from "./recent";
-import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
+import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
 import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
@@ -83,6 +84,31 @@ export function createActions(dispatch: DispatchFn) {
   };
 
   const sendRemote = (targetId: string, request: RemoteAction) => dispatch(remoteControl(targetId, request));
+
+  /**
+   * A child chip, a Return or a relationship Open (S6 B15, B16): one
+   * focus_pane carrying a request id, so the core's receipt says whether this
+   * click landed. A second click on the same target while the first is in
+   * flight is dropped. A pane on another device is asked for there, and the
+   * device's answer comes back as the same receipt.
+   */
+  const followRelation = (sourcePaneId: string, targetPaneId: string, label: string) => {
+    const current = ui().relation;
+    if (current?.targetPaneId === targetPaneId && relationState(current, rest()?.status?.pane_focus_request)?.phase === "pending") return;
+    const requestId = remoteRequestId();
+    ui().setRelation({ requestId, sourcePaneId, targetPaneId, label });
+    ui().setScreen({ kind: "workspace" });
+    const targetId = remoteTargetOfPane(rest(), targetPaneId);
+    if (targetId) {
+      dispatch({
+        schema_version: 2,
+        kind: "remote_control",
+        payload: { target_id: targetId, request_id: requestId, report_pane_focus_outcome: true, action: "focus_pane", pane_id: targetPaneId },
+      });
+      return;
+    }
+    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: targetPaneId, origin: "operator", request_id: requestId } });
+  };
 
   /** The id of the core's task slot now, so a request can tell its own answer from an older one. */
   const taskIdNow = () => rest()?.task_operation?.id ?? 0;
@@ -456,6 +482,18 @@ export function createActions(dispatch: DispatchFn) {
       }
       const request: RemoteAction = { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId };
       sendRemote(deviceId, request);
+    },
+
+    followRelation,
+
+    /** Asks for the failed relationship focus again, as a new request. */
+    retryRelation() {
+      const relation = ui().relation;
+      if (relation) followRelation(relation.sourcePaneId, relation.targetPaneId, relation.label);
+    },
+
+    dismissRelation() {
+      ui().setRelation(null);
     },
 
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */

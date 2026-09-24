@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mainSections } from "./navigation";
+import { agentSections, liveDescendants, mainSections } from "./navigation";
 import type { SnapshotRest } from "./snapshot";
 
 const project = (id: string, device: string, pinned = false) => ({
@@ -31,5 +31,23 @@ describe("Main", () => {
     expect(local?.projects[1]?.workspaceCount).toBe(1);
     expect(mini?.availability).toEqual({ state: "unavailable", text: "mini is unreachable", retry: true });
     expect(mini?.projects.map((row) => [row.id, row.counts, row.workspaceCount])).toEqual([["r", null, null]]);
+  });
+});
+
+describe("the Agents explorer", () => {
+  const row = (pane_id: string, group: string, children: string[] = []) => ({ pane_id, group, lineage_child_pane_ids: children }) as never;
+
+  it("keeps the fixed group order, leaves empty groups out and never drops a row", () => {
+    const sections = agentSections([row("a", "seen"), row("b", "needs_you"), row("c", "paused"), row("d", "seen")]);
+    expect(sections.map((section) => [section.label, section.agents.length])).toEqual([
+      ["Needs You", 1],
+      ["Seen", 2],
+      ["paused", 1],
+    ]);
+  });
+
+  it("counts every live descendant once, not only the direct children", () => {
+    const agents = [row("root", "working", ["child", "gone"]), row("child", "working", ["grandchild"]), row("grandchild", "seen", ["root"])];
+    expect(liveDescendants(agents[0]!, agents)).toBe(2);
   });
 });

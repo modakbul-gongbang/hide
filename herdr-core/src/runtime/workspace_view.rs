@@ -19,7 +19,7 @@ pub(super) type WorkspaceKey = (String, String);
 
 pub(super) struct WorkspaceViewStore {
     path: PathBuf,
-    views: WorkspaceViews,
+    pub(super) views: WorkspaceViews,
     /// Workspaces whose remembered tabs were restored in this process. Their
     /// tab list follows the editor from then on; any other Workspace keeps the
     /// list the file carried until it is shown.
@@ -324,22 +324,52 @@ impl Runtime {
         if front != store.front {
             let store = self.workspace_views.as_mut().expect("checked above");
             store.front = front.clone();
-            let restore = front
-                .as_ref()
-                .is_some_and(|key| store.live.insert(key.clone()));
             if let Some(key) = front.as_ref() {
                 store.views.entry(&key.0, &key.1).last_used_unix_ms = unix_milliseconds();
             }
-            if restore && let Some(key) = front.clone() {
-                self.restore_view_tabs(&key);
-            }
             self.persist_workspace_views();
         }
+        self.restore_front_when_ready();
         if front.is_some() {
             self.align_editor_with_front();
         }
         self.record_view_tabs();
         self.publish_workspace_view(front.as_ref());
+    }
+
+    /// Brings the front Workspace's View tabs back the first time in this
+    /// process that they can be read, and only then starts recording its tabs,
+    /// so a Workspace whose files cannot be reached yet keeps what it saved.
+    /// On this machine that waits for the daemon to open the checkout's root:
+    /// a read before it is refused, and would mark every restored file
+    /// unavailable. Returns whether a restore began.
+    pub(super) fn restore_front_when_ready(&mut self) -> bool {
+        let Some(store) = self.workspace_views.as_ref() else {
+            return false;
+        };
+        let Some(key) = store.front.clone() else {
+            return false;
+        };
+        if store.live.contains(&key) || !self.view_root_ready(&key) {
+            return false;
+        }
+        self.workspace_views
+            .as_mut()
+            .expect("checked above")
+            .live
+            .insert(key.clone());
+        self.restore_view_tabs(&key);
+        true
+    }
+
+    /// Whether a file of this Workspace can be read now. Only the daemon
+    /// installs file roots; the Swift shell reads by path and never waits.
+    fn view_root_ready(&self, key: &WorkspaceKey) -> bool {
+        key.0 != workspace::LOCAL_DEVICE_ID
+            || self
+                .file_roots
+                .as_ref()
+                .is_none_or(|roots| roots.pinned_root(Path::new(&key.1)).is_some())
     }
 
     fn publish_workspace_view(&mut self, front: Option<&WorkspaceKey>) {

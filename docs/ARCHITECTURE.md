@@ -295,7 +295,7 @@ A created worktree's pane is focused with one `focus_pane` once the snapshot lis
 A dialog or sheet returns keyboard focus to a terminal through `focusTerminal` on the core's focused pane (`restoreFocus`), never by re-focusing the textarea that held it, which would be reported as the operator moving there.
 
 The device switcher sits at the bottom of the sidebar (`web/src/DevicePicker.tsx`), the web form of the native chip and `HideDevicePicker`, and sends `focus_device`.
-Selecting an SSH device makes it the context (`web/src/remote.ts`, `web/src/RemoteSurface.tsx`): the sidebar lists that host's Herdr workspaces and agents and the canvas draws its visible tab from `status.remote[].session`, the projection the core already builds over SSH with every id scoped to the target (`remote:<target>:pane:…`).
+Selecting an SSH device makes it the context (`web/src/remote.ts`, the remote Agent area in `web/src/WorkspaceScreen.tsx`): the sidebar lists that host's Herdr workspaces and agents and the canvas draws its visible tab from `status.remote[].session`, the projection the core already builds over SSH with every id scoped to the target (`remote:<target>:pane:…`).
 The web follows the host's own focus rather than keeping a selection, because the core attaches exactly the panes of that host's focused tab; a pane is placed by the rectangle Herdr reports for it, and there is no divider because a remote pane's size is its host's.
 Keystrokes, scroll and viewport go out with the scoped pane id, which the core writes to that host's terminal session; focus, split, zoom, close pane, new tab, tab focus and close tab go out as `remote_control` with the device as `target_id` and a fresh `request_id`, and the core checks every id against that host's session before anything is sent, so a stale or local id is refused rather than retargeted.
 The pane's own id decides where a click-to-focus goes, and a close confirmation carries the device it was asked about.
@@ -304,6 +304,27 @@ The Explorer, file tabs and History run on the device's own helper; worktree cre
 The core also refuses `create_pane`, whose target is implicit, while a remote device is focused (`pane.device_mismatch`), so a split never falls back to this machine.
 Typing into a remote pane makes it the core's terminal pane, so `focus_device` back to this machine, or removing the selected device, hands the keyboard back to `ui_state.selected_pane_id` or the drawn tab's focused pane (`return_keyboard_to_local_pane`).
 Registering or removing a device refreshes only the device rows (`rebuild_device_rows`); rebuilding the whole catalog there dropped every checkout's tabs until the next session publish.
+
+### Workspaces in the web shell
+
+The web shell has three screens (PRD S6 D-02): Main lists every registered Project on every device, a Project's Overview lists its Workspaces and agents, and a Workspace is one checkout's working space (`web/src/{MainScreen,WorkspaceScreen}.tsx`, rules in `web/src/navigation.ts`).
+Which screen is showing is the shell's own location (`ui.ts`), not core state: the page starts on the Workspace the core has in front, or on Main once Herdr has settled with none, and moving between screens creates or ends nothing.
+Main and Overview read only the catalog, the device sessions and the agent rows the snapshot already carries; a device that is connecting or cannot answer shows why and leaves its counts unknown rather than zero.
+
+A Workspace's layout (Agents only, Agents and Views, Views only), its two tools, the boundary between its areas and its View tabs belong to the core (D-10), keyed by device and checkout path in `herdr-core/src/workspace_views.rs` and kept in `workspace-views.json` beside `core-state.json`, a versioned file of its own so neither the old settings nor the Swift shell's state is rewritten.
+Only `hided` names that file (`CoreOptions.workspace_views_path`); without it the core keeps today's single-surface editor, which is what the Swift shell still runs.
+A file this build cannot read is renamed aside as `<name>.unreadable-<ms>` and the defaults load with a `workspace_views.unreadable` diagnostic; saves are atomic and run on a worker, coalesced, never under the runtime mutex.
+The shell sends one `workspace_view` event for a layout, a tool or a boundary (`mode`, `explorer`, `changes`, `agent_share`), and the snapshot's `workspace_view` is the front Workspace's entry; it is absent from the wire when no Workspace is in front, so the Swift snapshot keeps its keys.
+The global `ui_state.right_panel_visible` and `right_panel_section` are projected from the front Workspace's tools, so the Changes reader and the device Explorer watch keep the one gate they had.
+A new Workspace starts with its agents alone and the Explorer shown, since it has no View yet.
+
+With the areas separate, choosing an Agent tab no longer takes the editor off screen: the active editor tab follows the front Workspace's own View tab (`runtime/workspace_view.rs`), where before every terminal choice deactivated it.
+The core also owns when the hidden area comes back (D-08): an explicit file open, reveal or History selection from Agents only switches to Agents and Views, and an explicit agent or tab choice from Views only does the same; a status change, a hover or a menu opening moves nothing, and a refused event moves nothing either.
+View tabs come back the first time their Workspace is in front in a process, each through the ordinary worker open; on this machine that waits until hided has opened the checkout's root, because a read before it is refused, and a Workspace does not record its tabs until it has restored them, so a Workspace whose files cannot be reached keeps what it saved.
+A file that cannot be read comes back as a View tab with `unavailable_reason` and only a Close; nothing is started in Herdr and no split or zoom is replayed.
+
+A pane's delegated children and ancestors come from the pane rows the core already projects (`children.chips`, `lineage_path`; rules in `web/src/lineage.ts`): a parent's header lists every direct child on one scrolling row, a child's header has a compact Return, and the pane menu lists parent, siblings and children, each moved to only by its explicit Open.
+Each of those moves is one `focus_pane` carrying a `request_id` (on a device, `remote_control` with `report_pane_focus_outcome`), and the core's `status.pane_focus_request` is the only answer the header shows: pending until Herdr's layout confirms, or failed with the core's reason and Retry when it can be retried; a second click on the same target while one is in flight is dropped, and a failure never splits the parent or makes a pane.
 
 ### The `$HOME` filesystem boundary
 
@@ -381,7 +402,7 @@ Every frame and reason code lives in `contracts/hided-ws.schema.json`.
 
 ### The Explorer, editor and viewers
 
-The Explorer (`web/src/ExplorerTree.tsx`) and History (`web/src/HistoryList.tsx`) are the web right panel's sections, drawn where the core's `right_panel_visible` and `right_panel_section` say (`web/src/RightPanel.tsx`): the core owns which folders are expanded (`ui_state.expanded_paths`) and hided answers one listing per folder, so an Explorer row is a pure function of those, the checkout's changed-file set and the file's icon (`web/src/explorer.ts`, unit-tested without a browser).
+The Explorer (`web/src/ExplorerTree.tsx`) and History (`web/src/HistoryList.tsx`) are the Workspace's two tools (`web/src/Tools.tsx`), each shown while the front Workspace's `workspace_view` says so (see Workspaces in the web shell): the core owns which folders are expanded (`ui_state.expanded_paths`) and hided answers one listing per folder, so an Explorer row is a pure function of those, the checkout's changed-file set and the file's icon (`web/src/explorer.ts`, unit-tested without a browser).
 `@tanstack/react-virtual` lays out a 10,000-row folder; nothing in a row runs git or reads the disk (B16).
 The core computes a checkout's changed files only while Explorer or History is visible or a diff tab is active, and the web renders only a Changes snapshot whose root matches the front checkout's `navigator.changes_root_path`.
 Each answer names the device and folder it was read for (`ChangesKey`); the core drops one that no longer matches the checkout in front, and moving to another device's checkout clears the published set in the same frame, so the same path on two devices never shows the other's changes (B22).

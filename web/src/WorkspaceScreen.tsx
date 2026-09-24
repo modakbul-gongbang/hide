@@ -3,7 +3,7 @@ import type { Actions } from "./actions";
 import { Button } from "./components/ui/controls";
 import { EditorSurface } from "./Editor";
 import { LayoutIcon, ToolIcon } from "./icons";
-import { MenuList, type MenuEntry } from "./Menu";
+import { ContextMenu, MenuList, type MenuEntry } from "./Menu";
 import { FindBar } from "./Overlays";
 import { PaneCanvas, RemotePaneCanvas } from "./PaneGrid";
 import { remoteView } from "./remote";
@@ -43,42 +43,62 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, actions }: { chec
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
   const setScreen = useUiStore((s) => s.setScreen);
   const name = checkout.branch ?? checkout.label;
+  // What the toolbar acts on is this Workspace: its layout, its tools, its
+  // path and its Project (B18). Opening the menu changes none of them.
+  const menuItems = (): MenuEntry<ToolbarMenuId>[] => [
+    ...LAYOUTS.map((layout) => ({ id: `layout:${layout.mode}` as const, label: `${layout.mode === mode ? "✓ " : ""}${layout.label}`, unavailable: null })),
+    { id: "explorer", label: explorer ? "Hide Explorer" : "Show Explorer", unavailable: null, separated: true },
+    { id: "changes", label: changes ? "Hide History" : "Show History", unavailable: null },
+    { id: "copy_path", label: "Copy Workspace path", unavailable: null, separated: true },
+    { id: "overview", label: "Open Project Overview", unavailable: project ? null : "This Workspace's Project is not in the catalog" },
+  ];
+  const select = (id: ToolbarMenuId) => {
+    if (id.startsWith("layout:")) return actions.setLayout(id.slice("layout:".length) as ViewMode);
+    if (id === "explorer") return actions.setTool("explorer", !explorer);
+    if (id === "changes") return actions.setTool("changes", !changes);
+    if (id === "copy_path") return void navigator.clipboard?.writeText(checkout.path).catch(() => undefined);
+    if (id === "overview" && project) setScreen({ kind: "overview", projectId: project.id });
+  };
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-divider bg-sidebar px-sm text-caption" data-workspace-toolbar="true">
-      <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
-        <button type="button" className="shrink-0 rounded-xs px-xs text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
-          Main
-        </button>
-        <span aria-hidden="true" className="text-muted">/</span>
-        {project ? (
-          <button
-            type="button"
-            className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
-            title={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}
-            data-go-overview={project.id}
-            onClick={() => setScreen({ kind: "overview", projectId: project.id })}
-          >
-            {project.label}
+    <ContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
+      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-divider bg-sidebar px-sm text-caption" data-workspace-toolbar="true">
+        <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
+          <button type="button" className="shrink-0 rounded-xs px-xs text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
+            Main
           </button>
-        ) : null}
-        <span aria-hidden="true" className="text-muted">/</span>
-        <span className="min-w-0 truncate text-primary" title={`${name} · ${checkout.path}`} aria-current="page">
-          {name}
-        </span>
-        {device ? (
-          <span className="shrink-0 rounded-xs bg-elevated px-xs text-micro text-secondary" title={`On ${device.label}`} data-workspace-device={device.id}>
-            {device.label}
+          <span aria-hidden="true" className="text-muted">/</span>
+          {project ? (
+            <button
+              type="button"
+              className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
+              title={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}
+              data-go-overview={project.id}
+              onClick={() => setScreen({ kind: "overview", projectId: project.id })}
+            >
+              {project.label}
+            </button>
+          ) : null}
+          <span aria-hidden="true" className="text-muted">/</span>
+          <span className="min-w-0 truncate text-primary" title={`${name} · ${checkout.path}`} aria-current="page">
+            {name}
           </span>
-        ) : null}
-      </nav>
-      <LayoutSwitch mode={mode} actions={actions} />
-      <div className="flex items-center gap-xxs" role="group" aria-label="Workspace tools">
-        <ToolToggle tool="explorer" label="Explorer" on={explorer} actions={actions} />
-        <ToolToggle tool="changes" label="History" on={changes} actions={actions} />
+          {device ? (
+            <span className="shrink-0 rounded-xs bg-elevated px-xs text-micro text-secondary" title={`On ${device.label}`} data-workspace-device={device.id}>
+              {device.label}
+            </span>
+          ) : null}
+        </nav>
+        <LayoutSwitch mode={mode} actions={actions} />
+        <div className="flex items-center gap-xxs" role="group" aria-label="Workspace tools">
+          <ToolToggle tool="explorer" label="Explorer" on={explorer} actions={actions} />
+          <ToolToggle tool="changes" label="History" on={changes} actions={actions} />
+        </div>
       </div>
-    </div>
+    </ContextMenu>
   );
 }
+
+type ToolbarMenuId = `layout:${ViewMode}` | "explorer" | "changes" | "copy_path" | "overview";
 
 /** Three icons with the choice marked, and the same choices by name in a menu (D-03). */
 function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
@@ -98,7 +118,7 @@ function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
             role="radio"
             aria-checked={layout.mode === mode}
             aria-label={layout.label}
-            title={`${layout.label} — ${layout.description}`}
+            title={layout.label}
             data-layout-choice={layout.mode}
             className={`flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-accent ${
               layout.mode === mode ? "bg-elevated text-primary" : "text-muted hover:text-secondary"
@@ -113,8 +133,8 @@ function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
         type="button"
         aria-haspopup="menu"
         aria-expanded={menu}
-        aria-label={`Layout: ${layoutLabel(mode)}`}
-        title="Layout menu"
+        aria-label={`Layout menu: ${layoutLabel(mode)}`}
+        title={`Layout menu: ${layoutLabel(mode)}`}
         data-layout-menu="true"
         className="rounded-xs px-xs text-muted hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
         onClick={() => setMenu(!menu)}
@@ -244,7 +264,7 @@ function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Ac
       <AgentTabBar checkout={checkout} activeTabId={checkout.active_tab_id} agents={agents} actions={actions} />
       <FindBar actions={actions} />
       {hasTabs ? (
-        <PaneCanvas dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
+        <PaneCanvas actions={actions} />
       ) : (
         <AreaEmpty state="no-agent-tab" text="No agent tab is open in this Workspace.">
           <Button onClick={() => actions.createTab()} data-empty-new-tab="true">
@@ -307,7 +327,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
         </div>
       )}
       <AgentTabBar checkout={view.checkout} activeTabId={view.tab?.id ?? null} agents={session?.agents ?? null} device actions={actions} />
-      <RemotePaneCanvas view={view} connected={connected} dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
+      <RemotePaneCanvas view={view} connected={connected} actions={actions} />
     </>
   );
 }

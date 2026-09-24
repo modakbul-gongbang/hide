@@ -2,6 +2,8 @@ import { memo } from "react";
 import type { Actions } from "./actions";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
+import { chipTone } from "./lineage";
+import { agentSections, liveDescendants } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import { RowMenu } from "./RowMenu";
 import { displayBrowser } from "./shortcuts";
@@ -75,29 +77,75 @@ export function Sidebar({ actions }: { actions: Actions }) {
   );
 }
 
-/** The agents of the context on screen: this machine's, or the selected SSH device's. */
+/**
+ * The agents of the context on screen, this machine's or the selected SSH
+ * device's, under Needs You, Done, Working and Seen (S6 B13). Showing the
+ * list changes nothing: no focus moves and nothing is marked read.
+ */
 function AgentList({ actions }: { actions: Actions }) {
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  const sections = agentSections(agents);
+  if (sections.length === 0) {
+    return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted" data-agents-empty="true">No agents are running</div>;
+  }
   return (
-    <ul className="min-h-0 flex-1 overflow-auto">
-      {agents.map((agent) => (
-        <AgentRowView key={agent.id} agent={agent} selected={agent.pane_id === focusedPaneId} onSelect={() => actions.openAgent(agent.pane_id)} />
+    <ul className="min-h-0 flex-1 overflow-auto" data-agent-list="true">
+      {sections.map((section) => (
+        <li key={section.group} data-agent-group={section.group}>
+          <div className="px-md pb-xxs pt-sm text-micro uppercase text-muted" id={`agent-group-${section.group}`}>
+            {section.label} · {section.agents.length}
+          </div>
+          <ul aria-labelledby={`agent-group-${section.group}`}>
+            {section.agents.map((agent) => (
+              <AgentRowView
+                key={agent.id}
+                agent={agent}
+                descendants={liveDescendants(agent, agents)}
+                selected={agent.pane_id === focusedPaneId}
+                onSelect={() => actions.openAgent(agent.pane_id)}
+              />
+            ))}
+          </ul>
+        </li>
       ))}
     </ul>
   );
 }
 
+function descendantDetail(agent: AgentRow, count: number): string {
+  const counts = agent.descendant_counts;
+  const parts = counts
+    ? (
+        [
+          ["error", counts.error],
+          ["approval", counts.approval],
+          ["question", counts.question],
+          ["working", counts.working],
+          ["done", counts.done],
+        ] as const
+      )
+        .filter(([, value]) => value > 0)
+        .map(([name, value]) => `${value} ${name}`)
+    : [];
+  return `${count} live ${count === 1 ? "descendant" : "descendants"}${parts.length > 0 ? `: ${parts.join(", ")}` : ""}`;
+}
+
 const AgentRowView = memo(function AgentRowView({
   agent,
+  descendants,
   selected,
   onSelect,
 }: {
   agent: AgentRow;
+  descendants: number;
   selected: boolean;
   onSelect: () => void;
 }) {
   const attention = agent.group === "needs_you" || agent.unread;
+  // A delegated row is somebody else's work: drawn quieter and indented,
+  // and never loud, since it is only ever Working or Seen.
+  const tone = agent.delegated ? "text-muted" : agent.emphasized || attention ? "text-primary" : "text-secondary";
   return (
     <li>
       <button
@@ -105,13 +153,27 @@ const AgentRowView = memo(function AgentRowView({
         onClick={onSelect}
         data-pane={agent.pane_id}
         data-attention={attention ? "true" : "false"}
-        className={`flex w-full flex-col items-start px-md py-xs text-left ${
-          selected ? "bg-elevated" : ""
-        } ${agent.emphasized || attention ? "text-primary" : "text-secondary"}`}
+        data-delegated={agent.delegated ? "true" : "false"}
+        title={agent.identity_label}
+        className={`flex w-full flex-col items-start py-xs pr-md text-left outline-none focus-visible:bg-elevated ${
+          agent.delegated ? "pl-[calc(var(--spacing-md)+var(--size-lineage-indent))]" : "pl-md"
+        } ${selected ? "bg-elevated" : ""} ${tone}`}
       >
         <span className="flex w-full items-baseline gap-xs text-body">
-          <span className="w-[var(--size-agent-mark)] font-mono text-caption">{agent.symbol}</span>
+          <span className={`w-[var(--size-agent-mark)] font-mono text-caption ${agent.delegated ? "" : chipTone({ demand: agent.demand ?? "none", activity: agent.activity ?? "", emphasized: agent.emphasized })}`}>
+            {agent.symbol}
+          </span>
           <span className="flex-1 truncate">{agent.identity_label}</span>
+          {descendants > 0 ? (
+            <span
+              className="shrink-0 rounded-xs bg-elevated px-xxs text-micro text-secondary"
+              title={descendantDetail(agent, descendants)}
+              aria-label={descendantDetail(agent, descendants)}
+              data-descendant-badge={descendants}
+            >
+              ↳{descendants}
+            </span>
+          ) : null}
           <span className="text-micro text-muted">{agent.elapsed}</span>
         </span>
         <span className="pl-[var(--size-agent-mark)] text-caption text-secondary">

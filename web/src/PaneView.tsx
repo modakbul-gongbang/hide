@@ -1,9 +1,10 @@
 import { memo, useEffect, useRef } from "react";
+import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
+import { ChildChipRow, RelationStatus, ReturnToParent, usePaneMenu } from "./PaneRelations";
 import type { PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
 import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale } from "./terminals";
-import type { DispatchFn } from "./ws";
 
 /** Transport states with a live stream; anything else is drawn as a caption in the header. */
 const LIVE_STATES = new Set(["connected", "controlling", "idle"]);
@@ -51,8 +52,7 @@ export const PaneView = memo(function PaneView({
   transport,
   focused,
   scale,
-  dispatch,
-  onClose,
+  actions,
   local = true,
   offline = false,
 }: {
@@ -60,8 +60,7 @@ export const PaneView = memo(function PaneView({
   transport: TerminalPane | undefined;
   focused: boolean;
   scale: number;
-  dispatch: DispatchFn;
-  onClose: (paneId: string) => void;
+  actions: Actions;
   /** False for a pane on a selected SSH device. */
   local?: boolean;
   /** True while that device's connection is down. */
@@ -72,6 +71,9 @@ export const PaneView = memo(function PaneView({
   const refusal = useShellStore((s) => s.attachmentRefusal);
   const setRefusal = useShellStore((s) => s.setAttachmentRefusal);
   const paneId = pane.id;
+  const dispatch = actions.dispatch;
+  const title = paneTitle(pane);
+  const paneMenu = usePaneMenu(pane, title, actions);
 
   // A dropped file or a pasted image stages through hided and reaches the
   // terminal as the core's own `terminal_attachment` (B14).
@@ -139,11 +141,19 @@ export const PaneView = memo(function PaneView({
       onDrop={drop}
     >
       <header
-        className={`flex h-[var(--size-pane-header)] shrink-0 items-center gap-sm px-sm text-caption ${
+        className={`relative flex h-[var(--size-pane-header)] shrink-0 items-center gap-sm px-sm text-caption ${
           focused ? "bg-elevated text-primary" : "bg-panel text-secondary"
         }`}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          const box = event.currentTarget.getBoundingClientRect();
+          paneMenu.openAt(event.clientX - box.left, event.clientY - box.top);
+        }}
       >
-        <span className="min-w-0 flex-1 truncate">{paneTitle(pane)}</span>
+        <ReturnToParent pane={pane} actions={actions} />
+        <span className="min-w-0 flex-1 truncate" title={title}>
+          {title}
+        </span>
         {caption ? (
           <span className="truncate text-muted">{caption.text}</span>
         ) : (
@@ -151,14 +161,38 @@ export const PaneView = memo(function PaneView({
         )}
         <button
           type="button"
-          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-secondary hover:bg-balloon hover:text-primary"
-          aria-label={`Close pane ${paneTitle(pane)}`}
+          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-secondary outline-none hover:bg-balloon hover:text-primary focus-visible:ring-1 focus-visible:ring-accent"
+          aria-label={`Pane actions for ${title}`}
+          title="Pane actions"
+          aria-haspopup="menu"
+          data-pane-menu={paneId}
+          onClick={(event) => {
+            const box = event.currentTarget.parentElement?.getBoundingClientRect();
+            const button = event.currentTarget.getBoundingClientRect();
+            paneMenu.openAt(button.left - (box?.left ?? 0), button.bottom - (box?.top ?? 0));
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+              event.preventDefault();
+              event.currentTarget.click();
+            }
+          }}
+        >
+          ⋯
+        </button>
+        <button
+          type="button"
+          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-secondary outline-none hover:bg-balloon hover:text-primary focus-visible:ring-1 focus-visible:ring-accent"
+          aria-label={`Close pane ${title}`}
           title="Close pane"
-          onClick={() => onClose(paneId)}
+          onClick={() => actions.closePane(paneId)}
         >
           ×
         </button>
+        {paneMenu.menu}
       </header>
+      <ChildChipRow pane={pane} actions={actions} />
+      <RelationStatus pane={pane} actions={actions} />
       <div className="h-[var(--size-hairline)] shrink-0 bg-divider" />
       <div className="relative min-h-0 flex-1">
         <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} />

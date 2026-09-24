@@ -1398,8 +1398,11 @@ impl Runtime {
 
     /// The daemon installs only handles opened under its pinned registrations.
     /// An empty set still enforces the boundary; Swift leaves this as `None`.
-    pub fn set_file_roots(&mut self, roots: crate::files::FileRoots) {
+    /// Returns whether the front Workspace's View tabs, which waited for its
+    /// root, began to restore, so the caller announces the change.
+    pub fn set_file_roots(&mut self, roots: crate::files::FileRoots) -> bool {
         self.file_roots = Some(roots);
+        self.restore_front_when_ready()
     }
 
     pub fn set_live(&mut self, context: LiveContext) {

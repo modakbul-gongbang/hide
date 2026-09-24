@@ -36,12 +36,14 @@ pub const MAX_AGENT_SHARE: f32 = 0.8;
 pub const DEFAULT_AGENT_SHARE: f32 = 0.5;
 
 /// Which working areas a Workspace shows. Changing it only changes space:
-/// no tab, document or pane is closed and no split is made (D-03).
+/// no tab, document or pane is closed and no split is made (D-03). A new
+/// Workspace starts with its agents alone, since it has no View yet; the
+/// first file opened into it brings the View area beside them (B11).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewMode {
-    Agents,
     #[default]
+    Agents,
     Together,
     Views,
 }

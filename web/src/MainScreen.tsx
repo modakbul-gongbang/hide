@@ -50,7 +50,7 @@ function DeviceProjects({ section, actions }: { section: DeviceSection; actions:
   return (
     <section aria-label={`Projects on ${device.label}`} data-main-device={device.id} data-device-availability={availability.state}>
       <h2 className="flex items-center gap-sm pb-xs text-micro uppercase text-muted">
-        <span>{section.local ? `${device.label} · this machine` : device.label}</span>
+        <span>{device.label}</span>
         {availability.state === "loading" ? (
           <span role="status" className="normal-case" data-device-loading="true">
             {availability.text}

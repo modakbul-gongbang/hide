@@ -19,6 +19,51 @@ export type AgentRow = {
   requires_close_confirmation?: boolean;
   requires_close_status_check?: boolean;
   unknown?: boolean;
+  demand?: string;
+  activity?: string;
+  /** Work another agent delegated; it is only ever Working or Seen (docs/status-model.md). */
+  delegated?: boolean;
+  lineage_parent_pane_id?: string | null;
+  lineage_child_pane_ids?: string[];
+  /** What every live descendant is doing, counted by state; unknown activity is in none. */
+  descendant_counts?: DescendantCounts;
+};
+
+export type DescendantCounts = { error: number; approval: number; question: number; working: number; done: number };
+
+/** One agent in a line of them: a pane header chip or a lineage step's sibling (`AgentChipSnapshot`). */
+export type AgentChip = {
+  pane_id: string;
+  label: string;
+  detail: string | null;
+  status_word_visible: boolean;
+  agent_kind: string;
+  demand: string;
+  activity: string;
+  emphasized: boolean;
+  symbol: string;
+  status_label: string;
+  delegated: boolean;
+};
+
+/** What a pane's agent delegated (`PaneChildrenSnapshot`); absent on a pane with no agent. */
+export type PaneChildren = {
+  instrumented: boolean;
+  uninstrumented_reason: string | null;
+  uninstrumented_label: string | null;
+  chips: AgentChip[];
+};
+
+/** One step of a pane's lineage, root first and ending at the pane itself. */
+export type LineageStep = { pane_id: string; label: string; siblings: AgentChip[] };
+
+/** The core's outcome of the latest pane focus that carried a request id. */
+export type PaneFocusRequest = {
+  request_id: string;
+  target_pane_id: string;
+  phase: "pending" | "succeeded" | "failed" | string;
+  message: string | null;
+  retryable: boolean;
 };
 
 export type PullRequest = {
@@ -42,6 +87,8 @@ export type PaneRow = {
   requires_close_confirmation: boolean;
   requires_close_status_check: boolean;
   identity_label: string | null;
+  children?: PaneChildren | null;
+  lineage_path?: LineageStep[];
 };
 
 export type Tab = {
@@ -522,6 +569,7 @@ export type SnapshotRest = {
     background_ai?: BackgroundAi;
     diagnostics?: CoreDiagnostic[];
     async_operations?: AsyncOperation[];
+    pane_focus_request?: PaneFocusRequest | null;
     /** The core's most recent failure; the shell logs its detail (B5). */
     last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number } | null;
   };

@@ -1,4 +1,5 @@
 import { memo, useCallback, useRef, useState } from "react";
+import type { Actions } from "./actions";
 import { PaneView } from "./PaneView";
 import { frameStyle, type RemoteView } from "./remote";
 import { resizeStep } from "./resize";
@@ -28,17 +29,10 @@ type PaneProps = {
   transports: Map<string, TerminalPane>;
   scales: Record<string, number>;
   focusedPaneId: string;
-  dispatch: DispatchFn;
-  onClosePane: (paneId: string) => void;
+  actions: Actions;
 };
 
-export function PaneCanvas({
-  dispatch,
-  onClosePane,
-}: {
-  dispatch: DispatchFn;
-  onClosePane: (paneId: string) => void;
-}) {
+export function PaneCanvas({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => focusedCheckout(s.rest));
   const tab = visibleTab(checkout);
   const layout = useShellStore((s) => layoutForTab(s.rest, tab?.id ?? null));
@@ -58,8 +52,7 @@ export function PaneCanvas({
       layout={layout}
       transportRows={transportRows ?? EMPTY_TRANSPORTS}
       scales={scales ?? EMPTY_SCALES}
-      dispatch={dispatch}
-      onClosePane={onClosePane}
+      actions={actions}
     />
   );
 }
@@ -76,14 +69,12 @@ const EMPTY_TRANSPORTS: TerminalPane[] = [];
 export function RemotePaneCanvas({
   view,
   connected,
-  dispatch,
-  onClosePane,
+  actions,
 }: {
   view: RemoteView;
   /** False while the device's connection is down; the panes show its last state. */
   connected: boolean;
-  dispatch: DispatchFn;
-  onClosePane: (paneId: string) => void;
+  actions: Actions;
 }) {
   const transportRows = useShellStore((s) => s.rest?.terminal?.panes ?? EMPTY_TRANSPORTS);
   const scales = useShellStore((s) => s.rest?.ui_state?.pane_text_scales ?? EMPTY_SCALES);
@@ -110,8 +101,7 @@ export function RemotePaneCanvas({
                 transport={transports.get(frame.pane_id)}
                 focused={view.focusedPaneId === frame.pane_id}
                 scale={scales[frame.pane_id] ?? 1}
-                dispatch={dispatch}
-                onClose={onClosePane}
+                actions={actions}
                 local={false}
                 offline={!connected}
               />
@@ -131,15 +121,13 @@ const TabCanvas = memo(function TabCanvas({
   layout,
   transportRows,
   scales,
-  dispatch,
-  onClosePane,
+  actions,
 }: {
   tab: Tab;
   layout: PaneLayout;
   transportRows: TerminalPane[];
   scales: Record<string, number>;
-  dispatch: DispatchFn;
-  onClosePane: (paneId: string) => void;
+  actions: Actions;
 }) {
   const panes = new Map(tab.panes.map((pane) => [pane.id, pane]));
   const transports = new Map(transportRows.map((row) => [row.pane_id, row]));
@@ -148,8 +136,7 @@ const TabCanvas = memo(function TabCanvas({
     transports,
     scales,
     focusedPaneId: layout.focused_pane_id,
-    dispatch,
-    onClosePane,
+    actions,
   };
   const root: LayoutNode = layout.zoomed ? { type: "pane", pane_id: layout.focused_pane_id } : layout.root;
   return (
@@ -170,8 +157,7 @@ function LayoutView({ node, ...props }: { node: LayoutNode } & PaneProps) {
             transport={props.transports.get(node.pane_id)}
             focused={props.focusedPaneId === node.pane_id}
             scale={props.scales[node.pane_id] ?? 1}
-            dispatch={props.dispatch}
-            onClose={props.onClosePane}
+            actions={props.actions}
           />
         ) : (
           // The layout names a pane the tab rows do not carry yet; the next
@@ -200,7 +186,7 @@ function SplitView({ node, ...props }: { node: Extract<LayoutNode, { type: "spli
       <div className="relative min-h-0 min-w-0">
         <LayoutView node={node.second} {...props} />
       </div>
-      <Divider node={node} dispatch={props.dispatch} />
+      <Divider node={node} dispatch={props.actions.dispatch} />
     </div>
   );
 }
