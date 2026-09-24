@@ -1131,6 +1131,9 @@ impl Runtime {
             .ui_state
             .workspace_registrations
             .iter()
+            // Only this machine's registrations: a device's project at the
+            // same absolute path is another folder (B2).
+            .filter(|registration| registration.device_id == workspace::LOCAL_DEVICE_ID)
             .filter(|registration| self.workspace_removals_in_flight.contains(&registration.id))
             .find(|registration| Path::new(&registration.path) == requested)
             .map(|registration| registration.id.clone())
@@ -1138,7 +1141,7 @@ impl Runtime {
 
     /// Whether a creation still running names the folder `workspace_id`
     /// registers; creation is keyed by the requested path, not the id.
-    fn workspace_creation_in_flight_for(&self, workspace_id: &str) -> bool {
+    pub(super) fn workspace_creation_in_flight_for(&self, workspace_id: &str) -> bool {
         if self.workspace_creations_in_flight.is_empty() {
             return false;
         }
@@ -1146,7 +1149,11 @@ impl Runtime {
             .ui_state
             .workspace_registrations
             .iter()
-            .filter(|registration| registration.id == workspace_id)
+            // Creations in flight are this machine's folders only (B2).
+            .filter(|registration| {
+                registration.id == workspace_id
+                    && registration.device_id == workspace::LOCAL_DEVICE_ID
+            })
             .any(|registration| {
                 self.workspace_creations_in_flight
                     .iter()

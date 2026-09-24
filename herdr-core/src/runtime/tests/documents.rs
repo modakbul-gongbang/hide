@@ -618,6 +618,39 @@ fn a_save_waiting_for_a_helper_that_fails_is_not_sent_and_keeps_the_draft() {
     );
 }
 
+/// B52: withdrawing consent while a save waits for the helper drops that save
+/// unsent, so it cannot go out on its own if consent is given again.
+#[test]
+fn withdrawing_consent_drops_a_save_waiting_for_the_helper() {
+    let f = Fixture::new();
+    f.open_and_wait("a.txt");
+    f.set_phase(hosts::HostPhase::Connecting);
+    f.save("a.txt", "mine\n");
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .push(crate::model::DeviceRegistration {
+                id: DEVICE.to_owned(),
+                label: DEVICE.to_owned(),
+                ssh_alias: Some(DEVICE.to_owned()),
+                herdr_socket_path: None,
+                host_consent: None,
+            });
+        runtime.set_host_consent(DEVICE, false);
+    }
+    let shown = f.shown();
+    assert!(shown.dirty);
+    assert_eq!(shown.contents_utf8.as_deref(), Some("mine\n"));
+    assert_eq!(shown.save, None, "the save no longer waits");
+    assert_eq!(f.last_error().as_deref(), Some("file.save_unavailable"));
+    f.set_phase(f.ready());
+    f.shared.lock().unwrap().settle_device_saves(DEVICE);
+    assert!(f.device.saves().is_empty(), "nothing goes out once allowed again");
+}
+
 /// B47: this machine's disk is read on a worker too, so a slow volume holds
 /// no runtime lock. An unrelated action applies while the read waits, and a
 /// reveal of that file moves the screen only when the read lands.

@@ -113,6 +113,9 @@ impl Runtime {
             }));
             self.close_device_host(device_id, "consent revoked");
             self.set_host_phase(device_id, HostPhase::NotAllowed);
+            // A save held for the helper to become ready would otherwise go
+            // out on its own if consent is given again later (B52).
+            self.release_held_saves(device_id, "Hide's helper is no longer allowed on this device");
         }
         self.refresh_device_snapshots();
         true

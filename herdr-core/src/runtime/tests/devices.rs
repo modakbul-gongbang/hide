@@ -360,3 +360,39 @@ fn removing_the_selected_device_keeps_the_local_tabs_and_keyboard() {
             .all(|device| device.id != "studio")
     );
 }
+
+/// B2: a device's project at the same absolute path as a folder on this
+/// machine is another folder, so neither's add or removal in flight holds up
+/// the other.
+#[test]
+fn a_device_project_at_this_machines_path_does_not_hold_up_its_add_or_removal() {
+    let mut runtime = runtime_with_home();
+    let registration = |id: &str, device: &str| crate::model::WorkspaceRegistration {
+        id: id.to_owned(),
+        label: "same".to_owned(),
+        path: "/work/same".to_owned(),
+        device_id: device.to_owned(),
+        pinned: false,
+    };
+    runtime.snapshot.ui_state.workspace_registrations =
+        vec![registration("remote:mac:workspace:1", "mac")];
+    runtime
+        .workspace_removals_in_flight
+        .insert("remote:mac:workspace:1".to_owned());
+    assert_eq!(runtime.workspace_removal_in_flight_for("/work/same"), None);
+
+    runtime.snapshot.ui_state.workspace_registrations = vec![
+        registration("local:1", workspace::LOCAL_DEVICE_ID),
+        registration("remote:mac:workspace:1", "mac"),
+    ];
+    runtime.workspace_removals_in_flight.insert("local:1".to_owned());
+    assert_eq!(
+        runtime.workspace_removal_in_flight_for("/work/same"),
+        Some("local:1".to_owned())
+    );
+    runtime
+        .workspace_creations_in_flight
+        .insert("/work/same".to_owned());
+    assert!(!runtime.workspace_creation_in_flight_for("remote:mac:workspace:1"));
+    assert!(runtime.workspace_creation_in_flight_for("local:1"));
+}
