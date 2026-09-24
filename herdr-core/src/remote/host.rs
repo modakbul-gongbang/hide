@@ -68,6 +68,11 @@ pub const MAX_QUEUED: usize = 32;
 
 const HELPER_NAME: &str = "hide-host-helper";
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a draining connection waits for its admitted requests before it
+/// closes anyway. An admitted request can wait up to its timeout to be
+/// written and again for its answer, and the longest call timeout is 120 s
+/// (an index walk, a worktree removal), so this outlasts both.
+const DRAIN_BOUND: Duration = Duration::from_secs(250);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The helper builds this daemon carries, one per device platform.
@@ -271,6 +276,11 @@ impl Gate {
         self.changed.notify_all();
     }
 
+    /// Why nothing more is admitted, once it is not.
+    fn stopped(&self) -> Option<String> {
+        lock_recover(&self.state).stopped.clone()
+    }
+
     /// Admits nothing more; the first reason given is the one kept.
     fn stop(&self, reason: &str) {
         let mut admission = lock_recover(&self.state);
@@ -377,19 +387,25 @@ impl RemoteHost {
         let written = inner.runtime.block_on(async {
             let Ok(mut writer) = tokio::time::timeout_at(deadline, inner.writer.lock()).await
             else {
-                return None;
+                return Err(HostCallError::Busy);
             };
-            Some(
-                tokio::time::timeout_at(deadline, async {
-                    writer.write_all(&line).await?;
-                    writer.flush().await
-                })
-                .await,
-            )
+            // Admitted before the connection began to drain, but not sent:
+            // it is refused now rather than sent after consent was withdrawn.
+            if let Some(reason) = inner.gate.stopped() {
+                return Err(HostCallError::NotConnected(reason));
+            }
+            Ok(tokio::time::timeout_at(deadline, async {
+                writer.write_all(&line).await?;
+                writer.flush().await
+            })
+            .await)
         });
-        let Some(written) = written else {
-            lock_recover(&inner.pending).remove(&id);
-            return Err(HostCallError::Busy);
+        let written = match written {
+            Ok(written) => written,
+            Err(unsent) => {
+                lock_recover(&inner.pending).remove(&id);
+                return Err(unsent);
+            }
         };
         match written {
             Ok(Ok(())) => {}
@@ -449,9 +465,7 @@ impl HostChannel for RemoteHost {
             .spawn(move || {
                 // Admitted requests are bounded by their own timeouts; this
                 // bound only keeps a wedged count from holding the link open.
-                host.inner
-                    .gate
-                    .wait_idle(Instant::now() + Duration::from_secs(120));
+                host.inner.gate.wait_idle(Instant::now() + DRAIN_BOUND);
                 host.close(&drained);
             });
         if let Err(error) = spawned {
@@ -726,7 +740,10 @@ async fn install(
             "The helper install root is not a plain path".to_owned(),
         ));
     }
-    ensure_private_dirs(raw, &home, &root, owner).await?;
+    // Everything from here goes through the path the check resolved, whose
+    // every folder was checked and none is a link, so a link on the spelled
+    // path cannot be swapped between the check and the launch.
+    let root = ensure_private_dirs(raw, &home, &root, owner).await?;
     let version_dir = format!("{root}/{}", &digest[..16]);
     ensure_private_dir(raw, &version_dir, owner).await?;
     let final_path = format!("{version_dir}/{HELPER_NAME}");
@@ -790,12 +807,14 @@ async fn install(
     Ok((final_path, true))
 }
 
+/// Creates and checks the helper root, and answers the real path it resolves
+/// to, which is the one the helper is installed under and started from.
 async fn ensure_private_dirs(
     raw: &RawSftpSession,
     home: &str,
     root: &str,
     owner: u32,
-) -> Result<(), EstablishError> {
+) -> Result<String, EstablishError> {
     // Components below home are created private; home itself is not touched.
     // The prefix is compared by path component, so `/home/al` is not a
     // prefix of `/home/alice`.
@@ -882,14 +901,20 @@ async fn ensure_private_dirs(
             .await
             .map_err(|error| sftp_failure("The helper folder could not be inspected", error))?
             .attrs;
+        validate_ancestor(&attrs, owner, &ancestor)?;
         if !attrs.is_dir() {
             return Err(EstablishError::Install(format!(
                 "{ancestor} is not a folder on the resolved helper path, so the helper was not installed"
             )));
         }
-        validate_ancestor(&attrs, owner, &ancestor)?;
     }
-    Ok(())
+    let attrs = raw
+        .lstat(&resolved)
+        .await
+        .map_err(|error| sftp_failure("The helper folder could not be inspected", error))?
+        .attrs;
+    validate_private(&attrs, owner, &resolved)?;
+    Ok(resolved)
 }
 
 /// Every folder above `resolved`, from `/`, for an absolute path SFTP
