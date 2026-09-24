@@ -1102,6 +1102,52 @@ test("a root-keyed v2 recovery draft survives the IndexedDB upgrade", async ({ p
   }
 });
 
+test("of two legacy drafts for one file the newer is restored, and the older is kept for recovery (S5.5 B12)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  try {
+    const app = await leaveApp(page);
+    await page.evaluate(async ({ path, root }) => {
+      await new Promise<void>((resolve, reject) => {
+        const removed = indexedDB.deleteDatabase("hide-shell");
+        removed.onsuccess = () => resolve();
+        removed.onerror = () => reject(removed.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const opened = indexedDB.open("hide-shell", 2);
+        opened.onupgradeneeded = () => opened.result.createObjectStore("buffers", { keyPath: "id" });
+        opened.onerror = () => reject(opened.error);
+        opened.onsuccess = () => {
+          const database = opened.result;
+          const transaction = database.transaction("buffers", "readwrite");
+          const store = transaction.objectStore("buffers");
+          const now = Date.now();
+          store.put({ id: `${root}\u0000${path}`, root, path, contents: "export const answer = 96;\n", updated_at: now });
+          store.put({ id: `\u0000${path}`, root: "", path, contents: "export const answer = 97;\n", updated_at: now - 60_000 });
+          transaction.oncomplete = () => { database.close(); resolve(); };
+          transaction.onerror = () => { database.close(); reject(transaction.error); };
+        };
+      });
+    }, { path: file, root: repo });
+    await page.goto(app);
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
+    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
+    const kept = await page.evaluate(() => new Promise<string[]>((resolve, reject) => {
+      const opened = indexedDB.open("hide-shell");
+      opened.onerror = () => reject(opened.error);
+      opened.onsuccess = () => {
+        const database = opened.result;
+        const all = database.transaction("drafts_v4").objectStore("drafts_v4").getAll();
+        all.onsuccess = () => { database.close(); resolve((all.result as Array<{ contents: string }>).map((row) => row.contents)); };
+        all.onerror = () => { database.close(); reject(all.error); };
+      };
+    }));
+    expect(kept).toContain("export const answer = 97;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
 test("an old draft is restored, never discarded for its age (S5.5 B12)", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { file, repo } = fixture;

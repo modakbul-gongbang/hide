@@ -50,19 +50,29 @@ function migrate(database: IDBDatabase, transaction: IDBTransaction) {
   const destination = database.objectStoreNames.contains(STORE)
     ? transaction.objectStore(STORE)
     : database.createObjectStore(STORE, { keyPath: "id" });
-  for (const name of LEGACY_STORES) {
-    if (!database.objectStoreNames.contains(name)) continue;
-    const source = transaction.objectStore(name);
-    source.getAll().onsuccess = (event) => {
+  // Every legacy row is read before anything is written, and each draft id
+  // is written once with its newest row: queued reads all run before any
+  // write, so comparing row by row would let an older row win (B12).
+  const legacy = LEGACY_STORES.filter((name) => database.objectStoreNames.contains(name));
+  const newest = new Map<string, StoredBuffer>();
+  let left = legacy.length;
+  for (const name of legacy) {
+    transaction.objectStore(name).getAll().onsuccess = (event) => {
       const rows = (event.target as IDBRequest<Array<{ root?: string; path: string; contents: string; updated_at: number }>>).result;
       for (const row of rows) {
         const record = legacyRecord(row.root ?? "", row.path, row.contents, row.updated_at);
+        const seen = newest.get(record.id);
+        if (!seen || seen.updated_at < record.updated_at) newest.set(record.id, record);
+      }
+      database.deleteObjectStore(name);
+      left -= 1;
+      if (left > 0) return;
+      for (const record of newest.values()) {
         destination.get(record.id).onsuccess = (lookup) => {
           const current = (lookup.target as IDBRequest<StoredBuffer | undefined>).result;
           if (!current || current.updated_at < record.updated_at) destination.put(record);
         };
       }
-      database.deleteObjectStore(name);
     };
   }
 }
@@ -139,15 +149,20 @@ export async function claimLegacyBuffer(key: BufferKey): Promise<void> {
     const target = identity(key);
     store.get(target).onsuccess = (lookup) => {
       if ((lookup.target as IDBRequest<StoredBuffer | undefined>).result) return;
-      for (const legacyId of [legacyIdentity(key.root, key.path), legacyIdentity("", key.path)]) {
+      // Both legacy spellings are read first; only the newest is claimed and
+      // only its row is removed, so the other stays a recovery item (B12).
+      const ids = [legacyIdentity(key.root, key.path), legacyIdentity("", key.path)];
+      const found: StoredBuffer[] = [];
+      let answered = 0;
+      for (const legacyId of ids) {
         store.get(legacyId).onsuccess = (event) => {
           const row = (event.target as IDBRequest<StoredBuffer | undefined>).result;
-          if (!row) return;
-          store.get(target).onsuccess = (again) => {
-            if ((again.target as IDBRequest<StoredBuffer | undefined>).result) return;
-            store.put({ ...row, id: target, host: key.host, device: key.device, root: key.root, path: key.path });
-            store.delete(legacyId);
-          };
+          if (row) found.push(row);
+          answered += 1;
+          if (answered < ids.length || found.length === 0) return;
+          const claimed = found.reduce((a, b) => (b.updated_at > a.updated_at ? b : a));
+          store.put({ ...claimed, id: target, host: key.host, device: key.device, root: key.root, path: key.path });
+          store.delete(claimed.id);
         };
       }
     };
