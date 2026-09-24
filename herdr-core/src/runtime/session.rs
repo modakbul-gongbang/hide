@@ -1213,6 +1213,14 @@ impl Runtime {
                 self.snapshot.navigator.focused_device_id.as_deref() == Some(target_id),
             )
         });
+        // Herdr's session is kept as it came; the published one groups its
+        // workspaces into the device's projects (`device_catalog`).
+        let fetched = fetched.map(|raw| {
+            let derived = self.derive_device_session(target_id, &raw);
+            self.device_raw_sessions.insert(target_id.to_owned(), raw);
+            derived
+        });
+        let session_ok = fetched.is_ok();
         let Some(status_index) = self
             .snapshot
             .status
@@ -1255,8 +1263,7 @@ impl Runtime {
         }
         let mut observed_session = None;
         match fetched {
-            Ok(mut session) => {
-                join_device_editor_tabs(&mut session, &self.snapshot.editor.tabs);
+            Ok(session) => {
                 if status.state != "connected" || status.message.is_some() {
                     status.state = "connected".to_owned();
                     status.message = None;
@@ -1322,6 +1329,9 @@ impl Runtime {
         changed |= self.expire_remote_operations(unix_milliseconds());
         if let Some(session) = observed_session.as_ref() {
             changed |= self.observe_remote_operations(session);
+        }
+        if session_ok {
+            changed |= self.request_device_facts(target_id);
         }
         if changed {
             self.sync_async_operations();

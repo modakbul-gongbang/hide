@@ -28,6 +28,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
             pane_layouts: Vec::new(),
         }),
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
         hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
@@ -51,6 +52,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         report_pane_focus_outcome: false,
         request: RemoteControlRequest::CreateTab {
             workspace_id: projected_workspace_id.to_owned(),
+            checkout_id: None,
             cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
             label: "New tab".to_owned(),
         },
@@ -89,6 +91,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         herdr_version: None,
         session: None,
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
     runtime.snapshot.terminal.panes.push(TerminalPaneSnapshot {
         pane_id: "w-local:p1".to_owned(),
@@ -127,7 +130,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     let session = RemoteSessionSnapshot {
         workspaces: vec![remote_workspace],
         agents: Vec::new(),
-        active_tab_ids: [(workspace_id.to_owned(), active_tab_id.to_owned())]
+        active_tab_ids: [(checkout_id.to_owned(), active_tab_id.to_owned())]
             .into_iter()
             .collect(),
         focused_workspace_id: Some(workspace_id.to_owned()),
@@ -271,6 +274,7 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
             pane_layouts: Vec::new(),
         }),
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
 
     let request = serde_json::to_vec(&serde_json::json!({
@@ -730,6 +734,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
             pane_layouts: Vec::new(),
         }),
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
     let connector: Arc<dyn hide_herdr_client::ApiConnector> =
         Arc::new(hide_herdr_client::UnixSocketConnector::new(
@@ -1440,6 +1445,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             herdr_version: None,
             session: None,
             files: RemoteFileListSnapshot::idle(),
+            catalog: Default::default(),
         });
     }
     let remote_session = |target_id: &str, pane_ids: &[&str], focused: Option<&str>| {
@@ -1786,6 +1792,7 @@ fn remote_purpose_runtime(version: &str) -> Runtime {
             pane_layouts: Vec::new(),
         }),
         files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
     });
     runtime
 }

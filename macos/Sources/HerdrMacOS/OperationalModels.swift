@@ -532,7 +532,7 @@ struct RemoteNavigationSnapshot {
             }
         }
 
-        if selectedTab == nil, let activeTabID = activeTabIDs[workspaceID] {
+        if selectedTab == nil, let activeTabID = activeTabIDs[checkoutID] {
             selectedTab = selectedTabs.first { tab in
                 tab.id == activeTabID
             }

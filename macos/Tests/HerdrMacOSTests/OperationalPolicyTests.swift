@@ -465,7 +465,7 @@ import Testing
         }]
       }],
       "agents": [],
-      "active_tab_ids": {"remote:device:mini:workspace:w1": "w1:t1"},
+      "active_tab_ids": {"remote:device:mini:checkout:w1": "w1:t1"},
       "focused_workspace_id": "remote:device:mini:workspace:w1",
       "focused_checkout_id": "remote:device:mini:checkout:w1",
       "focused_tab_id": "w1:t1",

@@ -293,14 +293,21 @@ pub(super) enum RemoteControlRequest {
         pane_id: String,
         confirmed: bool,
     },
+    /// `checkout_id` names the Herdr workspace on the host: a device's
+    /// project can hold several (`device_catalog`). Without it,
+    /// `workspace_id` must itself be a Herdr workspace's row.
     FocusWorkspace {
         workspace_id: String,
+        #[serde(default)]
+        checkout_id: Option<String>,
     },
     FocusTab {
         tab_id: String,
     },
     CreateTab {
         workspace_id: String,
+        #[serde(default)]
+        checkout_id: Option<String>,
         cwd: String,
         label: String,
     },

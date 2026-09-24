@@ -363,6 +363,19 @@ export type RemoteStatus = {
   herdr_version: string | null;
   /** The last session read from that host; kept while `stale`. */
   session?: RemoteSession | null;
+  /** How far the device's helper has confirmed its projects (`device_catalog`). */
+  catalog?: DeviceCatalog;
+};
+
+/**
+ * `resolving`: the helper is being asked; `ready`: every directory is
+ * confirmed; `unavailable`: the helper cannot be asked and `message` says why.
+ * An unconfirmed directory is listed as its Herdr workspace alone.
+ */
+export type DeviceCatalog = {
+  state: "resolving" | "ready" | "unavailable";
+  message: string | null;
+  refused: { path: string; message: string }[];
 };
 
 export type HerdrStatus = {

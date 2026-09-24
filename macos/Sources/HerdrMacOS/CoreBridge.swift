@@ -898,11 +898,13 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         )
     }
 
-    func focusRemoteWorkspace(targetID: String, workspaceID: String) {
+    /// A device's project can hold several Herdr workspaces; the checkout
+    /// names the one to focus (`device_catalog`).
+    func focusRemoteWorkspace(targetID: String, workspaceID: String, checkoutID: String) {
         dispatchRemoteControl(
             targetID: targetID,
             action: "focus_workspace",
-            extra: ["workspace_id": workspaceID]
+            extra: ["workspace_id": workspaceID, "checkout_id": checkoutID]
         )
     }
 
@@ -917,6 +919,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
     func createRemoteTab(
         targetID: String,
         workspaceID: String,
+        checkoutID: String,
         cwd: String,
         label: String
     ) {
@@ -925,6 +928,7 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
             action: "create_tab",
             extra: [
                 "workspace_id": workspaceID,
+                "checkout_id": checkoutID,
                 "cwd": cwd,
                 "label": label,
             ]

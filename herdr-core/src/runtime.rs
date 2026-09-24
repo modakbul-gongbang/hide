@@ -6,6 +6,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agents;
 mod attachments;
+mod device_catalog;
 mod devices;
 mod documents;
 mod editor;
@@ -58,7 +59,10 @@ fn conversation_agent_kind(kind: &str) -> bool {
 /// A device checkout's strip: its Herdr tabs in the host's order, then the
 /// editor tabs opened on it. Herdr orders the host's tabs and the core does
 /// not reorder a device's strip, so the file tabs follow in opening order.
-fn join_device_editor_tabs(session: &mut RemoteSessionSnapshot, editor_tabs: &[EditorTabSnapshot]) {
+pub(super) fn join_device_editor_tabs(
+    session: &mut RemoteSessionSnapshot,
+    editor_tabs: &[EditorTabSnapshot],
+) {
     for workspace in &mut session.workspaces {
         for checkout in &mut workspace.checkouts {
             checkout
@@ -67,9 +71,7 @@ fn join_device_editor_tabs(session: &mut RemoteSessionSnapshot, editor_tabs: &[E
             checkout.strip.extend(
                 editor_tabs
                     .iter()
-                    .filter(|tab| {
-                        tab.workspace_id == checkout.workspace_id && tab.checkout_id == checkout.id
-                    })
+                    .filter(|tab| tab.checkout_id == checkout.id)
                     .map(StripTabSnapshot::editor),
             );
         }
@@ -652,9 +654,9 @@ fn remote_terminal_pane_sets(
     }
     let active_tab_id = session.focused_tab_id.as_deref().or_else(|| {
         session
-            .focused_workspace_id
+            .focused_checkout_id
             .as_deref()
-            .and_then(|workspace_id| session.active_tab_ids.get(workspace_id))
+            .and_then(|checkout_id| session.active_tab_ids.get(checkout_id))
             .map(String::as_str)
     });
     let active_tab = active_tab_id.and_then(|tab_id| {
@@ -758,6 +760,10 @@ pub struct Runtime {
     remote_device_tests: HashMap<String, crate::model::DeviceTestSnapshot>,
     /// Each device's helper connection and the consent it runs under.
     device_hosts: HashMap<String, hosts::DeviceHost>,
+    /// Each device's session as its Herdr reported it, before its projects
+    /// are grouped from the helper's facts (`device_catalog`).
+    device_raw_sessions: HashMap<String, RemoteSessionSnapshot>,
+    device_facts: HashMap<String, crate::device_catalog::DeviceFacts>,
     /// This machine's file host: the helper's dispatch, run in place.
     local_host: Arc<dyn crate::host_access::HostChannel>,
     /// Where each open file tab's saves go.
@@ -1123,6 +1129,8 @@ impl Runtime {
             retired_remote_syncs: Vec::new(),
             remote_device_tests: HashMap::new(),
             device_hosts: HashMap::new(),
+            device_raw_sessions: HashMap::new(),
+            device_facts: HashMap::new(),
             local_host: Arc::new(crate::host_access::InProcessHost),
             document_places: HashMap::new(),
             document_saves: HashMap::new(),

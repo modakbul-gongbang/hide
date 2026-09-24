@@ -451,12 +451,15 @@ impl SessionReplica {
         // projected panes by id, and the projection carries the remote form.
         crate::project_context::sort_projects(&mut workspaces, &agents);
 
+        // Keyed by checkout: the runtime groups a device's Herdr workspaces
+        // into projects (`device_catalog`), and a checkout is the one id that
+        // still names a single Herdr workspace after that.
         let active_tab_ids = state
             .workspaces
             .iter()
             .map(|workspace| {
                 (
-                    remote_workspace_id(target_id, &workspace.workspace_id),
+                    remote_checkout_id(target_id, &workspace.workspace_id),
                     remote_tab_id(target_id, &workspace.active_tab_id),
                 )
             })

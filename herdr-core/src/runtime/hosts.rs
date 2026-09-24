@@ -276,6 +276,7 @@ impl Runtime {
                     },
                 );
                 self.settle_device_saves(device_id);
+                self.reset_device_facts(device_id);
             }
             Err(error) => {
                 let message = error.to_string();
@@ -287,16 +288,27 @@ impl Runtime {
                     "message": message,
                 }));
                 self.release_held_saves(device_id, &message);
+                self.device_facts
+                    .entry(device_id.to_owned())
+                    .or_default()
+                    .unavailable = Some(message.clone());
                 let phase = match error {
                     EstablishError::IdentityChanged { .. } => HostPhase::IdentityChanged(message),
                     EstablishError::Unsupported(_) => HostPhase::Unsupported(message),
                     _ => HostPhase::Unavailable(message),
                 };
                 self.set_host_phase(device_id, phase);
+                self.refresh_device_catalog(device_id);
             }
         }
         self.refresh_device_snapshots();
         true
+    }
+
+    pub(super) fn device_host_generation(&self, device_id: &str) -> u64 {
+        self.device_hosts
+            .get(device_id)
+            .map_or(0, |host| host.generation)
     }
 
     pub(super) fn device_host_connecting(&self, device_id: &str) -> bool {
@@ -334,6 +346,7 @@ impl Runtime {
     pub(super) fn forget_device_host(&mut self, device_id: &str) {
         self.close_device_host(device_id, "device removed");
         self.device_hosts.remove(device_id);
+        self.forget_device_catalog(device_id);
     }
 
     /// Where a device's file or Git work runs, or the sentence that says

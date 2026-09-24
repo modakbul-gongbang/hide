@@ -39,7 +39,7 @@ struct Gate {
     waiting: usize,
 }
 
-struct FakeDevice {
+pub(super) struct FakeDevice {
     answer: Mutex<Answer>,
     gate: Mutex<Gate>,
     released: Condvar,
@@ -47,7 +47,7 @@ struct FakeDevice {
 }
 
 impl FakeDevice {
-    fn new() -> Arc<Self> {
+    pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             answer: Mutex::new(Answer::Normally),
             gate: Mutex::new(Gate::default()),
@@ -60,11 +60,11 @@ impl FakeDevice {
         *self.answer.lock().unwrap() = answer;
     }
 
-    fn hold(&self) {
+    pub(super) fn hold(&self) {
         self.gate.lock().unwrap().held = true;
     }
 
-    fn release(&self) {
+    pub(super) fn release(&self) {
         self.gate.lock().unwrap().held = false;
         self.released.notify_all();
     }
@@ -729,6 +729,7 @@ fn a_device_file_tab_joins_the_device_strip_and_survives_session_syncs() {
             herdr_version: None,
             session: Some(session.clone()),
             files: RemoteFileListSnapshot::idle(),
+            catalog: Default::default(),
         });
         runtime.snapshot.navigator.focused_device_id = Some(DEVICE.to_owned());
         runtime.snapshot.navigator.focused_workspace_id = None;

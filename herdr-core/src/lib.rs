@@ -2,6 +2,7 @@ pub mod agent_hooks;
 mod ai;
 mod changes;
 pub mod chromux;
+mod device_catalog;
 pub mod diagnostics;
 mod disk;
 pub mod domain;

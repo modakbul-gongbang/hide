@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createActions } from "./actions";
-import { remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
-import type { Device, RemoteSession, SnapshotRest, Tab, Workspace } from "./snapshot";
+import { deviceCatalogLine, remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
+import type { Device, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
@@ -64,7 +64,7 @@ function session(overrides: Partial<RemoteSession> = {}): RemoteSession {
   return {
     workspaces: [workspace],
     agents: [],
-    active_tab_ids: { "remote:studio:workspace:w9": "remote:studio:tab:w9:t1" },
+    active_tab_ids: { "remote:studio:checkout:w9": "remote:studio:tab:w9:t1" },
     focused_workspace_id: "remote:studio:workspace:w9",
     focused_checkout_id: "remote:studio:checkout:w9",
     focused_tab_id: "remote:studio:tab:w9:t1",
@@ -193,7 +193,7 @@ describe("commands with an SSH device selected", () => {
     expect(sent[1]?.payload).toMatchObject({ action: "toggle_pane_zoom", pane_id: PANE_A });
     expect(sent[2]?.payload).toMatchObject({ action: "focus_pane", pane_id: PANE_B });
     expect(sent[3]?.payload).toMatchObject({ action: "focus_tab", tab_id: "remote:studio:tab:w9:t2" });
-    expect(sent[4]?.payload).toMatchObject({ action: "create_tab", workspace_id: "remote:studio:workspace:w9", cwd: "/home/remote/app", label: "3" });
+    expect(sent[4]?.payload).toMatchObject({ action: "create_tab", workspace_id: "remote:studio:workspace:w9", checkout_id: "remote:studio:checkout:w9", cwd: "/home/remote/app", label: "3" });
     expect(new Set(sent.map((event) => event.payload.request_id)).size).toBe(5);
   });
 
@@ -233,5 +233,32 @@ describe("commands with an SSH device selected", () => {
     const { sent, actions } = recorder();
     actions.split("right");
     expect(sent[0]).toMatchObject({ kind: "create_pane", payload: { tab_id: "w1:t1", direction: "right" } });
+  });
+});
+
+describe("deviceCatalogLine", () => {
+  const device: Device = { id: "studio", label: "Studio", kind: "remote", state: "ready", message: null, ssh_alias: "studio", herdr_socket_path: null, agent_count: 0 } as Device;
+  const status = (state: string, session: RemoteSession | null, catalog?: RemoteStatus["catalog"]): RemoteStatus => ({
+    target_id: "studio",
+    state,
+    message: state === "connected" ? null : "ssh refused",
+    herdr_version: null,
+    session,
+    catalog,
+  });
+  const line = (value: RemoteStatus | null) => deviceCatalogLine({ device, status: value, session: value?.session ?? null });
+
+  it("tells loading, failure, a kept stale list and an empty host apart", () => {
+    expect(line(null)?.state).toBe("loading");
+    expect(line(status("auth_failed", null))).toMatchObject({ state: "error", text: "Studio is auth failed: ssh refused" });
+    expect(line(status("stale", session()))?.state).toBe("stale");
+    expect(line(status("connected", { ...session(), workspaces: [] }))?.state).toBe("empty");
+  });
+
+  it("never presents projects the helper has not confirmed as confirmed", () => {
+    expect(line(status("connected", session(), { state: "resolving", message: null, refused: [] }))?.state).toBe("resolving");
+    expect(line(status("connected", session(), { state: "unavailable", message: "Allow the helper in Settings", refused: [] }))?.text).toContain("Allow the helper in Settings");
+    expect(line(status("connected", session(), { state: "ready", message: null, refused: [{ path: "/gone", message: "missing" }] }))?.state).toBe("partial");
+    expect(line(status("connected", session(), { state: "ready", message: null, refused: [] }))).toBeNull();
   });
 });

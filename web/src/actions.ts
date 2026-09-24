@@ -110,16 +110,20 @@ export function createActions(dispatch: DispatchFn) {
     });
   };
 
-  /** A project or checkout row: on a selected SSH device every checkout is one Herdr workspace there. */
+  /**
+   * A project or checkout row. On a selected SSH device a project can hold
+   * several Herdr workspaces, and the checkout names the one to focus.
+   */
   const focusCheckout = (workspaceId: string, checkoutId: string) => {
     const context = remoteContext(rest());
     if (context) {
       const host = remoteHost("Switching workspace");
       if (!host) return;
-      if (!context.session?.workspaces.some((row) => row.id === workspaceId)) {
-        return diagnostic(`focus_workspace: ${workspaceId} is not on ${context.device.label}`);
+      const project = context.session?.workspaces.find((row) => row.id === workspaceId);
+      if (!project?.checkouts.some((row) => row.id === checkoutId)) {
+        return diagnostic(`focus_workspace: ${checkoutId} is not on ${context.device.label}`);
       }
-      sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId });
+      sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId });
       return;
     }
     dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
@@ -408,7 +412,7 @@ export function createActions(dispatch: DispatchFn) {
         if (!host) return;
         const checkout = host.view?.checkout;
         if (!checkout) return diagnostic("create_tab: the remote device has no workspace open");
-        sendRemote(host.targetId, { action: "create_tab", workspace_id: checkout.workspace_id, cwd: checkout.path, label: checkout.next_tab_label });
+        sendRemote(host.targetId, { action: "create_tab", workspace_id: checkout.workspace_id, checkout_id: checkout.id, cwd: checkout.path, label: checkout.next_tab_label });
         return;
       }
       const here = current();

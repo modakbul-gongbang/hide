@@ -5,9 +5,9 @@ import { NewWorkspace } from "./NewWorkspace";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import { RowMenu } from "./RowMenu";
 import { displayBrowser } from "./shortcuts";
-import { contextAgents, contextWorkspaces, remoteContext, remoteView } from "./remote";
+import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { checkoutMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
-import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type Workspace } from "./snapshot";
+import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore } from "./ui";
 
@@ -124,6 +124,11 @@ const AgentRowView = memo(function AgentRowView({
 
 const NO_GROUPS: InactiveProjectGroup[] = [];
 
+function catalogLineOf(rest: SnapshotRest | null) {
+  const context = remoteContext(rest);
+  return context ? deviceCatalogLine(context) : null;
+}
+
 /**
  * The projects of the context on screen. A selected SSH device lists its
  * Herdr workspaces, one checkout each, with the one its host has focused
@@ -138,9 +143,17 @@ function ProjectList({ actions }: { actions: Actions }) {
     remote ? (remoteView(remoteContext(s.rest)?.session ?? null)?.checkout.id ?? null) : (s.rest?.navigator?.focused_checkout_id ?? null),
   );
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
+  const catalogState = useShellStore((s) => catalogLineOf(s.rest)?.state ?? null);
+  const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
+  const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
   const rows = projectRows(workspaces, groups);
   return (
     <ul className="min-h-0 flex-1 overflow-auto" data-project-list="true">
+      {catalogLine ? (
+        <li role="status" className="px-md py-xs text-caption text-muted" data-device-catalog={catalogLine.state}>
+          {catalogLine.text}
+        </li>
+      ) : null}
       {rows.map((row) => (
         <ProjectRowView key={rowKey(row)} row={row} agents={agents} focusedCheckoutId={focusedCheckoutId} actions={actions} />
       ))}

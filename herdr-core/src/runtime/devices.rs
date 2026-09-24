@@ -64,6 +64,7 @@ impl Runtime {
                 herdr_version: None,
                 session: None,
                 files: RemoteFileListSnapshot::idle(),
+                catalog: Default::default(),
             });
         }
         let started = (|| {

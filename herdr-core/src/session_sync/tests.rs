@@ -482,7 +482,7 @@ fn remote_projection_uses_target_scoped_ids_and_normalized_layout_frames() {
     assert_eq!(
         projected
             .active_tab_ids
-            .get("remote:mini:workspace:w1")
+            .get("remote:mini:checkout:w1")
             .map(String::as_str),
         Some("remote:mini:tab:w1:t1")
     );

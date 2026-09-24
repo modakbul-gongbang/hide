@@ -5,6 +5,8 @@ use crate::fake_herdr::FakeHerdr;
 
 #[path = "tests/agents_settings_remote.rs"]
 mod agents_settings_remote;
+#[path = "tests/device_catalog.rs"]
+mod device_catalog;
 #[path = "tests/devices.rs"]
 mod devices;
 #[path = "tests/documents.rs"]

@@ -1516,8 +1516,11 @@ impl Runtime {
                 );
             }
         }
-        let session_workspace_id = if remote_target_id.is_some() {
-            workspace.session_workspace_ids.last().cloned()
+        // A device checkout names the one Herdr workspace that holds it; its
+        // project can hold several (`device_catalog`).
+        let session_workspace_id = if let Some(target_id) = remote_target_id.as_deref() {
+            crate::device_catalog::remote_checkout_source_id(target_id, &checkout.id)
+                .map(str::to_owned)
         } else {
             workspace::authoritative_session_space(
                 &self.last_session_spaces,

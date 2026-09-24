@@ -2365,6 +2365,40 @@ pub struct RemoteStatusSnapshot {
     pub herdr_version: Option<String>,
     pub session: Option<RemoteSessionSnapshot>,
     pub files: RemoteFileListSnapshot,
+    /// Whether the session's projects are grouped from the device's own
+    /// facts (`device_catalog`).
+    pub catalog: DeviceCatalogSnapshot,
+}
+
+/// How far a device's projects are confirmed by its helper (PRD S5.5 B3,
+/// B4). `resolving`: the helper is being asked; `ready`: every directory the
+/// device's Herdr names has the helper's answer; `unavailable`: the helper
+/// cannot be asked now and `message` says why. A directory the helper has not
+/// answered for is shown as its Herdr workspace alone, never grouped by a
+/// guess and never read on this machine.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeviceCatalogSnapshot {
+    pub state: String,
+    pub message: Option<String>,
+    /// Directories the helper answered with a refusal (missing, unreadable),
+    /// each with its reason; their workspaces stay ungrouped.
+    pub refused: Vec<DeviceCatalogRefusal>,
+}
+
+impl Default for DeviceCatalogSnapshot {
+    fn default() -> Self {
+        Self {
+            state: "resolving".to_owned(),
+            message: None,
+            refused: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DeviceCatalogRefusal {
+    pub path: String,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

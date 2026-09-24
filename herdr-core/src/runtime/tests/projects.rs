@@ -219,8 +219,11 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     assert!(runtime.changes_request().is_none());
 }
 
+/// A registration on another device names a path on that machine. Even when
+/// the same path is a repository here, this machine's filesystem is not asked
+/// about it: it is not listed from here, and no local history is read for it.
 #[test]
-fn remote_checkout_with_a_local_path_collision_has_no_history_request() {
+fn remote_registration_with_a_local_path_collision_is_not_read_on_this_machine() {
     let repository = tempfile::tempdir().unwrap();
     std::process::Command::new("git")
         .arg("-C")
@@ -239,7 +242,8 @@ fn remote_checkout_with_a_local_path_collision_has_no_history_request() {
     runtime.rebuild_catalog();
     runtime.snapshot.ui_state.right_panel_visible = true;
     runtime.snapshot.ui_state.right_panel_section = RightPanelSection::Changes;
-    assert!(runtime.snapshot.navigator.root_path.is_some());
+    assert!(runtime.snapshot.navigator.workspaces.is_empty());
+    assert!(runtime.snapshot.navigator.root_path.is_none());
     assert!(runtime.snapshot.navigator.changes_root_path.is_none());
     assert!(runtime.changes_request().is_none());
 }

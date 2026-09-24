@@ -430,14 +430,16 @@ impl Runtime {
                     pane_id: source_pane_id.expect("remote pane source id was validated"),
                 })
             }
-            RemoteControlRequest::FocusWorkspace { workspace_id } => {
-                let Some(source_id) = session
-                    .workspaces
-                    .iter()
-                    .any(|workspace| workspace.id == workspace_id)
-                    .then(|| remote_workspace_source_id(&target_id, &workspace_id))
-                    .flatten()
-                else {
+            RemoteControlRequest::FocusWorkspace {
+                workspace_id,
+                checkout_id,
+            } => {
+                let Some(source_id) = remote_herdr_workspace(
+                    &session,
+                    &target_id,
+                    &workspace_id,
+                    checkout_id.as_deref(),
+                ) else {
                     self.set_error(
                         "remote.control.workspace_not_found",
                         format!(
@@ -483,16 +485,16 @@ impl Runtime {
             }
             RemoteControlRequest::CreateTab {
                 workspace_id,
+                checkout_id,
                 cwd,
                 label,
             } => {
-                let Some(source_id) = session
-                    .workspaces
-                    .iter()
-                    .any(|workspace| workspace.id == workspace_id)
-                    .then(|| remote_workspace_source_id(&target_id, &workspace_id))
-                    .flatten()
-                else {
+                let Some(source_id) = remote_herdr_workspace(
+                    &session,
+                    &target_id,
+                    &workspace_id,
+                    checkout_id.as_deref(),
+                ) else {
                     self.set_error(
                         "remote.control.workspace_not_found",
                         format!(
@@ -1823,5 +1825,30 @@ impl Runtime {
                 }));
             }
         }
+    }
+}
+
+/// The Herdr workspace a remote focus or new tab goes to: the one the named
+/// checkout holds, checked to be a checkout of that project in the session;
+/// or, with no checkout, the project row that is itself one Herdr workspace.
+pub(super) fn remote_herdr_workspace(
+    session: &RemoteSessionSnapshot,
+    target_id: &str,
+    workspace_id: &str,
+    checkout_id: Option<&str>,
+) -> Option<String> {
+    let workspace = session
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == workspace_id)?;
+    match checkout_id {
+        Some(checkout_id) => workspace
+            .checkouts
+            .iter()
+            .any(|checkout| checkout.id == checkout_id)
+            .then(|| crate::device_catalog::remote_checkout_source_id(target_id, checkout_id))
+            .flatten()
+            .map(str::to_owned),
+        None => remote_workspace_source_id(target_id, workspace_id).map(str::to_owned),
     }
 }
