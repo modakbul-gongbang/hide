@@ -16,12 +16,13 @@
 
 use super::*;
 pub use crate::host_access::HostCallError;
-use crate::host_access::{HostChannel, call_as};
+use crate::host_access::{HostAnswer, HostChannel, call_as};
 use crate::model::{HostConsent, HostIdentity};
-use hide_host::protocol::{Call, Hello, Outcome, PROTOCOL_VERSION, Request, Response};
+use hide_host::HostError;
+use hide_host::protocol::{Call, Hello, PROTOCOL_VERSION, Request};
 use russh_sftp::client::{RawSftpSession, error::Error as SftpError};
 use russh_sftp::protocol::{FileAttributes, StatusCode};
-use serde_json::Value;
+use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Condvar;
@@ -32,6 +33,27 @@ use std::sync::mpsc;
 /// a 16 MiB document, which JSON escaping can grow by up to six times, so
 /// this bounds memory without refusing any answer the protocol can produce.
 const MAX_ANSWER_BYTES: usize = 128 * 1024 * 1024;
+
+/// One answer line as the helper sends it (`hide_host::protocol::Response`),
+/// with the result borrowed as JSON text rather than built into a `Value`.
+#[derive(serde::Deserialize)]
+struct AnswerLine<'a> {
+    id: u64,
+    // `Option` alone reads a `null` result as absent; a unit answer is `null`.
+    #[serde(borrow, default, deserialize_with = "present")]
+    ok: Option<&'a RawValue>,
+    #[serde(default)]
+    error: Option<HostError>,
+}
+
+/// What the reader hands a waiting call: the result's text or the refusal.
+type Answered = Result<Box<RawValue>, HostError>;
+
+fn present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<&'de RawValue>, D::Error> {
+    serde::Deserialize::deserialize(deserializer).map(Some)
+}
 
 /// The scope the operator agrees to, versioned. A build that needs more than
 /// this contract describes bumps it, and every device asks again (B51).
@@ -186,7 +208,7 @@ struct Inner {
     runtime: Arc<Runtime>,
     session: Mutex<Option<Handle<KnownHostHandler>>>,
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
-    pending: Mutex<HashMap<u64, mpsc::Sender<Outcome>>>,
+    pending: Mutex<HashMap<u64, mpsc::Sender<Answered>>>,
     closed: Mutex<Option<String>>,
     admission: Mutex<Admission>,
     admitted: Condvar,
@@ -234,7 +256,7 @@ impl RemoteHost {
 
     /// Sends one request and waits at most `timeout` for its answer. Must
     /// not be called from inside an async context.
-    pub fn call(&self, call: Call, timeout: Duration) -> Result<Value, HostCallError> {
+    pub fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
         let inner = &self.inner;
         self.admit(timeout)?;
         let result = self.send_and_wait(call, timeout);
@@ -277,7 +299,7 @@ impl RemoteHost {
         Ok(())
     }
 
-    fn send_and_wait(&self, call: Call, timeout: Duration) -> Result<Value, HostCallError> {
+    fn send_and_wait(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
         let inner = &self.inner;
         let id = inner.next_id.fetch_add(1, Ordering::Relaxed);
         let mut line = serde_json::to_vec(&Request { id, call }).map_err(|error| {
@@ -290,14 +312,27 @@ impl RemoteHost {
             lock_recover(&inner.pending).remove(&id);
             return Err(HostCallError::NotConnected(reason));
         }
+        // Waiting behind another request's write sends nothing, so running
+        // out of time there leaves the connection as it was; only a write
+        // that started and did not finish can have sent part of a line.
+        let deadline = tokio::time::Instant::now() + timeout;
         let written = inner.runtime.block_on(async {
-            tokio::time::timeout(timeout, async {
-                let mut writer = inner.writer.lock().await;
-                writer.write_all(&line).await?;
-                writer.flush().await
-            })
-            .await
+            let Ok(mut writer) = tokio::time::timeout_at(deadline, inner.writer.lock()).await
+            else {
+                return None;
+            };
+            Some(
+                tokio::time::timeout_at(deadline, async {
+                    writer.write_all(&line).await?;
+                    writer.flush().await
+                })
+                .await,
+            )
         });
+        let Some(written) = written else {
+            lock_recover(&inner.pending).remove(&id);
+            return Err(HostCallError::Busy);
+        };
         match written {
             Ok(Ok(())) => {}
             // A write that failed or timed out may have sent part of the
@@ -320,8 +355,8 @@ impl RemoteHost {
             }
         }
         match receiver.recv_timeout(timeout) {
-            Ok(Outcome::Ok(value)) => Ok(value),
-            Ok(Outcome::Error(error)) => Err(HostCallError::Refused(error)),
+            Ok(Ok(raw)) => Ok(HostAnswer::Raw(raw)),
+            Ok(Err(error)) => Err(HostCallError::Refused(error)),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 lock_recover(&inner.pending).remove(&id);
                 Err(HostCallError::Unknown(
@@ -339,7 +374,7 @@ impl RemoteHost {
 }
 
 impl HostChannel for RemoteHost {
-    fn call(&self, call: Call, timeout: Duration) -> Result<Value, HostCallError> {
+    fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
         RemoteHost::call(self, call, timeout)
     }
 
@@ -941,10 +976,28 @@ fn spawn_host(
                         scanned = 0;
                         let line: Vec<u8> = buffer.drain(..=end).collect();
                         let Some(inner) = reader.upgrade() else { return };
-                        match serde_json::from_slice::<Response>(&line) {
-                            Ok(response) => {
-                                if let Some(sender) = lock_recover(&inner.pending).remove(&response.id) {
-                                    let _ = sender.send(response.outcome);
+                        // The answer is only tokenized here and kept as its
+                        // own text; one nobody waits for is never copied.
+                        match serde_json::from_slice::<AnswerLine<'_>>(&line) {
+                            Ok(answer) => {
+                                let outcome = match (answer.ok, answer.error) {
+                                    (Some(raw), None) => Some(Ok(raw)),
+                                    (None, Some(error)) => Some(Err(error)),
+                                    _ => None,
+                                };
+                                let sender = lock_recover(&inner.pending).remove(&answer.id);
+                                match (sender, outcome) {
+                                    (Some(sender), Some(outcome)) => {
+                                        let _ = sender.send(outcome.map(ToOwned::to_owned));
+                                    }
+                                    (sender, _) => crate::diagnostic!(json!({
+                                        "component": "remote_host",
+                                        "kind": "host.answer_unmatched",
+                                        "target": inner.target,
+                                        "id": answer.id,
+                                        "awaited": sender.is_some(),
+                                        "bytes": line.len(),
+                                    })),
                                 }
                             }
                             // serde's own text can quote the value it could
@@ -1012,6 +1065,30 @@ mod tests {
             permissions: Some(0o040000 | mode),
             ..FileAttributes::empty()
         }
+    }
+
+    /// An answer line keeps its result as the helper's own text, `null`
+    /// included, and a refusal as the helper's error; nothing else reads as
+    /// an answer.
+    #[test]
+    fn an_answer_line_keeps_its_result_as_text() {
+        let line: AnswerLine = serde_json::from_str(r#"{"id":7,"ok":null}"#).unwrap();
+        assert_eq!((line.id, line.ok.map(RawValue::get)), (7, Some("null")));
+        let line: AnswerLine =
+            serde_json::from_str(r#"{"id":8,"ok":{"paths":["a"],"truncated":false}}"#).unwrap();
+        let answer = HostAnswer::Raw(line.ok.unwrap().to_owned());
+        let decoded = match answer {
+            HostAnswer::Raw(raw) => serde_json::from_str::<hide_host::index::Walked>(raw.get()),
+            HostAnswer::Parsed(_) => unreachable!(),
+        }
+        .unwrap();
+        assert_eq!(decoded.paths, vec!["a".to_owned()]);
+        let line: AnswerLine =
+            serde_json::from_str(r#"{"id":9,"error":{"code":"invalid_path","message":"no"}}"#)
+                .unwrap();
+        assert!(line.ok.is_none());
+        assert_eq!(line.error.unwrap().code, hide_host::ErrorCode::InvalidPath);
+        assert!(serde_json::from_str::<AnswerLine>(r#"{"ok":1}"#).is_err());
     }
 
     /// The folders on the way to the helper root follow OpenSSH's rule: the

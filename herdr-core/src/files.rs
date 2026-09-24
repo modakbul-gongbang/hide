@@ -801,9 +801,13 @@ pub(crate) mod tests {
     }
 
     impl HostChannel for RecordingHost {
-        fn call(&self, call: Call, _timeout: Duration) -> Result<serde_json::Value, HostCallError> {
+        fn call(
+            &self,
+            call: Call,
+            _timeout: Duration,
+        ) -> Result<crate::host_access::HostAnswer, HostCallError> {
             self.calls.lock().unwrap().push(call);
-            Ok(serde_json::json!({}))
+            Ok(serde_json::json!({}).into())
         }
     }
 

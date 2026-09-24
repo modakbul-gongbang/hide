@@ -2211,7 +2211,8 @@ mod tests {
                 &self,
                 _call: hide_host::protocol::Call,
                 _timeout: std::time::Duration,
-            ) -> Result<Value, crate::host_access::HostCallError> {
+            ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError>
+            {
                 Err(crate::host_access::HostCallError::Unknown(
                     "The device did not answer in time".to_owned(),
                 ))

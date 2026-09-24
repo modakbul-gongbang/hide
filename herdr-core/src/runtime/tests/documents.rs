@@ -8,7 +8,7 @@
 //! file work is real, and it can hold a request or lose an answer.
 
 use super::*;
-use crate::host_access::{HostCallError, HostChannel, InProcessHost};
+use crate::host_access::{HostAnswer, HostCallError, HostChannel, InProcessHost};
 use hide_host::protocol::Call;
 use serde_json::Value;
 use std::sync::Condvar;
@@ -91,7 +91,7 @@ impl HostChannel for FakeDevice {
         self.closes.lock().unwrap().push("when_idle");
     }
 
-    fn call(&self, call: Call, timeout: Duration) -> Result<Value, HostCallError> {
+    fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
         {
             let mut gate = self.gate.lock().unwrap();
             gate.waiting += 1;

@@ -40,12 +40,28 @@ impl fmt::Display for HostCallError {
     }
 }
 
+/// A helper's answer before it is decoded into the type the call expects.
+/// A device's answer stays the raw JSON text it sent: materializing an
+/// untrusted line as a generic `Value` costs tens of times its size, so it is
+/// decoded once, straight into the typed answer (`call_as`).
+#[derive(Debug)]
+pub enum HostAnswer {
+    Parsed(Value),
+    Raw(Box<serde_json::value::RawValue>),
+}
+
+impl From<Value> for HostAnswer {
+    fn from(value: Value) -> Self {
+        HostAnswer::Parsed(value)
+    }
+}
+
 /// One device's answerer for `hide_host` requests.
 pub trait HostChannel: Send + Sync {
     /// Sends one request and waits at most `timeout` for its answer. Blocks,
     /// on this machine's disk as on a device; never call it under the
     /// runtime lock.
-    fn call(&self, call: Call, timeout: Duration) -> Result<Value, HostCallError>;
+    fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError>;
 
     /// Whether the answer is computed in this process, so a path the
     /// operator spelled through a link to the checkout can be resolved on
@@ -235,8 +251,11 @@ pub fn call_as<T: serde::de::DeserializeOwned>(
     call: Call,
     timeout: Duration,
 ) -> Result<T, HostCallError> {
-    let value = channel.call(call, timeout)?;
-    serde_json::from_value(value).map_err(|error| {
+    let decoded = match channel.call(call, timeout)? {
+        HostAnswer::Parsed(value) => serde_json::from_value(value),
+        HostAnswer::Raw(raw) => serde_json::from_str(raw.get()),
+    };
+    decoded.map_err(|error| {
         HostCallError::Unknown(format!(
             "The device helper answered in an unexpected shape: {error}"
         ))
@@ -248,8 +267,10 @@ pub fn call_as<T: serde::de::DeserializeOwned>(
 pub struct InProcessHost;
 
 impl HostChannel for InProcessHost {
-    fn call(&self, call: Call, _timeout: Duration) -> Result<Value, HostCallError> {
-        hide_host::serve::handle(call).map_err(HostCallError::Refused)
+    fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+        hide_host::serve::handle(call)
+            .map(HostAnswer::Parsed)
+            .map_err(HostCallError::Refused)
     }
 
     fn in_process(&self) -> bool {
@@ -265,7 +286,7 @@ mod tests {
     struct Hostile;
 
     impl HostChannel for Hostile {
-        fn call(&self, call: Call, _timeout: Duration) -> Result<Value, HostCallError> {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
             let entry =
                 |name: &str| serde_json::json!({"name": name, "is_directory": false, "inode": 1});
             Ok(match call {
@@ -289,7 +310,8 @@ mod tests {
                     serde_json::json!({"paths": paths, "truncated": false})
                 }
                 _ => serde_json::json!(null),
-            })
+            }
+            .into())
         }
 
         fn pinned(&self, _root: &str) -> Option<RootIdentity> {
