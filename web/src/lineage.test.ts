@@ -23,6 +23,13 @@ describe("a relationship focus", () => {
       retryable: true,
     });
   });
+
+  it("reads as a retryable failure when no answer arrived in time, unless the core answered", () => {
+    const late = { ...relation, timedOut: true };
+    expect(relationState(late, null)).toEqual({ phase: "failed", message: "child task did not open: Hide did not answer in time.", retryable: true });
+    expect(relationState(late, { request_id: "r1", target_pane_id: "child", phase: "pending", message: null, retryable: false })?.phase).toBe("failed");
+    expect(relationState(late, { request_id: "r1", target_pane_id: "child", phase: "succeeded", message: null, retryable: false })).toBeNull();
+  });
 });
 
 describe("the relationship menu", () => {

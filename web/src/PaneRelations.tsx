@@ -99,7 +99,10 @@ export function RelationStatus({ pane, actions }: { pane: PaneRow; actions: Acti
   if (state.phase === "pending") {
     return (
       <div className="flex shrink-0 items-center gap-sm bg-panel px-sm py-xxs text-caption text-muted" role="status" data-relation-status="pending">
-        <span className="truncate">Opening {relation.label}…</span>
+        <span className="min-w-0 flex-1 truncate">Opening {relation.label}…</span>
+        <button type="button" className="shrink-0 text-muted hover:text-primary" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
+          Dismiss
+        </button>
       </div>
     );
   }

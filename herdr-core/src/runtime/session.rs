@@ -2060,14 +2060,6 @@ impl Runtime {
         origin: PaneFocusOrigin,
         request_id: Option<String>,
     ) {
-        if self.close_operation_holds_pane(&pane_id) {
-            self.set_error(
-                "pane.close_pending",
-                format!("Pane {pane_id} is closing; focus was not moved back to it"),
-                true,
-            );
-            return;
-        }
         let request_id = request_id.filter(|value| !value.trim().is_empty());
         if let Some(request_id) = request_id.as_deref() {
             if self
@@ -2090,6 +2082,22 @@ impl Runtime {
                 message: None,
                 retryable: false,
             });
+        }
+        // A refusal still answers the request it refuses, or the control
+        // that asked would wait for a receipt that never comes.
+        if self.close_operation_holds_pane(&pane_id) {
+            let message = format!("Pane {pane_id} is closing; focus was not moved back to it");
+            self.finish_pane_focus_request(
+                request_id.as_deref(),
+                &pane_id,
+                "failed",
+                Some(message.clone()),
+                false,
+            );
+            self.set_error("pane.close_pending", message, true);
+            return;
+        }
+        if let Some(request_id) = request_id.as_deref() {
             if !self.pane_exists_for_focus(&pane_id) {
                 let message = format!("Pane {pane_id} is no longer available.");
                 self.finish_pane_focus_request(

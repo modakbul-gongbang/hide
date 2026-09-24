@@ -6,8 +6,15 @@
 
 import type { AgentChip, LineageStep, PaneFocusRequest, PaneRow } from "./snapshot";
 
-/** The one focus the shell asked for by relationship, and where it was asked from. */
-export type Relation = { requestId: string; sourcePaneId: string; targetPaneId: string; label: string };
+/**
+ * The one focus the shell asked for by relationship, and where it was asked
+ * from. `timedOut` is set when no answer arrived in time: a send the socket
+ * dropped, or a refusal that wrote no receipt, must not leave it pending.
+ */
+export type Relation = { requestId: string; sourcePaneId: string; targetPaneId: string; label: string; timedOut?: boolean };
+
+/** How long a relationship focus waits for the core's answer before it reads as failed. */
+export const RELATION_ANSWER_TIMEOUT_MS = 15_000;
 
 export type RelationState = { phase: "pending" } | { phase: "failed"; message: string; retryable: boolean } | null;
 
@@ -17,12 +24,13 @@ export type RelationState = { phase: "pending" } | { phase: "failed"; message: s
  */
 export function relationState(relation: Relation | null, outcome: PaneFocusRequest | null | undefined): RelationState {
   if (!relation) return null;
-  if (!outcome || outcome.request_id !== relation.requestId) return { phase: "pending" };
-  if (outcome.phase === "failed") {
-    return { phase: "failed", message: outcome.message ?? `Could not open ${relation.label}`, retryable: outcome.retryable };
+  const answered = outcome && outcome.request_id === relation.requestId ? outcome : null;
+  if (answered?.phase === "failed") {
+    return { phase: "failed", message: answered.message ?? `Could not open ${relation.label}`, retryable: answered.retryable };
   }
-  if (outcome.phase === "pending") return { phase: "pending" };
-  return null;
+  if (answered && answered.phase !== "pending") return null;
+  if (relation.timedOut) return { phase: "failed", message: `${relation.label} did not open: Hide did not answer in time.`, retryable: true };
+  return { phase: "pending" };
 }
 
 /** The step a Return goes back to: the parent, the step before this pane. */

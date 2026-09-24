@@ -6,7 +6,7 @@ import { closeWithSaveOutcome, deleteBuffer, flushBuffer, settledBuffer, storedD
 import { closeDecision, statusUnknownNotice } from "./close";
 import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { latestDraft, noteSent } from "./editor/draft";
-import { relationState } from "./lineage";
+import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { lastCheckoutOf } from "./recent";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
 import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
@@ -97,6 +97,11 @@ export function createActions(dispatch: DispatchFn) {
     if (current?.targetPaneId === targetPaneId && relationState(current, rest()?.status?.pane_focus_request)?.phase === "pending") return;
     const requestId = remoteRequestId();
     ui().setRelation({ requestId, sourcePaneId, targetPaneId, label });
+    setTimeout(() => {
+      const asked = ui().relation;
+      if (asked?.requestId !== requestId || relationState(asked, rest()?.status?.pane_focus_request)?.phase !== "pending") return;
+      ui().setRelation({ ...asked, timedOut: true });
+    }, RELATION_ANSWER_TIMEOUT_MS);
     ui().setScreen({ kind: "workspace" });
     const targetId = remoteTargetOfPane(rest(), targetPaneId);
     if (targetId) {
