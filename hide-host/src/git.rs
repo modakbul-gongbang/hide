@@ -664,7 +664,7 @@ impl Watchdog {
             let mut child = child
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            matches!(child.try_wait(), Ok(None)) && child.kill().is_ok()
+            matches!(child.try_wait(), Ok(None)) && crate::worktrees::kill_group(&mut child).is_ok()
         });
         Self { finished, thread }
     }
@@ -693,6 +693,13 @@ fn git_diff_text(
         Some(input) => Stdio::from(input),
         None => Stdio::null(),
     });
+    // Its own group, so a textconv or external diff it starts is stopped
+    // with it and cannot hold the output open past the deadline.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -708,10 +715,11 @@ fn git_diff_text(
         crate::worktrees::GIT_DEADLINE,
     );
     let kill = || {
-        let _ = child
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .kill();
+        let _ = crate::worktrees::kill_group(
+            &mut child
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
     };
     let stderr_reader = std::thread::spawn(move || {
         let mut kept = Vec::new();

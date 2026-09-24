@@ -762,27 +762,38 @@ impl WithinDeadline for Command {
 /// Runs `command` to completion, or kills it at `deadline` and answers
 /// `None`. Both pipes are drained on their own threads the whole time, so a
 /// child whose output outgrows the pipe buffer is never left blocked on a
-/// write nobody reads.
+/// write nobody reads. The child leads its own process group and the deadline
+/// stops the whole group, so a hook, filter or fsmonitor Git started cannot
+/// keep a pipe open past it; a descendant that left the group is waited for
+/// only a moment and then left behind with its pipe.
 pub fn output_within(
     command: &mut Command,
     deadline: Duration,
 ) -> std::io::Result<Option<std::process::Output>> {
     use std::io::Read;
     use std::process::Stdio;
+    use std::sync::mpsc;
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let drain = |pipe: Option<_>| {
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let mut buffer = Vec::new();
             if let Some(mut pipe) = pipe {
-                let _: std::io::Result<usize> = std::io::Read::read_to_end(&mut pipe, &mut buffer);
+                let _: std::io::Result<usize> = pipe.read_to_end(&mut buffer);
             }
-            buffer
-        })
+            let _ = sender.send(buffer);
+        });
+        receiver
     };
     let stdout = drain(
         child
@@ -802,19 +813,39 @@ pub fn output_within(
             break Some(status);
         }
         if started.elapsed() >= deadline {
-            child.kill()?;
+            kill_group(&mut child)?;
             child.wait()?;
             break None;
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    let stdout = stdout.join().unwrap_or_default();
-    let stderr = stderr.join().unwrap_or_default();
+    let drained = std::time::Instant::now().max(started + deadline) + Duration::from_secs(1);
+    let collect = |receiver: mpsc::Receiver<Vec<u8>>| {
+        receiver
+            .recv_timeout(drained.saturating_duration_since(std::time::Instant::now()))
+            .unwrap_or_default()
+    };
+    let stdout = collect(stdout);
+    let stderr = collect(stderr);
     Ok(status.map(|status| std::process::Output {
         status,
         stdout,
         stderr,
     }))
+}
+
+/// Stops `child` and every process in its group, which it leads when it was
+/// spawned by [`output_within`] or the diff reader.
+pub(crate) fn kill_group(child: &mut std::process::Child) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let group = child.id() as libc::pid_t;
+        // SAFETY: killpg only sends a signal; the group is the child's own.
+        if unsafe { libc::killpg(group, libc::SIGKILL) } == 0 {
+            return Ok(());
+        }
+    }
+    child.kill()
 }
 
 // --- creation --------------------------------------------------------------
@@ -1109,6 +1140,25 @@ mod ignored_repository_tests {
             .status()
             .unwrap();
         assert!(status.success(), "git {args:?}");
+    }
+
+    /// D-15: the deadline stops Git's descendants too, so one that still
+    /// holds the output pipe cannot keep the helper's worker past it.
+    #[cfg(unix)]
+    #[test]
+    fn a_descendant_holding_the_pipe_does_not_outlast_the_deadline() {
+        let started = std::time::Instant::now();
+        let output = output_within(
+            Command::new("sh").args(["-c", "sleep 30 & sleep 30"]),
+            Duration::from_millis(200),
+        )
+        .unwrap();
+        assert!(output.is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
     }
 
     /// B28: a repository cloned into an ignored folder is found, because a
