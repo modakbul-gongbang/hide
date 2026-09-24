@@ -13,6 +13,7 @@
 pub mod document;
 pub mod error;
 pub mod list;
+pub mod mutate;
 pub mod protocol;
 pub mod root;
 pub mod save;

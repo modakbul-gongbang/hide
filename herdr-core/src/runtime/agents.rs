@@ -93,17 +93,17 @@ impl Runtime {
         {
             return false;
         }
-        let Some(transport) = self.remote_file_transports.get(&target_id).cloned() else {
-            let message = format!("Remote target {target_id} has no configured SFTP transport");
-            let generation = self.advance_remote_file_generation();
-            self.mark_remote_files_unavailable(
-                status_index,
-                root_path,
-                message.clone(),
-                generation,
-            );
-            self.set_error("remote.files.transport_unavailable", message, true);
-            return true;
+        // The device's helper lists it, as it lists the web Explorer's
+        // folders: the same confinement to the checkout's opened root on
+        // either shell (PRD S5.5 D-05). A device without a ready helper
+        // lists nothing and says why.
+        let channel = match self.device_channel(&target_id) {
+            Ok(channel) => channel,
+            Err(message) => {
+                let generation = self.advance_remote_file_generation();
+                self.mark_remote_files_unavailable(status_index, root_path, message, generation);
+                return true;
+            }
         };
         let Some(context) = self.worker_context.clone() else {
             let message = "The remote file worker is unavailable".to_owned();
@@ -135,9 +135,9 @@ impl Runtime {
         match thread::Builder::new()
             .name(format!("herdr-core-remote-files-{target_id}"))
             .spawn(move || {
-                let result = RemoteFileService::new(worker_root_path.clone(), transport)
-                    .and_then(|service| service.list(""))
-                    .map_err(|error| error.to_string());
+                let result =
+                    crate::host_access::list_folder(channel.as_ref(), &worker_root_path, "")
+                        .map_err(|error| error.to_string());
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -170,7 +170,7 @@ impl Runtime {
         target_id: &str,
         root_path: &str,
         generation: u64,
-        result: Result<Vec<FileEntry>, String>,
+        result: Result<hide_host::list::Listing, String>,
     ) -> bool {
         let Some(status_index) = self
             .snapshot
@@ -197,19 +197,11 @@ impl Runtime {
             return true;
         }
         match result {
-            Ok(mut entries) => {
-                entries.sort_by(|left, right| {
-                    let left_is_directory = left.kind == FileKind::Directory;
-                    let right_is_directory = right.kind == FileKind::Directory;
-                    right_is_directory
-                        .cmp(&left_is_directory)
-                        .then_with(|| {
-                            left.name
-                                .to_ascii_lowercase()
-                                .cmp(&right.name.to_ascii_lowercase())
-                        })
-                        .then_with(|| left.path.cmp(&right.path))
-                });
+            Ok(listing) => {
+                // The helper's order: folders first, then the natural name
+                // order the Explorer uses.
+                let base = root_path.trim_end_matches('/');
+                let entries = listing.entries;
                 let entry_count = entries.len();
                 self.snapshot.status.remote[status_index].files = RemoteFileListSnapshot {
                     root_path: Some(root_path.to_owned()),
@@ -217,10 +209,9 @@ impl Runtime {
                     entries: entries
                         .into_iter()
                         .map(|entry| RemoteFileEntrySnapshot {
-                            path: entry.path,
+                            path: format!("{base}/{}", entry.name),
                             name: entry.name,
-                            is_directory: entry.kind == FileKind::Directory,
-                            size_bytes: entry.size_bytes,
+                            is_directory: entry.is_directory,
                         })
                         .collect(),
                     message: None,

@@ -978,14 +978,15 @@ fn explorer_create_writes_the_item_and_selects_it() {
 #[test]
 fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
     let (mut runtime, root) = explorer_runtime();
+    let checkout_id = workspace::checkout_id_for_path("workspace:0", &root);
     let src = root.join("src").to_string_lossy().into_owned();
     let nested = root.join("src/nested").to_string_lossy().into_owned();
     runtime.snapshot.ui_state.expanded_paths = vec![src.clone(), nested.clone()];
     let lib = root.join("src/lib.rs").to_string_lossy().into_owned();
-    runtime.snapshot.editor.tabs.push(EditorTabSnapshot {
-        id: "file:w:c:lib".to_owned(),
-        workspace_id: "w".to_owned(),
-        checkout_id: "c".to_owned(),
+    let tab = |id: &str, workspace_id: &str, checkout_id: &str| EditorTabSnapshot {
+        id: id.to_owned(),
+        workspace_id: workspace_id.to_owned(),
+        checkout_id: checkout_id.to_owned(),
         path: lib.clone(),
         label: "lib.rs".to_owned(),
         kind: EditorTabKind::File,
@@ -994,11 +995,32 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         wrap: false,
         dirty: false,
         preview: false,
-    });
-    runtime.editor_documents.insert(
-        "file:w:c:lib".to_owned(),
-        files::tests::open_local(Path::new(&lib)).0,
-    );
+    };
+    runtime
+        .snapshot
+        .editor
+        .tabs
+        .push(tab("file:lib", "workspace:0", &checkout_id));
+    // The same path in a checkout on another device is another file.
+    runtime.snapshot.editor.tabs.push(tab(
+        "file:device",
+        "remote:macbook:project:x",
+        "remote:macbook:checkout:w1",
+    ));
+    let (document, place) = files::open_document(
+        &crate::host_access::InProcessHost,
+        &files::DocumentRoot {
+            device_id: "local".to_owned(),
+            path: root.to_string_lossy().into_owned(),
+            identity: None,
+        },
+        &lib,
+    )
+    .expect("fixture document");
+    runtime
+        .editor_documents
+        .insert("file:lib".to_owned(), document);
+    runtime.document_places.insert("file:lib".to_owned(), place);
 
     assert!(runtime.dispatch_json(&explorer_event(
         "path_rename",
@@ -1032,9 +1054,15 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         renamed.join("lib.rs").to_string_lossy()
     );
     assert_eq!(
-        runtime.editor_documents["file:w:c:lib"].path,
+        snapshot.editor.tabs[1].path, lib,
+        "another device's tab stays"
+    );
+    assert_eq!(
+        runtime.editor_documents["file:lib"].path,
         renamed.join("lib.rs").to_string_lossy()
     );
+    // The tab's saves go to the file it now shows, not to the old path.
+    assert_eq!(runtime.document_places["file:lib"].relative, "lib/lib.rs");
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -1107,7 +1135,7 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
     runtime.snapshot.editor.tabs.push(EditorTabSnapshot {
         id: "file:lib".to_owned(),
         workspace_id: "workspace:0".to_owned(),
-        checkout_id: "checkout:0".to_owned(),
+        checkout_id: workspace::checkout_id_for_path("workspace:0", &root),
         path: lib.to_string_lossy().into_owned(),
         label: file_name.clone(),
         kind: EditorTabKind::File,
@@ -1118,6 +1146,13 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
         preview: false,
     });
 
+    let mut document = files::tests::open_local(&lib).0;
+    document.contents_utf8 = Some("draft\n".to_owned());
+    document.dirty = true;
+    runtime
+        .editor_documents
+        .insert("file:lib".to_owned(), document);
+
     assert!(runtime.dispatch_json(&explorer_event(
         "path_trash",
         serde_json::json!({
@@ -1127,6 +1162,18 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
         })
     )));
     assert!(!lib.exists(), "the file left the tree");
+    // The tab keeps its draft and shows the file as removed, so a save does
+    // not look as if it could land (B18).
+    let document = &runtime.editor_documents["file:lib"];
+    assert_eq!(document.contents_utf8.as_deref(), Some("draft\n"));
+    assert!(document.dirty);
+    assert_eq!(
+        document
+            .conflict
+            .as_ref()
+            .map(|conflict| conflict.disk_revision.clone()),
+        Some(None)
+    );
     let snapshot = runtime.snapshot();
     let operation = snapshot
         .explorer_operation
@@ -1181,7 +1228,8 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
 fn explorer_trash_refuses_an_item_replaced_while_the_prompt_was_open() {
     let (mut runtime, root) = explorer_runtime();
     let lib = root.join("src/lib.rs");
-    let shown = crate::files::inode_of(&std::fs::symlink_metadata(&lib).expect("fixture"));
+    let shown =
+        std::os::unix::fs::MetadataExt::ino(&std::fs::symlink_metadata(&lib).expect("fixture"));
     std::fs::rename(&lib, root.join("src/old.rs")).expect("keep the shown inode alive");
     std::fs::write(&lib, "rewritten").expect("replacement");
 

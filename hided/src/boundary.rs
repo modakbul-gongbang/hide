@@ -202,6 +202,10 @@ pub struct Entry {
     pub name: String,
     pub path: String,
     pub is_directory: bool,
+    /// The entry's own inode in a checkout listing, which a trash of the
+    /// row confirms; absent in the registration listing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inode: Option<u64>,
 }
 
 /// A listing answer: the directory that was listed and its visible children.
@@ -843,6 +847,7 @@ impl Boundary {
                 name: name.to_owned(),
                 path: root.join(name).display().to_string(),
                 is_directory: true,
+                inode: None,
             });
         }
         entries.sort_by_key(|entry| entry.name.to_lowercase());
@@ -894,6 +899,7 @@ impl Boundary {
                     path: dir.join(&entry.name).display().to_string(),
                     name: entry.name,
                     is_directory: entry.is_directory,
+                    inode: Some(entry.inode),
                 })
                 .collect(),
             truncated: listed.truncated,

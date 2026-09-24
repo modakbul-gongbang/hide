@@ -415,6 +415,9 @@ pub(super) struct FileSavePayload {
 /// focused checkout before it trusts the parent to be inside it.
 #[derive(Debug, Deserialize)]
 pub(super) struct ExplorerCreatePayload {
+    /// The device whose tree asked; absent for this machine.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
     pub(super) root: String,
     pub(super) parent: String,
     pub(super) name: String,
@@ -422,6 +425,9 @@ pub(super) struct ExplorerCreatePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct PathRenamePayload {
+    /// The device whose tree asked; absent for this machine.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
     pub(super) root: String,
     pub(super) path: String,
     pub(super) name: String,
@@ -429,6 +435,9 @@ pub(super) struct PathRenamePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct PathMovePayload {
+    /// The device whose tree asked; absent for this machine.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
     pub(super) root: String,
     pub(super) path: String,
     /// The folder the item lands in; the item keeps its name.
@@ -437,6 +446,9 @@ pub(super) struct PathMovePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct PathTrashPayload {
+    /// The device whose tree asked; absent for this machine.
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
     pub(super) root: String,
     pub(super) path: String,
     /// The row the tree selects once the item is gone: its next sibling,
@@ -2223,6 +2235,7 @@ impl Runtime {
                 },
                 &payload.root,
                 &payload.parent,
+                payload.device_id.as_deref(),
             ),
             Event::DirCreate(payload) => self.start_explorer_operation(
                 |root| {
@@ -2235,6 +2248,7 @@ impl Runtime {
                 },
                 &payload.root,
                 &payload.parent,
+                payload.device_id.as_deref(),
             ),
             Event::PathRename(payload) => self.start_explorer_operation(
                 |root| {
@@ -2242,6 +2256,7 @@ impl Runtime {
                 },
                 &payload.root,
                 &payload.path,
+                payload.device_id.as_deref(),
             ),
             Event::PathMove(payload) => self.start_explorer_operation(
                 |root| {
@@ -2253,6 +2268,7 @@ impl Runtime {
                 },
                 &payload.root,
                 &payload.path,
+                payload.device_id.as_deref(),
             ),
             Event::PathTrash(payload) => self.start_explorer_operation(
                 |root| {
@@ -2265,6 +2281,7 @@ impl Runtime {
                 },
                 &payload.root,
                 &payload.path,
+                payload.device_id.as_deref(),
             ),
             Event::TerminalClick(payload) => {
                 // D8 explicitly chooses Herdr's detected agent as the policy

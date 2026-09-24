@@ -45,7 +45,6 @@ use crate::model::{
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
-use crate::remote_files::{FileEntry, FileKind, FileService, RemoteFileService};
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -221,6 +220,17 @@ fn herdr_insert_index(
 /// `path` with the `source` prefix replaced by `destination`, or `None`
 /// when `path` is neither `source` nor inside it. Component-wise, so
 /// `/repo/src2` is not inside `/repo/src`.
+/// The checkout an explorer change was decided for: its tabs, its device's
+/// expanded folders and its host are the ones the result applies to,
+/// whatever is in front when the result lands.
+#[derive(Clone, Debug)]
+pub(crate) struct ExplorerTarget {
+    pub(crate) workspace_id: String,
+    pub(crate) checkout_id: String,
+    pub(crate) device_id: String,
+    pub(crate) root: String,
+}
+
 fn retarget_path(path: &str, source: &str, destination: &str) -> Option<String> {
     if path == source {
         return Some(destination.to_owned());

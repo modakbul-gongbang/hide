@@ -244,8 +244,23 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     );
 }
 
+/// A helper listing with these (name, is_directory) rows, in its order.
+fn listing(rows: &[(&str, bool)]) -> hide_host::list::Listing {
+    hide_host::list::Listing {
+        entries: rows
+            .iter()
+            .map(|(name, is_directory)| hide_host::list::Entry {
+                name: (*name).to_owned(),
+                is_directory: *is_directory,
+                inode: 1,
+            })
+            .collect(),
+        truncated: false,
+    }
+}
+
 #[test]
-fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
+fn remote_file_results_are_scoped_and_generation_guarded() {
     let mut runtime = runtime();
     let root_path = "/private/tmp/herdr-remote-files";
     let workspace_id = "remote:mini:workspace:w9";
@@ -284,16 +299,14 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
     }))
     .expect("remote file event");
     assert!(runtime.dispatch_json(&request));
-    assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
-    assert_eq!(
-        runtime
-            .snapshot
-            .status
-            .last_error
-            .as_ref()
-            .expect("missing SFTP transport is externally visible")
-            .kind,
-        "remote.files.transport_unavailable"
+    // No helper consent: the device lists nothing and says why in place.
+    let files = &runtime.snapshot.status.remote[0].files;
+    assert_eq!(files.state, "unavailable");
+    assert!(
+        files
+            .message
+            .as_deref()
+            .is_some_and(|message| !message.is_empty())
     );
 
     runtime.snapshot.status.remote[0].files = RemoteFileListSnapshot {
@@ -307,24 +320,12 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
         "mini",
         root_path,
         7,
-        Ok(vec![
-            FileEntry {
-                path: format!("{root_path}/zeta.txt"),
-                name: "zeta.txt".to_owned(),
-                kind: FileKind::File,
-                size_bytes: 4,
-            },
-            FileEntry {
-                path: format!("{root_path}/Sources"),
-                name: "Sources".to_owned(),
-                kind: FileKind::Directory,
-                size_bytes: 96,
-            },
-        ]),
+        Ok(listing(&[("Sources", true), ("zeta.txt", false)])),
     ));
     let files = &runtime.snapshot.status.remote[0].files;
     assert_eq!(files.state, "ready");
     assert_eq!(files.entries[0].name, "Sources");
+    assert_eq!(files.entries[0].path, format!("{root_path}/Sources"));
     assert!(files.entries[0].is_directory);
     assert_eq!(files.entries[1].name, "zeta.txt");
 
@@ -335,7 +336,7 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
         message: None,
         generation: 8,
     };
-    assert!(runtime.ingest_remote_file_list_result("mini", root_path, 7, Ok(Vec::new()),));
+    assert!(runtime.ingest_remote_file_list_result("mini", root_path, 7, Ok(listing(&[]))));
     assert_eq!(runtime.snapshot.status.remote[0].files.state, "loading");
     assert_eq!(runtime.snapshot.status.remote[0].files.generation, 8);
     assert_eq!(
@@ -354,7 +355,7 @@ fn remote_file_results_are_scoped_sorted_and_generation_guarded() {
     assert!(runtime.dispatch_json(&request));
     assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
     assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
-    assert!(runtime.ingest_remote_file_list_result("mini", root_path, 8, Ok(Vec::new())));
+    assert!(runtime.ingest_remote_file_list_result("mini", root_path, 8, Ok(listing(&[]))));
     assert_eq!(runtime.snapshot.status.remote[0].files.state, "unavailable");
     assert_eq!(runtime.snapshot.status.remote[0].files.generation, 9);
 }

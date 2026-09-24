@@ -1046,8 +1046,26 @@ fn explorer_runtime() -> (Runtime, PathBuf) {
     std::fs::write(root.join("src/lib.rs"), "lib\n").expect("fixture file");
     let root = root.canonicalize().expect("a real root");
     let mut runtime = runtime();
-    runtime.snapshot.navigator.root_path = Some(root.to_string_lossy().into_owned());
+    focus_local_checkout(&mut runtime, &root);
     (runtime, root)
+}
+
+/// Registers `root` as this machine's checkout and puts it in front, the
+/// way a click on it in the sidebar leaves the navigator.
+fn focus_local_checkout(runtime: &mut Runtime, root: &Path) {
+    runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        id: "workspace:0".to_owned(),
+        label: "workspace 0".to_owned(),
+        path: root.to_string_lossy().into_owned(),
+        device_id: "local".to_owned(),
+        pinned: false,
+    }];
+    runtime.rebuild_catalog();
+    let checkout_id = workspace::checkout_id_for_path("workspace:0", root);
+    runtime.snapshot.navigator.focused_workspace_id = Some("workspace:0".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some(checkout_id.clone());
+    runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
+    runtime.snapshot.navigator.root_path = Some(root.to_string_lossy().into_owned());
 }
 
 fn explorer_event(kind: &str, payload: serde_json::Value) -> Vec<u8> {

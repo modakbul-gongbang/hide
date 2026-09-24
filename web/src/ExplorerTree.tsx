@@ -74,7 +74,8 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   const expandedPaths = useShellStore((s) => explorerContext(s.rest).expanded ?? EMPTY_PATHS);
   const listings = useShellStore((s) => s.listings);
   // Git decorations and file changes are this machine's until the device's
-  // helper serves Git and mutations (S5.5 slices 5-6); a device's tree reads.
+  // helper serves Git (S5.5 slice 6); a device's tree takes the same changes
+  // as this machine's, made by that device's helper.
   const local = device === "local";
   const changes = useShellStore((s) => (local ? changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null) : null));
   const unavailable = useShellStore((s) => (s.directoryUnavailable && s.directoryUnavailable.device_id === device ? s.directoryUnavailable : null));
@@ -241,7 +242,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   };
 
   const requestTrash = (row: ExplorerRow) => {
-    actions.requestTrash(row.path, row.name, row.isDirectory, selectionAfterRemoval(rows, row.path, rootPath ?? row.path));
+    actions.requestTrash(row.path, row.name, row.isDirectory, selectionAfterRemoval(rows, row.path, rootPath ?? row.path), row.inode);
     setMenu(null);
   };
 
@@ -251,7 +252,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     // because in a terminal it is ^U (S2 passthrough).
     if (event.key === "Backspace" && event.metaKey) {
       event.preventDefault();
-      if (row && local) requestTrash(row);
+      if (row) requestTrash(row);
       return;
     }
     switch (event.key) {
@@ -363,7 +364,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           onContextMenu={(event) => {
             if (event.target !== event.currentTarget && (event.target as HTMLElement).closest("[data-explorer-row]")) return;
             event.preventDefault();
-            if (local) setMenu({ path: rootPath, isDirectory: true, x: event.clientX, y: event.clientY });
+            setMenu({ path: rootPath, isDirectory: true, x: event.clientX, y: event.clientY });
           }}
         >
           <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
@@ -403,10 +404,9 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                     pending.current.delete(row.path);
                     actions.setExpandedPaths([...expandedPaths.filter((path) => path !== row.path), row.path]);
                   }}
-                  movable={local}
                   onContextMenu={(event) => {
                     event.preventDefault();
-                    if (local) setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
+                    setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
                   }}
                   onDragStart={() => {
                     dragPath.current = row.path;
@@ -557,7 +557,6 @@ function ExplorerRowView({
   onOpen,
   onRefresh,
   onContextMenu,
-  movable,
   onDragStart,
   onDrop,
 }: {
@@ -569,8 +568,6 @@ function ExplorerRowView({
   onOpen: (row: ExplorerRow, preview: boolean) => void;
   onRefresh: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
-  /** Whether the row can be dragged onto a folder; a device's tree reads only for now. */
-  movable: boolean;
   onDragStart: () => void;
   onDrop: (from: string | null) => void;
 }) {
@@ -583,7 +580,7 @@ function ExplorerRowView({
       aria-expanded={row.isDirectory ? row.expanded : undefined}
       aria-label={rowAccessibilityLabel(row)}
       title={rowTitle(row, rootPath)}
-      draggable={movable}
+      draggable
       data-explorer-row={row.path}
       data-selected={selected ? "true" : "false"}
       data-decoration={row.decoration?.status ?? ""}

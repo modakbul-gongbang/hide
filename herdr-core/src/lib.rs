@@ -30,7 +30,6 @@ mod project_context;
 mod reader;
 mod recent_closed;
 pub mod remote;
-pub mod remote_files;
 mod runtime;
 pub mod schema;
 mod session_sync;

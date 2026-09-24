@@ -51,6 +51,8 @@ export type PendingTrash = {
   name: string;
   isDirectory: boolean;
   selectAfter: string;
+  /** The row's inode when the prompt opened: the host refuses an item that replaced it. */
+  inode: number | null;
 };
 
 type UiStore = {

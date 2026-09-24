@@ -14,7 +14,7 @@ use crate::protocol::{
     Call, Hello, Outcome, PROTOCOL_VERSION, Request, Response, RevisionNow, RootOpened, RootRef,
 };
 use crate::root::{Root, relative_path};
-use crate::{document, list, save};
+use crate::{document, list, mutate, save};
 
 /// Requests the helper works on at once; the core also admits at most this
 /// many per device, so the helper never queues behind itself.
@@ -176,6 +176,40 @@ pub fn handle(call: Call) -> HostResult<Value> {
             })
         }
         Call::Project { path } => to_value(project_facts(&path)?),
+        Call::Create {
+            root,
+            parent,
+            name,
+            directory,
+        } => {
+            let root = open_root(&root)?;
+            to_value(mutate::create(
+                root.dir(),
+                &relative_path(&parent)?,
+                &name,
+                directory,
+            )?)
+        }
+        Call::Rename { root, path, name } => {
+            let root = open_root(&root)?;
+            to_value(mutate::rename(root.dir(), &relative_path(&path)?, &name)?)
+        }
+        Call::Move {
+            root,
+            path,
+            destination,
+        } => {
+            let root = open_root(&root)?;
+            to_value(mutate::move_into(
+                root.dir(),
+                &relative_path(&path)?,
+                &relative_path(&destination)?,
+            )?)
+        }
+        Call::Trash { root, path, inode } => {
+            let root = open_root(&root)?;
+            to_value(mutate::trash(&root, &relative_path(&path)?, inode)?)
+        }
         Call::Save {
             root,
             path,

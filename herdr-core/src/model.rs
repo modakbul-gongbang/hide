@@ -2427,7 +2427,6 @@ pub struct RemoteFileEntrySnapshot {
     pub path: String,
     pub name: String,
     pub is_directory: bool,
-    pub size_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

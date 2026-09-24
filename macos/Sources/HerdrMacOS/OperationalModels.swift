@@ -415,7 +415,6 @@ struct RemoteFileNode: Identifiable, Hashable, Sendable {
     let path: String
     let name: String
     let isDirectory: Bool
-    let sizeBytes: UInt64
 
     var id: String { path }
 }
@@ -686,8 +685,7 @@ final class RemoteRuntimeModel: ObservableObject {
                     RemoteFileNode(
                         path: entry.path,
                         name: entry.name,
-                        isDirectory: entry.isDirectory,
-                        sizeBytes: entry.sizeBytes
+                        isDirectory: entry.isDirectory
                     )
                 }
                 fileError = status.files.state == "unavailable"

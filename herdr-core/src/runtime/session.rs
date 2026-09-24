@@ -2755,17 +2755,23 @@ impl Runtime {
     /// Decides an explorer change under the lock and runs it off the lock.
     ///
     /// The decision reads nothing from disk: `plan` refuses a path outside
-    /// the focused checkout and a name that is not one component from the
+    /// the checkout in front and a name that is not one component from the
     /// strings alone, and the refusal lands in the slot as a failed
-    /// operation so the tree can say why under the row. The filesystem call
-    /// then runs on a worker with the mutex released and reports back
-    /// through `ingest_explorer_operation_result`; a runtime without a
-    /// worker context has no shared mutex and runs it in place.
+    /// operation so the tree can say why under the row. The change is made
+    /// by the host of that checkout's device, this machine's in process or a
+    /// device's helper, on a worker with the mutex released, and reports back
+    /// through `ingest_explorer_operation_result`; a runtime without a worker
+    /// context has no shared mutex and runs it in place.
+    ///
+    /// `device` is the device the tree that asked was showing. A change for
+    /// another device than the checkout in front is refused: the tree it came
+    /// from is no longer the one on screen (PRD S5.5 B34).
     pub(super) fn start_explorer_operation(
         &mut self,
         plan: impl FnOnce(&Path) -> Result<files::ExplorerOperation, String>,
         root: &str,
         started_from: &str,
+        device: Option<&str>,
     ) -> bool {
         if self
             .snapshot
@@ -2782,13 +2788,34 @@ impl Runtime {
         }
         self.next_explorer_operation_id = self.next_explorer_operation_id.wrapping_add(1).max(1);
         let id = self.next_explorer_operation_id;
-        let planned = match self.snapshot.navigator.root_path.as_deref() {
-            Some(focused_root) if focused_root == root => plan(Path::new(root)),
-            Some(focused_root) => Err(format!("{root} is not the focused checkout {focused_root}")),
-            None => Err("No local checkout is focused".to_owned()),
+        let device = device.unwrap_or(workspace::LOCAL_DEVICE_ID);
+        let target = self
+            .front_checkout_owned()
+            .and_then(|(workspace_id, checkout_id)| {
+                self.catalog_checkout(&workspace_id, &checkout_id)
+                    .map(|(workspace, checkout)| ExplorerTarget {
+                        workspace_id: workspace_id.clone(),
+                        checkout_id: checkout_id.clone(),
+                        device_id: workspace.device_id.clone(),
+                        root: checkout.path.clone(),
+                    })
+            });
+        let planned = match target {
+            Some(target) if target.device_id != device => Err(format!(
+                "{root} is not on the device in front; nothing was changed"
+            )),
+            Some(target) if target.root == root => plan(Path::new(root)).and_then(|operation| {
+                self.document_source(&target.workspace_id, &target.checkout_id)
+                    .map(|source| (operation, target, source))
+            }),
+            Some(target) => Err(format!(
+                "{root} is not the focused checkout {}",
+                target.root
+            )),
+            None => Err("No checkout is focused".to_owned()),
         };
-        let operation = match planned {
-            Ok(operation) => operation,
+        let (operation, target, (document_root, channel)) = match planned {
+            Ok(planned) => planned,
             Err(message) => {
                 self.snapshot.explorer_operation = Some(ExplorerOperationSnapshot {
                     id,
@@ -2810,24 +2837,33 @@ impl Runtime {
             destination: operation.destination.to_string_lossy().into_owned(),
             message: None,
         });
+        crate::diagnostic!(serde_json::json!({
+            "component": "explorer", "kind": "explorer.change_requested",
+            "operation": operation.kind.as_str(), "id": id, "device": target.device_id,
+        }));
         let Some(context) = self.worker_context.clone() else {
             let result =
-                files::apply_explorer_operation_with_roots(&operation, self.file_roots.as_ref());
-            return self.ingest_explorer_operation_result(id, &operation, result);
+                files::apply_explorer_operation(channel.as_ref(), &document_root, &operation);
+            return self.ingest_explorer_operation_result(id, &target, &operation, result);
         };
         let worker_operation = operation.clone();
-        let file_roots = self.file_roots.clone();
+        let worker_target = target.clone();
         match thread::Builder::new()
             .name(format!("herdr-core-explorer-{}", operation.kind.as_str()))
             .spawn(move || {
                 let operation = worker_operation;
                 let result =
-                    files::apply_explorer_operation_with_roots(&operation, file_roots.as_ref());
+                    files::apply_explorer_operation(channel.as_ref(), &document_root, &operation);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.ingest_explorer_operation_result(id, &operation, result),
+                    Ok(mut guard) => guard.ingest_explorer_operation_result(
+                        id,
+                        &worker_target,
+                        &operation,
+                        result,
+                    ),
                     Err(_) => return,
                 };
                 drop(runtime);
@@ -2838,21 +2874,38 @@ impl Runtime {
             Ok(_) => true,
             Err(error) => {
                 let message = format!("The file operation worker could not start: {error}");
-                self.ingest_explorer_operation_result(id, &operation, Err(message))
+                self.ingest_explorer_operation_result(id, &target, &operation, Err(message))
             }
         }
     }
-    /// Settles the slot with what the filesystem said. Success moves the
+    /// The folders the Explorer has expanded on `device`: this machine's in
+    /// `expanded_paths`, a device's in its own entry.
+    fn expanded_paths_on(&mut self, device: &str) -> &mut Vec<String> {
+        if device == workspace::LOCAL_DEVICE_ID {
+            &mut self.snapshot.ui_state.expanded_paths
+        } else {
+            self.snapshot
+                .ui_state
+                .device_expanded_paths
+                .entry(device.to_owned())
+                .or_default()
+        }
+    }
+    /// Settles the slot with what the checkout's host said. Success moves the
     /// selection to the operation's `selection` and carries the paths the
-    /// core owns - the tree's expanded folders and any open file tab - from
-    /// the old path to the new one, so a renamed folder stays open and a
-    /// renamed file's tab still saves to the file it shows. An item moved to
-    /// the Trash drops its expanded folders and keeps its file tabs: the tab
-    /// is the operator's draft, and saving it recreates the file (D-05).
-    /// Failure changes no core state beyond the message.
+    /// core owns in that checkout - its device's expanded folders and its
+    /// open file tabs, with the place their saves go to - from the old path
+    /// to the new one, so a renamed folder stays open and a renamed file's
+    /// tab saves to the file it shows. The same path in another checkout or
+    /// on another device is not touched. An item moved to the Trash drops
+    /// its expanded folders and keeps its file tabs with their drafts, each
+    /// marked removed: a save does not recreate a trashed file, and the
+    /// operator exports or discards the draft (B18). Failure changes no core
+    /// state beyond the message.
     pub(crate) fn ingest_explorer_operation_result(
         &mut self,
         id: u64,
+        target: &ExplorerTarget,
         operation: &files::ExplorerOperation,
         result: Result<(), String>,
     ) -> bool {
@@ -2867,39 +2920,75 @@ impl Runtime {
         match result {
             Ok(()) => {
                 slot.phase = "finished".to_owned();
+                let in_checkout: Vec<String> = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .filter(|tab| {
+                        tab.kind == EditorTabKind::File
+                            && tab.workspace_id == target.workspace_id
+                            && tab.checkout_id == target.checkout_id
+                    })
+                    .map(|tab| tab.id.clone())
+                    .collect();
                 if source != destination {
-                    for expanded in &mut self.snapshot.ui_state.expanded_paths {
-                        if let Some(moved) = retarget_path(expanded, &source, &destination) {
-                            *expanded = moved;
+                    for folder in self.expanded_paths_on(&target.device_id).iter_mut() {
+                        if let Some(moved) = retarget_path(folder, &source, &destination) {
+                            *folder = moved;
                         }
                     }
-                    let mut retargeted = Vec::new();
                     for tab in &mut self.snapshot.editor.tabs {
-                        if tab.kind != EditorTabKind::File {
+                        if !in_checkout.contains(&tab.id) {
                             continue;
                         }
-                        if let Some(moved) = retarget_path(&tab.path, &source, &destination) {
-                            tab.label = Path::new(&moved)
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .filter(|name| !name.is_empty())
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| moved.clone());
-                            tab.path = moved.clone();
-                            retargeted.push((tab.id.clone(), moved));
+                        let Some(moved) = retarget_path(&tab.path, &source, &destination) else {
+                            continue;
+                        };
+                        tab.label = Path::new(&moved)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| moved.clone());
+                        tab.path = moved.clone();
+                        if let Some(document) = self.editor_documents.get_mut(&tab.id) {
+                            document.path = moved.clone();
                         }
-                    }
-                    for (tab_id, moved) in retargeted {
-                        if let Some(document) = self.editor_documents.get_mut(&tab_id) {
-                            document.path = moved;
+                        if let Some(place) = self.document_places.get_mut(&tab.id)
+                            && let Ok(relative) = files::relative_under(&place.root.path, &moved)
+                        {
+                            place.relative = relative;
                         }
                     }
                     self.sync_active_editor_document();
                 }
                 if operation.kind == files::ExplorerOperationKind::PathTrash {
-                    self.snapshot.ui_state.expanded_paths.retain(|expanded| {
-                        expanded != &source && !expanded.starts_with(&format!("{source}/"))
+                    self.expanded_paths_on(&target.device_id).retain(|folder| {
+                        folder != &source && !folder.starts_with(&format!("{source}/"))
                     });
+                    let removed: Vec<String> = self
+                        .snapshot
+                        .editor
+                        .tabs
+                        .iter()
+                        .filter(|tab| {
+                            in_checkout.contains(&tab.id)
+                                && retarget_path(&tab.path, &source, &source).is_some()
+                        })
+                        .map(|tab| tab.id.clone())
+                        .collect();
+                    for tab_id in removed {
+                        if let Some(document) = self.editor_documents.get_mut(&tab_id)
+                            && let Some(revision) = document.revision.clone()
+                        {
+                            document.conflict = Some(crate::model::EditorConflictSnapshot {
+                                opened_revision: revision,
+                                disk_revision: None,
+                            });
+                        }
+                    }
+                    self.sync_active_editor_document();
                 }
                 self.snapshot.ui_state.selected_path =
                     Some(operation.selection.to_string_lossy().into_owned());
@@ -2911,19 +3000,19 @@ impl Runtime {
                 // with no second dispatch from the shell; its read runs on a
                 // worker like every open, so the tab follows the selection.
                 // New Folder, Rename and move open nothing. If the checkout
-                // cannot serve the file it still exists on disk, so the reason
+                // cannot serve the file it still exists there, so the reason
                 // rides the finished slot's message and the tree keeps the
                 // created file (B10 pattern).
-                if operation.kind == files::ExplorerOperationKind::FileCreate
-                    && let Some((workspace_id, checkout_id)) = self
-                        .focused_local_checkout()
-                        .map(|(workspace, checkout)| (workspace.id.clone(), checkout.id.clone()))
-                {
-                    match self.prepare_file_tab(&workspace_id, &checkout_id, &destination) {
+                if operation.kind == files::ExplorerOperationKind::FileCreate {
+                    match self.prepare_file_tab(
+                        &target.workspace_id,
+                        &target.checkout_id,
+                        &destination,
+                    ) {
                         Ok(prepared) => self.show_file_tab(
                             prepared,
-                            &workspace_id,
-                            &checkout_id,
+                            &target.workspace_id,
+                            &target.checkout_id,
                             &destination,
                             false,
                         ),

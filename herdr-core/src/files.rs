@@ -1,4 +1,4 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -133,18 +133,6 @@ impl FileRoots {
             .iter()
             .find(|(root, _)| root == path)
             .map(|(_, dir)| dir.as_raw_fd())
-    }
-
-    fn parent(&self, path: &Path) -> io::Result<(Dir, std::ffi::OsString)> {
-        let (dir, relative) = self.relative(path)?;
-        let name = relative.file_name().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "checkout root is not an item")
-        })?;
-        let parent = relative
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        dir.open_dir(parent).map(|parent| (parent, name.to_owned()))
     }
 }
 
@@ -534,324 +522,111 @@ impl ExplorerOperation {
             expected_inode,
         })
     }
-
-    fn item_name(&self) -> String {
-        self.destination
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    }
-
-    fn folder_name(&self) -> String {
-        self.destination
-            .parent()
-            .and_then(Path::file_name)
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    }
 }
 
-/// Runs the change on disk. Nothing here overwrites: every call is the
-/// exclusive form, so a name that appears between the runtime's decision
-/// and this call is refused rather than replaced.
-#[cfg(test)]
-pub fn apply_explorer_operation(operation: &ExplorerOperation) -> Result<(), String> {
-    apply_explorer_operation_with_roots(operation, None)
+const CHANGE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// `absolute` spelled under `root`, the root itself as the empty path.
+fn relative_or_root(root: &str, absolute: &Path) -> Result<String, String> {
+    let absolute = absolute.to_string_lossy();
+    if absolute.trim_end_matches('/') == root.trim_end_matches('/') {
+        return Ok(String::new());
+    }
+    relative_under(root, &absolute)
 }
 
-pub fn apply_explorer_operation_with_roots(
+/// The root as the checkout's host requests name it: the identity hided
+/// pinned, or the one a fresh `root_open` on that host reports.
+fn root_ref(channel: &dyn HostChannel, root: &DocumentRoot) -> Result<RootRef, HostCallError> {
+    let identity = match root.identity {
+        Some(identity) => identity,
+        None => {
+            call_as::<RootOpened>(
+                channel,
+                Call::RootOpen {
+                    root: root.path.clone(),
+                },
+                OPEN_TIMEOUT,
+            )?
+            .identity
+        }
+    };
+    Ok(RootRef {
+        path: root.path.clone(),
+        identity,
+    })
+}
+
+/// Runs the change on the machine that holds the checkout, through the same
+/// `hide_host` request on this machine as on a device: the host confines it
+/// to the opened root, never replaces an existing item, and moves an item to
+/// its own Trash or leaves it (PRD S5.5 B16-B18). Blocks on the channel; a
+/// request whose answer was lost is reported as an unknown result, which the
+/// tree settles by reading the folder again.
+pub fn apply_explorer_operation(
+    channel: &dyn HostChannel,
+    root: &DocumentRoot,
     operation: &ExplorerOperation,
-    roots: Option<&FileRoots>,
 ) -> Result<(), String> {
-    if let Some(roots) = roots {
-        return apply_rooted_explorer_operation(operation, roots);
-    }
-    let describe = |error: io::Error| describe_explorer_error(operation, error);
-    match operation.kind {
-        ExplorerOperationKind::FileCreate => OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&operation.destination)
-            .map(drop)
-            .map_err(describe),
-        ExplorerOperationKind::DirCreate => {
-            fs::create_dir(&operation.destination).map_err(describe)
-        }
-        ExplorerOperationKind::PathRename | ExplorerOperationKind::PathMove => {
-            require_source(operation, describe)?;
-            rename_exclusive(&operation.source, &operation.destination).map_err(describe)
-        }
-        ExplorerOperationKind::PathTrash => {
-            let present = require_source(operation, describe)?;
-            if let Some(expected) = operation.expected_inode
-                && inode_of(&present) != expected
-            {
-                return Err(format!(
-                    "{} changed while the prompt was open; nothing was moved",
-                    operation.item_name()
-                ));
-            }
-            move_to_trash(&operation.source).map_err(|error| {
-                format!(
-                    "{} could not be moved to the Trash: {error}",
-                    operation.item_name()
-                )
-            })
-        }
-    }
-}
-
-/// The daemon's mutation path uses opened parent directories. Relative
-/// operations remain inside the registered root even if a checked pathname
-/// is replaced before the worker runs.
-fn apply_rooted_explorer_operation(
-    operation: &ExplorerOperation,
-    roots: &FileRoots,
-) -> Result<(), String> {
-    let describe = |error: io::Error| describe_explorer_error(operation, error);
-    let (source_parent, source_name) = roots.parent(&operation.source).map_err(describe)?;
-    match operation.kind {
-        ExplorerOperationKind::FileCreate => {
-            let mut options = CapOpenOptions::new();
-            options.write(true).create_new(true);
-            source_parent
-                .open_with(Path::new(&source_name), &options)
-                .map(drop)
-                .map_err(describe)
-        }
-        ExplorerOperationKind::DirCreate => source_parent
-            .create_dir(Path::new(&source_name))
-            .map_err(describe),
-        ExplorerOperationKind::PathRename | ExplorerOperationKind::PathMove => {
-            rooted_source(&source_parent, &source_name, operation, describe)?;
-            let (destination_parent, destination_name) =
-                roots.parent(&operation.destination).map_err(describe)?;
-            rename_rooted_exclusive(
-                &source_parent,
-                &source_name,
-                &destination_parent,
-                &destination_name,
-            )
-            .map_err(describe)
-        }
-        ExplorerOperationKind::PathTrash => {
-            let present = rooted_source(&source_parent, &source_name, operation, describe)?;
-            if let Some(expected) = operation.expected_inode
-                && rooted_inode_of(&present) != expected
-            {
-                return Err(format!(
-                    "{} changed while the prompt was open; nothing was moved",
-                    operation.item_name()
-                ));
-            }
-            move_rooted_to_trash(&source_parent, &source_name, operation, roots)
-        }
-    }
-}
-
-fn rooted_source(
-    parent: &Dir,
-    name: &std::ffi::OsStr,
-    operation: &ExplorerOperation,
-    describe: impl FnOnce(io::Error) -> String,
-) -> Result<cap_std::fs::Metadata, String> {
-    match parent.symlink_metadata(Path::new(name)) {
-        Ok(metadata) => Ok(metadata),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(format!(
-            "{} no longer exists",
-            operation
+    let root_ref = root_ref(channel, root).map_err(|error| change_failure(operation, error))?;
+    let source = relative_or_root(&root.path, &operation.source)?;
+    let call = match operation.kind {
+        ExplorerOperationKind::FileCreate | ExplorerOperationKind::DirCreate => {
+            let parent = operation
                 .source
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-        )),
-        Err(error) => Err(describe(error)),
-    }
-}
-
-#[cfg(unix)]
-fn rooted_inode_of(metadata: &cap_std::fs::Metadata) -> u64 {
-    use cap_std::fs::MetadataExt;
-    metadata.ino()
-}
-
-#[cfg(not(unix))]
-fn rooted_inode_of(_metadata: &cap_std::fs::Metadata) -> u64 {
-    0
-}
-
-#[cfg(target_os = "macos")]
-fn rename_rooted_exclusive(
-    from_dir: &Dir,
-    from: &std::ffi::OsStr,
-    to_dir: &Dir,
-    to: &std::ffi::OsStr,
-) -> io::Result<()> {
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-    let from = CString::new(from.as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid source name"))?;
-    let to = CString::new(to.as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid destination name"))?;
-    let result = unsafe {
-        libc::renameatx_np(
-            from_dir.as_raw_fd(),
-            from.as_ptr(),
-            to_dir.as_raw_fd(),
-            to.as_ptr(),
-            libc::RENAME_EXCL,
-        )
+                .parent()
+                .ok_or_else(|| "The item has no parent folder".to_owned())?;
+            Call::Create {
+                root: root_ref,
+                parent: relative_or_root(&root.path, parent)?,
+                name: file_name(&operation.source)?,
+                directory: operation.kind == ExplorerOperationKind::DirCreate,
+            }
+        }
+        ExplorerOperationKind::PathRename => Call::Rename {
+            root: root_ref,
+            path: source,
+            name: file_name(&operation.destination)?,
+        },
+        ExplorerOperationKind::PathMove => Call::Move {
+            root: root_ref,
+            path: source,
+            destination: relative_or_root(
+                &root.path,
+                operation
+                    .destination
+                    .parent()
+                    .ok_or_else(|| "The destination has no folder".to_owned())?,
+            )?,
+        },
+        ExplorerOperationKind::PathTrash => Call::Trash {
+            root: root_ref,
+            path: source,
+            inode: operation.expected_inode,
+        },
     };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    call_as::<hide_host::mutate::Changed>(channel, call, CHANGE_TIMEOUT)
+        .map(drop)
+        .map_err(|error| change_failure(operation, error))
 }
 
-#[cfg(target_os = "linux")]
-fn rename_rooted_exclusive(
-    from_dir: &Dir,
-    from: &std::ffi::OsStr,
-    to_dir: &Dir,
-    to: &std::ffi::OsStr,
-) -> io::Result<()> {
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-    let from = CString::new(from.as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid source name"))?;
-    let to = CString::new(to.as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid destination name"))?;
-    let result = unsafe {
-        libc::renameat2(
-            from_dir.as_raw_fd(),
-            from.as_ptr(),
-            to_dir.as_raw_fd(),
-            to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+fn file_name(path: &Path) -> Result<String, String> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{} has no name", path.display()))
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn rename_rooted_exclusive(
-    from_dir: &Dir,
-    from: &std::ffi::OsStr,
-    to_dir: &Dir,
-    to: &std::ffi::OsStr,
-) -> io::Result<()> {
-    if to_dir.symlink_metadata(Path::new(to)).is_ok() {
-        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+fn change_failure(operation: &ExplorerOperation, error: HostCallError) -> String {
+    match error {
+        HostCallError::Refused(error) => error.message,
+        HostCallError::NotConnected(reason) => format!("{reason}; nothing was changed"),
+        error @ HostCallError::Busy => error.to_string(),
+        HostCallError::Unknown(reason) => format!(
+            "{reason}; whether {} changed is unknown, so the folder is read again",
+            operation.source.display()
+        ),
     }
-    from_dir.rename(Path::new(from), to_dir, Path::new(to))
-}
-
-fn move_rooted_to_trash(
-    parent: &Dir,
-    name: &std::ffi::OsStr,
-    operation: &ExplorerOperation,
-    roots: &FileRoots,
-) -> Result<(), String> {
-    // The platform Trash API takes a pathname. Move the selected item through
-    // its checked parent handle into a private directory outside the mutable
-    // checkout spelling, then hand that independent path to the OS.
-    let stage = tempfile::Builder::new()
-        .prefix("hide-trash-")
-        .tempdir()
-        .map_err(|error| format!("Trash staging could not be created: {error}"))?;
-    if stage_is_inside_root(stage.path(), roots)
-        .map_err(|error| format!("Trash staging could not be inspected: {error}"))?
-    {
-        return Err("Trash staging must be outside registered checkouts".to_owned());
-    }
-    let staged = Dir::open_ambient_dir(stage.path(), cap_std::ambient_authority())
-        .map_err(|error| format!("Trash staging could not be opened: {error}"))?;
-    let item_path = stage.path().join(name);
-    let mut preserve_stage = false;
-    let result = (|| {
-        rename_rooted_exclusive(parent, name, &staged, name).map_err(|error| {
-            if error.kind() == io::ErrorKind::CrossesDevices {
-                "Trash staging is on another volume; the item was left in place".to_owned()
-            } else {
-                describe_explorer_error(operation, error)
-            }
-        })?;
-        let before_handoff = (|| {
-            if let Some(expected) = operation.expected_inode {
-                let actual = staged.symlink_metadata(Path::new(name)).map_err(|error| {
-                    format!(
-                        "{} could not be inspected after staging: {error}",
-                        operation.item_name()
-                    )
-                })?;
-                if rooted_inode_of(&actual) != expected {
-                    return Err(format!(
-                        "{} changed while the prompt was open; nothing was moved",
-                        operation.item_name()
-                    ));
-                }
-            }
-            Ok(())
-        })();
-        if let Err(error) = before_handoff {
-            rename_rooted_exclusive(&staged, name, parent, name).map_err(|restore_error| {
-                preserve_stage = true;
-                format!(
-                    "{} could not be restored after staging: {restore_error}",
-                    operation.item_name()
-                )
-            })?;
-            return Err(error);
-        }
-        let outcome = move_to_trash(&item_path).map_err(|error| {
-            format!(
-                "{} could not be moved to the Trash: {error}",
-                operation.item_name()
-            )
-        });
-        if outcome.is_err() {
-            rename_rooted_exclusive(&staged, name, parent, name).map_err(|error| {
-                preserve_stage = true;
-                format!(
-                    "Trash failed and {} could not be restored: {error}",
-                    operation.item_name()
-                )
-            })?;
-        }
-        outcome
-    })();
-    if preserve_stage {
-        let recovery = stage.keep();
-        return Err(format!(
-            "{}; inspect recovery staging at {}",
-            result.unwrap_err(),
-            recovery.display()
-        ));
-    }
-    result
-}
-
-/// Compare the temporary path's ancestors with the *opened* checkout roots,
-/// not their mutable names. This also covers an environment temp directory
-/// placed inside a checkout whose original spelling has since been replaced.
-fn stage_is_inside_root(stage: &Path, roots: &FileRoots) -> io::Result<bool> {
-    let real = stage.canonicalize()?;
-    for (_, root) in roots.roots.iter() {
-        let root_metadata = root.dir_metadata()?;
-        for ancestor in real.ancestors() {
-            if same_directory_identity(&root_metadata, &fs::metadata(ancestor)?) {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
 }
 
 #[cfg(unix)]
@@ -875,106 +650,6 @@ fn same_directory_identity(root: &cap_std::fs::Metadata, other: &fs::Metadata) -
 #[cfg(not(any(unix, windows)))]
 fn same_directory_identity(_root: &cap_std::fs::Metadata, _other: &fs::Metadata) -> bool {
     true
-}
-
-/// A rename, move or trash of an item that is already gone is named as
-/// such rather than reported as a failed write. The metadata comes back so
-/// a trash can compare the inode without a second read.
-fn require_source(
-    operation: &ExplorerOperation,
-    describe: impl FnOnce(io::Error) -> String,
-) -> Result<fs::Metadata, String> {
-    match fs::symlink_metadata(&operation.source) {
-        Ok(metadata) => Ok(metadata),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(format!(
-            "{} no longer exists",
-            operation
-                .source
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-        )),
-        Err(error) => Err(describe(error)),
-    }
-}
-
-/// The inode is the identity the shell captured when it built the prompt
-/// and the one the core checks before the move; see `expected_inode`.
-#[cfg(unix)]
-pub(crate) fn inode_of(metadata: &fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    metadata.ino()
-}
-
-#[cfg(not(unix))]
-pub(crate) fn inode_of(_metadata: &fs::Metadata) -> u64 {
-    0
-}
-
-/// Moves the item to the Trash through `NSFileManager` rather than through
-/// Finder, which is the crate's default. The Finder route runs `osascript`
-/// and asks macOS for Automation permission on first use; a refusal there
-/// would fail every delete after it with a permission prompt the tree
-/// cannot explain. The file-manager route needs no permission and no
-/// subprocess. What it gives up is Finder's "Put Back" on some systems; the
-/// item is still in the Trash and restores by dragging it out.
-fn move_to_trash(path: &Path) -> Result<(), String> {
-    let mut context = trash::TrashContext::default();
-    #[cfg(target_os = "macos")]
-    {
-        use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        context.set_delete_method(DeleteMethod::NsFileManager);
-    }
-    context.delete(path).map_err(|error| match error {
-        trash::Error::CouldNotAccess { .. } => "it is not accessible".to_owned(),
-        trash::Error::TargetedRoot => "it is a volume root".to_owned(),
-        trash::Error::Unknown { description } | trash::Error::Os { description, .. } => description,
-        other => other.to_string(),
-    })
-}
-
-fn describe_explorer_error(operation: &ExplorerOperation, error: io::Error) -> String {
-    let name = operation.item_name();
-    let folder = operation.folder_name();
-    match error.kind() {
-        io::ErrorKind::AlreadyExists => format!("{name} already exists in {folder}"),
-        io::ErrorKind::NotFound => format!("The folder {folder} no longer exists"),
-        io::ErrorKind::PermissionDenied => format!("{folder} is not writable"),
-        io::ErrorKind::CrossesDevices => {
-            "Items can only be moved within the same volume".to_owned()
-        }
-        _ => format!("{name} could not be written: {error}"),
-    }
-}
-
-/// `rename(2)` replaces an existing destination, which is the one thing a
-/// move or rename here must never do. macOS offers the exclusive form
-/// directly; elsewhere the destination is checked first, which leaves a
-/// window this crate does not otherwise close.
-#[cfg(target_os = "macos")]
-fn rename_exclusive(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-    let from = CString::new(source.as_os_str().as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))?;
-    let to = CString::new(destination.as_os_str().as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))?;
-    // SAFETY: both strings are NUL-terminated and outlive the call; the
-    // call touches no memory of ours beyond reading them.
-    let status = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
-    if status == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn rename_exclusive(source: &Path, destination: &Path) -> io::Result<()> {
-    if fs::symlink_metadata(destination).is_ok() {
-        return Err(io::Error::from(io::ErrorKind::AlreadyExists));
-    }
-    fs::rename(source, destination)
 }
 
 /// The path as given when it is absolute, normal, and inside `root`.
@@ -1027,10 +702,7 @@ fn valid_item_name(name: &str) -> Result<&str, String> {
 pub(crate) mod tests {
     use super::*;
     use crate::model::DocumentKind;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::UNIX_EPOCH;
-
-    static NEXT_EXPLORER_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn draft_updates_keep_unsaved_contents_in_memory() {
@@ -1051,22 +723,6 @@ pub(crate) mod tests {
         assert_eq!(editor.contents_utf8.as_deref(), Some("new"));
     }
 
-    fn explorer_fixture() -> PathBuf {
-        let sequence = NEXT_EXPLORER_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "hide-explorer-{}-{}-{sequence}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(root.join("src/nested")).unwrap();
-        fs::write(root.join("README.md"), "readme").unwrap();
-        fs::write(root.join("src/lib.rs"), "lib").unwrap();
-        root
-    }
-
     /// Opens `path` on this machine the way the runtime does, with the
     /// parent folder as the checkout root.
     pub(crate) fn open_local(path: &Path) -> (EditorDocumentSnapshot, DocumentPlace) {
@@ -1085,7 +741,7 @@ pub(crate) mod tests {
 
     /// A checkout whose path is replaced after a document opened refuses
     /// the save: it lands neither in the impostor nor, silently, in the
-    /// moved original, and explorer work keeps using the pinned handle.
+    /// moved original, and an explorer change is refused the same way.
     #[cfg(unix)]
     #[test]
     fn a_checkout_replaced_after_the_open_refuses_the_save_and_writes_nowhere() {
@@ -1130,12 +786,13 @@ pub(crate) mod tests {
             SaveOutcome::Refused(message) => assert!(message.contains("replaced"), "{message}"),
             other => panic!("a replaced checkout must refuse the save: {other:?}"),
         }
-        apply_explorer_operation_with_roots(&create, Some(&roots)).unwrap();
+        let refused = apply_explorer_operation(&channel, &document_root, &create).unwrap_err();
+        assert!(refused.contains("replaced"), "{refused}");
         assert_eq!(
             fs::read_to_string(sandbox.path().join("moved/note.txt")).unwrap(),
             "inside"
         );
-        assert!(sandbox.path().join("moved/created.txt").is_file());
+        assert!(!sandbox.path().join("moved/created.txt").exists());
         assert!(!outside.join("created.txt").exists());
         assert_eq!(
             fs::read_to_string(outside.join("note.txt")).unwrap(),
@@ -1194,77 +851,6 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn rooted_mutations_refuse_outside_symlink() {
-        use std::os::unix::fs::symlink;
-        let sandbox = tempfile::tempdir().unwrap();
-        let root = sandbox.path().join("checkout");
-        let outside = sandbox.path().join("outside");
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(&outside).unwrap();
-        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
-        fs::create_dir(root.join("escape")).unwrap();
-        let escaped = ExplorerOperation::create(
-            ExplorerOperationKind::FileCreate,
-            &root,
-            &root.join("escape"),
-            "bad.txt",
-        )
-        .unwrap();
-        fs::rename(root.join("escape"), root.join("former_escape")).unwrap();
-        symlink(&outside, root.join("escape")).unwrap();
-        assert!(apply_explorer_operation_with_roots(&escaped, Some(&roots)).is_err());
-        assert!(!outside.join("bad.txt").exists());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rooted_trash_hands_off_the_selected_item_after_checkout_path_replacement() {
-        use std::os::unix::fs::symlink;
-        let sandbox = tempfile::tempdir().unwrap();
-        let root = sandbox.path().join("checkout");
-        let moved = sandbox.path().join("moved");
-        let outside = sandbox.path().join("outside");
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(&outside).unwrap();
-        let (name, _) = unique_trash_names();
-        fs::write(root.join(&name), "selected").unwrap();
-        fs::write(outside.join(&name), "outside").unwrap();
-        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
-        let shown = inode_of(&fs::symlink_metadata(root.join(&name)).unwrap());
-        let operation =
-            ExplorerOperation::trash(&root, &root.join(&name), &root, Some(shown)).unwrap();
-
-        fs::rename(&root, &moved).unwrap();
-        symlink(&outside, &root).unwrap();
-        apply_explorer_operation_with_roots(&operation, Some(&roots)).unwrap();
-        assert!(!moved.join(&name).exists());
-        assert_eq!(fs::read_to_string(outside.join(&name)).unwrap(), "outside");
-        fs::remove_file(&root).unwrap();
-        remove_from_trash(&[&name]);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn trash_stage_checks_the_opened_root_even_after_its_name_moves() {
-        use std::os::unix::fs::symlink;
-        let sandbox = tempfile::tempdir().unwrap();
-        let root = sandbox.path().join("checkout");
-        let outside = sandbox.path().join("outside");
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(&outside).unwrap();
-        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
-        let inside_stage = tempfile::tempdir_in(&root).unwrap();
-        let outside_stage = tempfile::tempdir_in(&outside).unwrap();
-        let moved = sandbox.path().join("moved");
-        fs::rename(&root, &moved).unwrap();
-        symlink(&outside, &root).unwrap();
-        let moved_stage = moved.join(inside_stage.path().file_name().unwrap());
-        assert!(stage_is_inside_root(&moved_stage, &roots).unwrap());
-        assert!(!stage_is_inside_root(outside_stage.path(), &roots).unwrap());
-    }
-
     /// Names no other Trash entry can carry, so a trashed fixture can be
     /// found and removed by exact name without touching anything else.
     pub(crate) fn unique_trash_names() -> (String, String) {
@@ -1305,137 +891,85 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn explorer_creates_a_file_and_a_folder_inside_the_root() {
-        let root = explorer_fixture();
-        let file = ExplorerOperation::create(
-            ExplorerOperationKind::FileCreate,
-            &root,
-            &root.join("src"),
-            "new.rs",
-        )
-        .unwrap();
-        apply_explorer_operation(&file).unwrap();
-        assert!(root.join("src/new.rs").is_file());
-        assert_eq!(file.destination, root.join("src/new.rs"));
+    /// Records each request and answers every one, so a test reads exactly
+    /// what a checkout's host is asked to do.
+    #[derive(Default)]
+    struct RecordingHost {
+        calls: std::sync::Mutex<Vec<Call>>,
+    }
 
-        let dir = ExplorerOperation::create(ExplorerOperationKind::DirCreate, &root, &root, "docs")
-            .unwrap();
-        apply_explorer_operation(&dir).unwrap();
-        assert!(root.join("docs").is_dir());
-        fs::remove_dir_all(&root).unwrap();
+    impl HostChannel for RecordingHost {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<serde_json::Value, HostCallError> {
+            self.calls.lock().unwrap().push(call);
+            Ok(serde_json::json!({}))
+        }
     }
 
     #[test]
-    fn explorer_renames_and_moves_without_touching_siblings() {
-        let root = explorer_fixture();
-        let rename = ExplorerOperation::rename(&root, &root.join("README.md"), "GUIDE.md").unwrap();
-        apply_explorer_operation(&rename).unwrap();
-        assert!(!root.join("README.md").exists());
-        assert_eq!(fs::read_to_string(root.join("GUIDE.md")).unwrap(), "readme");
-
-        let moved =
-            ExplorerOperation::move_into(&root, &root.join("src/lib.rs"), &root.join("src/nested"))
-                .unwrap();
-        apply_explorer_operation(&moved).unwrap();
-        assert_eq!(moved.destination, root.join("src/nested/lib.rs"));
-        assert!(!root.join("src/lib.rs").exists());
-        assert_eq!(fs::read_to_string(&moved.destination).unwrap(), "lib");
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn explorer_refuses_to_overwrite_an_existing_item() {
-        let root = explorer_fixture();
-        let create =
-            ExplorerOperation::create(ExplorerOperationKind::FileCreate, &root, &root, "README.md")
-                .unwrap();
-        let error = apply_explorer_operation(&create).unwrap_err();
-        assert!(error.contains("already exists"), "{error}");
+    fn a_change_asks_the_checkout_host_with_paths_under_its_pinned_root() {
+        let root = Path::new("/repo");
+        let identity = RootIdentity {
+            device: 1,
+            inode: 2,
+        };
+        let document_root = DocumentRoot {
+            device_id: "macbook".to_owned(),
+            path: "/repo".to_owned(),
+            identity: Some(identity),
+        };
+        let pinned = RootRef {
+            path: "/repo".to_owned(),
+            identity,
+        };
+        let host = RecordingHost::default();
+        let operations = [
+            ExplorerOperation::create(ExplorerOperationKind::DirCreate, root, root, "new").unwrap(),
+            ExplorerOperation::create(
+                ExplorerOperationKind::FileCreate,
+                root,
+                Path::new("/repo/src"),
+                "a.rs",
+            )
+            .unwrap(),
+            ExplorerOperation::rename(root, Path::new("/repo/src/a.rs"), "b.rs").unwrap(),
+            ExplorerOperation::move_into(root, Path::new("/repo/src/b.rs"), root).unwrap(),
+            ExplorerOperation::trash(root, Path::new("/repo/src"), root, Some(7)).unwrap(),
+        ];
+        for operation in &operations {
+            apply_explorer_operation(&host, &document_root, operation).unwrap();
+        }
         assert_eq!(
-            fs::read_to_string(root.join("README.md")).unwrap(),
-            "readme"
+            *host.calls.lock().unwrap(),
+            vec![
+                Call::Create {
+                    root: pinned.clone(),
+                    parent: String::new(),
+                    name: "new".to_owned(),
+                    directory: true
+                },
+                Call::Create {
+                    root: pinned.clone(),
+                    parent: "src".to_owned(),
+                    name: "a.rs".to_owned(),
+                    directory: false
+                },
+                Call::Rename {
+                    root: pinned.clone(),
+                    path: "src/a.rs".to_owned(),
+                    name: "b.rs".to_owned()
+                },
+                Call::Move {
+                    root: pinned.clone(),
+                    path: "src/b.rs".to_owned(),
+                    destination: String::new()
+                },
+                Call::Trash {
+                    root: pinned,
+                    path: "src".to_owned(),
+                    inode: Some(7)
+                },
+            ]
         );
-
-        fs::write(root.join("src/nested/README.md"), "nested").unwrap();
-        let moved =
-            ExplorerOperation::move_into(&root, &root.join("README.md"), &root.join("src/nested"))
-                .unwrap();
-        let error = apply_explorer_operation(&moved).unwrap_err();
-        assert!(error.contains("already exists"), "{error}");
-        assert_eq!(
-            fs::read_to_string(root.join("README.md")).unwrap(),
-            "readme"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("src/nested/README.md")).unwrap(),
-            "nested"
-        );
-
-        let rename = ExplorerOperation::rename(&root, &root.join("src/lib.rs"), "nested").unwrap();
-        let error = apply_explorer_operation(&rename).unwrap_err();
-        assert!(error.contains("already exists"), "{error}");
-        assert!(root.join("src/lib.rs").is_file());
-        assert!(root.join("src/nested").is_dir());
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    /// The moved items really land in the account's Trash: the crate has no
-    /// fixture Trash and `NSFileManager` ignores `HOME`. So they carry names
-    /// nothing else in the Trash has, and the test removes them from
-    /// `~/.Trash` afterwards. On a volume whose Trash is elsewhere the
-    /// removal finds nothing and the item stays there, which is the one
-    /// side effect this test cannot avoid.
-    #[test]
-    fn explorer_moves_a_file_and_a_folder_to_the_trash() {
-        let root = explorer_fixture();
-        let (file_name, folder_name) = unique_trash_names();
-        let file_path = root.join("src").join(&file_name);
-        let folder_path = root.join(&folder_name);
-        fs::write(&file_path, "trashed").unwrap();
-        fs::create_dir(&folder_path).unwrap();
-        fs::write(folder_path.join("inside.txt"), "inside").unwrap();
-
-        let file =
-            ExplorerOperation::trash(&root, &file_path, &root.join("src/nested"), None).unwrap();
-        assert_eq!(file.kind, ExplorerOperationKind::PathTrash);
-        assert_eq!(file.destination, file_path);
-        assert_eq!(file.selection, root.join("src/nested"));
-        apply_explorer_operation(&file).unwrap();
-        assert!(!file_path.exists());
-        assert!(root.join("src/lib.rs").is_file());
-        assert!(root.join("src/nested").is_dir());
-
-        let folder = ExplorerOperation::trash(&root, &folder_path, &root, None).unwrap();
-        assert_eq!(folder.selection, root);
-        apply_explorer_operation(&folder).unwrap();
-        assert!(!folder_path.exists());
-        assert!(root.join("README.md").is_file());
-        fs::remove_dir_all(&root).unwrap();
-        remove_from_trash(&[&file_name, &folder_name]);
-    }
-
-    /// D-03: the item the modal named is the item that moves. A different
-    /// inode at the same path is refused and left where it is.
-    #[test]
-    fn explorer_refuses_to_trash_an_item_whose_inode_changed_under_the_prompt() {
-        let root = explorer_fixture();
-        let lib = root.join("src/lib.rs");
-        let shown = inode_of(&fs::symlink_metadata(&lib).unwrap());
-        // Keep the shown inode alive so the filesystem cannot hand its
-        // number to the replacement.
-        fs::rename(&lib, root.join("src/old.rs")).unwrap();
-        fs::write(&lib, "rewritten").unwrap();
-        assert_ne!(inode_of(&fs::symlink_metadata(&lib).unwrap()), shown);
-
-        let stale = ExplorerOperation::trash(&root, &lib, &root.join("src"), Some(shown)).unwrap();
-        let error = apply_explorer_operation(&stale).unwrap_err();
-        assert_eq!(
-            error,
-            "lib.rs changed while the prompt was open; nothing was moved"
-        );
-        assert_eq!(fs::read_to_string(&lib).unwrap(), "rewritten");
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -1475,18 +1009,6 @@ pub(crate) mod tests {
                 .unwrap_err()
                 .contains("cannot move into the item")
         );
-    }
-
-    #[test]
-    fn explorer_reports_a_missing_item_instead_of_trashing_it() {
-        let root = explorer_fixture();
-        let missing =
-            ExplorerOperation::trash(&root, &root.join("src/gone.rs"), &root.join("src"), None)
-                .unwrap();
-        let error = apply_explorer_operation(&missing).unwrap_err();
-        assert_eq!(error, "gone.rs no longer exists");
-        assert!(root.join("src/lib.rs").is_file());
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

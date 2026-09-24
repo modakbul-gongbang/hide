@@ -770,3 +770,69 @@ fn a_device_file_tab_joins_the_device_strip_and_survives_session_syncs() {
         "an unchanged host session is not a change"
     );
 }
+
+/// B16, B18, B34: an Explorer change on a device's checkout is made by that
+/// device's host, off the lock, and an open tab of the item follows it so its
+/// next save lands on the new path; a change the tree asked for on another
+/// device than the one in front is refused and changes nothing.
+#[test]
+fn a_device_explorer_change_runs_on_its_host_and_the_open_tab_follows_it() {
+    let f = Fixture::new();
+    f.open_and_wait("a.txt");
+    let root = f.root.to_string_lossy().into_owned();
+
+    f.dispatch(
+        "file_create",
+        serde_json::json!({"root": root, "parent": root, "name": "planted.txt"}),
+    );
+    f.wait("the refusal", |runtime| {
+        runtime
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "failed")
+    });
+    assert!(
+        !f.root.join("planted.txt").exists(),
+        "the tree that asked is not the one in front"
+    );
+
+    f.dispatch(
+        "path_rename",
+        serde_json::json!({"root": root, "path": f.path("a.txt"), "name": "b.txt", "device_id": DEVICE}),
+    );
+    f.wait("the rename", |runtime| {
+        runtime
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "finished")
+    });
+    assert!(f.root.join("b.txt").is_file() && !f.root.join("a.txt").exists());
+    let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &f.path("a.txt"));
+    assert_eq!(
+        f.shared.lock().unwrap().document_places[&tab_id].relative,
+        "b.txt"
+    );
+    f.dispatch(
+        "file_save",
+        serde_json::json!({"tab_id": tab_id, "path": f.path("b.txt"), "contents_utf8": "new\n"}),
+    );
+    f.wait("the save", |runtime| {
+        runtime
+            .editor_documents
+            .get(&tab_id)
+            .is_some_and(|document| {
+                document.revision.as_deref()
+                    == Some(hide_host::document::revision_of(b"new\n").as_str())
+            })
+    });
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("b.txt")).unwrap(),
+        "new\n"
+    );
+    assert!(
+        !f.root.join("a.txt").exists(),
+        "the save did not recreate the old path"
+    );
+}

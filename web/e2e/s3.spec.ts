@@ -710,6 +710,7 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     expect(lastSent.get("path_move")).toMatchObject({ root: repo, path: `${repo}/src/renamed.ts`, destination: `${repo}/dest` });
 
     // Trash behind the confirmation: nothing goes out until it is confirmed.
+    const destInode = fs.statSync(`${repo}/dest`).ino;
     await page.locator(`[data-explorer-row="${repo}/dest"]`).click({ button: "right" });
     await page.locator('[data-menu-item="trash"]').click();
     const dialog = page.locator("[data-confirm-trash]");
@@ -719,7 +720,9 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await page.locator("[data-trash-confirm]").click();
     await expect.poll(() => sent.get("path_trash")).toBe(1);
     // The tree selects the removed folder's next sibling, which is `src`.
-    expect(lastSent.get("path_trash")).toMatchObject({ root: repo, path: `${repo}/dest`, select_after: `${repo}/src` });
+    // It names the folder the operator confirmed by its inode, so the host
+    // refuses a folder that replaced it while the prompt was open (S5.5 B17).
+    expect(lastSent.get("path_trash")).toMatchObject({ root: repo, path: `${repo}/dest`, select_after: `${repo}/src`, inode: destInode });
     await expect(page.locator(`[data-explorer-row="${repo}/dest"]`)).toHaveCount(0);
   } finally {
     close(fixture);

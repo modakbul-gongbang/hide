@@ -19,6 +19,9 @@ const GIT_DIR_NAME: &str = ".git";
 pub struct Entry {
     pub name: String,
     pub is_directory: bool,
+    /// The entry's own inode (a link's, not its target's): the identity a
+    /// trash of this row confirms (`mutate::trash`).
+    pub inode: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -92,9 +95,13 @@ pub fn list(dir: &Dir, relative: &Path, real_root: &Path) -> HostResult<Listing>
             truncated = true;
             break;
         }
+        let Ok(metadata) = item.metadata() else {
+            continue;
+        };
         entries.push(Entry {
             name: name.to_owned(),
             is_directory,
+            inode: crate::mutate::item_inode(&metadata),
         });
     }
     entries.sort_by(|left, right| {

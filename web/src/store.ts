@@ -25,7 +25,8 @@ export type TerminalChunk = {
   bytes_base64: string;
 };
 
-export type DirectoryEntry = { name: string; path: string; is_directory: boolean };
+/** `inode` is the entry's own identity in a checkout listing, which a trash of the row confirms. */
+export type DirectoryEntry = { name: string; path: string; is_directory: boolean; inode?: number };
 export type DirectoryList = {
   /** The event that asked: `remote_file_list` for the registration input, `file_list` for the Explorer. */
   kind: string;

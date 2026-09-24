@@ -14,7 +14,7 @@ use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -55,6 +55,33 @@ pub enum Call {
         path: String,
         contents: String,
         expected_revision: String,
+    },
+    /// A new empty file, or a folder when `directory`, named `name` in the
+    /// folder `parent`. Never replaces an existing item.
+    Create {
+        root: RootRef,
+        parent: String,
+        name: String,
+        directory: bool,
+    },
+    /// `path` takes the name `name` in its own folder.
+    Rename {
+        root: RootRef,
+        path: String,
+        name: String,
+    },
+    /// `path` moves into the folder `destination`, keeping its name.
+    Move {
+        root: RootRef,
+        path: String,
+        destination: String,
+    },
+    /// `path` goes to this machine's Trash; `inode` is the item the operator
+    /// confirmed, and another item found at the path is refused.
+    Trash {
+        root: RootRef,
+        path: String,
+        inode: Option<u64>,
     },
     /// The project facts of a folder on this machine (`hide_project::facts`):
     /// a Herdr pane's directory or a registered project's path, which the

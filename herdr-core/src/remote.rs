@@ -24,7 +24,7 @@ use russh::keys::{
 };
 use russh::{Channel, ChannelMsg, ChannelOpenFailure, Disconnect, Pty};
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::{FileType as SftpFileType, OpenFlags};
+use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::Value;
@@ -36,9 +36,6 @@ use tokio::runtime::{Builder, Runtime};
 use crate::domain::{
     DomainEvent, DomainProjection, DomainSnapshot, EnvironmentContract, HostScope,
 };
-use crate::remote_files::{FileEntry, FileKind, FileResult, FileServiceError, SftpTransport};
-#[cfg(test)]
-use crate::remote_files::{FileService, RemoteFileService};
 use hide_herdr_client::{ApiConnector, ApiError, ApiStream, ConnectionShutdown};
 
 mod attachments;
@@ -2210,192 +2207,6 @@ impl RusshRemoteClient {
         Ok(session)
     }
 
-    fn sftp_read(&self, path: &str) -> RemoteResult<Vec<u8>> {
-        let mut session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let operation = self.runtime.block_on(async {
-            let sftp = open_sftp(&mut session, &self.host.host_id).await?;
-            let result = sftp.read(path).await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-read",
-                    path,
-                    RemoteStage::Sftp,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            let cleanup = sftp.close().await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-read",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            combine_cleanup("remote-sftp-read", path, Ok(result), cleanup)
-        });
-        let disconnect = self
-            .runtime
-            .block_on(session.disconnect(Disconnect::ByApplication, "SFTP read complete", "en"))
-            .map_err(|error| {
-                remote_error(
-                    "remote-sftp-read",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-        combine_cleanup("remote-sftp-read", path, operation, disconnect)
-    }
-
-    fn sftp_list(&self, path: &str) -> RemoteResult<Vec<FileEntry>> {
-        let mut session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let operation = self.runtime.block_on(async {
-            let sftp = open_sftp(&mut session, &self.host.host_id).await?;
-            let directory = sftp.read_dir(path).await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-list",
-                    path,
-                    RemoteStage::Sftp,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-            let mut entries = Vec::new();
-            for entry in directory {
-                let file_type = match entry.file_type() {
-                    SftpFileType::Dir => FileKind::Directory,
-                    SftpFileType::File => FileKind::File,
-                    SftpFileType::Symlink | SftpFileType::Other => continue,
-                };
-                entries.push(FileEntry {
-                    path: entry.path(),
-                    name: entry.file_name(),
-                    kind: file_type,
-                    size_bytes: entry.metadata().len(),
-                });
-            }
-            entries.sort_by(|left, right| left.path.cmp(&right.path));
-            let cleanup = sftp.close().await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-list",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            combine_cleanup("remote-sftp-list", path, Ok(entries), cleanup)
-        });
-        let disconnect = self
-            .runtime
-            .block_on(session.disconnect(Disconnect::ByApplication, "SFTP list complete", "en"))
-            .map_err(|error| {
-                remote_error(
-                    "remote-sftp-list",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-        combine_cleanup("remote-sftp-list", path, operation, disconnect)
-    }
-
-    fn sftp_write(&self, path: &str, bytes: &[u8]) -> RemoteResult<()> {
-        let mut session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let operation = self.runtime.block_on(async {
-            let sftp = open_sftp(&mut session, &self.host.host_id).await?;
-            let mut file = sftp
-                .open_with_flags(
-                    path,
-                    OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
-                )
-                .await
-                .map_err(|error| {
-                    remote_error(
-                        "remote-sftp-write",
-                        path,
-                        RemoteStage::Sftp,
-                        error,
-                        true,
-                        false,
-                    )
-                })?;
-            let result = file.write_all(bytes).await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-write",
-                    path,
-                    RemoteStage::Sftp,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            if let Err(error) = result {
-                let cleanup = sftp.close().await.map_err(|close_error| {
-                    remote_error(
-                        "remote-sftp-write",
-                        path,
-                        RemoteStage::Cleanup,
-                        close_error,
-                        true,
-                        false,
-                    )
-                });
-                return combine_cleanup("remote-sftp-write", path, Err(error), cleanup);
-            }
-            let result = file.shutdown().await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-write",
-                    path,
-                    RemoteStage::Sftp,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            let cleanup = sftp.close().await.map_err(|error| {
-                remote_error(
-                    "remote-sftp-write",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-            combine_cleanup("remote-sftp-write", path, result, cleanup)
-        });
-        let disconnect = self
-            .runtime
-            .block_on(session.disconnect(Disconnect::ByApplication, "SFTP write complete", "en"))
-            .map_err(|error| {
-                remote_error(
-                    "remote-sftp-write",
-                    path,
-                    RemoteStage::Cleanup,
-                    error,
-                    true,
-                    false,
-                )
-            });
-        combine_cleanup("remote-sftp-write", path, operation, disconnect)
-    }
-
     pub fn start_reverse_browser_bridge(
         &self,
         spec: ReverseBrowserBridgeSpec,
@@ -2883,47 +2694,6 @@ async fn execute_channel(
             )
         })?,
     })
-}
-
-async fn open_sftp(
-    session: &mut Handle<KnownHostHandler>,
-    target: &str,
-) -> RemoteResult<SftpSession> {
-    let channel = session.channel_open_session().await.map_err(|error| {
-        remote_error(
-            "remote-sftp-open",
-            target,
-            RemoteStage::Sftp,
-            error,
-            true,
-            false,
-        )
-    })?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|error| {
-            remote_error(
-                "remote-sftp-open",
-                target,
-                RemoteStage::Sftp,
-                error,
-                true,
-                false,
-            )
-        })?;
-    SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|error| {
-            remote_error(
-                "remote-sftp-open",
-                target,
-                RemoteStage::Sftp,
-                error,
-                true,
-                false,
-            )
-        })
 }
 
 #[derive(Clone, Debug)]
@@ -3698,55 +3468,6 @@ impl RusshSftpTransport {
     pub fn client(&self) -> &Arc<RusshRemoteClient> {
         &self.client
     }
-
-    fn map_error(&self, operation: &str, error: RemoteError) -> FileServiceError {
-        FileServiceError::Remote {
-            operation: operation.to_owned(),
-            target: self.client.host().host_id.clone(),
-            reason: error.to_string(),
-        }
-    }
-}
-
-impl SftpTransport for RusshSftpTransport {
-    fn list(&self, path: &str) -> FileResult<Vec<FileEntry>> {
-        self.client
-            .sftp_list(path)
-            .map_err(|error| self.map_error("list", error))
-    }
-
-    fn read(&self, path: &str) -> FileResult<Vec<u8>> {
-        self.client
-            .sftp_read(path)
-            .map_err(|error| self.map_error("read", error))
-    }
-
-    fn write(&self, path: &str, bytes: &[u8]) -> FileResult<()> {
-        self.client
-            .sftp_write(path, bytes)
-            .map_err(|error| self.map_error("write", error))
-    }
-
-    fn git_status(&self, root: &str) -> FileResult<String> {
-        let output = self
-            .client
-            .exec_read_only(RemoteReadCommand::GitStatus {
-                root: root.to_owned(),
-            })
-            .map_err(|error| self.map_error("git status", error))?;
-        if output.exit_status != 0 && output.exit_status != 128 {
-            return Err(FileServiceError::Remote {
-                operation: "git status".to_owned(),
-                target: self.client.host().host_id.clone(),
-                reason: format!(
-                    "exit={} stderr={}",
-                    output.exit_status,
-                    redact_output(&output.stderr)
-                ),
-            });
-        }
-        Ok(output.stdout)
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -4254,39 +3975,6 @@ mod tests {
         shutdown();
         reader_thread.join().expect("reader thread joins");
         assert_eq!(observed, (true, true, true));
-    }
-
-    #[test]
-    #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_FILES_* variables"]
-    fn remote_sftp_fixture_probe() {
-        let alias_name = std::env::var("HERDR_TEST_REMOTE_FILES_SSH_ALIAS")
-            .expect("HERDR_TEST_REMOTE_FILES_SSH_ALIAS");
-        let root =
-            std::env::var("HERDR_TEST_REMOTE_FILES_ROOT").expect("HERDR_TEST_REMOTE_FILES_ROOT");
-        assert!(
-            root.starts_with("/private/tmp/herdr-ide-verify-remote-files-")
-                || root.starts_with("/tmp/herdr-ide-verify-remote-files-"),
-            "remote SFTP probe refused a root outside the owned fixture namespace"
-        );
-        let home = std::env::var_os("HOME").expect("HOME");
-        let alias =
-            SshAlias::from_config_file(&PathBuf::from(home).join(".ssh/config"), &alias_name)
-                .expect("fixture alias");
-        let client = Arc::new(RusshRemoteClient::new(alias).expect("remote client"));
-        let service = RemoteFileService::new(root.clone(), RusshSftpTransport::new(client))
-            .expect("remote file service");
-
-        let entries = service.list("").expect("SFTP directory list");
-        let marker = entries
-            .iter()
-            .find(|entry| entry.name == "marker.txt")
-            .expect("fixture marker");
-        assert_eq!(marker.kind, FileKind::File);
-        assert_eq!(marker.path, format!("{root}/marker.txt"));
-        assert_eq!(
-            service.open("marker.txt").expect("SFTP read").content,
-            "ok\n"
-        );
     }
 
     #[test]

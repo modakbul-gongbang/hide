@@ -24,6 +24,17 @@ export function createActions(dispatch: DispatchFn) {
     return checkout ? { checkout, tab: visibleTab(checkout) } : null;
   };
 
+  /**
+   * The checkout an Explorer change is made in: the one in front on the
+   * selected device, named with that device so the core refuses the change
+   * once another device's tree is on screen (S5.5 B16, B34).
+   */
+  const explorerTarget = (): { root: string; device_id?: string } | null => {
+    const context = explorerContext(rest());
+    if (!context.checkout) return null;
+    return { root: context.checkout.path, ...(context.device === "local" ? {} : { device_id: context.device }) };
+  };
+
   const setLeftSidebarVisible = (visible: boolean) => {
     const state = rest()?.ui_state;
     if (!state || state.left_sidebar_visible === visible) return;
@@ -709,36 +720,36 @@ export function createActions(dispatch: DispatchFn) {
 
     /** A new file or folder in `parent`; the core opens a created file (B9). */
     createEntry(parent: string, name: string, isDirectory: boolean) {
-      const here = current();
+      const here = explorerTarget();
       if (!here) return diagnostic("explorer create: no focused checkout");
       dispatch({
         schema_version: 2,
         kind: isDirectory ? "dir_create" : "file_create",
-        payload: { root: here.checkout.path, parent, name },
+        payload: { ...here, parent, name },
       });
     },
 
     renameEntry(path: string, name: string) {
-      const here = current();
+      const here = explorerTarget();
       if (!here) return diagnostic("path_rename: no focused checkout");
-      dispatch({ schema_version: 2, kind: "path_rename", payload: { root: here.checkout.path, path, name } });
+      dispatch({ schema_version: 2, kind: "path_rename", payload: { ...here, path, name } });
     },
 
     /** A drag that landed: one `path_move` into the folder it was dropped on. */
     moveEntry(path: string, destination: string) {
-      const here = current();
+      const here = explorerTarget();
       if (!here) return diagnostic("path_move: no focused checkout");
-      dispatch({ schema_version: 2, kind: "path_move", payload: { root: here.checkout.path, path, destination } });
+      dispatch({ schema_version: 2, kind: "path_move", payload: { ...here, path, destination } });
     },
 
     /** Opens the trash confirmation; nothing is dispatched until it is confirmed. */
-    requestTrash(path: string, name: string, isDirectory: boolean, selectAfter: string) {
-      ui().setPendingTrash({ path, name, isDirectory, selectAfter });
+    requestTrash(path: string, name: string, isDirectory: boolean, selectAfter: string, inode: number | null) {
+      ui().setPendingTrash({ path, name, isDirectory, selectAfter, inode });
     },
 
     confirmTrash() {
       const pending = ui().pendingTrash;
-      const here = current();
+      const here = explorerTarget();
       ui().setPendingTrash(null);
       if (!pending) return;
       if (!here) return diagnostic("path_trash: no focused checkout");
@@ -746,10 +757,10 @@ export function createActions(dispatch: DispatchFn) {
         schema_version: 2,
         kind: "path_trash",
         payload: {
-          root: here.checkout.path,
+          ...here,
           path: pending.path,
           select_after: pending.selectAfter,
-          inode: null,
+          inode: pending.inode,
         },
       });
     },

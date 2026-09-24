@@ -413,7 +413,17 @@ enum ClientAction {
 /// machine's paths, so these never meet the local boundary: the core finds the
 /// checkout and its device in its own catalog, and the helper confines the
 /// path to the checkout root it opened.
-const DEVICE_FILE_EVENTS: [&str; 4] = ["file_list", "file_open", "reveal_path", "file_save"];
+const DEVICE_FILE_EVENTS: [&str; 9] = [
+    "file_list",
+    "file_open",
+    "reveal_path",
+    "file_save",
+    "file_create",
+    "dir_create",
+    "path_rename",
+    "path_move",
+    "path_trash",
+];
 
 /// The SSH device a file event names, or `None` for this machine.
 fn event_device(event: &Value) -> Option<String> {
@@ -569,6 +579,7 @@ fn device_listing(core: &CoreHandle, boundary: &Boundary, event: &Value) -> Valu
                         "path": format!("{base}/{}", entry.name),
                         "name": entry.name,
                         "is_directory": entry.is_directory,
+                        "inode": entry.inode,
                     })
                 })
                 .collect();
