@@ -823,11 +823,17 @@ pub fn output_within(
     let collect = |receiver: mpsc::Receiver<Vec<u8>>| {
         receiver
             .recv_timeout(drained.saturating_duration_since(std::time::Instant::now()))
-            .unwrap_or_default()
+            .ok()
     };
-    let stdout = collect(stdout);
-    let stderr = collect(stderr);
-    Ok(status.map(|status| std::process::Output {
+    let (stdout, stderr) = (collect(stdout), collect(stderr));
+    // A pipe still open once git has ended is held by something it started,
+    // so what was read may be cut short: the call did not finish, never an
+    // empty answer a safety check would read as clean.
+    let (Some(status), Some(stdout), Some(stderr)) = (status, stdout, stderr) else {
+        let _ = kill_group(&mut child);
+        return Ok(None);
+    };
+    Ok(Some(std::process::Output {
         status,
         stdout,
         stderr,
@@ -837,15 +843,26 @@ pub fn output_within(
 /// Stops `child` and every process in its group, which it leads when it was
 /// spawned by [`output_within`] or the diff reader.
 pub(crate) fn kill_group(child: &mut std::process::Child) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        let group = child.id() as libc::pid_t;
-        // SAFETY: killpg only sends a signal; the group is the child's own.
-        if unsafe { libc::killpg(group, libc::SIGKILL) } == 0 {
-            return Ok(());
-        }
+    if stop_group(child.id()) {
+        return Ok(());
     }
     child.kill()
+}
+
+/// Sends SIGKILL to the process group `leader` leads; whether one was there.
+/// A group id is not reused while any member lives, so this reaches only what
+/// that child started, even after the child itself has ended.
+pub(crate) fn stop_group(leader: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: killpg only sends a signal.
+        unsafe { libc::killpg(leader as libc::pid_t, libc::SIGKILL) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = leader;
+        false
+    }
 }
 
 // --- creation --------------------------------------------------------------
@@ -1154,6 +1171,26 @@ mod ignored_repository_tests {
         )
         .unwrap();
         assert!(output.is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// B28: a pipe something git started still holds after git ended is not
+    /// read as an empty, successful answer, which a dirty or nested-repository
+    /// check would take for clean; the call did not finish.
+    #[cfg(unix)]
+    #[test]
+    fn output_held_open_after_the_command_ended_is_not_an_empty_success() {
+        let started = std::time::Instant::now();
+        let output = output_within(
+            Command::new("sh").args(["-c", "sleep 30 & echo partial"]),
+            Duration::from_millis(200),
+        )
+        .unwrap();
+        assert!(output.is_none(), "{output:?}");
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "took {:?}",

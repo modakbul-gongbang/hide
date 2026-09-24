@@ -664,7 +664,14 @@ impl Watchdog {
             let mut child = child
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            matches!(child.try_wait(), Ok(None)) && crate::worktrees::kill_group(&mut child).is_ok()
+            // The group goes even when git itself has ended, because
+            // something it started may still hold its output open.
+            let running = matches!(child.try_wait(), Ok(None));
+            let group = crate::worktrees::stop_group(child.id());
+            if running && !group {
+                let _ = child.kill();
+            }
+            running || group
         });
         Self { finished, thread }
     }
