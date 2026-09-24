@@ -9,6 +9,7 @@ import { downloadFile } from "./fileBytes";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
+import { useFileSource } from "./viewers/useFileBytes";
 
 // The document surface (PRD B3-B7). The core owns the open tabs and the
 // document; this draws the one that is showing and dispatches the events that
@@ -346,6 +347,7 @@ function EditorBody({
 
 function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const source = useFileSource();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-sm px-md text-center text-caption text-muted" data-editor-preview-only="true">
       <span>{document.readonly_reason ?? "This file is too large to edit here."}</span>
@@ -355,7 +357,7 @@ function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
         data-editor-download="true"
         onClick={() => {
           setDownloadError(null);
-          void downloadFile(document.path).catch((error: unknown) => {
+          void downloadFile(document.path, source).catch((error: unknown) => {
             if ((error as { name?: string }).name !== "AbortError") {
               setDownloadError(error instanceof Error ? error.message : "download_failed");
             }

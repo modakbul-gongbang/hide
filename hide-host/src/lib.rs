@@ -10,9 +10,11 @@
 //! exec channel on a registered device, so a local and a remote checkout obey
 //! one contract (PRD S5.5 D-05, D-06).
 
+pub mod bytes;
 pub mod document;
 pub mod error;
 pub mod git;
+pub mod index;
 pub mod list;
 pub mod mutate;
 pub mod protocol;

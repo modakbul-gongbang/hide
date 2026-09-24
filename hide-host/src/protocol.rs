@@ -14,7 +14,7 @@ use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -39,6 +39,19 @@ pub enum Call {
     List {
         root: RootRef,
         path: String,
+    },
+    /// At most `hide_host::bytes::MAX_RANGE` bytes of a regular file from
+    /// `offset` (`hide_host::bytes::read`).
+    Bytes {
+        root: RootRef,
+        path: String,
+        offset: u64,
+        length: u64,
+    },
+    /// Every file under the root the ignore files admit, capped
+    /// (`hide_host::index::walk`), for the ⌘P palette.
+    Index {
+        root: RootRef,
     },
     OpenDocument {
         root: RootRef,

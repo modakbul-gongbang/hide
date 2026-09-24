@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
 import { filterEntries, searchEntries, type SearchEntry } from "./search";
-import { focusedCheckout } from "./snapshot";
+import { explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
@@ -120,8 +120,13 @@ function usePaletteNavigation(count: number, onCommit: (index: number) => void) 
 }
 
 function FilePalette({ actions }: { actions: Actions }) {
-  const root = useShellStore((s) => focusedCheckout(s.rest)?.path ?? null);
-  const fileIndex = useShellStore((s) => s.fileIndex);
+  // The checkout in front on the device in front, as the Explorer shows it.
+  const device = useShellStore((s) => explorerContext(s.rest).device);
+  const root = useShellStore((s) => explorerContext(s.rest).checkout?.path ?? null);
+  // An answer for another device or checkout is not this list.
+  const fileIndex = useShellStore((s) =>
+    s.fileIndex && s.fileIndex.device_id === device && s.fileIndex.root_path === root ? s.fileIndex : null,
+  );
   const [query, setQuery] = useState("");
   const timer = useRef<number | undefined>(undefined);
 
@@ -130,17 +135,17 @@ function FilePalette({ actions }: { actions: Actions }) {
     window.clearTimeout(timer.current);
     // A palette keystroke is not one event per character: the index answer is
     // what the list draws, so the query is debounced to one request.
-    timer.current = window.setTimeout(() => actions.requestFileIndex(root, query), 120);
+    timer.current = window.setTimeout(() => actions.requestFileIndex(root, query, device), 120);
     return () => window.clearTimeout(timer.current);
-  }, [root, query, actions]);
+  }, [root, query, device, actions]);
 
   // The first query for a checkout starts the walk and answers `indexing`; ask
   // again while it says so, so the list fills without another keystroke.
   useEffect(() => {
     if (!root || !fileIndex?.indexing) return undefined;
-    const poll = window.setTimeout(() => actions.requestFileIndex(root, query), 250);
+    const poll = window.setTimeout(() => actions.requestFileIndex(root, query, device), 250);
     return () => window.clearTimeout(poll);
-  }, [root, query, fileIndex, actions]);
+  }, [root, query, device, fileIndex, actions]);
 
   const entries = fileIndex?.files ?? [];
   const navigation = usePaletteNavigation(entries.length, (index) => {
@@ -157,7 +162,11 @@ function FilePalette({ actions }: { actions: Actions }) {
       onKeyDown={navigation.onKeyDown}
       footer={fileIndex?.truncated ? "The index is truncated at 50,000 files" : ""}
     >
-      {fileIndex?.indexing && entries.length === 0 ? (
+      {fileIndex?.unavailable ? (
+        <div className="px-md py-sm text-caption text-muted" role="alert" data-palette-state="unavailable">
+          {`Files could not be listed: ${fileIndex.unavailable}`}
+        </div>
+      ) : fileIndex?.indexing && entries.length === 0 ? (
         <div className="px-md py-sm text-caption text-muted" data-palette-state="indexing">
           Indexing…
         </div>

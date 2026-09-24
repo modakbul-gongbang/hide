@@ -40,12 +40,16 @@ export type PathRefusal = { kind: string; path: string; reason: string };
 export type DirectoryChanged = { path: string };
 export type FileIndexEntry = { path: string; relative_path: string };
 export type FileIndexResult = {
+  /** The device the root is on; `local` for this Hide host. */
+  device_id: string;
   root_path: string;
   query: string;
   /** Named `files`, not `entries`: the directory_list frame owns `entries`. */
   files: FileIndexEntry[];
   truncated: boolean;
   indexing: boolean;
+  /** Why a device's helper could not walk the root; the next query walks again. */
+  unavailable: string | null;
 };
 
 export type Frame = {
@@ -314,6 +318,8 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "file_index_result") {
       set({
         fileIndex: {
+          device_id: payload.device_id ?? "local",
+          unavailable: payload.unavailable ?? null,
           root_path: payload.root_path ?? "",
           query: payload.query ?? "",
           files: payload.files ?? [],

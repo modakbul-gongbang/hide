@@ -684,8 +684,6 @@ export function createActions(dispatch: DispatchFn) {
 
     /** ⌘P: the file palette over hided's index of the focused checkout. */
     openFilePalette() {
-      // Remote files are viewed on their device (PRD S5 Non-goals).
-      if (refusedRemotely("Open file")) return;
       ui().openOverlay(ui().overlay === "file_palette" ? "none" : "file_palette");
     },
 
@@ -694,8 +692,9 @@ export function createActions(dispatch: DispatchFn) {
       ui().openOverlay(ui().overlay === "search" ? "none" : "search");
     },
 
-    requestFileIndex(root: string, query: string) {
-      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query } });
+    /** Asks for the index of `root` on `device`; a device's is walked by its helper. */
+    requestFileIndex(root: string, query: string, device: string) {
+      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query, ...(device === "local" ? {} : { device_id: device }) } });
     },
 
     /** A palette pick opens in the checkout's preview tab (B12) and closes the palette. */

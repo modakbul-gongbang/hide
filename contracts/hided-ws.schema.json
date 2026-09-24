@@ -191,20 +191,23 @@
       }
     },
     "fileIndex": {
-      "description": "A client `file_index` event asks for the files of a registered checkout that match a query: {root, query}. The daemon walks the checkout once, honoring .gitignore (and .git/info/exclude and the global ignore file) without a git process, caps the index at 50,000 files, and answers with a file_index_result frame: {root_path, query, files: [{path, relative_path}], truncated, indexing}. `files` is ranked by the Swift fuzzy score, best first, at most 80; `path` is absolute so the client can open it, `relative_path` is what the palette shows. The first query for a root answers `indexing: true` while the walk runs; `truncated` marks a checkout whose index hit the cap. A root that is not a registered checkout is the usual path_refused frame with kind file_index.",
+      "description": "A client `file_index` event asks for the files of a registered checkout that match a query: {root, query}. The daemon walks the checkout once, honoring .gitignore (and .git/info/exclude and the global ignore file) without a git process, caps the index at 50,000 files, and answers with a file_index_result frame: {root_path, query, files: [{path, relative_path}], truncated, indexing}. `files` is ranked by the Swift fuzzy score, best first, at most 80; `path` is absolute so the client can open it, `relative_path` is what the palette shows. The first query for a root answers `indexing: true` while the walk runs; `truncated` marks a checkout whose index hit the cap. A root that is not a registered checkout is the usual path_refused frame with kind file_index. With `device_id` naming an SSH device, `root` is a checkout the core's catalog carries for that device, the walk is that device's helper's, `path` is spelled on that device, and a walk the helper could not make is answered with `unavailable` naming why; the next query walks again.",
       "type": "object",
       "required": ["root", "query"],
       "properties": {
         "root": { "type": "string" },
-        "query": { "type": "string" }
+        "query": { "type": "string" },
+        "device_id": { "type": "string" }
       }
     },
     "fileIndexResult": {
-      "description": "Payload of a file_index_result frame: the root that was searched, the query, the ranked files, whether the index is truncated, and whether the walk is still running.",
+      "description": "Payload of a file_index_result frame: the device and root that were searched, the query, the ranked files, whether the index is truncated, whether the walk is still running, and why a device walk was unavailable.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["root_path", "query", "files", "truncated", "indexing"],
+      "required": ["device_id", "root_path", "query", "files", "truncated", "indexing"],
       "properties": {
+        "device_id": { "type": "string" },
+        "unavailable": { "type": ["string", "null"] },
         "root_path": { "type": "string" },
         "query": { "type": "string" },
         "files": {
@@ -224,14 +227,16 @@
       }
     },
     "fileBytes": {
-      "description": "A client `file_bytes` event asks for a regular file's bytes under a registered checkout root: {request_id, path, offset, length}. `length` null or absent reads to the end of the file; `offset` defaults to 0. The daemon answers with one or more binary frames, each framed as a 4-byte big-endian header length, the header JSON as UTF-8, then that chunk's bytes. The header is {type: \"file_bytes\", request_id, path, offset, total, eof}: offset is where this chunk starts in the file, total is the file's whole size, and eof marks the last frame. A read past MAX_FILE_BYTES (256 MiB) or a disk failure is answered with a file_bytes_error text frame instead: {request_id, path, reason} where reason is too_large or read_failed. A path that fails the boundary is the usual path_refused frame with kind file_bytes.",
+      "description": "A client `file_bytes` event asks for a regular file's bytes under a registered checkout root: {request_id, path, offset, length}. `length` null or absent reads to the end of the file; `offset` defaults to 0. The daemon answers with one or more binary frames, each framed as a 4-byte big-endian header length, the header JSON as UTF-8, then that chunk's bytes. The header is {type: \"file_bytes\", request_id, path, offset, total, eof}: offset is where this chunk starts in the file, total is the file's whole size, and eof marks the last frame. A read past MAX_FILE_BYTES (256 MiB) or a disk failure is answered with a file_bytes_error text frame instead: {request_id, path, reason} where reason is too_large or read_failed. A path that fails the boundary is the usual path_refused frame with kind file_bytes. With `device_id` naming an SSH device and `root` a checkout the core's catalog carries for it, `path` is spelled under that root on the device and the device's helper reads it one bounded range at a time; a file that changes between ranges ends the read as read_failed.",
       "type": "object",
       "required": ["request_id", "path"],
       "properties": {
         "request_id": { "type": "string" },
         "path": { "type": "string" },
         "offset": { "type": "integer", "minimum": 0 },
-        "length": { "type": ["integer", "null"], "minimum": 0 }
+        "length": { "type": ["integer", "null"], "minimum": 0 },
+        "device_id": { "type": "string" },
+        "root": { "type": "string" }
       }
     },
     "fileBytesError": {

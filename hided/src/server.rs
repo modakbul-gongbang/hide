@@ -345,7 +345,11 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                     Some(Ok(Message::Text(text))) => {
                         match handle_client_text(&state, &text, connection) {
                             Ok(ClientAction::FileBytes(event)) => {
-                                if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() { break; }
+                                let sent = match event_device(&event) {
+                                    Some(device) => send_device_file_bytes(&mut socket, &state, &device, &event).await,
+                                    None => send_file_bytes(&mut socket, &state.boundary, &event).await,
+                                };
+                                if sent.is_err() { break; }
                             }
                             Ok(ClientAction::DeviceListing(event)) => {
                                 spawn_device_listing(&state, event, device_frames_tx.clone());
@@ -1012,6 +1016,13 @@ fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
 fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
     let root = payload_str(event, "root");
     let query = payload_str(event, "query");
+    if let Some(device) = event_device(event) {
+        return vec![Message::Text(
+            device_file_index(state, &device, &root, &query)
+                .to_string()
+                .into(),
+        )];
+    }
     let Ok((known, opened)) = state.boundary.open_directory(Path::new(&root), &root) else {
         return vec![Message::Text(
             refused("file_index", &root, Refusal::OutsideCheckout)
@@ -1020,8 +1031,21 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
         )];
     };
     let root_path = known.display().to_string();
-    let payload = match state.index.query(&known, opened, &query) {
+    let walk_root = known.clone();
+    let answer = state.index.query(
+        herdr_core::workspace::LOCAL_DEVICE_ID,
+        &root_path,
+        &query,
+        move || {
+            Ok(hide_host::index::walk(
+                &cap_std::fs::Dir::from_std_file(opened),
+                &walk_root,
+            ))
+        },
+    );
+    let payload = match answer {
         IndexAnswer::Indexing => json!({
+            "device_id": herdr_core::workspace::LOCAL_DEVICE_ID,
             "root_path": root_path,
             "query": query,
             "files": [],
@@ -1042,6 +1066,7 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
                 })
                 .collect();
             json!({
+                "device_id": herdr_core::workspace::LOCAL_DEVICE_ID,
                 "root_path": root_path,
                 "query": query,
                 "files": listed,
@@ -1049,12 +1074,71 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
                 "indexing": false,
             })
         }
+        // This machine's walk reads its own opened root and cannot fail.
+        IndexAnswer::Failed(message) => json!({
+            "device_id": herdr_core::workspace::LOCAL_DEVICE_ID,
+            "root_path": root_path,
+            "query": query,
+            "files": [],
+            "truncated": false,
+            "indexing": false,
+            "unavailable": message,
+        }),
     };
     vec![Message::Text(
         json!({"type": "file_index_result", "payload": payload})
             .to_string()
             .into(),
     )]
+}
+
+/// A `file_index` query for a checkout on an SSH device. The root has to be
+/// one the core's catalog carries for that device; the walk is the device's
+/// helper's, reached on the index worker, and its paths are that device's.
+fn device_file_index(state: &AppState, device: &str, root: &str, query: &str) -> Value {
+    if !state.boundary.is_device_root(device, root) {
+        return refused("file_index", root, Refusal::OutsideCheckout);
+    }
+    let core = Arc::clone(&state.core);
+    let (walk_device, walk_root) = (device.to_owned(), root.to_owned());
+    let answer = state.index.query(device, root, query, move || {
+        let channel = core.device_channel(&walk_device)?;
+        herdr_core::host_access::index_root(channel.as_ref(), &walk_root).map_err(|error| {
+            eprintln!(
+                "{}",
+                json!({
+                    "component": "hided",
+                    "kind": "device.index_unavailable",
+                    "device": walk_device,
+                    "message": error.to_string(),
+                })
+            );
+            error.to_string()
+        })
+    });
+    let base = root.trim_end_matches('/');
+    let (files, truncated, indexing, unavailable) = match answer {
+        IndexAnswer::Indexing => (Vec::new(), false, true, None),
+        IndexAnswer::Ready { entries, truncated } => (
+            entries
+                .iter()
+                .map(|relative| json!({"path": format!("{base}/{relative}"), "relative_path": relative}))
+                .collect(),
+            truncated,
+            false,
+            None,
+        ),
+        IndexAnswer::Failed(message) => (Vec::new(), false, false, Some(message)),
+    };
+    json!({"type": "file_index_result", "payload": {
+        "device_id": device,
+        "root_path": root,
+        "query": query,
+        "files": files,
+        "truncated": truncated,
+        "indexing": indexing,
+        "unavailable": unavailable,
+    }})
 }
 
 /// Bytes one binary frame carries; a read streams in frames this size so a
@@ -1094,6 +1178,136 @@ fn file_bytes_error(request_id: &str, path: &str, reason: &str) -> Message {
         .to_string()
         .into(),
     )
+}
+
+/// A `file_bytes` read of a file on an SSH device. The root has to be a
+/// checkout the core's catalog carries for that device and the path is spelled
+/// under it; the device's helper confines the read and answers one bounded
+/// range per call, so this keeps one range in memory as the local read does.
+/// A file that changed between ranges ends the read as `read_failed` rather
+/// than joining two files' bytes.
+async fn send_device_file_bytes(
+    socket: &mut WebSocket,
+    state: &AppState,
+    device: &str,
+    event: &Value,
+) -> Result<(), ()> {
+    let request_id = payload_str(event, "request_id");
+    let path = payload_str(event, "path");
+    let root = payload_str(event, "root");
+    let offset = event
+        .pointer("/payload/offset")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let length = event.pointer("/payload/length").and_then(Value::as_u64);
+    let relative = path
+        .strip_prefix(root.trim_end_matches('/'))
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|rest| hide_host::relative_path(rest).is_ok())
+        .map(str::to_owned);
+    let Some(relative) = relative.filter(|_| state.boundary.is_device_root(device, &root)) else {
+        return socket
+            .send(Message::Text(
+                refused("file_bytes", &path, Refusal::OutsideCheckout)
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .map_err(|_| ());
+    };
+    if length.is_some_and(|length| length > boundary::MAX_FILE_BYTES) {
+        return socket
+            .send(file_bytes_error(&request_id, &path, "too_large"))
+            .await
+            .map_err(|_| ());
+    }
+    let mut cursor = offset;
+    let mut end: Option<u64> = None;
+    let mut first: Option<hide_host::bytes::FileStamp> = None;
+    loop {
+        let wanted = end.map_or(hide_host::bytes::MAX_RANGE, |end| {
+            end.saturating_sub(cursor).min(hide_host::bytes::MAX_RANGE)
+        });
+        let core = Arc::clone(&state.core);
+        let (read_device, read_root, read_relative) =
+            (device.to_owned(), root.clone(), relative.clone());
+        let range = tokio::task::spawn_blocking(move || {
+            let channel = core.device_channel(&read_device)?;
+            herdr_core::host_access::read_bytes(
+                channel.as_ref(),
+                &read_root,
+                &read_relative,
+                cursor,
+                wanted,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result);
+        let range = match range {
+            Ok(range) => range,
+            Err(message) => {
+                eprintln!(
+                    "{}",
+                    json!({
+                        "component": "hided",
+                        "kind": "device.file_bytes_failed",
+                        "device": device,
+                        "message": message,
+                    })
+                );
+                return socket
+                    .send(file_bytes_error(&request_id, &path, "read_failed"))
+                    .await
+                    .map_err(|_| ());
+            }
+        };
+        let end_now = *end.get_or_insert_with(|| {
+            let wanted = length.unwrap_or_else(|| range.total.saturating_sub(range.offset));
+            range.offset.saturating_add(wanted).min(range.total)
+        });
+        if end_now - range.offset.min(end_now) > boundary::MAX_FILE_BYTES {
+            return socket
+                .send(file_bytes_error(&request_id, &path, "too_large"))
+                .await
+                .map_err(|_| ());
+        }
+        if first.get_or_insert_with(|| range.file.clone()) != &range.file {
+            return socket
+                .send(file_bytes_error(&request_id, &path, "read_failed"))
+                .await
+                .map_err(|_| ());
+        }
+        let Ok(bytes) = range.bytes() else {
+            return socket
+                .send(file_bytes_error(&request_id, &path, "read_failed"))
+                .await
+                .map_err(|_| ());
+        };
+        let taken = bytes
+            .len()
+            .min((end_now - range.offset.min(end_now)) as usize);
+        let eof = taken == 0 || range.offset + taken as u64 >= end_now;
+        let header = json!({
+            "type": "file_bytes",
+            "request_id": request_id,
+            "path": path,
+            "offset": range.offset,
+            "total": range.total,
+            "eof": eof,
+        });
+        socket
+            .send(Message::Binary(
+                bytes_frame(&header, &bytes[..taken]).into(),
+            ))
+            .await
+            .map_err(|_| ())?;
+        cursor = range.offset + taken as u64;
+        if eof {
+            return Ok(());
+        }
+    }
 }
 
 /// A `file_bytes` read keeps only one bounded chunk in memory. Sending each

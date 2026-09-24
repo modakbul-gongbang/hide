@@ -126,6 +126,52 @@ pub fn list_folder(
     result
 }
 
+/// One range of a device file's bytes (`hide_host::bytes::read`).
+pub fn read_bytes(
+    channel: &(impl HostChannel + ?Sized),
+    root: &str,
+    relative: &str,
+    offset: u64,
+    length: u64,
+) -> Result<hide_host::bytes::Range, HostCallError> {
+    let root_ref = pinned_root(channel, root, LIST_TIMEOUT)?;
+    let result = call_as(
+        channel,
+        Call::Bytes {
+            root: root_ref,
+            path: relative.to_owned(),
+            offset,
+            length,
+        },
+        LIST_TIMEOUT,
+    );
+    if let Err(HostCallError::Refused(error)) = &result
+        && error.code == ErrorCode::RootReplaced
+    {
+        channel.pin(root, None);
+    }
+    result
+}
+
+/// A whole-root walk can take a while on a wide checkout far away.
+const INDEX_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Every file of a pinned root the ignore files admit, capped, from the host
+/// that holds it (`hide_host::index::walk`).
+pub fn index_root(
+    channel: &(impl HostChannel + ?Sized),
+    root: &str,
+) -> Result<hide_host::index::Walked, HostCallError> {
+    let root_ref = pinned_root(channel, root, LIST_TIMEOUT)?;
+    let result = call_as(channel, Call::Index { root: root_ref }, INDEX_TIMEOUT);
+    if let Err(HostCallError::Refused(error)) = &result
+        && error.code == ErrorCode::RootReplaced
+    {
+        channel.pin(root, None);
+    }
+    result
+}
+
 pub fn call_as<T: serde::de::DeserializeOwned>(
     channel: &(impl HostChannel + ?Sized),
     call: Call,

@@ -311,10 +311,21 @@ fn apply_snapshot(
             })
         );
     }
+    let device_roots = device_roots_from_value(value);
     index.set_roots(
         &roots
             .iter()
-            .map(|root| root.path.clone())
+            .map(|root| {
+                (
+                    herdr_core::workspace::LOCAL_DEVICE_ID.to_owned(),
+                    root.path.display().to_string(),
+                )
+            })
+            .chain(
+                device_roots
+                    .iter()
+                    .map(|root| (root.device_id.clone(), root.path.clone())),
+            )
             .collect::<Vec<_>>(),
     );
     let (root, expanded) = watch_state_from_value(value);
