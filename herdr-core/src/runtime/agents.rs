@@ -277,6 +277,7 @@ impl Runtime {
     pub(super) fn request_remote_control(&mut self, payload: RemoteControlPayload) -> bool {
         let target_id = payload.target_id;
         let request_id = payload.request_id;
+        let focus_device = payload.focus_device;
         let pane_focus_target = match (&payload.request, payload.report_pane_focus_outcome) {
             (RemoteControlRequest::FocusPane { pane_id }, true) => Some(pane_id.clone()),
             _ => None,
@@ -430,6 +431,13 @@ impl Runtime {
             }
         }
 
+        // An agent chosen on the device brings the Agent area back on the
+        // Workspace that holds it, which is in front only once the device's
+        // Herdr has moved there (D-08).
+        let agents_area_key = self
+            .separate_view_areas()
+            .then(|| self.remote_request_workspace_key(&target_id, &session, &payload.request))
+            .flatten();
         let action = match payload.request {
             RemoteControlRequest::FocusPane { .. } => {
                 RemoteControlAction::Pane(PaneControlAction::Focus {
@@ -715,8 +723,47 @@ impl Runtime {
             if remote_operation_key.is_none() {
                 self.set_error("remote.control.worker_failed", message, true);
             }
+            return true;
+        }
+        if focus_device && !self.device_in_front(&target_id) {
+            self.bring_device_forward(target_id.clone());
+        }
+        if let Some(key) = agents_area_key {
+            self.apply_area_intent_to(&key, AreaIntent::Agents);
         }
         true
+    }
+
+    /// The Workspace a device focus request lands on: the checkout holding
+    /// the pane or tab it names.
+    fn remote_request_workspace_key(
+        &self,
+        target_id: &str,
+        session: &RemoteSessionSnapshot,
+        request: &RemoteControlRequest,
+    ) -> Option<workspace_view::WorkspaceKey> {
+        let holds = |checkout: &CheckoutSnapshot| match request {
+            RemoteControlRequest::FocusPane { pane_id } => checkout
+                .tabs
+                .iter()
+                .any(|tab| tab.panes.iter().any(|pane| &pane.id == pane_id)),
+            RemoteControlRequest::FocusTab { tab_id } => checkout
+                .tabs
+                .iter()
+                .any(|tab| tab.id.as_deref() == Some(tab_id.as_str())),
+            _ => false,
+        };
+        let (workspace, checkout) = session.workspaces.iter().find_map(|workspace| {
+            workspace
+                .checkouts
+                .iter()
+                .find(|checkout| holds(checkout))
+                .map(|checkout| (workspace, checkout))
+        })?;
+        Some(
+            self.workspace_key(&workspace.id, &checkout.id)
+                .unwrap_or_else(|| (target_id.to_owned(), checkout.path.clone())),
+        )
     }
 
     pub fn ingest_provider_usage(

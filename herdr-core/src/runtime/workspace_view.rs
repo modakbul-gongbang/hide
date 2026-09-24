@@ -54,12 +54,8 @@ impl AreaIntent {
             Event::FileOpen(_) | Event::FileFocus(_) | Event::ChangesSelect(_) => Some(Self::Views),
             Event::RevealPath(_) => Some(Self::RevealInViews),
             Event::FocusPane(_) | Event::FocusTab(_) => Some(Self::Agents),
-            Event::RemoteControl(payload) => match payload.request {
-                RemoteControlRequest::FocusPane { .. } | RemoteControlRequest::FocusTab { .. } => {
-                    Some(Self::Agents)
-                }
-                _ => None,
-            },
+            // A device focus lands where the device's Herdr moves, so
+            // `request_remote_control` applies it to that Workspace.
             _ => None,
         }
     }
@@ -77,6 +73,10 @@ pub(super) struct WorkspaceViewPayload {
     pub(super) changes: Option<bool>,
     #[serde(default)]
     pub(super) agent_share: Option<f32>,
+    /// A file of the front Workspace to reveal: the Explorer shows with the
+    /// file's folders unfolded, in the same event, and nothing is opened.
+    #[serde(default)]
+    pub(super) reveal: Option<String>,
 }
 
 impl WorkspaceViewStore {
@@ -227,11 +227,15 @@ impl Runtime {
         }
     }
 
-    /// Applies what the event that just ran asks of the areas.
+    /// Applies what the event that just ran asks of the front Workspace.
     pub(super) fn apply_area_intent(&mut self, intent: AreaIntent) {
-        let Some(key) = self.front_workspace_key() else {
-            return;
-        };
+        if let Some(key) = self.front_workspace_key() {
+            self.apply_area_intent_to(&key, intent);
+        }
+    }
+
+    /// Applies an area intent to one Workspace, in front or about to be.
+    pub(super) fn apply_area_intent_to(&mut self, key: &WorkspaceKey, intent: AreaIntent) {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };
@@ -288,6 +292,17 @@ impl Runtime {
             );
             return true;
         };
+        let root = key.1.trim_end_matches('/');
+        if let Some(path) = payload.reveal.as_deref()
+            && !path.starts_with(&format!("{root}/"))
+        {
+            self.set_error(
+                "workspace_view.reveal_outside",
+                format!("{path} is not in the Workspace at {root}; nothing was revealed"),
+                false,
+            );
+            return true;
+        }
         let store = self.workspace_views.as_mut().expect("checked above");
         let entry = store.views.entry(&key.0, &key.1);
         let before = entry.clone();
@@ -303,11 +318,36 @@ impl Runtime {
         if let Some(share) = payload.agent_share {
             entry.agent_share = workspace_views::clamp_agent_share(share);
         }
-        if *entry == before {
+        let revealed = payload
+            .reveal
+            .is_some_and(|path| self.unfold_to(&key, &path));
+        let entry_changed = self
+            .workspace_views
+            .as_ref()
+            .and_then(|store| store.views.get(&key.0, &key.1))
+            != Some(&before);
+        if !entry_changed && !revealed {
             return false;
         }
-        self.persist_workspace_views();
+        if entry_changed {
+            self.persist_workspace_views();
+        }
         self.sync_workspace_view();
+        true
+    }
+
+    /// Unfolds the Explorer folders down to `path`, a file the caller found
+    /// inside the Workspace `key`; the shell selects the row.
+    fn unfold_to(&mut self, key: &WorkspaceKey, path: &str) -> bool {
+        let root = key.1.trim_end_matches('/');
+        let folders = reveal_expansion_paths(root, path, false);
+        let expanded = self.expanded_paths_on(&key.0);
+        for folder in folders {
+            if !expanded.contains(&folder) {
+                expanded.push(folder);
+            }
+        }
+        self.persist_current_ui_state();
         true
     }
 

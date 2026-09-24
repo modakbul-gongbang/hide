@@ -2775,3 +2775,35 @@ fn pane_focus_request_on_a_closing_pane_is_answered_as_failed() {
     assert!(!request.retryable);
     assert!(request.message.as_deref().unwrap_or("").contains("closing"));
 }
+
+/// S6 B21: a Workspace on this machine chosen while a device is in front is
+/// one event that brings this machine forward too, and a refused one moves
+/// neither.
+#[test]
+fn a_checkout_chosen_with_its_device_moves_both_or_neither() {
+    let checkout_path = "/private/tmp/hide-checkout-with-device";
+    let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+    let choose = |checkout_id: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_checkout",
+            "payload": {"workspace_id": "workspace:order", "checkout_id": checkout_id, "focus_device": true}
+        }))
+        .expect("focus checkout event")
+    };
+    runtime.snapshot.navigator.focused_device_id = Some("mini".to_owned());
+
+    runtime.dispatch_json(&choose("checkout:missing"));
+    assert!(runtime.snapshot.status.last_error.is_some());
+    assert_eq!(
+        runtime.snapshot.navigator.focused_device_id.as_deref(),
+        Some("mini")
+    );
+
+    runtime.dispatch_json(&choose(&checkout_id));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_device_id.as_deref(),
+        Some(workspace::LOCAL_DEVICE_ID)
+    );
+}

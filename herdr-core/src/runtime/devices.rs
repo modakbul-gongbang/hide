@@ -27,6 +27,44 @@ pub(super) struct RemoteDeviceConnection {
 }
 
 impl Runtime {
+    /// Makes a registered device the one in front: its checkouts, panes and
+    /// files are what the shell shows next.
+    pub(super) fn bring_device_forward(&mut self, device_id: String) {
+        if !self
+            .snapshot
+            .navigator
+            .devices
+            .iter()
+            .any(|device| device.id == device_id)
+        {
+            self.set_error(
+                "device.unknown",
+                format!("Device {device_id} is not registered"),
+                false,
+            );
+            return;
+        }
+        let local = device_id == workspace::LOCAL_DEVICE_ID;
+        self.snapshot.navigator.focused_device_id = Some(device_id);
+        self.yield_surface_to_terminal();
+        if local {
+            self.return_keyboard_to_local_pane();
+        }
+        self.reconcile_remote_terminal_selection();
+        self.sync_recent_closed_snapshot();
+        self.persist_current_ui_state();
+    }
+
+    /// Whether `device_id` is already the device in front.
+    pub(super) fn device_in_front(&self, device_id: &str) -> bool {
+        self.snapshot
+            .navigator
+            .focused_device_id
+            .as_deref()
+            .unwrap_or(workspace::LOCAL_DEVICE_ID)
+            == device_id
+    }
+
     /// Connects every device the persisted registrations name. Called once,
     /// after the worker context exists, because a coordinator reports back
     /// through it.

@@ -355,3 +355,30 @@ fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
 
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
 }
+
+/// B10, AGENTS.md one event per action: revealing a file shows the Explorer
+/// and unfolds its folders in the same `workspace_view`, and a path outside
+/// the Workspace is refused without showing anything.
+#[test]
+fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
+    let (runtime, _checkout_id, directory) = strip_checkout("reveal");
+    let mut runtime = with_views(runtime, &views_path("reveal"));
+    layout(&mut runtime, serde_json::json!({"explorer": false}));
+    let root = directory.to_string_lossy().into_owned();
+
+    runtime.dispatch_json(&explorer_event(
+        "workspace_view",
+        serde_json::json!({"explorer": true, "reveal": "/elsewhere/a.txt"}),
+    ));
+    assert!(runtime.snapshot.status.last_error.is_some());
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().explorer);
+
+    layout(
+        &mut runtime,
+        serde_json::json!({"explorer": true, "reveal": format!("{root}/src/deep/a.rs")}),
+    );
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().explorer);
+    let expanded = &runtime.snapshot.ui_state.expanded_paths;
+    assert!(expanded.contains(&format!("{root}/src")));
+    assert!(expanded.contains(&format!("{root}/src/deep")));
+}

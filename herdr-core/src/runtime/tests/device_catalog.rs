@@ -608,6 +608,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
             target_id: TARGET.to_owned(),
             request_id: request.to_owned(),
             report_pane_focus_outcome: false,
+            focus_device: false,
             request: RemoteControlRequest::CreateTab {
                 workspace_id: workspace_id.to_owned(),
                 checkout_id: Some(format!("{workspace_id}#registered")),
@@ -927,4 +928,123 @@ fn a_registration_answer_after_its_device_was_removed_is_dropped() {
         }),
     ));
     assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+}
+
+/// S6 D-08, B12, B21: an agent chosen on a device is one event that brings
+/// the device forward, and the Agent area comes back on the Workspace that
+/// holds the agent, not on the one the device showed before its Herdr moved.
+#[test]
+fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() {
+    use crate::workspace_views::ViewMode;
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.devices.push(DeviceSnapshot {
+        id: TARGET.to_owned(),
+        label: "Mac mini".to_owned(),
+        kind: "remote".to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        problem: None,
+        ssh_alias: Some(TARGET.to_owned()),
+        herdr_socket_path: None,
+        agent_count: 0,
+        test: None,
+        host: Default::default(),
+    });
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let mut raw = session(vec![
+        herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
+        herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),
+    ]);
+    raw.focused_workspace_id = Some(format!("remote:{TARGET}:workspace:w1"));
+    raw.focused_checkout_id = Some(format!("remote:{TARGET}:checkout:w1"));
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+    );
+    runtime.install_remote_control(RemoteControlContext::new(
+        TARGET,
+        connector,
+        Weak::new(),
+        ChangeNotifier::noop(),
+    ));
+    let views = tempfile::tempdir().unwrap();
+    let mut store = WorkspaceViewStore::open(views.path().join("views.json")).0;
+    store.views.entry(TARGET, &t.main).mode = ViewMode::Views;
+    store.views.entry(TARGET, &t.linked).mode = ViewMode::Views;
+    runtime.workspace_views = Some(store);
+
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "open-agent".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusPane {
+            pane_id: format!("remote:{TARGET}:pane:t3"),
+        },
+    });
+
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_device_id.as_deref(),
+        Some(TARGET)
+    );
+    let mode = |runtime: &Runtime, path: &str| {
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .views
+            .get(TARGET, path)
+            .unwrap()
+            .mode
+    };
+    assert_eq!(mode(&runtime, &t.linked), ViewMode::Together);
+    assert_eq!(mode(&runtime, &t.main), ViewMode::Views);
+}
+
+/// S6 B21: a device request refused before it is sent leaves the device
+/// that was in front where it was.
+#[test]
+fn a_refused_device_request_does_not_bring_the_device_forward() {
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "not_connected".to_owned(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+    );
+    runtime.install_remote_control(RemoteControlContext::new(
+        TARGET,
+        connector,
+        Weak::new(),
+        ChangeNotifier::noop(),
+    ));
+    let before = runtime.snapshot.navigator.focused_device_id.clone();
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "open-workspace".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w1"),
+            checkout_id: None,
+        },
+    });
+    assert!(runtime.snapshot.status.last_error.is_some());
+    assert_eq!(runtime.snapshot.navigator.focused_device_id, before);
 }

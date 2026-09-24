@@ -88,6 +88,11 @@ pub(super) struct FocusPaneRequestPayload {
     pub(super) origin: PaneFocusOrigin,
     #[serde(default)]
     pub(super) request_id: Option<String>,
+    /// Also makes this machine the device in front, in the same event, when
+    /// the focus is accepted: an agent chosen from Main or the Agents list
+    /// while another device is in front is one action (S6 B12, B21).
+    #[serde(default)]
+    pub(super) focus_device: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +141,10 @@ pub(super) struct CreateTabPayload {
 pub(super) struct FocusCheckoutPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
+    /// Also makes this machine the device in front when the checkout is
+    /// accepted, as `FocusPaneRequestPayload::focus_device` does.
+    #[serde(default)]
+    pub(super) focus_device: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -274,6 +283,11 @@ pub(super) struct RemoteControlPayload {
     /// receipt into B24's visible pane-focus outcome.
     #[serde(default)]
     pub(super) report_pane_focus_outcome: bool,
+    /// Also makes the target the device in front once the request is sent,
+    /// so choosing a device's Workspace or agent is one event that moves both
+    /// or, refused, neither (S6 B21).
+    #[serde(default)]
+    pub(super) focus_device: bool,
     #[serde(flatten)]
     pub(super) request: RemoteControlRequest,
 }
@@ -1171,6 +1185,12 @@ impl Runtime {
             }
             Event::FocusPane(payload) => {
                 self.focus_pane(payload.pane_id, payload.origin, payload.request_id);
+                if payload.focus_device
+                    && self.snapshot.status.last_error.is_none()
+                    && !self.device_in_front(workspace::LOCAL_DEVICE_ID)
+                {
+                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                }
                 true
             }
             Event::ReconnectPane(payload) => {
@@ -1391,7 +1411,14 @@ impl Runtime {
                 true
             }
             Event::FocusCheckout(payload) => {
-                self.focus_checkout(&payload.workspace_id, &payload.checkout_id)
+                let changed = self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
+                if payload.focus_device
+                    && self.snapshot.status.last_error.is_none()
+                    && !self.device_in_front(workspace::LOCAL_DEVICE_ID)
+                {
+                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                }
+                changed
             }
             Event::FocusTab(payload) => {
                 let Some(workspace_snapshot) = self
@@ -1526,29 +1553,7 @@ impl Runtime {
             }
             Event::ReorderTab(payload) => self.reorder_tab(payload),
             Event::FocusDevice(payload) => {
-                if !self
-                    .snapshot
-                    .navigator
-                    .devices
-                    .iter()
-                    .any(|device| device.id == payload.device_id)
-                {
-                    self.set_error(
-                        "device.unknown",
-                        format!("Device {} is not registered", payload.device_id),
-                        false,
-                    );
-                    return true;
-                }
-                let local = payload.device_id == workspace::LOCAL_DEVICE_ID;
-                self.snapshot.navigator.focused_device_id = Some(payload.device_id);
-                self.yield_surface_to_terminal();
-                if local {
-                    self.return_keyboard_to_local_pane();
-                }
-                self.reconcile_remote_terminal_selection();
-                self.sync_recent_closed_snapshot();
-                self.persist_current_ui_state();
+                self.bring_device_forward(payload.device_id);
                 true
             }
             Event::InactiveCheckoutsToggle(payload) => {

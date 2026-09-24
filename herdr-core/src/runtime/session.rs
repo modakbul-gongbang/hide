@@ -2097,19 +2097,17 @@ impl Runtime {
             self.set_error("pane.close_pending", message, true);
             return;
         }
-        if let Some(request_id) = request_id.as_deref() {
-            if !self.pane_exists_for_focus(&pane_id) {
-                let message = format!("Pane {pane_id} is no longer available.");
-                self.finish_pane_focus_request(
-                    Some(request_id),
-                    &pane_id,
-                    "failed",
-                    Some(message.clone()),
-                    true,
-                );
-                self.set_error("pane.focus_target_unavailable", message, true);
-                return;
-            }
+        if request_id.is_some() && !self.pane_exists_for_focus(&pane_id) {
+            let message = format!("Pane {pane_id} is no longer available.");
+            self.finish_pane_focus_request(
+                request_id.as_deref(),
+                &pane_id,
+                "failed",
+                Some(message.clone()),
+                true,
+            );
+            self.set_error("pane.focus_target_unavailable", message, true);
+            return;
         }
         let context_changed = self.focus_context_for_pane(&pane_id);
         let already_focused =
@@ -3008,7 +3006,7 @@ impl Runtime {
     }
     /// The folders the Explorer has expanded on `device`: this machine's in
     /// `expanded_paths`, a device's in its own entry.
-    fn expanded_paths_on(&mut self, device: &str) -> &mut Vec<String> {
+    pub(super) fn expanded_paths_on(&mut self, device: &str) -> &mut Vec<String> {
         if device == workspace::LOCAL_DEVICE_ID {
             &mut self.snapshot.ui_state.expanded_paths
         } else {

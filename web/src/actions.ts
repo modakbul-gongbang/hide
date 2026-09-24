@@ -8,7 +8,7 @@ import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { latestDraft, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { lastCheckoutOf } from "./recent";
-import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
+import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
@@ -199,7 +199,7 @@ export function createActions(dispatch: DispatchFn) {
    * `workspace_view` event naming only what changes. The core keeps them per
    * Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { mode?: ViewMode; explorer?: boolean; changes?: boolean; agent_share?: number }) => {
+  const setWorkspaceView = (patch: { mode?: ViewMode; explorer?: boolean; changes?: boolean; agent_share?: number; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
@@ -465,17 +465,15 @@ export function createActions(dispatch: DispatchFn) {
 
     /**
      * A Workspace chosen on Main or an Overview, on any device (S6 B2, B21).
-     * A Workspace on another device than the one in front first makes that
-     * device the context, then asks its own Herdr or this machine's core for
-     * the checkout: two events, each of which the core checks on its own.
+     * A Workspace on another device than the one in front is one event that
+     * also brings its device forward, so a refusal moves neither.
      */
     openWorkspace(deviceId: string, workspaceId: string, checkoutId: string) {
       ui().setScreen({ kind: "workspace" });
       const front = rest()?.navigator?.focused_device_id ?? "local";
       if (front === deviceId) return focusCheckout(workspaceId, checkoutId);
-      dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
       if (deviceId === "local") {
-        dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
+        dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, focus_device: true } });
         return;
       }
       // A registered device project Herdr has no workspace in yet is opened
@@ -483,10 +481,9 @@ export function createActions(dispatch: DispatchFn) {
       if (checkoutId.endsWith(REGISTERED_CHECKOUT)) {
         const checkout = rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces.flatMap((row) => row.checkouts).find((row) => row.id === checkoutId);
         if (!checkout) return diagnostic(`open workspace: ${checkoutId} is not on ${deviceId}`);
-        return sendRemote(deviceId, { action: "create_tab", workspace_id: workspaceId, checkout_id: checkoutId, cwd: checkout.path, label: checkout.next_tab_label });
+        return dispatch(withDeviceForward(remoteControl(deviceId, { action: "create_tab", workspace_id: workspaceId, checkout_id: checkoutId, cwd: checkout.path, label: checkout.next_tab_label })));
       }
-      const request: RemoteAction = { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId };
-      sendRemote(deviceId, request);
+      dispatch(withDeviceForward(remoteControl(deviceId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId })));
     },
 
     followRelation,
@@ -505,10 +502,12 @@ export function createActions(dispatch: DispatchFn) {
     openAgent(paneId: string) {
       ui().setScreen({ kind: "workspace" });
       const target = remoteTargetOfPane(rest(), paneId) ?? "local";
-      const front = rest()?.navigator?.focused_device_id ?? "local";
-      if (front !== target) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: target } });
-      if (target !== "local") return sendRemote(target, { action: "focus_pane", pane_id: paneId });
-      dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
+      const forward = (rest()?.navigator?.focused_device_id ?? "local") !== target;
+      if (target !== "local") {
+        const event = remoteControl(target, { action: "focus_pane", pane_id: paneId });
+        return dispatch(forward ? withDeviceForward(event) : event);
+      }
+      dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator", focus_device: forward } });
     },
 
     setPinned(workspaceId: string, pinned: boolean) {
@@ -770,8 +769,7 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
     revealInExplorer(path: string) {
-      setWorkspaceView({ explorer: true });
-      revealAncestors(path);
+      setWorkspaceView({ explorer: true, reveal: path });
       ui().setExplorerSelection(path);
     },
 
