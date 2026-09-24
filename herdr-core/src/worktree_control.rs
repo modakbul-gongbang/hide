@@ -168,8 +168,13 @@ fn check_new_branch(
     .map_err(|error| error.to_string())
 }
 
-/// The real path of an existing directory on the repository's host.
-fn host_directory(host: &dyn crate::host_access::HostChannel, path: &str) -> Option<String> {
+/// The real path of an existing directory on the repository's host, `None`
+/// when there is none there. A host that did not answer is an error, never a
+/// missing folder: a real worktree is not rolled back for a helper hiccup.
+fn host_directory(
+    host: &dyn crate::host_access::HostChannel,
+    path: &str,
+) -> Result<Option<String>, String> {
     crate::host_access::call_as::<Option<String>>(
         host,
         hide_host::protocol::Call::Directory {
@@ -177,8 +182,7 @@ fn host_directory(host: &dyn crate::host_access::HostChannel, path: &str) -> Opt
         },
         HOST_CHECK_TIMEOUT,
     )
-    .ok()
-    .flatten()
+    .map_err(|error| error.to_string())
 }
 
 /// `Remove project…`: closes every pane in the project's checkouts and waits
@@ -945,8 +949,16 @@ fn create_worktree_observing_purpose(
     let result = control_request(connector, "worktree.create", params)
         .map_err(|error| format!("create worktree: {error}"))?;
     let created = wire::created_worktree(result)?;
-    // The folder is on the repository's host, which answers for it.
-    let created_real = host_directory(host, &created.path);
+    // The folder is on the repository's host, which answers for it. A host
+    // that cannot answer leaves the worktree as created and says so, rather
+    // than rolling back what may be a good worktree (B27).
+    let unverified = |error: String| {
+        format!(
+            "The worktree was created at {} but its host could not confirm it ({error}); it was kept",
+            created.path
+        )
+    };
+    let created_real = host_directory(host, &created.path).map_err(unverified)?;
     let path_exists = created_real.is_some();
     let listed = control_request(
         connector,
@@ -960,9 +972,10 @@ fn create_worktree_observing_purpose(
             .as_ref()
             .ok()
             .and_then(|path| path.as_deref())
-            .is_some_and(|path| {
-                created_real.is_some() && host_directory(host, path) == created_real
-            });
+            .map(|path| host_directory(host, path).map(|real| (path, real)))
+            .transpose()
+            .map_err(unverified)?
+            .is_some_and(|(_, real)| created_real.is_some() && real == created_real);
     if identity_matches {
         let purpose_failure = request.purpose.as_ref().and_then(|purpose| {
             on_purpose_write(&created.path, purpose);
@@ -1025,7 +1038,13 @@ fn create_worktree_observing_purpose(
     .and_then(|result| wire::listed_worktree_path(result, &request.branch))
     .map(|path| path.is_some())
     .unwrap_or(true);
-    if host_directory(host, &created.path).is_some() || still_listed {
+    let residue = host_directory(host, &created.path);
+    if let Err(error) = &residue {
+        return Err(format!(
+            "{reason}; the rollback could not be confirmed on the host ({error})"
+        ));
+    }
+    if residue.is_ok_and(|real| real.is_some()) || still_listed {
         return Err(format!(
             "{reason}; rollback left residue at {} or in Herdr's worktree list",
             created.path
@@ -2179,6 +2198,42 @@ mod tests {
                 "worktree.remove",
                 "worktree.list"
             ]
+        );
+    }
+
+    /// B27: a host that cannot answer whether the created folder exists
+    /// leaves the worktree as created; nothing is rolled back for it.
+    #[test]
+    fn an_unanswered_folder_check_keeps_the_created_worktree() {
+        struct Busy;
+        impl crate::host_access::HostChannel for Busy {
+            fn call(
+                &self,
+                _call: hide_host::protocol::Call,
+                _timeout: std::time::Duration,
+            ) -> Result<Value, crate::host_access::HostCallError> {
+                Err(crate::host_access::HostCallError::Unknown(
+                    "The device did not answer in time".to_owned(),
+                ))
+            }
+        }
+        let path = "/private/tmp/hide-created-unanswered";
+        let server = server(vec![
+            worktree_created(path, "feature"),
+            worktree_list(path, "feature"),
+        ]);
+        let error = create_worktree(&server, &Busy, false, &task("feature")).unwrap_err();
+        assert!(error.contains("it was kept"), "{error}");
+        let methods = server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request["method"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            !methods.iter().any(|method| method == "worktree.remove"),
+            "{methods:?}"
         );
     }
 
