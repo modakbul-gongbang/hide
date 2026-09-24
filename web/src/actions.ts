@@ -7,7 +7,7 @@ import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
 import { remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
-import { activeEditorTab, checkoutById, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
+import { activeEditorTab, checkoutById, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -242,6 +242,10 @@ export function createActions(dispatch: DispatchFn) {
       diagnostic(`file_save: no contents for ${tab.path}`);
       return false;
     }
+    // A device file's path means nothing to this machine's checkout roots,
+    // so the save names the device and the daemon hands it to the core,
+    // which writes only to the place the tab was opened from.
+    const device = deviceOfCheckout(state.rest, tab.checkout_id);
     const sent = dispatch({
       schema_version: 2,
       kind: "file_save",
@@ -251,6 +255,7 @@ export function createActions(dispatch: DispatchFn) {
         // The core checks the save against the revision it read when it
         // opened the file; the shell sends only the draft.
         contents_utf8: contents,
+        ...(device === "local" ? {} : { device_id: device }),
       },
     });
     if (sent === false) return false;
