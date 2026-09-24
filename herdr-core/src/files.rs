@@ -24,10 +24,12 @@ const IMAGE_EXTENSIONS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "tiff"
 /// The Swift shell uses the ambient path calls below; both shells share the
 /// document and explorer logic, while the daemon's paths resolve through
 /// these directory capabilities when the actual I/O runs.
+type RootIdentity = (PathBuf, Option<(u64, u64)>);
+
 #[derive(Clone, Debug, Default)]
 pub struct FileRoots {
     roots: Arc<Vec<(PathBuf, Arc<Dir>)>>,
-    identities: Arc<Vec<(PathBuf, Option<(u64, u64)>)>>,
+    identities: Arc<Vec<RootIdentity>>,
 }
 
 impl PartialEq for FileRoots {
