@@ -859,7 +859,59 @@ async fn ensure_private_dirs(
         .await
         .map_err(|error| sftp_failure("The helper folder could not be inspected", error))?
         .attrs;
-    validate_private(&attrs, owner, root)
+    validate_private(&attrs, owner, root)?;
+    // The walk above checked each folder as spelled, and home not at all.
+    // The folder the root really is is checked again from `/`, home and its
+    // parents included, so a linked ancestor whose target sits under a
+    // folder another account can change is refused as well (OpenSSH's
+    // `safe_path` rule for key files, which a device that signs in with a
+    // key already passes).
+    let resolved = raw
+        .realpath(root)
+        .await
+        .map_err(|error| sftp_failure("The helper folder could not be resolved", error))?
+        .files
+        .first()
+        .map(|entry| entry.filename.clone())
+        .ok_or_else(|| {
+            EstablishError::Install("SFTP did not resolve the helper folder".to_owned())
+        })?;
+    for ancestor in ancestors(&resolved)? {
+        let attrs = raw
+            .lstat(&ancestor)
+            .await
+            .map_err(|error| sftp_failure("The helper folder could not be inspected", error))?
+            .attrs;
+        if !attrs.is_dir() {
+            return Err(EstablishError::Install(format!(
+                "{ancestor} is not a folder on the resolved helper path, so the helper was not installed"
+            )));
+        }
+        validate_ancestor(&attrs, owner, &ancestor)?;
+    }
+    Ok(())
+}
+
+/// Every folder above `resolved`, from `/`, for an absolute path SFTP
+/// resolved; anything else is refused rather than guessed at.
+fn ancestors(resolved: &str) -> Result<Vec<String>, EstablishError> {
+    if !resolved.starts_with('/')
+        || resolved.chars().any(char::is_control)
+        || resolved.split('/').any(|part| part == ".." || part == ".")
+    {
+        return Err(EstablishError::Install(format!(
+            "SFTP resolved the helper folder to an unusable path {resolved:?}"
+        )));
+    }
+    let parts: Vec<&str> = resolved.split('/').filter(|part| !part.is_empty()).collect();
+    let mut folders = vec!["/".to_owned()];
+    let mut current = String::new();
+    for part in parts.iter().take(parts.len().saturating_sub(1)) {
+        current.push('/');
+        current.push_str(part);
+        folders.push(current.clone());
+    }
+    Ok(folders)
 }
 
 async fn ensure_private_dir(
@@ -897,18 +949,32 @@ fn owned_by(attrs: &FileAttributes, owner: u32) -> bool {
 }
 
 /// A folder on the way to the helper root: owned by the account or by root,
-/// and writable by no other account unless it is a root-owned sticky folder
-/// such as `/tmp`, where others cannot rename what the account made.
+/// and writable by no group or other account unless it is a root-owned sticky
+/// folder such as `/tmp`, where others cannot rename what the account made.
+/// A folder whose mode was not reported is refused, not assumed safe. Group
+/// write is refused even for a group only the account is in (a `umask 002`
+/// home on some Linux systems), as OpenSSH's default rule does; the refusal
+/// names the fix.
 fn validate_ancestor(attrs: &FileAttributes, owner: u32, path: &str) -> Result<(), EstablishError> {
-    let mode = attrs.permissions.unwrap_or(0o7777);
+    let Some(mode) = attrs.permissions else {
+        return Err(EstablishError::Install(format!(
+            "The device did not report who can change {path}, so the helper was not installed under it"
+        )));
+    };
     let shared = mode & 0o022 != 0;
     let root_sticky = attrs.uid == Some(0) && mode & 0o1000 != 0;
     if owned_by(attrs, owner) && (!shared || root_sticky) {
         return Ok(());
     }
-    Err(EstablishError::Install(format!(
-        "{path} can be changed by another account, so the helper was not installed under it"
-    )))
+    Err(EstablishError::Install(if owned_by(attrs, owner) {
+        format!(
+            "{path} can be changed by its group or by other accounts, so the helper was not installed under it; remove that write access on the device (chmod go-w {path}) or choose another install root"
+        )
+    } else {
+        format!(
+            "{path} belongs to another account, so the helper was not installed under it; choose another install root"
+        )
+    }))
 }
 
 fn validate_private(attrs: &FileAttributes, owner: u32, path: &str) -> Result<(), EstablishError> {
@@ -1205,6 +1271,33 @@ mod tests {
         assert!(validate_ancestor(&folder(502, 0o755), me, "/tmp/theirs").is_err());
         assert!(validate_ancestor(&folder(me, 0o777), me, "/tmp/open").is_err());
         assert!(validate_ancestor(&folder(0, 0o777), me, "/shared").is_err());
+        // A mode the device did not report is refused, even for root's.
+        let unreported = FileAttributes {
+            uid: Some(0),
+            permissions: None,
+            ..FileAttributes::empty()
+        };
+        assert!(validate_ancestor(&unreported, me, "/").is_err());
+        // A group-writable home folder names the fix.
+        let refusal = validate_ancestor(&folder(me, 0o775), me, "/home/me/.local")
+            .unwrap_err()
+            .to_string();
+        assert!(refusal.contains("chmod go-w /home/me/.local"), "{refusal}");
+        // The resolved path is checked from `/`, home and its parents too.
+        assert_eq!(
+            ancestors("/Users/me/.local/share/hide/host-helper").unwrap(),
+            [
+                "/",
+                "/Users",
+                "/Users/me",
+                "/Users/me/.local",
+                "/Users/me/.local/share",
+                "/Users/me/.local/share/hide"
+            ]
+        );
+        assert_eq!(ancestors("/helper").unwrap(), ["/"]);
+        assert!(ancestors("relative/helper").is_err());
+        assert!(ancestors("/a/../b").is_err());
         assert!(owned_by(&folder(0, 0o755), me) && !owned_by(&folder(502, 0o755), me));
         // Component-wise: `/home/al` is not a prefix of `/home/alice`.
         assert!(Path::new("/home/alice/x").strip_prefix("/home/al").is_err());
