@@ -292,11 +292,43 @@ export type Device = {
   test: { state: string; checked_at_unix_ms: number | null; stages: DeviceTestStage[] } | null;
 };
 
+/** One pane's rectangle in a remote tab, as fractions of the tab's area (`RemotePaneLayoutFrame`). */
+export type RemotePaneFrame = { pane_id: string; x: number; y: number; width: number; height: number };
+
+/** A remote tab's geometry: Herdr reports rectangles, not the local split tree (`RemotePaneLayoutSnapshot`). */
+export type RemotePaneLayout = {
+  workspace_id: string;
+  tab_id: string;
+  focused_pane_id: string;
+  zoomed: boolean;
+  frames: RemotePaneFrame[];
+};
+
+/**
+ * What the core projected from one SSH device's Herdr (`RemoteSessionSnapshot`).
+ * Every id is scoped to the target (`remote:<target>:workspace:…`, `…:tab:…`,
+ * `…:pane:…`), so a remote id can never name a local pane, and the focus
+ * fields are that Herdr's own.
+ */
+export type RemoteSession = {
+  workspaces: Workspace[];
+  agents: AgentRow[];
+  active_tab_ids: Record<string, string>;
+  focused_workspace_id: string | null;
+  focused_checkout_id: string | null;
+  focused_tab_id: string | null;
+  focused_pane_id: string | null;
+  pane_layouts: RemotePaneLayout[];
+};
+
 export type RemoteStatus = {
   target_id: string;
+  /** `connected`, `not_connected`, `stale`, `disabled`, `socket_missing`, or a failure word. */
   state: string;
   message: string | null;
   herdr_version: string | null;
+  /** The last session read from that host; kept while `stale`. */
+  session?: RemoteSession | null;
 };
 
 export type HerdrStatus = {

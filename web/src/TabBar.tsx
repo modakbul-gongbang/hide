@@ -1,6 +1,7 @@
 import { memo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
+import type { RemoteView } from "./remote";
 import { editorFor, focusedCheckout, type AsyncOperation, type Checkout, type EditorSnapshot, type StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 
@@ -31,6 +32,54 @@ export function TabBar({ actions }: { actions: Actions }) {
 }
 
 const NONE: AsyncOperation[] = [];
+
+const ignore = () => {};
+
+/**
+ * A selected SSH device's strip: the Herdr tabs of the workspace its host has
+ * focused. Selecting, adding and closing go to that host (`remote_control`);
+ * the order is Herdr's there, so a remote tab is not dragged.
+ */
+export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Actions }) {
+  const operations = useShellStore((s) => s.rest?.status?.async_operations ?? NONE);
+  const { checkout } = view;
+  return (
+    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel" role="tablist" data-tab-bar={checkout.id} data-remote-tab-bar="true">
+      {checkout.tabs.map((tab) =>
+        tab.id ? (
+          <TabButton
+            key={tab.id}
+            entry={{ id: tab.id, kind: "herdr", source_id: tab.id, label: tab.label ?? tab.id, preview: false }}
+            identity={tab.label ?? tab.id}
+            active={tab.id === view.tab?.id}
+            dirty={false}
+            saving={false}
+            tabOnly={false}
+            closing={closingSuffix(tab.id, "tab.close", operations)}
+            dragging={false}
+            over={false}
+            onSelect={() => actions.focusTab(tab.id as string)}
+            onDoubleClick={ignore}
+            onClose={() => actions.closeTab(tab.id as string)}
+            onPointerDown={ignore}
+            onPointerMove={ignore}
+            onPointerEnter={ignore}
+            onPointerUp={ignore}
+          />
+        ) : null,
+      )}
+      <button
+        type="button"
+        className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-secondary hover:bg-elevated hover:text-primary"
+        aria-label={`New tab ${checkout.next_tab_label}`}
+        title="New tab (⌥T)"
+        onClick={() => actions.createTab()}
+      >
+        +
+      </button>
+    </div>
+  );
+}
 
 /** Phases of a close the core is still confirming with Herdr (`operations.rs`). */
 const IN_FLIGHT = new Set(["transmitting", "awaiting_topology", "unknown"]);
@@ -145,7 +194,7 @@ const Strip = memo(function Strip({
   );
 });
 
-const TabButton = memo(function TabButton({
+export const TabButton = memo(function TabButton({
   entry,
   identity,
   active,

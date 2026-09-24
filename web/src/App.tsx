@@ -11,6 +11,7 @@ import { PaneCanvas } from "./PaneGrid";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
+import { RemoteSurface } from "./RemoteSurface";
 import { RightPanel } from "./RightPanel";
 import { SettingsGate } from "./SettingsSheet";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
@@ -58,6 +59,18 @@ export function App() {
       // A terminal lives as long as the core streams its pane; released or
       // vanished panes lose theirs here, never on a tab switch (D-05).
       if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) retainTerminals();
+      // A command a remote host refused is one the operator can act on (a
+      // lost connection, a close that needs confirming), so it is a notice
+      // rather than only a diagnostic (design 13).
+      // A notice about one device's command does not outlive the device
+      // context it was about.
+      if (state.rest?.navigator?.focused_device_id !== previous.rest?.navigator?.focused_device_id) {
+        useUiStore.getState().setNotice(null);
+      }
+      const error = state.rest?.status?.last_error;
+      if (error && error.occurred_at !== previous.rest?.status?.last_error?.occurred_at && error.kind.startsWith("remote.control.")) {
+        useUiStore.getState().setNotice({ text: error.message, refreshable: error.kind === "remote.control.close_status_unknown" });
+      }
       const checkout = focusedCheckout(state.rest);
       if (!checkout) return;
       const before = focusedCheckout(previous.rest);
@@ -186,31 +199,16 @@ function ShortcutSheetGate({ actions }: { actions: Actions }) {
   return open ? <ShortcutSheet actions={actions} /> : null;
 }
 
-/** This machine's tabs, or the selected SSH device's context in their place (B19). */
+/** This machine's tabs, or the selected SSH device's own tabs and panes in their place (B19). */
 function MainSurface({ actions }: { actions: Actions }) {
-  const remote = useShellStore((s) => focusedRemoteDevice(s.rest));
-  if (remote) return <RemoteDeviceSurface actions={actions} label={remote.label} alias={remote.ssh_alias} state={remote.state} message={remote.message} />;
+  const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
+  if (remote) return <RemoteSurface actions={actions} />;
   return (
     <>
       <TabBar actions={actions} />
       <FindBar actions={actions} />
       <Canvas actions={actions} />
     </>
-  );
-}
-
-function RemoteDeviceSurface({ actions, label, alias, state, message }: { actions: Actions; label: string; alias: string | null; state: string; message: string | null }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-sm p-xl text-body text-secondary" data-remote-device-surface={label}>
-      <h2 className="text-title font-semibold text-primary">
-        {label} <span className="font-mono text-caption text-muted">{alias}</span>
-      </h2>
-      <p>{state === "ready" ? "Connected." : `Not connected${message ? `: ${message}` : "."}`}</p>
-      <p>The web shell does not control a remote device's panes yet. Nothing here is sent to this machine or to {label}.</p>
-      <button type="button" className="text-primary underline" onClick={() => actions.focusDevice("local")} data-use-local-device="true">
-        Show this machine
-      </button>
-    </div>
   );
 }
 

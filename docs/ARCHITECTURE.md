@@ -271,7 +271,7 @@ Closing mirrors the Swift flow in `web/src/close.ts`: an unknown activity status
 
 ### Settings and workspace management in the web shell
 
-Settings (`web/src/SettingsSheet.tsx`, rules in `web/src/settings.ts`) opens from the sidebar's gear or ⌥, and carries the native sheet's sections less Pet: General reads the `daemon` frame and `status.{herdr,environment,diagnostics}`, Appearance writes `accent_hex` and `font_size` through `ui_state_update`, Agents reads `status.{background_ai,agent_hooks}` and sends `ai_settings` and `install_agent_hooks`, Devices sends `register_device`, `test_device`, `retry_connect`, `focus_device` and `remove_device`, and Shortcuts writes `browser_shortcut_bindings`.
+Settings (`web/src/SettingsSheet.tsx`, rules in `web/src/settings.ts`) opens from the sidebar's gear or ⌥, and carries the native sheet's sections less Pet: General reads the `daemon` frame and `status.{herdr,environment,diagnostics}`, Appearance writes `accent_hex` and `font_size` through `ui_state_update`, Agents reads `status.{background_ai,agent_hooks}` and sends `ai_settings` and `install_agent_hooks`, Devices sends `register_device`, `test_device`, `retry_connect`, `focus_device` and `remove_device` (the sidebar's device switcher sends `focus_device` too), and Shortcuts writes `browser_shortcut_bindings`.
 Every row shows what the snapshot says; an edit is pending until the snapshot carries it, and a refusal is matched to the edit by the core's `last_error` kind and time.
 Copy diagnostics carries versions, paths, states and the core's recent diagnostics, redacts anything token-shaped, and has no terminal output or pane input among its inputs.
 `retry_connect` is a new connection attempt: it retires the device's coordinator and transports and connects again from its registration, keeping the device focus, and a connected device refuses it.
@@ -283,7 +283,16 @@ The dialogs (`web/src/WorkspaceDialogs.tsx`) send `create_worktree`, `set_checko
 A created worktree's pane is focused with one `focus_pane` once the snapshot lists it, because only a focus request is tracked until Herdr confirms it; a late focus event for the pane left behind cannot undo the move.
 A dialog or sheet returns keyboard focus to a terminal through `focusTerminal` on the core's focused pane (`restoreFocus`), never by re-focusing the textarea that held it, which would be reported as the operator moving there.
 
-Selecting an SSH device makes it the context: the web shell draws that device's state in place of this machine's tabs and refuses local pane and tab commands with a notice, because it has no remote pane control yet; the core also refuses `create_pane`, whose target is implicit, while a remote device is focused (`pane.device_mismatch`), so a split never falls back to this machine.
+The device switcher sits at the bottom of the sidebar (`web/src/DevicePicker.tsx`), the web form of the native chip and `HideDevicePicker`, and sends `focus_device`.
+Selecting an SSH device makes it the context (`web/src/remote.ts`, `web/src/RemoteSurface.tsx`): the sidebar lists that host's Herdr workspaces and agents and the canvas draws its visible tab from `status.remote[].session`, the projection the core already builds over SSH with every id scoped to the target (`remote:<target>:pane:…`).
+The web follows the host's own focus rather than keeping a selection, because the core attaches exactly the panes of that host's focused tab; a pane is placed by the rectangle Herdr reports for it, and there is no divider because a remote pane's size is its host's.
+Keystrokes, scroll and viewport go out with the scoped pane id, which the core writes to that host's terminal session; focus, split, zoom, close pane, new tab, tab focus and close tab go out as `remote_control` with the device as `target_id` and a fresh `request_id`, and the core checks every id against that host's session before anything is sent, so a stale or local id is refused rather than retargeted.
+The pane's own id decides where a click-to-focus goes, and a close confirmation carries the device it was asked about.
+A device that is not connected takes no command: the web says so and sends nothing, keeps the last session on screen under a Retry banner while it is `stale`, and draws the connection's own state when there is no session.
+Reorder, reopen closed, find in pane, open file, the Explorer and History, worktree creation and deletion, and pin stay this machine's and are refused or disabled with the reason; a remote checkout's purpose is written through the core when the host's Herdr is 0.9.1 or newer.
+The core also refuses `create_pane`, whose target is implicit, while a remote device is focused (`pane.device_mismatch`), so a split never falls back to this machine.
+Typing into a remote pane makes it the core's terminal pane, so `focus_device` back to this machine, or removing the selected device, hands the keyboard back to `ui_state.selected_pane_id` or the drawn tab's focused pane (`return_keyboard_to_local_pane`).
+Registering or removing a device refreshes only the device rows (`rebuild_device_rows`); rebuilding the whole catalog there dropped every checkout's tabs until the next session publish.
 
 ### The `$HOME` filesystem boundary
 

@@ -27,8 +27,12 @@ function useErrorSince(since: number | null, prefixes: readonly string[]): strin
   return prefixes.some((prefix) => error.kind.startsWith(prefix)) ? error.message : null;
 }
 
+/** The row a dialog names, among this machine's projects or a connected device's workspaces (a remote purpose). */
 function findTarget(workspaceId: string, checkoutId?: string): { workspace: Workspace; checkout: Checkout | null } | null {
-  const workspace = useShellStore.getState().rest?.navigator?.workspaces?.find((row) => row.id === workspaceId);
+  const rest = useShellStore.getState().rest;
+  const workspace =
+    rest?.navigator?.workspaces?.find((row) => row.id === workspaceId) ??
+    rest?.status?.remote?.flatMap((row) => row.session?.workspaces ?? []).find((row) => row.id === workspaceId);
   if (!workspace) return null;
   return { workspace, checkout: checkoutId ? (workspace.checkouts.find((row) => row.id === checkoutId) ?? null) : null };
 }
@@ -38,6 +42,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   // Re-read on every snapshot so a dialog follows its row (a purpose saved
   // elsewhere, a gate that changed) rather than a copy from when it opened.
   useShellStore((s) => s.rest?.navigator?.workspaces);
+  useShellStore((s) => s.rest?.status?.remote);
   // A deleted worktree leaves the navigator while its dialog still reports
   // the result, so the dialog keeps the last row it saw for its checkout.
   const lastSeen = useRef<{ key: string; target: { workspace: Workspace; checkout: Checkout | null } } | null>(null);

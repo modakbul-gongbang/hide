@@ -1,0 +1,237 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { createActions } from "./actions";
+import { remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
+import type { Device, RemoteSession, SnapshotRest, Tab, Workspace } from "./snapshot";
+import { useShellStore } from "./store";
+import { useUiStore } from "./ui";
+
+const LOCAL_PANE = "w1:p1";
+const PANE_A = "remote:studio:pane:w9:p1";
+const PANE_B = "remote:studio:pane:w9:p2";
+
+function tab(id: string, paneIds: string[], working: string[] = []): Tab {
+  return {
+    id,
+    workspace_id: null,
+    checkout_id: null,
+    label: id.split(":").pop() ?? id,
+    empty: false,
+    delegated: false,
+    panes: paneIds.map((paneId) => ({
+      id: paneId,
+      herdr_label: paneId,
+      terminal_title: null,
+      workspace_label: null,
+      cwd: "/home/remote/app",
+      status_label: "idle",
+      requires_close_confirmation: working.includes(paneId),
+      requires_close_status_check: false,
+      identity_label: null,
+    })),
+  };
+}
+
+function session(overrides: Partial<RemoteSession> = {}): RemoteSession {
+  const workspace: Workspace = {
+    id: "remote:studio:workspace:w9",
+    label: "app",
+    path: "/home/remote/app",
+    device_id: "studio",
+    remote_target_id: "studio",
+    registered: false,
+    temporary: false,
+    pinned: false,
+    checkouts: [
+      {
+        id: "remote:studio:checkout:w9",
+        workspace_id: "remote:studio:workspace:w9",
+        label: "app",
+        path: "/home/remote/app",
+        branch: null,
+        purpose: null,
+        is_worktree: false,
+        exists: true,
+        has_panes: true,
+        pull_request: null,
+        tabs: [tab("remote:studio:tab:w9:t1", [PANE_A, PANE_B], [PANE_B]), tab("remote:studio:tab:w9:t2", ["remote:studio:pane:w9:p3"])],
+        active_tab_id: null,
+        strip: [],
+        next_tab_label: "3",
+      },
+    ],
+    inactive_checkouts: { expanded: false, checkout_ids: [] },
+  };
+  return {
+    workspaces: [workspace],
+    agents: [],
+    active_tab_ids: { "remote:studio:workspace:w9": "remote:studio:tab:w9:t1" },
+    focused_workspace_id: "remote:studio:workspace:w9",
+    focused_checkout_id: "remote:studio:checkout:w9",
+    focused_tab_id: "remote:studio:tab:w9:t1",
+    focused_pane_id: PANE_A,
+    pane_layouts: [
+      {
+        workspace_id: "remote:studio:workspace:w9",
+        tab_id: "remote:studio:tab:w9:t1",
+        focused_pane_id: PANE_A,
+        zoomed: false,
+        frames: [
+          { pane_id: PANE_A, x: 0, y: 0, width: 0.5, height: 1 },
+          { pane_id: PANE_B, x: 0.5, y: 0, width: 0.5, height: 1 },
+        ],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+const STUDIO: Device = { id: "studio", label: "Studio Mac", kind: "remote", state: "ready", message: null, ssh_alias: "studio", agent_count: 0, test: null };
+
+function rest(focusedDevice: string, state = "connected"): SnapshotRest {
+  return {
+    navigator: {
+      focused_device_id: focusedDevice,
+      focused_checkout_id: "c-local",
+      devices: [{ ...STUDIO, id: "local", label: "This Mac", kind: "local", state: "local", ssh_alias: null }, STUDIO],
+      workspaces: [
+        {
+          id: "p-local",
+          label: "local",
+          path: "/Users/me/app",
+          device_id: "local",
+          registered: true,
+          temporary: false,
+          pinned: false,
+          inactive_checkouts: { expanded: false, checkout_ids: [] },
+          checkouts: [
+            {
+              id: "c-local",
+              workspace_id: "p-local",
+              label: "app",
+              path: "/Users/me/app",
+              branch: "main",
+              purpose: null,
+              is_worktree: false,
+              exists: true,
+              has_panes: true,
+              pull_request: null,
+              tabs: [tab("w1:t1", [LOCAL_PANE])],
+              active_tab_id: "w1:t1",
+              strip: [],
+              next_tab_label: "2",
+            },
+          ],
+        },
+      ],
+    },
+    // What typing into the remote pane leaves in the core's terminal pane.
+    terminal: { pane_id: PANE_A, panes: [] },
+    status: { remote: [{ target_id: "studio", state, message: null, herdr_version: "0.9.1", session: session() }] },
+  };
+}
+
+function seed(value: SnapshotRest) {
+  useShellStore.setState({ rest: null, agents: [], focusedPaneId: null });
+  useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest: value } });
+}
+
+function recorder() {
+  const sent: { kind: string; payload: Record<string, unknown> }[] = [];
+  const actions = createActions((event) => {
+    sent.push(event as { kind: string; payload: Record<string, unknown> });
+    return true;
+  });
+  return { sent, actions };
+}
+
+describe("remote view", () => {
+  it("draws the tab the host focused, which is the one the core attaches", () => {
+    const view = remoteView(session());
+    expect(view?.tab?.id).toBe("remote:studio:tab:w9:t1");
+    expect(view?.layout?.frames).toHaveLength(2);
+    expect(view?.focusedPaneId).toBe(PANE_A);
+  });
+
+  it("falls back to the focused workspace's active tab and the layout's focused pane", () => {
+    const view = remoteView(session({ focused_tab_id: null, focused_pane_id: "remote:studio:pane:w9:gone" }));
+    expect(view?.tab?.id).toBe("remote:studio:tab:w9:t1");
+    expect(view?.focusedPaneId).toBe(PANE_A);
+  });
+
+  it("names a pane's host by its scoped id and never a similar target", () => {
+    const value: SnapshotRest = { status: { remote: [{ target_id: "studio", state: "connected", message: null, herdr_version: null }, { target_id: "studio2", state: "connected", message: null, herdr_version: null }] } };
+    expect(remoteTargetOfPane(value, PANE_A)).toBe("studio");
+    expect(remoteTargetOfPane(value, "remote:studio2:pane:w1:p1")).toBe("studio2");
+    expect(remoteTargetOfPane(value, LOCAL_PANE)).toBeNull();
+  });
+
+  it("stores a remote purpose only from Herdr 0.9.1", () => {
+    expect(supportsRemotePurpose("0.9.1")).toBe(true);
+    expect(supportsRemotePurpose("v0.10.0")).toBe(true);
+    expect(supportsRemotePurpose("0.9.0")).toBe(false);
+    expect(supportsRemotePurpose(null)).toBe(false);
+  });
+});
+
+describe("commands with an SSH device selected", () => {
+  beforeEach(() => {
+    useUiStore.setState({ notice: null, pendingClose: null });
+  });
+
+  it("splits, zooms and focuses the host's exact pane and sends nothing local", () => {
+    seed(rest("studio"));
+    expect(useShellStore.getState().focusedPaneId).toBe(PANE_A);
+    const { sent, actions } = recorder();
+    actions.split("right");
+    actions.toggleZoom();
+    actions.focusPane(PANE_B);
+    actions.focusTab("remote:studio:tab:w9:t2");
+    actions.createTab();
+    expect(sent.map((event) => event.kind)).toEqual(["remote_control", "remote_control", "remote_control", "remote_control", "remote_control"]);
+    expect(sent.map((event) => event.payload.target_id)).toEqual(["studio", "studio", "studio", "studio", "studio"]);
+    expect(sent[0]?.payload).toMatchObject({ action: "split_pane", pane_id: PANE_A, direction: "right", cwd: "/home/remote/app" });
+    expect(sent[1]?.payload).toMatchObject({ action: "toggle_pane_zoom", pane_id: PANE_A });
+    expect(sent[2]?.payload).toMatchObject({ action: "focus_pane", pane_id: PANE_B });
+    expect(sent[3]?.payload).toMatchObject({ action: "focus_tab", tab_id: "remote:studio:tab:w9:t2" });
+    expect(sent[4]?.payload).toMatchObject({ action: "create_tab", workspace_id: "remote:studio:workspace:w9", cwd: "/home/remote/app", label: "3" });
+    expect(new Set(sent.map((event) => event.payload.request_id)).size).toBe(5);
+  });
+
+  it("asks before closing working remote work and closes it on that host after confirming", () => {
+    seed(rest("studio"));
+    const { sent, actions } = recorder();
+    actions.closePane(PANE_B);
+    expect(sent).toHaveLength(0);
+    expect(useUiStore.getState().pendingClose).toMatchObject({ kind: "pane", id: PANE_B, targetId: "studio" });
+    actions.confirmClose();
+    expect(sent[0]).toMatchObject({ kind: "remote_control", payload: { target_id: "studio", action: "close_pane", pane_id: PANE_B, confirmed: true } });
+  });
+
+  it("sends nothing to a device that is not connected and says so", () => {
+    seed(rest("studio", "stale"));
+    const { sent, actions } = recorder();
+    actions.split("down");
+    actions.closeTab();
+    expect(sent).toHaveLength(0);
+    expect(useUiStore.getState().notice?.text).toContain("Studio Mac is not connected");
+  });
+
+  it("refuses the local-only commands instead of running them on this machine", () => {
+    seed(rest("studio"));
+    const { sent, actions } = recorder();
+    actions.reopenClosed();
+    actions.openFind();
+    actions.openFilePalette();
+    actions.reorderTab("remote:studio:tab:w9:t2", 0);
+    expect(sent).toHaveLength(0);
+    expect(useUiStore.getState().notice?.text).toContain("Studio Mac");
+  });
+
+  it("splits this machine's pane again once this machine is selected", () => {
+    const local = rest("local");
+    seed({ ...local, terminal: { pane_id: LOCAL_PANE, panes: [] } });
+    const { sent, actions } = recorder();
+    actions.split("right");
+    expect(sent[0]).toMatchObject({ kind: "create_pane", payload: { tab_id: "w1:t1", direction: "right" } });
+  });
+});

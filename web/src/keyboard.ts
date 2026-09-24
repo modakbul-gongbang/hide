@@ -7,13 +7,19 @@
 
 import type { Actions } from "./actions";
 import { recentCheckoutOrder, recentTabOrder } from "./recent";
+import { contextWorkspaces, remoteContext, remoteView } from "./remote";
 import { matchBrowser, resolvedRegistry, type CommandId } from "./shortcuts";
 import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 
+/** The checkout whose tabs ⌥` walks: this machine's focused one, or the selected device's visible one. */
+function cycleCheckout(rest: SnapshotRest | null) {
+  return remoteContext(rest) ? (remoteView(remoteContext(rest)?.session ?? null)?.checkout ?? null) : focusedCheckout(rest);
+}
+
 function tabCycle(rest: SnapshotRest | null): Cycle | null {
-  const checkout = focusedCheckout(rest);
+  const checkout = cycleCheckout(rest);
   if (!checkout) return null;
   const tabs = checkout.tabs.filter((tab) => tab.id);
   const order = recentTabOrder(checkout.id, tabs.map((tab) => tab.id as string));
@@ -25,7 +31,7 @@ function tabCycle(rest: SnapshotRest | null): Cycle | null {
 }
 
 function projectCycle(rest: SnapshotRest | null): Cycle | null {
-  const rows = (rest?.navigator?.workspaces ?? []).flatMap((workspace) =>
+  const rows = contextWorkspaces(rest).flatMap((workspace) =>
     workspace.checkouts.map((checkout) => ({
       id: checkout.id,
       label: checkout.label,

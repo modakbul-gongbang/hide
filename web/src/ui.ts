@@ -13,6 +13,8 @@ export const SIDEBAR_MODES: readonly SidebarMode[] = ["agents", "projects"];
 export type PendingClose = {
   kind: "pane" | "tab";
   id: string;
+  /** The SSH device the pane or tab is on, or null for this machine. */
+  targetId: string | null;
   title: string;
   consequence: string;
   affected: string[];

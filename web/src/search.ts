@@ -3,6 +3,7 @@
 // entries and the fuzzy score are pure functions, so the palette's behavior is
 // testable without a browser; ⌘P's ranking happens in hided, beside the walk.
 
+import { contextAgents, contextWorkspaces } from "./remote";
 import type { SnapshotRest } from "./snapshot";
 
 export type SearchEntry = {
@@ -38,11 +39,15 @@ export function fuzzyScore(candidate: string, query: string): number | null {
   return score;
 }
 
-/** The snapshot rows ⌘K searches: agents, projects and checkouts. */
+/**
+ * The snapshot rows ⌘K searches: agents, projects and checkouts of the
+ * context on screen, so a pick on a selected SSH device focuses that host's
+ * row rather than one on this machine behind it.
+ */
 export function searchEntries(rest: SnapshotRest | null): SearchEntry[] {
   if (!rest) return [];
   const entries: SearchEntry[] = [];
-  for (const agent of rest.navigator?.agents ?? []) {
+  for (const agent of contextAgents(rest, rest.navigator?.agents ?? [])) {
     entries.push({
       id: `agent:${agent.pane_id}`,
       title: agent.identity_label,
@@ -51,7 +56,7 @@ export function searchEntries(rest: SnapshotRest | null): SearchEntry[] {
       paneId: agent.pane_id,
     });
   }
-  for (const workspace of rest.navigator?.workspaces ?? []) {
+  for (const workspace of contextWorkspaces(rest)) {
     entries.push({
       id: `project:${workspace.id}`,
       title: workspace.label,

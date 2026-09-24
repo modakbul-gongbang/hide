@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
+import { remoteContext, remoteView } from "./remote";
 import { share } from "./share";
 import {
   type AgentRow,
@@ -10,6 +11,12 @@ import {
 } from "./snapshot";
 
 export type { AgentRow, SnapshotRest } from "./snapshot";
+
+function focusedPaneOf(rest: SnapshotRest): string | null {
+  const remote = remoteContext(rest);
+  if (remote) return remoteView(remote.session)?.focusedPaneId ?? null;
+  return rest.terminal?.pane_id ?? rest.focused?.pane_id ?? null;
+}
 
 export type TerminalChunk = {
   pane_id: string;
@@ -85,7 +92,11 @@ type Store = {
   /** The core's changes section, read the same way and for the same reason. */
   changes: ChangesSnapshot | null;
   agents: AgentRow[];
-  /** The keyboard-focus pane the core reports (`terminal.pane_id`). */
+  /**
+   * The keyboard-focus pane of the context on screen: the core's
+   * `terminal.pane_id` for this machine, the host's own focus for a selected
+   * SSH device (`remote.ts`).
+   */
   focusedPaneId: string | null;
   herdrState: string | null;
   find: PaneFind | null;
@@ -314,7 +325,7 @@ export const useShellStore = create<Store>((set, get) => ({
         ...withDiagnostics(get().diagnostics, get().diagnosticsDropped, diagnostics),
         viewGeneration: frame.type === "snapshot" ? get().viewGeneration + 1 : get().viewGeneration,
         ...cursors,
-        focusedPaneId: rest.terminal?.pane_id ?? rest.focused?.pane_id ?? null,
+        focusedPaneId: focusedPaneOf(rest),
         herdrState: rest.status?.herdr?.state ?? get().herdrState,
       });
     } else {

@@ -1,11 +1,13 @@
 import { memo } from "react";
 import type { Actions } from "./actions";
+import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import { RowMenu } from "./RowMenu";
 import { displayBrowser } from "./shortcuts";
-import { checkoutMenu, projectMenu, type MenuItem } from "./workspaceManage";
-import type { AgentRow, Checkout, InactiveProjectGroup, Workspace } from "./snapshot";
+import { contextAgents, contextWorkspaces, remoteContext, remoteView } from "./remote";
+import { checkoutMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
+import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore } from "./ui";
 
@@ -21,7 +23,10 @@ export function Sidebar({ actions }: { actions: Actions }) {
   const herdrState = useShellStore((s) => s.herdrState);
   const mode = useUiStore((s) => s.sidebarMode);
   const visible = useShellStore((s) => s.rest?.ui_state?.left_sidebar_visible ?? true);
-  const status = herdrRowLabel(herdrState);
+  // The row speaks for this machine's Herdr, so it is not shown over a
+  // selected SSH device's lists; that device's state is on the canvas.
+  const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
+  const status = remote ? null : herdrRowLabel(herdrState);
   if (!visible) return null;
 
   return (
@@ -65,28 +70,19 @@ export function Sidebar({ actions }: { actions: Actions }) {
       >
         + 새 워크스페이스 <span className="text-muted">⌥⇧N</span>
       </button>
+      <DevicePicker actions={actions} />
     </nav>
   );
 }
 
+/** The agents of the context on screen: this machine's, or the selected SSH device's. */
 function AgentList({ actions }: { actions: Actions }) {
-  const agents = useShellStore((s) => s.agents);
+  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   return (
     <ul className="min-h-0 flex-1 overflow-auto">
       {agents.map((agent) => (
-        <AgentRowView
-          key={agent.id}
-          agent={agent}
-          selected={agent.pane_id === focusedPaneId}
-          onSelect={() =>
-            actions.dispatch({
-              schema_version: 2,
-              kind: "focus_pane",
-              payload: { pane_id: agent.pane_id, origin: "operator" },
-            })
-          }
-        />
+        <AgentRowView key={agent.id} agent={agent} selected={agent.pane_id === focusedPaneId} onSelect={() => actions.focusPane(agent.pane_id)} />
       ))}
     </ul>
   );
@@ -126,14 +122,22 @@ const AgentRowView = memo(function AgentRowView({
   );
 });
 
-const NO_WORKSPACES: Workspace[] = [];
 const NO_GROUPS: InactiveProjectGroup[] = [];
 
+/**
+ * The projects of the context on screen. A selected SSH device lists its
+ * Herdr workspaces, one checkout each, with the one its host has focused
+ * marked; the inactive folds and pins are this machine's and are not drawn
+ * there (DESIGN.md: the remote context carries no pins).
+ */
 function ProjectList({ actions }: { actions: Actions }) {
-  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces ?? NO_WORKSPACES);
-  const groups = useShellStore((s) => s.rest?.navigator?.inactive_projects ?? NO_GROUPS);
-  const focusedCheckoutId = useShellStore((s) => s.rest?.navigator?.focused_checkout_id ?? null);
-  const agents = useShellStore((s) => s.agents);
+  const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
+  const workspaces = useShellStore((s) => contextWorkspaces(s.rest));
+  const groups = useShellStore((s) => (remote ? NO_GROUPS : (s.rest?.navigator?.inactive_projects ?? NO_GROUPS)));
+  const focusedCheckoutId = useShellStore((s) =>
+    remote ? (remoteView(remoteContext(s.rest)?.session ?? null)?.checkout.id ?? null) : (s.rest?.navigator?.focused_checkout_id ?? null),
+  );
+  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const rows = projectRows(workspaces, groups);
   return (
     <ul className="min-h-0 flex-1 overflow-auto" data-project-list="true">
@@ -273,11 +277,12 @@ const CheckoutRowView = memo(function CheckoutRowView({
   actions: Actions;
 }) {
   const badge = checkout.pull_request ? pullRequestBadge(checkout.pull_request) : null;
+  const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
   return (
     <li>
       <RowMenu
         label={`${checkout.branch ?? checkout.label} actions`}
-        items={checkoutMenu(workspace, checkout)}
+        items={checkoutMenu(workspace, checkout, purposeProblem)}
         onSelect={(item) => runCheckoutItem(workspace, checkout, item)}
         data-checkout-menu={checkout.id}
       >

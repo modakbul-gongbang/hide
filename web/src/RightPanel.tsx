@@ -1,6 +1,7 @@
 import type { Actions } from "./actions";
 import { ExplorerTree } from "./ExplorerTree";
 import { HistoryList } from "./HistoryList";
+import { focusedRemoteDevice } from "./snapshot";
 import { useShellStore } from "./store";
 
 // Core UI state owns section and visibility. Switching sections does not
@@ -9,6 +10,7 @@ import { useShellStore } from "./store";
 export function RightPanel({ actions }: { actions: Actions }) {
   const visible = useShellStore((s) => s.rest?.ui_state?.right_panel_visible ?? false);
   const section = useShellStore((s) => s.rest?.ui_state?.right_panel_section ?? "explorer");
+  const remoteLabel = useShellStore((s) => focusedRemoteDevice(s.rest)?.label ?? null);
   if (!visible || (section !== "explorer" && section !== "changes")) return null;
   return (
     <aside
@@ -32,7 +34,18 @@ export function RightPanel({ actions }: { actions: Actions }) {
           ⌘⇧B
         </button>
       </div>
-      {section === "explorer" ? <ExplorerTree actions={actions} /> : <HistoryList actions={actions} />}
+      {remoteLabel ? (
+        // Remote file viewing is not part of the web shell (PRD S5 Non-goals);
+        // the tree and History would otherwise show this machine's checkout
+        // behind the selected device.
+        <p className="p-md text-caption text-muted" data-right-panel-remote="true">
+          Files on {remoteLabel} are not available from the web shell. Switch to this machine to browse its checkouts.
+        </p>
+      ) : section === "explorer" ? (
+        <ExplorerTree actions={actions} />
+      ) : (
+        <HistoryList actions={actions} />
+      )}
     </aside>
   );
 }

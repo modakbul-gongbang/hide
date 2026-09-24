@@ -1,5 +1,6 @@
 import { memo, useCallback, useRef, useState } from "react";
 import { PaneView } from "./PaneView";
+import { frameStyle, type RemoteView } from "./remote";
 import { resizeStep } from "./resize";
 import {
   dividerPaneId,
@@ -64,6 +65,65 @@ export function PaneCanvas({
 }
 
 const EMPTY_TRANSPORTS: TerminalPane[] = [];
+
+/**
+ * A selected SSH device's visible tab (PRD S5 B19). Herdr reports a remote
+ * tab's geometry as each pane's rectangle rather than the split tree, so the
+ * panes are placed where it says. There is no divider: a remote pane's size
+ * is its host's, as in the native shell. A zoomed tab draws the pane Herdr
+ * zoomed, its focused one, over the whole canvas.
+ */
+export function RemotePaneCanvas({
+  view,
+  connected,
+  dispatch,
+  onClosePane,
+}: {
+  view: RemoteView;
+  /** False while the device's connection is down; the panes show its last state. */
+  connected: boolean;
+  dispatch: DispatchFn;
+  onClosePane: (paneId: string) => void;
+}) {
+  const transportRows = useShellStore((s) => s.rest?.terminal?.panes ?? EMPTY_TRANSPORTS);
+  const scales = useShellStore((s) => s.rest?.ui_state?.pane_text_scales ?? EMPTY_SCALES);
+  const { tab, layout } = view;
+  if (!tab || !layout) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center text-caption text-muted" data-canvas="empty">
+        {tab ? "The remote tab's layout has not arrived yet" : "no tab"}
+      </div>
+    );
+  }
+  const panes = new Map(tab.panes.map((pane) => [pane.id, pane]));
+  const transports = new Map(transportRows.map((row) => [row.pane_id, row]));
+  const frames = layout.zoomed ? [{ pane_id: layout.focused_pane_id, x: 0, y: 0, width: 1, height: 1 }] : layout.frames;
+  return (
+    <div className="relative min-h-0 min-w-0 flex-1" data-canvas={tab.id ?? ""} data-remote-canvas="true" data-zoomed={layout.zoomed ? "true" : "false"}>
+      {frames.map((frame) => {
+        const pane = panes.get(frame.pane_id);
+        return (
+          <div key={frame.pane_id} className="absolute min-h-0 min-w-0" style={frameStyle(frame)} data-layout-pane={frame.pane_id}>
+            {pane ? (
+              <PaneView
+                pane={pane}
+                transport={transports.get(frame.pane_id)}
+                focused={view.focusedPaneId === frame.pane_id}
+                scale={scales[frame.pane_id] ?? 1}
+                dispatch={dispatch}
+                onClose={onClosePane}
+                local={false}
+                offline={!connected}
+              />
+            ) : (
+              <div className="h-full bg-background" data-pane-missing={frame.pane_id} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 const EMPTY_SCALES: Record<string, number> = {};
 
 const TabCanvas = memo(function TabCanvas({

@@ -470,6 +470,7 @@ Up and Down move focus, Return or a click selects, and Escape dismisses without 
 Empty lists say `No devices available`, long names truncate in their title line, and the complete identity remains in the row's accessibility label.
 The list uses the existing tooltip width and relationship-list height cap, with scrolling beyond the cap.
 The reusable device-row and remote-location state sheets are maintained in the design library; the approved scope is recorded in `agents/prd/remote-interface-parity/prd.md`.
+The web shell draws the same trigger and list at the bottom of its sidebar from the shared tokens (`web/src/DevicePicker.tsx`), with line icons standing in for the SF Symbols.
 
 ### Search keyboard navigation
 

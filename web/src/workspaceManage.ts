@@ -3,7 +3,8 @@
 // dialogs read out of a task or removal the core reports. The core re-checks
 // every one of these; they decide what the screen offers, not what is allowed.
 
-import type { Checkout, TaskOperation, Workspace, WorktreeRemoval } from "./snapshot";
+import { supportsRemotePurpose } from "./remote";
+import type { Checkout, RemoteStatus, TaskOperation, Workspace, WorktreeRemoval } from "./snapshot";
 
 /** The native purpose field's limits (`PurposeInputPresentation`). */
 export const PURPOSE_RECOMMENDED = 40;
@@ -75,9 +76,21 @@ export function projectMenu(workspace: Workspace): MenuItem[] {
   return items;
 }
 
-/** The checkout row's menu: purpose for any checkout, deletion for a local linked worktree. */
-export function checkoutMenu(workspace: Workspace, checkout: Checkout): MenuItem[] {
-  const items: MenuItem[] = [{ id: "set_purpose", label: "Set purpose…", unavailable: null }];
+/**
+ * Why a remote checkout's purpose cannot be written: the core stores it in
+ * that host's Herdr, which takes it from 0.9.1 (the native `purposeUnavailableReason`).
+ */
+export function remotePurposeProblem(workspace: Workspace, remote: RemoteStatus[] | undefined): string | null {
+  const targetId = workspace.remote_target_id;
+  if (!targetId) return null;
+  const version = remote?.find((row) => row.target_id === targetId)?.herdr_version ?? null;
+  if (supportsRemotePurpose(version)) return null;
+  return `Set purpose requires Herdr 0.9.1 or newer on the remote device${version ? `; ${version} is installed` : "; its version is unavailable"}.`;
+}
+
+/** The checkout row's menu: purpose for any checkout its host can store it for, deletion for a local linked worktree. */
+export function checkoutMenu(workspace: Workspace, checkout: Checkout, purposeProblem: string | null = null): MenuItem[] {
+  const items: MenuItem[] = [{ id: "set_purpose", label: "Set purpose…", unavailable: purposeProblem }];
   if (checkout.is_worktree) {
     const gate = checkout.worktree?.deletion_gate;
     items.push({

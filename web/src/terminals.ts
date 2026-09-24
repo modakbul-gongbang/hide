@@ -25,6 +25,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { mapModifiedKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
+import { remoteControl, remoteTargetOfPane } from "./remote";
 import { selectionToText, type CellRow } from "./selection";
 import { pointerModifiers, wheelRows } from "./wheel";
 import { useShellStore, type TerminalChunk } from "./store";
@@ -457,7 +458,14 @@ export function attachTerminal(
     // the snapshot, not the click.
     shown.term.textarea?.addEventListener("focus", () => {
       if (followingSnapshot || useShellStore.getState().focusedPaneId === paneId) return;
-      shown.dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } });
+      // A remote pane's focus is its host's, so it goes there by the pane's
+      // own scoped id; this machine's `focus_pane` never carries it.
+      const targetId = remoteTargetOfPane(useShellStore.getState().rest, paneId);
+      shown.dispatch(
+        targetId
+          ? remoteControl(targetId, { action: "focus_pane", pane_id: paneId })
+          : { schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator" } },
+      );
     });
   }
   const observer = new ResizeObserver(() => sendGrid(paneId, shown, false));
