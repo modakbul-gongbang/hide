@@ -198,9 +198,104 @@ impl fmt::Debug for RemoteHost {
     }
 }
 
+/// Admission to one helper connection: four running and thirty-two waiting
+/// requests (PRD S5.5 D-15). Once the connection is draining or closed it
+/// admits nothing new, and a request still waiting is refused rather than
+/// sent, because nothing went out for it (B52).
+struct Gate {
+    state: Mutex<Admission>,
+    changed: Condvar,
+}
+
 struct Admission {
     running: usize,
     queued: usize,
+    stopped: Option<String>,
+}
+
+impl Gate {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(Admission {
+                running: 0,
+                queued: 0,
+                stopped: None,
+            }),
+            changed: Condvar::new(),
+        }
+    }
+
+    fn admit(&self, timeout: Duration) -> Result<(), HostCallError> {
+        let mut admission = lock_recover(&self.state);
+        if let Some(reason) = &admission.stopped {
+            return Err(HostCallError::NotConnected(reason.clone()));
+        }
+        if admission.running < MAX_RUNNING {
+            admission.running += 1;
+            return Ok(());
+        }
+        if admission.queued >= MAX_QUEUED {
+            return Err(HostCallError::Busy);
+        }
+        admission.queued += 1;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(reason) = &admission.stopped {
+                let reason = reason.clone();
+                admission.queued -= 1;
+                drop(admission);
+                self.changed.notify_all();
+                return Err(HostCallError::NotConnected(reason));
+            }
+            if admission.running < MAX_RUNNING {
+                break;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                admission.queued -= 1;
+                return Err(HostCallError::Busy);
+            }
+            admission = self
+                .changed
+                .wait_timeout(admission, deadline - now)
+                .map(|(guard, _)| guard)
+                .unwrap_or_else(|poisoned| poisoned.into_inner().0);
+        }
+        admission.queued -= 1;
+        admission.running += 1;
+        Ok(())
+    }
+
+    fn release(&self) {
+        lock_recover(&self.state).running -= 1;
+        self.changed.notify_all();
+    }
+
+    /// Admits nothing more; the first reason given is the one kept.
+    fn stop(&self, reason: &str) {
+        let mut admission = lock_recover(&self.state);
+        if admission.stopped.is_none() {
+            admission.stopped = Some(reason.to_owned());
+        }
+        drop(admission);
+        self.changed.notify_all();
+    }
+
+    /// Waits until no admitted or waiting request remains, or `deadline`.
+    fn wait_idle(&self, deadline: Instant) {
+        let mut admission = lock_recover(&self.state);
+        while admission.running > 0 || admission.queued > 0 {
+            let now = Instant::now();
+            if now >= deadline {
+                return;
+            }
+            admission = self
+                .changed
+                .wait_timeout(admission, deadline - now)
+                .map(|(guard, _)| guard)
+                .unwrap_or_else(|poisoned| poisoned.into_inner().0);
+        }
+    }
 }
 
 struct Inner {
@@ -210,8 +305,7 @@ struct Inner {
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
     pending: Mutex<HashMap<u64, mpsc::Sender<Answered>>>,
     closed: Mutex<Option<String>>,
-    admission: Mutex<Admission>,
-    admitted: Condvar,
+    gate: Gate,
     next_id: AtomicU64,
     /// Checkout roots this connection has opened, pinned to the directory
     /// they named then.
@@ -257,46 +351,10 @@ impl RemoteHost {
     /// Sends one request and waits at most `timeout` for its answer. Must
     /// not be called from inside an async context.
     pub fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
-        let inner = &self.inner;
-        self.admit(timeout)?;
+        self.inner.gate.admit(timeout)?;
         let result = self.send_and_wait(call, timeout);
-        let mut admission = lock_recover(&inner.admission);
-        admission.running -= 1;
-        drop(admission);
-        inner.admitted.notify_one();
+        self.inner.gate.release();
         result
-    }
-
-    fn admit(&self, timeout: Duration) -> Result<(), HostCallError> {
-        let inner = &self.inner;
-        if let Some(reason) = self.closed_reason() {
-            return Err(HostCallError::NotConnected(reason));
-        }
-        let mut admission = lock_recover(&inner.admission);
-        if admission.running < MAX_RUNNING {
-            admission.running += 1;
-            return Ok(());
-        }
-        if admission.queued >= MAX_QUEUED {
-            return Err(HostCallError::Busy);
-        }
-        admission.queued += 1;
-        let deadline = Instant::now() + timeout;
-        while admission.running >= MAX_RUNNING {
-            let now = Instant::now();
-            if now >= deadline {
-                admission.queued -= 1;
-                return Err(HostCallError::Busy);
-            }
-            admission = inner
-                .admitted
-                .wait_timeout(admission, deadline - now)
-                .map(|(guard, _)| guard)
-                .unwrap_or_else(|poisoned| poisoned.into_inner().0);
-        }
-        admission.queued -= 1;
-        admission.running += 1;
-        Ok(())
     }
 
     fn send_and_wait(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
@@ -382,26 +440,29 @@ impl HostChannel for RemoteHost {
         let host = RemoteHost {
             inner: Arc::clone(&self.inner),
         };
-        let reason = reason.to_owned();
-        let _ = std::thread::Builder::new()
+        // Nothing new goes out from here, whoever still holds the channel;
+        // a request waiting for a slot is refused, since nothing was sent.
+        self.inner.gate.stop(reason);
+        let drained = reason.to_owned();
+        let spawned = std::thread::Builder::new()
             .name("remote-host-drain".into())
             .spawn(move || {
                 // Admitted requests are bounded by their own timeouts; this
                 // bound only keeps a wedged count from holding the link open.
-                let deadline = std::time::Instant::now() + Duration::from_secs(120);
-                loop {
-                    let admission = lock_recover(&host.inner.admission);
-                    if admission.running == 0 && admission.queued == 0 {
-                        break;
-                    }
-                    drop(admission);
-                    if std::time::Instant::now() >= deadline {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                host.close(&reason);
+                host.inner
+                    .gate
+                    .wait_idle(Instant::now() + Duration::from_secs(120));
+                host.close(&drained);
             });
+        if let Err(error) = spawned {
+            crate::diagnostic!(json!({
+                "component": "remote_host",
+                "kind": "host.drain_unstarted",
+                "target": self.inner.target,
+                "error": error.to_string(),
+            }));
+            self.close(reason);
+        }
     }
 
     fn closed_reason(&self) -> Option<String> {
@@ -432,12 +493,12 @@ impl HostChannel for RemoteHost {
 fn mark_closed(inner: &Inner, reason: String) {
     let mut closed = lock_recover(&inner.closed);
     if closed.is_none() {
-        *closed = Some(reason);
+        *closed = Some(reason.clone());
     }
     drop(closed);
     // Dropping the senders wakes every waiting request as disconnected.
     lock_recover(&inner.pending).clear();
-    inner.admitted.notify_all();
+    inner.gate.stop(&reason);
 }
 
 impl HostIdentity {
@@ -951,11 +1012,7 @@ fn spawn_host(
         writer: tokio::sync::Mutex::new(writer),
         pending: Mutex::new(HashMap::new()),
         closed: Mutex::new(None),
-        admission: Mutex::new(Admission {
-            running: 0,
-            queued: 0,
-        }),
-        admitted: Condvar::new(),
+        gate: Gate::new(),
         next_id: AtomicU64::new(1),
         roots: Mutex::new(HashMap::new()),
     });
@@ -1065,6 +1122,52 @@ mod tests {
             permissions: Some(0o040000 | mode),
             ..FileAttributes::empty()
         }
+    }
+
+    /// B52: withdrawing consent stops the channel admitting anything new,
+    /// whoever still holds it, and refuses a request waiting for a slot
+    /// unsent, while the requests already admitted run to their answers and
+    /// the connection waits for them before it closes.
+    #[test]
+    fn a_draining_connection_refuses_new_and_waiting_requests_and_waits_for_running_ones() {
+        let gate = Arc::new(Gate::new());
+        for _ in 0..MAX_RUNNING {
+            assert!(gate.admit(Duration::from_secs(1)).is_ok());
+        }
+        let waiting = {
+            let gate = Arc::clone(&gate);
+            std::thread::spawn(move || gate.admit(Duration::from_secs(60)))
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while lock_recover(&gate.state).queued == 0 {
+            assert!(Instant::now() < deadline, "the request never waited");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let stopped = Instant::now();
+        gate.stop("consent revoked");
+        assert!(matches!(
+            waiting.join().unwrap(),
+            Err(HostCallError::NotConnected(reason)) if reason == "consent revoked"
+        ));
+        assert!(stopped.elapsed() < Duration::from_secs(10));
+        assert!(matches!(
+            gate.admit(Duration::from_secs(1)),
+            Err(HostCallError::NotConnected(_))
+        ));
+
+        let idle = {
+            let gate = Arc::clone(&gate);
+            std::thread::spawn(move || gate.wait_idle(Instant::now() + Duration::from_secs(60)))
+        };
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!idle.is_finished(), "closed while admitted requests ran");
+        for _ in 0..MAX_RUNNING {
+            gate.release();
+        }
+        idle.join().unwrap();
+        let admission = lock_recover(&gate.state);
+        assert_eq!((admission.running, admission.queued), (0, 0));
     }
 
     /// An answer line keeps its result as the helper's own text, `null`

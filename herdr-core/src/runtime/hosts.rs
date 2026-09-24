@@ -5,9 +5,11 @@
 //! A device without consent never gets a helper connection. Consent given at
 //! registration or later is bound to the SSH identity the helper first runs
 //! on; a device that later answers with another account, address or host key
-//! is refused until the operator allows it again. Revoking closes the
-//! connection, so work already sent settles as unknown and is read back
-//! rather than resent, and nothing on the device is removed.
+//! is refused until the operator allows it again. Revoking stops the
+//! connection admitting work at once, whoever still holds it, and refuses a
+//! request still waiting for a slot; work already admitted answers on it and
+//! settles to its real result before it closes, a save held for the helper is
+//! dropped unsent, and nothing on the device is removed.
 
 use std::sync::Arc;
 
@@ -111,7 +113,8 @@ impl Runtime {
                 "kind": "host.consent_revoked",
                 "target": device_id,
             }));
-            // New work stops here: the channel is no longer handed out. Work
+            // New work stops here: the channel is no longer handed out and
+            // admits nothing more from a worker still holding it. Work
             // already admitted answers on the old connection, which closes
             // once it is idle, so a save in flight settles to its real
             // result rather than becoming unknown (B52).
