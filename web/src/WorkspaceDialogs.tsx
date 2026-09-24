@@ -44,15 +44,16 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   // elsewhere, a gate that changed) rather than a copy from when it opened.
   useShellStore((s) => s.rest?.navigator?.workspaces);
   useShellStore((s) => s.rest?.status?.remote);
-  // A deleted worktree leaves the navigator while its dialog still reports
-  // the result, so the dialog keeps the last row it saw for its checkout.
+  // A deleted worktree or a removed project leaves the catalog while its
+  // dialog still reports the result, so the dialog keeps the last row it saw.
   const lastSeen = useRef<{ key: string; target: { workspace: Workspace; checkout: Checkout | null } } | null>(null);
   const close = () => useUiStore.getState().setWorkspaceDialog(null);
   if (!dialog) return null;
   const key = JSON.stringify(dialog);
   const found = findTarget(dialog.workspaceId, "checkoutId" in dialog ? dialog.checkoutId : undefined);
   if (found && (!("checkoutId" in dialog) || found.checkout)) lastSeen.current = { key, target: found };
-  const target = found?.checkout || !("checkoutId" in dialog) ? found : dialog.kind === "delete_worktree" && lastSeen.current?.key === key ? lastSeen.current.target : found;
+  const keepsLastSeen = dialog.kind === "delete_worktree" || dialog.kind === "remove_project";
+  const target = found && (found.checkout || !("checkoutId" in dialog)) ? found : keepsLastSeen && lastSeen.current?.key === key ? lastSeen.current.target : found;
   if (!target || ("checkoutId" in dialog && !target.checkout)) {
     return (
       <Dialog label="Unavailable" onClose={close}>

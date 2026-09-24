@@ -44,7 +44,7 @@ function DeviceNewWorkspace({ actions, device }: { actions: Actions; device: str
   if (!open) return null;
   const submit = () => {
     const path = text.trim().replace(/\/+$/, "");
-    if (!path || path === "~") return;
+    if (!path) return;
     setSent({ at: Date.now(), count });
     actions.createWorkspace(path, path.slice(path.lastIndexOf("/") + 1), device);
   };
