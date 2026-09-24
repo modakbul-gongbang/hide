@@ -659,6 +659,50 @@ pub fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// The first ignored folder of the worktree that holds a Git repository of
+/// its own, relative to the worktree.
+fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
+    let listed = git(
+        worktree,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+        ],
+    )?;
+    Ok(listed
+        .split('\0')
+        .filter(|entry| entry.ends_with('/'))
+        .find(|folder| {
+            let folder = worktree.join(folder);
+            folder.join(".git").exists() || walkdir_has_git(&folder)
+        })
+        .map(|folder| folder.trim_end_matches('/').to_owned()))
+}
+
+/// Whether any folder below `folder` holds a `.git`, looked for at most a few
+/// levels down so a large ignored tree (`node_modules`) stays cheap.
+fn walkdir_has_git(folder: &Path) -> bool {
+    fn visit(folder: &Path, depth: usize) -> bool {
+        if depth == 0 {
+            return false;
+        }
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return false;
+        };
+        entries.flatten().any(|entry| {
+            let Ok(kind) = entry.file_type() else {
+                return false;
+            };
+            kind.is_dir() && (entry.path().join(".git").exists() || visit(&entry.path(), depth - 1))
+        })
+    }
+    visit(folder, 3)
+}
+
 /// `Command::output` within [`GIT_DEADLINE`], for the branch checks.
 trait WithinDeadline {
     fn output_within_deadline(&mut self) -> Result<std::process::Output, String>;
@@ -985,6 +1029,16 @@ pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
                 "the worktree became dirty after confirmation".into(),
             ));
         }
+        // Git leaves ignored folders out of the status above, and removing
+        // the worktree deletes them, including a repository cloned into one
+        // (B28): such a nested repository stops the removal.
+        if let Some(nested) = ignored_repository(target)
+            .map_err(|error| stopped(format!("could not recheck ignored folders: {error}")))?
+        {
+            return Err(stopped(format!(
+                "the ignored folder {nested} holds its own Git repository"
+            )));
+        }
     }
     remove_worktree(root, target).map_err(|error| {
         format!("git worktree remove failed: {error}. The worktree remains; panes already closed stay closed.")
@@ -1001,4 +1055,38 @@ pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
 
 fn io_error(message: String) -> HostError {
     HostError::new(ErrorCode::Io, message)
+}
+
+#[cfg(test)]
+mod ignored_repository_tests {
+    use super::*;
+
+    fn run(cwd: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// B28: a repository cloned into an ignored folder is found, because a
+    /// worktree removal would delete it; ignored build output is not.
+    #[test]
+    fn a_repository_inside_an_ignored_folder_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        run(repo, &["init", "-q"]);
+        std::fs::write(repo.join(".gitignore"), "vendor/\nbuild/\n").unwrap();
+        std::fs::create_dir_all(repo.join("build/out")).unwrap();
+        std::fs::write(repo.join("build/out/a.o"), "x").unwrap();
+        assert_eq!(ignored_repository(repo).unwrap(), None);
+
+        std::fs::create_dir_all(repo.join("vendor/lib")).unwrap();
+        run(&repo.join("vendor/lib"), &["init", "-q"]);
+        assert_eq!(ignored_repository(repo).unwrap(), Some("vendor".to_owned()));
+    }
 }
