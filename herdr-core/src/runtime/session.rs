@@ -3863,7 +3863,11 @@ impl Runtime {
         self.operator_focused_pane_id = None;
         self.refresh_pane_read_state();
         self.yield_surface_to_terminal();
+        // With separate View areas the alignment above already chose the
+        // Workspace's remembered View tab; only the shared canvas needs a
+        // document to show in place of a missing terminal.
         if !has_herdr_tab
+            && !self.separate_view_areas()
             && let Some(file_tab_id) = self
                 .snapshot
                 .editor

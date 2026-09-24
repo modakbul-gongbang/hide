@@ -301,3 +301,57 @@ fn an_unreadable_views_file_is_kept_and_reported_in_the_diagnostic_log() {
         });
     assert!(kept);
 }
+
+/// B8: coming back to a Workspace that has no Herdr tab shows the View tab
+/// that was active there, not the newest one.
+#[test]
+fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
+    let (runtime, checkout_id, directory) = strip_checkout("return-active");
+    let mut runtime = with_views(runtime, &views_path("return-active"));
+    let other = directory.with_file_name(format!(
+        "{}-other",
+        directory.file_name().unwrap().to_string_lossy()
+    ));
+    std::fs::create_dir_all(&other).expect("second checkout");
+    runtime
+        .snapshot
+        .ui_state
+        .workspace_registrations
+        .push(WorkspaceRegistration {
+            id: "workspace:other".to_owned(),
+            label: "other".to_owned(),
+            path: other.to_string_lossy().into_owned(),
+            device_id: "local".to_owned(),
+            pinned: false,
+        });
+    runtime.rebuild_catalog();
+    let other_checkout = workspace::checkout_id_for_path("workspace:other", &other);
+    std::fs::write(directory.join("later.md"), "later\n").expect("second file");
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    open(&mut runtime, &checkout_id, &directory.join("later.md"));
+    let notes = runtime
+        .snapshot
+        .editor
+        .tabs
+        .iter()
+        .find(|tab| tab.label == "notes.md")
+        .expect("notes tab")
+        .id
+        .clone();
+    assert!(runtime.dispatch_json(&explorer_event(
+        "file_focus",
+        serde_json::json!({"tab_id": notes})
+    )));
+    assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
+
+    let focus = |workspace_id: &str, checkout_id: &str| {
+        explorer_event(
+            "focus_checkout",
+            serde_json::json!({"workspace_id": workspace_id, "checkout_id": checkout_id}),
+        )
+    };
+    runtime.dispatch_json(&focus("workspace:other", &other_checkout));
+    runtime.dispatch_json(&focus("workspace:order", &checkout_id));
+
+    assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
+}
