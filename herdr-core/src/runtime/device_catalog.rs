@@ -17,8 +17,8 @@ const FACTS_TIMEOUT: Duration = Duration::from_secs(15);
 type FactAnswers = Vec<(String, Fact)>;
 
 impl Runtime {
-    /// The published session for a device: grouped by the facts known now,
-    /// with the device's file tabs in its checkouts' strips.
+    /// The published session for a device, grouped by the facts known now;
+    /// its strips are placed by `place_device_strips`.
     pub(super) fn derive_device_session(
         &self,
         target: &str,
@@ -40,7 +40,6 @@ impl Runtime {
                 }
             }
         }
-        join_device_editor_tabs(&mut session, &self.snapshot.editor.tabs);
         session
     }
 
@@ -50,10 +49,15 @@ impl Runtime {
         let Some(raw) = self.device_raw_sessions.get(target) else {
             return false;
         };
-        let session = self.derive_device_session(target, raw);
+        let mut session = self.derive_device_session(target, raw);
         let empty = DeviceFacts::default();
         let catalog =
             device_catalog::catalog_state(raw, self.device_facts.get(target).unwrap_or(&empty));
+        let mut dropped_moves = Vec::new();
+        self.place_device_strips(target, &mut session, &mut dropped_moves);
+        if !dropped_moves.is_empty() {
+            self.report_dropped_tab_moves(dropped_moves);
+        }
         let Some(status) = self
             .snapshot
             .status

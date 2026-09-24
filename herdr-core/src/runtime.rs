@@ -55,26 +55,82 @@ fn conversation_agent_kind(kind: &str) -> bool {
     )
 }
 
-/// A device checkout's strip: its Herdr tabs in the host's order, then the
-/// editor tabs opened on it. Herdr orders the host's tabs and the core does
-/// not reorder a device's strip, so the file tabs follow in opening order.
-pub(super) fn join_device_editor_tabs(
-    session: &mut RemoteSessionSnapshot,
-    editor_tabs: &[EditorTabSnapshot],
+/// Which Herdr workspace each tab belongs to, from each workspace's tab order.
+pub(super) fn tab_owners(order: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, String> {
+    order
+        .iter()
+        .flat_map(|(workspace_id, tab_ids)| {
+            tab_ids
+                .iter()
+                .map(move |tab_id| (tab_id.clone(), workspace_id.clone()))
+        })
+        .collect()
+}
+
+/// A device's Herdr workspaces' tab orders, keyed by Herdr's own workspace id
+/// and naming each tab by its device-scoped id, as the device's strips do.
+/// The raw session carries one checkout per Herdr workspace, in Herdr's order.
+pub(super) fn device_workspace_tab_order(
+    raw: &RemoteSessionSnapshot,
+) -> BTreeMap<String, Vec<String>> {
+    raw.workspaces
+        .iter()
+        .filter_map(|workspace| {
+            let herdr_id = workspace.session_workspace_ids.first()?;
+            let tabs = workspace
+                .checkouts
+                .iter()
+                .flat_map(|checkout| checkout.tabs.iter())
+                .filter_map(|tab| tab.id.clone())
+                .collect();
+            Some((herdr_id.clone(), tabs))
+        })
+        .collect()
+}
+
+/// Places one checkout's strip from its Herdr and editor tabs, settling a
+/// held reorder once Herdr reports the order it asked for.
+///
+/// A held reorder lands the moment Herdr reports the order it asked for,
+/// whichever path carried it: the `tab_moved` event, a move Herdr had already
+/// made, or a move made from the TUI. A held reorder whose tabs are no longer
+/// the checkout's tabs can never be reported, so it is dropped rather than
+/// kept waiting for an order that cannot arrive.
+fn place_checkout_strip(
+    checkout: &mut CheckoutSnapshot,
+    editor: Vec<StripTabSnapshot>,
+    owners: &BTreeMap<String, String>,
+    order: &mut BTreeMap<String, Vec<String>>,
+    pending: &mut BTreeMap<String, PendingTabMove>,
+    dropped_moves: &mut Vec<String>,
 ) {
-    for workspace in &mut session.workspaces {
-        for checkout in &mut workspace.checkouts {
-            checkout
-                .strip
-                .retain(|entry| entry.kind == StripTabKind::Herdr);
-            checkout.strip.extend(
-                editor_tabs
-                    .iter()
-                    .filter(|tab| tab.checkout_id == checkout.id)
-                    .map(StripTabSnapshot::editor),
-            );
+    let herdr = StripTabSnapshot::from_herdr_tabs(&checkout.tabs);
+    let stored = order.entry(checkout.id.clone()).or_default();
+    if let Some(held) = pending.get(&checkout.id) {
+        // Only the tabs the move was asked about: the workspace it named, as
+        // this checkout currently holds them.
+        let live_owned = herdr
+            .iter()
+            .map(|entry| &entry.source_id)
+            .filter(|tab_id| owners.get(*tab_id) == Some(&held.workspace_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if live_owned.iter().cloned().collect::<BTreeSet<_>>()
+            != held.herdr_order.iter().cloned().collect::<BTreeSet<_>>()
+        {
+            pending.remove(&checkout.id);
+            dropped_moves.push(checkout.id.clone());
+        } else if live_owned == held.herdr_order {
+            *stored = held.desired.clone();
+            pending.remove(&checkout.id);
         }
     }
+    checkout.strip = ordered_strip(stored, &herdr, &editor, owners);
+    *stored = checkout
+        .strip
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect();
 }
 
 /// Places one checkout's tab strip.
@@ -162,6 +218,13 @@ struct PendingTabMove {
     deadline_at_unix_ms: Option<u64>,
     message: Option<String>,
     retryable: bool,
+}
+
+/// The Herdr that carries a tab move: this machine's, or the device whose
+/// checkout the moved tab is in.
+enum TabMoveCarrier {
+    Local(LiveContext),
+    Device(RemoteControlContext),
 }
 
 /// Translates a wanted Herdr tab order into the index `tab.move` takes.

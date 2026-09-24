@@ -426,28 +426,36 @@ impl Runtime {
     /// Herdr reports the order it actually has, and a refusal leaves the strip
     /// on the order Herdr last reported.
     pub(super) fn reorder_tab(&mut self, payload: ReorderTabPayload) -> bool {
-        let Some(workspace) = self
+        // The checkout is this machine's or a device's; a device's strip is
+        // placed by the same rule, and its Herdr tabs move on its own Herdr.
+        let local = self
             .snapshot
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == payload.workspace_id)
-        else {
-            self.set_error(
-                "tab.unknown_workspace",
-                format!("Workspace {} is not registered", payload.workspace_id),
-                false,
-            );
-            return true;
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .find(|workspace| workspace.id == payload.workspace_id);
+        let device = self.snapshot.status.remote.iter().find_map(|remote| {
+            remote
+                .session
+                .as_ref()?
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == payload.workspace_id)
+                .map(|workspace| (remote.target_id.clone(), workspace))
+        });
+        let (device, workspace) = match (local, device) {
+            (Some(workspace), _) => (None, workspace),
+            (None, Some((target, workspace))) => (Some(target), workspace),
+            (None, None) => {
+                self.set_error(
+                    "tab.unknown_workspace",
+                    format!("Workspace {} is not registered", payload.workspace_id),
+                    false,
+                );
+                return true;
+            }
         };
-        if workspace.remote_target_id.is_some() {
-            self.set_error(
-                "tab.reorder_remote",
-                "A remote target's tab order is Herdr's alone and cannot be rearranged here",
-                false,
-            );
-            return true;
-        }
         let Some(checkout) = workspace
             .checkouts
             .iter()
@@ -544,8 +552,15 @@ impl Runtime {
         // Deciding this per checkout is what refused every drag in a checkout
         // whose tabs come from two Herdr workspaces, which is the ordinary
         // arrangement for a repository opened twice.
-        let Some((moved_workspace_id, workspace_order)) = self
-            .herdr_workspace_tab_order
+        let workspace_orders = match device.as_deref() {
+            None => self.herdr_workspace_tab_order.clone(),
+            Some(target) => self
+                .device_raw_sessions
+                .get(target)
+                .map(device_workspace_tab_order)
+                .unwrap_or_default(),
+        };
+        let Some((moved_workspace_id, workspace_order)) = workspace_orders
             .iter()
             .find(|(_, order)| order.contains(&moved.source_id))
             .map(|(workspace_id, order)| (workspace_id.clone(), order.clone()))
@@ -592,13 +607,21 @@ impl Runtime {
             );
             return true;
         };
-        let Some(context) = self.live.as_ref().cloned() else {
-            self.set_error(
-                "tab.control_unavailable",
-                "Moving a Herdr tab requires a live Herdr connection",
-                true,
-            );
-            return true;
+        let carrier = match device.as_deref() {
+            None => self
+                .live
+                .as_ref()
+                .cloned()
+                .map(|context| (TabMoveCarrier::Local(context), self.live_generation))
+                .ok_or_else(|| "Moving a Herdr tab requires a live Herdr connection".to_owned()),
+            Some(target) => self.device_tab_move_carrier(target),
+        };
+        let (carrier, connection_generation) = match carrier {
+            Ok(carrier) => carrier,
+            Err(message) => {
+                self.set_error("tab.control_unavailable", message, true);
+                return true;
+            }
         };
         let generation = self.next_tab_move_generation;
         self.next_tab_move_generation += 1;
@@ -616,7 +639,7 @@ impl Runtime {
                 herdr_order: desired_owned.clone(),
                 target_id: moved.source_id.clone(),
                 generation,
-                connection_generation: self.live_generation,
+                connection_generation,
                 phase: "transmitting".to_owned(),
                 stage: "request".to_owned(),
                 started_at_unix_ms: now,
@@ -633,25 +656,78 @@ impl Runtime {
                 moved.source_id
             ),
         );
-        if let Err(message) = live::spawn_local_control(
-            context,
-            RemoteControlAction::MoveTab {
-                checkout_id: payload.checkout_id.clone(),
-                tab_id: moved.source_id,
-                insert_index,
-                // Herdr answers with its own workspace's tabs, so the order to
-                // check the answer against is the moved tab's workspace
-                // subsequence, never the checkout's mixed order.
-                expected_order: desired_owned,
-                generation,
-                connection_generation: self.live_generation,
-            },
-        ) {
+        // Herdr answers with its own workspace's tabs, so the order to check
+        // the answer against is the moved tab's workspace subsequence, never
+        // the checkout's mixed order. A device's Herdr names its tabs without
+        // the device scope the strip carries.
+        let herdr_id = |tab_id: &str| match device.as_deref() {
+            None => Some(tab_id.to_owned()),
+            Some(target) => remote_tab_source_id(target, tab_id).map(str::to_owned),
+        };
+        let (Some(tab_id), Some(expected_order)) = (
+            herdr_id(&moved.source_id),
+            desired_owned
+                .iter()
+                .map(|tab_id| herdr_id(tab_id))
+                .collect::<Option<Vec<_>>>(),
+        ) else {
+            self.pending_tab_move.remove(&payload.checkout_id);
+            self.sync_async_operations();
+            self.set_error(
+                "tab.reorder_inconsistent",
+                format!("Tab {} is not scoped to its device", moved.source_id),
+                false,
+            );
+            return true;
+        };
+        let action = RemoteControlAction::MoveTab {
+            checkout_id: payload.checkout_id.clone(),
+            tab_id,
+            insert_index,
+            expected_order,
+            generation,
+            connection_generation,
+        };
+        let spawned = match carrier {
+            TabMoveCarrier::Local(context) => live::spawn_local_control(context, action),
+            TabMoveCarrier::Device(context) => live::spawn_remote_control(
+                context,
+                format!("tab.move:{}:{generation}", payload.checkout_id),
+                action,
+                connection_generation,
+            ),
+        };
+        if let Err(message) = spawned {
             self.pending_tab_move.remove(&payload.checkout_id);
             self.sync_async_operations();
             self.set_error("tab.move_worker_failed", message, true);
         }
         true
+    }
+
+    /// The device's Herdr control and its connection generation, when the
+    /// device can take a tab move now.
+    fn device_tab_move_carrier(&self, target: &str) -> Result<(TabMoveCarrier, u64), String> {
+        let connected = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .any(|remote| remote.target_id == target && remote.state == "connected");
+        if !connected {
+            return Err(format!("{target} is not connected; the tab was not moved"));
+        }
+        let context = self
+            .remote_controls
+            .get(target)
+            .cloned()
+            .ok_or_else(|| format!("Herdr control for {target} is unavailable"))?;
+        let generation = self
+            .remote_connection_generations
+            .get(target)
+            .copied()
+            .unwrap_or(0);
+        Ok((TabMoveCarrier::Device(context), generation))
     }
     /// Drops a held reorder and says why, so a refused move is never a strip
     /// that silently stayed where it was.
@@ -679,26 +755,15 @@ impl Runtime {
         self.rebuild_tab_strips();
         true
     }
-    /// Rewrites every local checkout's tab strip from the Herdr and editor
-    /// tabs it currently holds.
-    ///
-    /// A remote checkout keeps the strip its own projection built: the remote
-    /// context browses Herdr's tabs and has no file tabs to mix in.
+    /// Rewrites every checkout's tab strip, this machine's and each device's,
+    /// from the Herdr and editor tabs it currently holds.
     pub(super) fn rebuild_tab_strips(&mut self) {
         let editor_tabs = &self.snapshot.editor.tabs;
         let order = &mut self.checkout_tab_order;
         let pending = &mut self.pending_tab_move;
         // Which Herdr workspace each tab belongs to, so a strip slot is
         // refilled from that workspace's order rather than from a flat one.
-        let owners = &self
-            .herdr_workspace_tab_order
-            .iter()
-            .flat_map(|(workspace_id, tab_ids)| {
-                tab_ids
-                    .iter()
-                    .map(move |tab_id| (tab_id.clone(), workspace_id.clone()))
-            })
-            .collect::<BTreeMap<String, String>>();
+        let owners = &tab_owners(&self.herdr_workspace_tab_order);
         let mut live_checkouts = BTreeSet::new();
         // Checkouts whose held arrangement became unreachable. The diagnostic
         // is pushed after the loop, which is where the snapshot is free again.
@@ -709,7 +774,6 @@ impl Runtime {
             }
             for checkout in &mut workspace.checkouts {
                 live_checkouts.insert(checkout.id.clone());
-                let herdr = StripTabSnapshot::from_herdr_tabs(&checkout.tabs);
                 let editor = editor_tabs
                     .iter()
                     .filter(|tab| {
@@ -717,57 +781,96 @@ impl Runtime {
                     })
                     .map(StripTabSnapshot::editor)
                     .collect::<Vec<_>>();
-                let stored = order.entry(checkout.id.clone()).or_default();
-                // A held reorder lands the moment Herdr reports the order it
-                // asked for, whichever path carried it: the `tab_moved` event,
-                // a move Herdr had already made, or a move made from the TUI.
-                // A held reorder whose tabs are no longer the checkout's tabs
-                // can never be reported, so it is dropped rather than kept
-                // waiting for an order that cannot arrive.
-                if let Some(held) = pending.get(&checkout.id) {
-                    // Only the tabs the move was asked about: the workspace
-                    // it named, as this checkout currently holds them.
-                    let live_owned = herdr
-                        .iter()
-                        .map(|entry| &entry.source_id)
-                        .filter(|tab_id| owners.get(*tab_id) == Some(&held.workspace_id))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if live_owned.iter().cloned().collect::<BTreeSet<_>>()
-                        != held.herdr_order.iter().cloned().collect::<BTreeSet<_>>()
-                    {
-                        pending.remove(&checkout.id);
-                        dropped_moves.push(checkout.id.clone());
-                    } else if live_owned == held.herdr_order {
-                        *stored = held.desired.clone();
-                        pending.remove(&checkout.id);
-                    }
-                }
-                checkout.strip = ordered_strip(stored, &herdr, &editor, owners);
-                *stored = checkout
-                    .strip
-                    .iter()
-                    .map(|entry| entry.id.clone())
-                    .collect();
+                place_checkout_strip(checkout, editor, owners, order, pending, &mut dropped_moves);
             }
         }
-        order.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
-        pending.retain(|checkout_id, _| live_checkouts.contains(checkout_id));
-        for session in self
+        let targets = self
             .snapshot
             .status
             .remote
-            .iter_mut()
-            .filter_map(|remote| remote.session.as_mut())
-        {
-            join_device_editor_tabs(session, editor_tabs);
+            .iter()
+            .filter(|remote| remote.session.is_some())
+            .map(|remote| remote.target_id.clone())
+            .collect::<Vec<_>>();
+        for target in targets {
+            let Some(mut session) = self
+                .snapshot
+                .status
+                .remote
+                .iter_mut()
+                .find(|remote| remote.target_id == target)
+                .and_then(|remote| remote.session.take())
+            else {
+                continue;
+            };
+            self.place_device_strips(&target, &mut session, &mut dropped_moves);
+            live_checkouts.extend(
+                session
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .map(|checkout| checkout.id.clone()),
+            );
+            if let Some(remote) = self
+                .snapshot
+                .status
+                .remote
+                .iter_mut()
+                .find(|remote| remote.target_id == target)
+            {
+                remote.session = Some(session);
+            }
         }
+        self.checkout_tab_order
+            .retain(|checkout_id, _| live_checkouts.contains(checkout_id));
+        self.pending_tab_move
+            .retain(|checkout_id, _| live_checkouts.contains(checkout_id));
         // A rebuilt entry starts without its agent; name it before the strip
         // is published so a fresh tab never draws as a bare number first.
         sync_strip_agent_identity(
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        self.report_dropped_tab_moves(dropped_moves);
+    }
+
+    /// Places a device's checkout strips by the rule this machine's follow:
+    /// the device's Herdr tabs in its host's order, its file tabs in the
+    /// slots the operator put them in (`place_checkout_strip`).
+    pub(super) fn place_device_strips(
+        &mut self,
+        target: &str,
+        session: &mut RemoteSessionSnapshot,
+        dropped_moves: &mut Vec<String>,
+    ) {
+        let owners = self
+            .device_raw_sessions
+            .get(target)
+            .map(|raw| tab_owners(&device_workspace_tab_order(raw)))
+            .unwrap_or_default();
+        for workspace in &mut session.workspaces {
+            for checkout in &mut workspace.checkouts {
+                let editor = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.checkout_id == checkout.id)
+                    .map(StripTabSnapshot::editor)
+                    .collect::<Vec<_>>();
+                place_checkout_strip(
+                    checkout,
+                    editor,
+                    &owners,
+                    &mut self.checkout_tab_order,
+                    &mut self.pending_tab_move,
+                    dropped_moves,
+                );
+            }
+        }
+    }
+
+    pub(super) fn report_dropped_tab_moves(&mut self, dropped_moves: Vec<String>) {
         for checkout_id in dropped_moves {
             self.push_diagnostic(
                 "tab.move.dropped",
@@ -1215,11 +1318,16 @@ impl Runtime {
         });
         // Herdr's session is kept as it came; the published one groups its
         // workspaces into the device's projects (`device_catalog`).
+        let mut dropped_moves = Vec::new();
         let fetched = fetched.map(|raw| {
-            let derived = self.derive_device_session(target_id, &raw);
+            let mut derived = self.derive_device_session(target_id, &raw);
             self.device_raw_sessions.insert(target_id.to_owned(), raw);
+            self.place_device_strips(target_id, &mut derived, &mut dropped_moves);
             derived
         });
+        if !dropped_moves.is_empty() {
+            self.report_dropped_tab_moves(dropped_moves);
+        }
         let session_ok = fetched.is_ok();
         let Some(status_index) = self
             .snapshot

@@ -219,12 +219,19 @@ describe("commands with an SSH device selected", () => {
   it("refuses the local-only commands instead of running them on this machine", () => {
     seed(rest("studio"));
     const { sent, actions } = recorder();
-    actions.reopenClosed();
     actions.openFind();
     actions.openFilePalette();
-    actions.reorderTab("remote:studio:tab:w9:t2", 0);
     expect(sent).toHaveLength(0);
     expect(useUiStore.getState().notice?.text).toContain("Studio Mac");
+  });
+
+  it("reorders the device's own strip, naming its checkout", () => {
+    seed(rest("studio"));
+    const { sent, actions } = recorder();
+    actions.reorderTab("herdr:remote:studio:tab:w9:t2", 0);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ kind: "reorder_tab", payload: { tab_id: "herdr:remote:studio:tab:w9:t2", to_index: 0 } });
+    expect(String(sent[0]?.payload.checkout_id)).toMatch(/^remote:studio:/);
   });
 
   it("splits this machine's pane again once this machine is selected", () => {

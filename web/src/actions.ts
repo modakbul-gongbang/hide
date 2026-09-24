@@ -460,8 +460,21 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     reorderTab(stripId: string, toIndex: number) {
-      // Herdr orders a remote host's tabs; the native shell does not move them either.
-      if (refusedRemotely("Reordering tabs")) return;
+      // A device's strip is arranged by the core as this machine's is; a
+      // Herdr tab moves on the device's own Herdr (`reorder_tab`).
+      // A file slot moves with the device offline too; the core refuses a
+      // Herdr move while the device is not connected.
+      const context = remoteContext(rest());
+      if (context) {
+        const checkout = remoteView(context.session)?.checkout;
+        if (!checkout) return diagnostic("reorder_tab: no device checkout in front");
+        dispatch({
+          schema_version: 2,
+          kind: "reorder_tab",
+          payload: { workspace_id: checkout.workspace_id, checkout_id: checkout.id, tab_id: stripId, to_index: toIndex },
+        });
+        return;
+      }
       const here = current();
       if (!here) return;
       dispatch({
@@ -532,8 +545,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     reopenClosed() {
-      // The core's reopen stack holds only closes made on this machine.
-      if (refusedRemotely("Reopen closed tab")) return;
+      // The core reopens the newest close of the device in front, and
+      // `recent_closed` already speaks for that device.
       const recent = rest()?.recent_closed;
       if (!recent?.can_reopen) {
         diagnostic(`reopen_closed: nothing to reopen${recent?.reopen_blocked_reason ? ` (${recent.reopen_blocked_reason})` : ""}`);

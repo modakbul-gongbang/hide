@@ -1104,42 +1104,6 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
     std::fs::remove_dir_all(&root_b).ok();
 }
 
-#[test]
-fn tab_strip_reorder_refuses_a_remote_checkout() {
-    let (mut runtime, checkout_id, directory) = strip_checkout("remote-refusal");
-    let tabs = ["w-order:t1", "w-order:t2"];
-    assert!(runtime.ingest_session(Ok(tab_order_payload(
-        &directory.to_string_lossy(),
-        &tabs,
-        &tabs,
-        "w-order:t1"
-    ))));
-    let before = strip_ids(&runtime, &checkout_id);
-    for workspace in &mut runtime.snapshot.navigator.workspaces {
-        workspace.remote_target_id = Some("mini".to_owned());
-    }
-
-    assert!(reorder_tab(
-        &mut runtime,
-        &checkout_id,
-        "herdr:w-order:t1",
-        1
-    ));
-    assert_eq!(strip_ids(&runtime, &checkout_id), before);
-    assert!(runtime.pending_tab_move.is_empty());
-    assert_eq!(
-        runtime
-            .snapshot()
-            .status
-            .last_error
-            .as_ref()
-            .map(|error| error.kind.as_str()),
-        Some("tab.reorder_remote")
-    );
-
-    std::fs::remove_dir_all(&directory).ok();
-}
-
 /// Returning from a remote device left `remote:<target>:pane:<id>` in the
 /// selection, and every local sync tick then compared it against local
 /// layouts, never matched, and re-raised the same projection error. A

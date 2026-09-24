@@ -543,12 +543,39 @@ impl Runtime {
         )
     }
 
+    /// The device whose closed items the reopen command and the snapshot's
+    /// `recent_closed` speak for: the one in front.
+    fn reopen_device(&self) -> &str {
+        self.snapshot
+            .navigator
+            .focused_device_id
+            .as_deref()
+            .unwrap_or(workspace::LOCAL_DEVICE_ID)
+    }
+
+    /// The newest closed item the device in front can reopen. One stack keeps
+    /// the twenty most recent closes of every device, and reopen never takes
+    /// another device's item, so a reopen on one device cannot restore work
+    /// on another.
+    fn reopenable(&self) -> Option<&ClosedItem> {
+        let device = self.reopen_device();
+        self.recent_closed
+            .iter()
+            .rev()
+            .find(|item| item.device_id() == device)
+    }
+
     pub(super) fn sync_recent_closed_snapshot(&mut self) {
-        self.snapshot.recent_closed.count = self.recent_closed.len();
-        self.snapshot.recent_closed.top_label = self
+        // This machine's close reservations block only this machine's reopen.
+        let local = self.reopen_device() == workspace::LOCAL_DEVICE_ID;
+        let device = self.reopen_device().to_owned();
+        self.snapshot.recent_closed.count = self
             .recent_closed
-            .back()
-            .map(|item| item.label().to_owned());
+            .iter()
+            .filter(|item| item.device_id() == device)
+            .count();
+        self.snapshot.recent_closed.top_label =
+            self.reopenable().map(|item| item.label().to_owned());
         self.snapshot.recent_closed.restoring = self.reopen_in_flight.is_some();
         self.snapshot.recent_closed.pending = self
             .close_capture_order
@@ -570,12 +597,13 @@ impl Runtime {
                 },
             )
             .collect();
-        self.snapshot.recent_closed.can_reopen = self.recent_closed.back().is_some()
-            && self.close_capture_order.is_empty()
+        self.snapshot.recent_closed.can_reopen = self.reopenable().is_some()
+            && (!local || self.close_capture_order.is_empty())
             && self.reopen_in_flight.is_none();
         self.snapshot.recent_closed.reopen_blocked_reason = self
             .close_capture_order
             .back()
+            .filter(|_| local)
             .and_then(|key| self.close_operations.get(key))
             .map(|operation| {
                 if operation.phase == "unknown" {
@@ -616,18 +644,16 @@ impl Runtime {
         let was_active = self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id);
         let closed_tab = self.retire_editor_tab(index);
         if closed_tab.kind == EditorTabKind::File {
+            // A checkout the catalog no longer lists keeps the item; its
+            // reopen then reports that the checkout is unavailable.
+            let (device_id, checkout_path) = self
+                .catalog_checkout(&closed_tab.workspace_id, &closed_tab.checkout_id)
+                .map(|(workspace, checkout)| (workspace.device_id.clone(), checkout.path.clone()))
+                .unwrap_or_else(|| (workspace::LOCAL_DEVICE_ID.to_owned(), String::new()));
             let key = self.next_recent_closed_key();
-            let checkout_path = self
-                .snapshot
-                .navigator
-                .workspaces
-                .iter()
-                .flat_map(|workspace| workspace.checkouts.iter())
-                .find(|checkout| checkout.id == closed_tab.checkout_id)
-                .map(|checkout| checkout.path.clone())
-                .unwrap_or_default();
             self.push_recent_closed(ClosedItem::File {
                 key,
+                device_id,
                 workspace_id: closed_tab.workspace_id.clone(),
                 checkout_id: closed_tab.checkout_id.clone(),
                 checkout_path,
@@ -1944,7 +1970,8 @@ impl Runtime {
         if self.reopen_in_flight.is_some() {
             return false;
         }
-        if let Some(key) = self.close_capture_order.back().cloned()
+        if self.reopen_device() == workspace::LOCAL_DEVICE_ID
+            && let Some(key) = self.close_capture_order.back().cloned()
             && let Some(operation) = self.close_operations.get(&key)
         {
             self.set_reopen_notices(vec![live::ReopenNotice {
@@ -1963,7 +1990,7 @@ impl Runtime {
             self.sync_recent_closed_snapshot();
             return true;
         }
-        let Some(item) = self.recent_closed.back().cloned() else {
+        let Some(item) = self.reopenable().cloned() else {
             return false;
         };
         if let ClosedItem::File {

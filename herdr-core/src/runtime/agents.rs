@@ -1650,6 +1650,29 @@ impl Runtime {
         elapsed_ms: u128,
         connection_generation: Option<u64>,
     ) -> bool {
+        // A device's tab move is held per checkout like this machine's, and
+        // its own record already names the connection that carried it.
+        if let RemoteControlAction::MoveTab {
+            checkout_id,
+            tab_id,
+            expected_order,
+            generation,
+            connection_generation,
+            ..
+        } = &action
+        {
+            return self.ingest_tab_move_result(
+                TabMoveResultContext {
+                    checkout_id,
+                    tab_id,
+                    expected_order,
+                    generation: *generation,
+                    connection_generation: *connection_generation,
+                    elapsed_ms,
+                },
+                result,
+            );
+        }
         let action_kind = action.kind();
         let remote_operation_key = (target_id.to_owned(), request_id.to_owned());
         if let Some(generation) = connection_generation {
@@ -1737,8 +1760,7 @@ impl Runtime {
                     "duration_ms": elapsed_ms,
                 }));
             }
-            // A remote target owns its tab order; `spawn_remote_control`
-            // refuses the only action that reports one back.
+            // A tab move is settled above; no other action reports an order.
             Ok(RemoteControlOutcome::TabsOrdered { .. }) => {
                 if tracked_remote_operation {
                     self.fail_remote_operation(

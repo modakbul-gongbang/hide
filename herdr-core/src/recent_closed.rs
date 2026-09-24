@@ -117,6 +117,9 @@ pub enum ClosedItem {
     },
     File {
         key: String,
+        /// The device the file is on; it reopens only while that device is
+        /// the one in front, and only through that device's host.
+        device_id: String,
         workspace_id: String,
         checkout_id: String,
         checkout_path: String,
@@ -129,6 +132,15 @@ impl ClosedItem {
     pub fn key(&self) -> &str {
         match self {
             Self::Pane { key, .. } | Self::Tab { key, .. } | Self::File { key, .. } => key,
+        }
+    }
+
+    /// The device whose surface can reopen this item. Hide records a pane or
+    /// tab close only on this machine's Herdr.
+    pub fn device_id(&self) -> &str {
+        match self {
+            Self::Pane { .. } | Self::Tab { .. } => crate::workspace::LOCAL_DEVICE_ID,
+            Self::File { device_id, .. } => device_id,
         }
     }
 
@@ -326,6 +338,7 @@ mod tests {
     fn file(key: &str) -> ClosedItem {
         ClosedItem::File {
             key: key.into(),
+            device_id: "local".into(),
             workspace_id: "workspace".into(),
             checkout_id: "checkout".into(),
             checkout_path: "/tmp".into(),

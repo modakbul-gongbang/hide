@@ -640,3 +640,168 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
         Some("remote.control.workspace_not_found")
     );
 }
+
+/// A Herdr socket that records each request and answers none, so a test sees
+/// exactly what a device's Herdr was asked.
+struct RecordingHerdr {
+    requests: Arc<Mutex<Vec<serde_json::Value>>>,
+}
+
+impl hide_herdr_client::ApiConnector for RecordingHerdr {
+    fn connect(
+        &self,
+    ) -> Result<Box<dyn hide_herdr_client::ApiStream>, hide_herdr_client::ApiError> {
+        use std::io::BufRead;
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let requests = self.requests.clone();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            if std::io::BufReader::new(server).read_line(&mut line).is_ok()
+                && let Ok(request) = serde_json::from_str(&line)
+            {
+                requests.lock().unwrap().push(request);
+            }
+        });
+        Ok(Box::new(client))
+    }
+}
+
+fn device_strip(runtime: &Runtime, checkout_id: &str) -> Vec<String> {
+    runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .find(|checkout| checkout.id == checkout_id)
+        .unwrap()
+        .strip
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect()
+}
+
+/// B23: a device's strip is arranged as this machine's is. A file tab keeps
+/// the slot it was dropped in without asking Herdr; a Herdr tab moves on the
+/// device's own Herdr by the id that Herdr knows, and the strip follows only
+/// when the device reports the new order. A device that is not connected
+/// takes no move.
+#[test]
+fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_dropped_in() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let raw = |order: &[&str]| {
+        let tabs = order
+            .iter()
+            .map(|tab| (*tab, t.main.as_str()))
+            .collect::<Vec<_>>();
+        session(vec![herdr_workspace(TARGET, "w1", &t.main, &tabs)])
+    };
+    runtime.ingest_remote_session(TARGET, Ok(raw(&["t1", "t2"])));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    runtime.install_remote_control(RemoteControlContext::new(
+        TARGET,
+        Arc::new(RecordingHerdr {
+            requests: requests.clone(),
+        }),
+        Weak::new(),
+        ChangeNotifier::noop(),
+    ));
+    let workspace_id = format!("remote:{TARGET}:workspace:w1");
+    let checkout_id = format!("remote:{TARGET}:checkout:w1");
+    runtime.snapshot.editor.tabs.push(EditorTabSnapshot {
+        id: "file:device".to_owned(),
+        workspace_id: workspace_id.clone(),
+        checkout_id: checkout_id.clone(),
+        path: format!("{}/README.md", t.main),
+        label: "README.md".to_owned(),
+        kind: EditorTabKind::File,
+        diff_committed: None,
+        markdown_live: false,
+        wrap: false,
+        dirty: false,
+        preview: false,
+    });
+    runtime.rebuild_tab_strips();
+    let t1 = format!("herdr:remote:{TARGET}:tab:t1");
+    let t2 = format!("herdr:remote:{TARGET}:tab:t2");
+    let file = "file:file:device".to_owned();
+    assert_eq!(
+        device_strip(&runtime, &checkout_id),
+        [t1.clone(), t2.clone(), file.clone()]
+    );
+    let reorder = |runtime: &mut Runtime, entry: &str, to_index: usize| {
+        dispatch(
+            runtime,
+            "reorder_tab",
+            serde_json::json!({
+                "workspace_id": workspace_id,
+                "checkout_id": checkout_id,
+                "tab_id": entry,
+                "to_index": to_index,
+            }),
+        );
+    };
+
+    reorder(&mut runtime, &file, 0);
+    assert_eq!(
+        device_strip(&runtime, &checkout_id),
+        [file.clone(), t1.clone(), t2.clone()],
+        "a file tab's slot is Hide's and lands at once"
+    );
+    assert!(runtime.pending_tab_move.is_empty());
+
+    reorder(&mut runtime, &t2, 1);
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert!(runtime.pending_tab_move.contains_key(&checkout_id));
+    assert_eq!(
+        device_strip(&runtime, &checkout_id),
+        [file.clone(), t1.clone(), t2.clone()],
+        "the strip waits for the device's Herdr"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while requests.lock().unwrap().is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the device's Herdr was not asked"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let request = requests.lock().unwrap()[0].clone();
+    assert_eq!(request["method"], "tab.move");
+    assert_eq!(
+        request["params"]["tab_id"], "t2",
+        "the id the device's Herdr knows"
+    );
+
+    runtime.ingest_remote_session(TARGET, Ok(raw(&["t2", "t1"])));
+    assert_eq!(
+        device_strip(&runtime, &checkout_id),
+        [file.clone(), t2.clone(), t1.clone()]
+    );
+    assert!(runtime.pending_tab_move.is_empty());
+
+    runtime.snapshot.status.remote[0].state = "disconnected".to_owned();
+    reorder(&mut runtime, &t1, 1);
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("tab.control_unavailable")
+    );
+    assert!(runtime.pending_tab_move.is_empty());
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}

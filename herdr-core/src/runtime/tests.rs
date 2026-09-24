@@ -1082,6 +1082,7 @@ fn explorer_event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
 fn closed_file(key: &str, path: &str) -> ClosedItem {
     ClosedItem::File {
         key: key.to_owned(),
+        device_id: workspace::LOCAL_DEVICE_ID.to_owned(),
         workspace_id: "workspace:0".to_owned(),
         checkout_id: "checkout:0".to_owned(),
         checkout_path: "/repo".to_owned(),

@@ -1544,6 +1544,7 @@ impl Runtime {
                     self.return_keyboard_to_local_pane();
                 }
                 self.reconcile_remote_terminal_selection();
+                self.sync_recent_closed_snapshot();
                 self.persist_current_ui_state();
                 true
             }

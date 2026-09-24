@@ -33,14 +33,53 @@ export function TabBar({ actions }: { actions: Actions }) {
 
 const NONE: AsyncOperation[] = [];
 
-const ignore = () => {};
+/**
+ * A tab drag. The drag itself lives in a ref: pointer events arrive faster
+ * than a continuous-priority render lands, so the release reads the ref and
+ * the state only drives the highlight. A drop sends one `reorder_tab` with
+ * the strip index of the tab it landed on.
+ */
+function useTabDrag(actions: Actions) {
+  const drag = useRef<{ id: string; x: number; active: boolean } | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const handlers = (entry: StripTab, index: number) => ({
+    dragging: dragging === entry.id,
+    over: over === entry.id && dragging !== entry.id,
+    onPointerDown: (x: number) => {
+      drag.current = { id: entry.id, x, active: false };
+    },
+    onPointerMove: (x: number) => {
+      const start = drag.current;
+      if (!start || start.active) return;
+      const threshold = Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue("--size-tab-drag-activation"),
+      );
+      if (Math.abs(x - start.x) >= threshold) {
+        start.active = true;
+        setDragging(start.id);
+      }
+    },
+    onPointerEnter: () => {
+      if (drag.current?.active) setOver(entry.id);
+    },
+    onPointerUp: () => {
+      const start = drag.current;
+      drag.current = null;
+      setDragging(null);
+      setOver(null);
+      if (start?.active && start.id !== entry.id) actions.reorderTab(start.id, index);
+    },
+  });
+  return handlers;
+}
 
 /**
  * A selected SSH device's strip: the Herdr tabs of the workspace its host has
- * focused, then the device files opened in that checkout, in the order the
- * core gave (`join_device_editor_tabs`). A terminal tab is selected, added and
- * closed on that host (`remote_control`); a file tab is the core's own. The
- * order is Herdr's there, so a remote tab is not dragged.
+ * focused and the device files opened in that checkout, in the order the core
+ * placed them (`place_device_strips`). A terminal tab is selected, added and
+ * closed on that host (`remote_control`); a file tab is the core's own. A drag
+ * is the same as this machine's: a Herdr tab moves on the device's Herdr.
  */
 export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Actions }) {
   const operations = useShellStore((s) => s.rest?.status?.async_operations ?? NONE);
@@ -50,9 +89,10 @@ export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Act
   const { checkout } = view;
   const showing = remoteEditorTab(editor, checkout);
   const dirty = new Set((editor?.tabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
+  const drag = useTabDrag(actions);
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel" role="tablist" data-tab-bar={checkout.id} data-remote-tab-bar="true">
-      {checkout.strip.map((entry) => {
+      {checkout.strip.map((entry, index) => {
         if (entry.kind === "session" || entry.kind === "memory") return null;
         const isFile = entry.kind === "file" || entry.kind === "diff";
         const fileTab = isFile ? editor?.tabs.find((tab) => tab.id === entry.source_id) : null;
@@ -67,15 +107,10 @@ export function RemoteTabBar({ view, actions }: { view: RemoteView; actions: Act
             saving={savingTabs.has(entry.source_id)}
             tabOnly={bufferWarnings.has(entry.source_id)}
             closing={!isFile && closingSuffix(entry.source_id, "tab.close", operations)}
-            dragging={false}
-            over={false}
             onSelect={() => (isFile ? actions.focusFileTab(entry.source_id) : actions.focusTab(entry.source_id))}
             onDoubleClick={() => { if (isFile) actions.keepOpenFile(entry.source_id); }}
             onClose={() => (isFile ? actions.closeFileTab(entry.source_id) : actions.closeTab(entry.source_id))}
-            onPointerDown={ignore}
-            onPointerMove={ignore}
-            onPointerEnter={ignore}
-            onPointerUp={ignore}
+            {...drag(entry, index)}
           />
         );
       })}
@@ -134,12 +169,7 @@ const Strip = memo(function Strip({
   const activeId = activeStripId(checkout, editor);
   const showingEditor = editorFor(editor) !== null;
   const dirty = new Set((editor?.tabs ?? []).filter((tab) => tab.dirty).map((tab) => tab.id));
-  // The drag itself lives in a ref: pointer events arrive faster than a
-  // continuous-priority render lands, so the release reads the ref and the
-  // state only drives the highlight.
-  const drag = useRef<{ id: string; x: number; active: boolean } | null>(null);
-  const [dragging, setDragging] = useState<string | null>(null);
-  const [over, setOver] = useState<string | null>(null);
+  const drag = useTabDrag(actions);
 
   return (
     <div
@@ -163,35 +193,10 @@ const Strip = memo(function Strip({
             saving={savingTabs.has(entry.source_id)}
             tabOnly={bufferWarnings.has(entry.source_id)}
             closing={!isEditor && closingSuffix(entry.source_id, "tab.close", operations)}
-            dragging={dragging === entry.id}
-            over={over === entry.id && dragging !== entry.id}
             onSelect={() => (isEditor ? actions.focusFileTab(entry.source_id) : actions.focusTab(entry.source_id))}
             onDoubleClick={() => { if (isEditor) actions.keepOpenFile(entry.source_id); }}
             onClose={() => (isEditor ? actions.closeFileTab(entry.source_id) : actions.closeTab(entry.source_id))}
-            onPointerDown={(x) => {
-              drag.current = { id: entry.id, x, active: false };
-            }}
-            onPointerMove={(x) => {
-              const start = drag.current;
-              if (!start || start.active) return;
-              const threshold = Number.parseFloat(
-                getComputedStyle(document.documentElement).getPropertyValue("--size-tab-drag-activation"),
-              );
-              if (Math.abs(x - start.x) >= threshold) {
-                start.active = true;
-                setDragging(start.id);
-              }
-            }}
-            onPointerEnter={() => {
-              if (drag.current?.active) setOver(entry.id);
-            }}
-            onPointerUp={() => {
-              const start = drag.current;
-              drag.current = null;
-              setDragging(null);
-              setOver(null);
-              if (start?.active && start.id !== entry.id) actions.reorderTab(start.id, index);
-            }}
+            {...drag(entry, index)}
           />
         );
       })}
@@ -256,7 +261,7 @@ export const TabButton = memo(function TabButton({
       data-saving={saving ? "true" : "false"}
       data-tab-only={tabOnly ? "true" : "false"}
       data-closing={closing ? "true" : "false"}
-      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default items-center gap-xs px-sm text-caption ${
+      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption ${
         active ? "bg-background text-primary" : "text-secondary hover:bg-elevated"
       } ${dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={(event) => {

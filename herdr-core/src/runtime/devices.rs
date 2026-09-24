@@ -192,6 +192,7 @@ impl Runtime {
             self.snapshot.navigator.focused_device_id = Some(workspace::LOCAL_DEVICE_ID.to_owned());
             self.snapshot.ui_state.focused_device_id = None;
             self.return_keyboard_to_local_pane();
+            self.sync_recent_closed_snapshot();
         }
     }
 

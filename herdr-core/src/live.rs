@@ -1986,10 +1986,8 @@ pub fn spawn_remote_control(
         RemoteControlAction::CloseTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-close")
         }
-        // A remote context browses Herdr's own tab order and owns no strip
-        // slots, so there is nothing here for a reorder to move.
         RemoteControlAction::MoveTab { .. } => {
-            return Err("a remote context's tab order cannot be reordered".to_owned());
+            format!("herdr-core-remote-{target_id}-tab-move")
         }
     };
     thread::Builder::new()

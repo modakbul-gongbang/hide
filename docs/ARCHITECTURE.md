@@ -134,6 +134,7 @@ Tab reorder ownership is decided per drag, not per checkout.
 Herdr orders the tabs inside one of its workspaces and has no order that spans two of them, so a strip slot is refilled from the workspace that slot already belongs to and Hide owns how the workspaces and the file tabs interleave.
 A drag that changes the moved tab's own workspace subsequence sends one `tab.move` with an index counted in that workspace; a drag that only steps over another workspace's tabs settles locally with no Herdr call.
 Deciding this for the whole checkout is what refused every drag in a checkout two Herdr workspaces share, which is the ordinary arrangement for a repository opened twice.
+A device's checkout strip follows the same rule (`place_checkout_strip`, reached through `place_device_strips`): its file tabs keep the slot they were dropped in, and a drag that changes its Herdr order sends `tab.move` to that device's own Herdr with the id that Herdr knows, so the strip moves only when the device reports the order; a device that is not connected takes no Herdr move.
 
 A pane that is going away ends its attach quietly.
 Herdr closes the PTY before it reports the pane gone, so the attach child ends while the pane is still drawn; projecting that as `ended` is what flashed "terminal attach ended" over a pane the operator had just closed.
@@ -172,6 +173,10 @@ This boundary has no provider-specific draft, composer or attachment shelf.
 
 The core owns one session-local, twenty-item LIFO stack for file tabs and local Herdr pane or tab closes initiated through Hide.
 Browser-only panes, remote closes, and topology changes reported by another Herdr client never enter it.
+Every item names its device: a file tab closed on a device is that device's, a pane or tab close is this machine's.
+Reopen restores the newest item of the device in front and `recent_closed` counts only that device's items, so a reopen on one device never restores work on another and never takes another device's newer close off the stack; a device's file reopens through that device's host.
+A device's Herdr pane and tab closes are not recorded, so a device has nothing of that kind to reopen (PRD S5.5 D-21 exception).
+Recording them needs the capture and marker-adoption protocol below run against the device's own Herdr and its agents' resume on that machine; that stays open until the device control path carries the layout export and the `HIDE_REOPEN_INTENT` adoption, and until then a closed device pane is reopened by making a new one there.
 Before sending a Herdr close, a background worker exports immutable layout facts and the core records the close intent in its target scope; it enters `closing` immediately, moves selection only to a confirmed surviving item, and starts the external effect after capture succeeds.
 The captured item is a reservation separate from the twenty confirmed entries, so a failed or unknown close cannot evict older undo history.
 A definitive Herdr refusal releases only that reservation; a transport failure or malformed acknowledgement keeps it available, starts one read-only status check, and reports the uncertainty inline.
@@ -290,7 +295,7 @@ The web follows the host's own focus rather than keeping a selection, because th
 Keystrokes, scroll and viewport go out with the scoped pane id, which the core writes to that host's terminal session; focus, split, zoom, close pane, new tab, tab focus and close tab go out as `remote_control` with the device as `target_id` and a fresh `request_id`, and the core checks every id against that host's session before anything is sent, so a stale or local id is refused rather than retargeted.
 The pane's own id decides where a click-to-focus goes, and a close confirmation carries the device it was asked about.
 A device that is not connected takes no command: the web says so and sends nothing, keeps the last session on screen under a Retry banner while it is `stale`, and draws the connection's own state when there is no session.
-The Explorer, file tabs and History run on the device's own helper; worktree creation and deletion, registration, pin and project removal run through the device's Herdr and helper (see Device catalogs); reorder, reopen closed and find in pane stay this machine's and are refused or disabled with the reason; a remote checkout's purpose is written through the core when the host's Herdr is 0.9.1 or newer.
+The Explorer, file tabs and History run on the device's own helper; worktree creation and deletion, registration, pin and project removal run through the device's Herdr and helper (see Device catalogs); a tab drag and reopen closed act on the device (see Tab reorder ownership and Reopening locally closed work); find in pane stays this machine's and is refused with the reason; a remote checkout's purpose is written through the core when the host's Herdr is 0.9.1 or newer.
 The core also refuses `create_pane`, whose target is implicit, while a remote device is focused (`pane.device_mismatch`), so a split never falls back to this machine.
 Typing into a remote pane makes it the core's terminal pane, so `focus_device` back to this machine, or removing the selected device, hands the keyboard back to `ui_state.selected_pane_id` or the drawn tab's focused pane (`return_keyboard_to_local_pane`).
 Registering or removing a device refreshes only the device rows (`rebuild_device_rows`); rebuilding the whole catalog there dropped every checkout's tabs until the next session publish.

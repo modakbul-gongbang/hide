@@ -208,7 +208,7 @@ pub(crate) fn group(
                 crate::workspace::checkout_row_label(facts.branch.as_deref(), &facts.checkout_root)
             };
             // The Herdr entries of this checkout's tabs; the runtime adds the
-            // file tabs (`join_device_editor_tabs`).
+            // file tabs (`place_device_strips`).
             let strip = raw_checkout
                 .strip
                 .iter()

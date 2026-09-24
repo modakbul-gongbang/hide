@@ -995,3 +995,67 @@ fn a_device_checkouts_history_comes_from_its_helper_and_stays_with_its_device() 
         crate::model::ChangesSnapshot::default()
     );
 }
+
+/// B23, B32, B34: a device's closed file is reopened from that device and
+/// through its host, never from this machine, and a reopen on the device does
+/// not take this machine's newer close off its stack.
+#[test]
+fn a_closed_device_file_reopens_only_on_its_device_and_leaves_this_machines_close() {
+    let f = Fixture::new();
+    f.open_and_wait("a.txt");
+    let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &f.path("a.txt"));
+    f.dispatch("file_close", serde_json::json!({"tab_id": tab_id}));
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        assert!(runtime.snapshot.editor.tabs.is_empty());
+        // This machine closed a file after the device's.
+        runtime.push_recent_closed(super::closed_file("local-close", "/repo/local.txt"));
+        runtime.snapshot.navigator.devices.push(DeviceSnapshot {
+            id: DEVICE.to_owned(),
+            label: "Device".to_owned(),
+            kind: "remote".to_owned(),
+            state: "connected".to_owned(),
+            message: None,
+            ssh_alias: Some(DEVICE.to_owned()),
+            herdr_socket_path: None,
+            agent_count: 0,
+            test: None,
+            host: Default::default(),
+        });
+        assert_eq!(runtime.snapshot.recent_closed.count, 1);
+        assert_eq!(
+            runtime.snapshot.recent_closed.top_label.as_deref(),
+            Some("local.txt"),
+            "this machine in front offers only its own close"
+        );
+    }
+
+    f.dispatch("focus_device", serde_json::json!({"device_id": DEVICE}));
+    {
+        let runtime = f.shared.lock().unwrap();
+        assert_eq!(runtime.snapshot.recent_closed.count, 1);
+        assert_eq!(
+            runtime.snapshot.recent_closed.top_label.as_deref(),
+            Some("a.txt")
+        );
+        assert!(runtime.snapshot.recent_closed.can_reopen);
+    }
+    f.dispatch("reopen_closed", serde_json::json!({}));
+    f.wait("the device file back in its tab", |runtime| {
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.id == tab_id)
+    });
+    let runtime = f.shared.lock().unwrap();
+    assert_eq!(
+        runtime.editor_documents[&tab_id].contents_utf8.as_deref(),
+        Some("old\n"),
+        "read back through the device's host"
+    );
+    assert_eq!(runtime.snapshot.recent_closed.count, 0);
+    assert_eq!(runtime.recent_closed.len(), 1);
+    assert_eq!(runtime.recent_closed[0].label(), "local.txt");
+}
