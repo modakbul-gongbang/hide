@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize } from "./settings";
+import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, helperConsentTerms, herdrLine, hostLine, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
 import type { AiProvider, Device, DeviceHost } from "./snapshot";
 
 const device = (patch: Partial<Device>): Device => ({
@@ -192,5 +192,17 @@ describe("settings rules", () => {
     expect(socketProblem("herdr.sock")).not.toBeNull();
     expect(socketProblem("/")).not.toBeNull();
     expect(socketProblem("/tmp/a\nb")).not.toBeNull();
+  });
+});
+
+describe("unstoredDeviceDrafts (S5.5 B26, B44)", () => {
+  it("names the device's tabs whose draft is only in the tab", () => {
+    const tabs = [
+      { id: "t1", checkout_id: "remote:mac:checkout:w1", path: "/r/a.txt" },
+      { id: "t2", checkout_id: "remote:mac:checkout:w1", path: "/r/b.txt" },
+      { id: "t3", checkout_id: "local:checkout", path: "/r/a.txt" },
+    ];
+    expect(unstoredDeviceDrafts("mac", tabs, new Set(["t2", "t3"]))).toEqual(["/r/b.txt"]);
+    expect(unstoredDeviceDrafts("mac", tabs, new Set())).toEqual([]);
   });
 });

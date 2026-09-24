@@ -2,7 +2,7 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import { allBuffers, bufferFor, closeWithSaveOutcome, deleteBuffer, storedDraftOnClose, tabBufferKey } from "./buffers";
+import { allBuffers, bufferFor, closeWithSaveOutcome, deleteBuffer, flushBuffer, storedDraftOnClose, tabBufferKey, type BufferKey } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
@@ -393,7 +393,18 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "retry_connect", payload: { target_id: deviceId } });
     },
 
-    removeDevice(deviceId: string) {
+    /**
+     * The core closes the device's file tabs without saving, so every draft of
+     * them this browser is still writing lands first and stays as a recovery
+     * item (B26).
+     */
+    async removeDevice(deviceId: string) {
+      const state = useShellStore.getState();
+      const keys = (state.editor?.tabs ?? [])
+        .filter((tab) => tab.checkout_id.startsWith(`remote:${deviceId}:`))
+        .map((tab) => tabBufferKey(state.daemon?.host_id, state.rest, tab))
+        .filter((key): key is BufferKey => key !== null);
+      await Promise.all(keys.map((key) => flushBuffer(key)));
       dispatch({ schema_version: 2, kind: "remove_device", payload: { device_id: deviceId } });
     },
 

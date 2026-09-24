@@ -17,6 +17,7 @@ import {
   deviceFacts,
   deviceRemovalLines,
   deviceIdFor,
+  unstoredDeviceDrafts,
   deviceLine,
   deviceProblemLine,
   diagnosticsText,
@@ -526,6 +527,8 @@ function DevicesTab({ actions }: { actions: Actions }) {
   const editorTabs = useShellStore((s) => s.editor?.tabs);
   const recoveryDrafts = useShellStore((s) => s.recoveryDrafts);
   const removalLines = removing ? deviceRemovalLines(removing.id, registrations ?? [], editorTabs ?? [], recoveryDrafts) : [];
+  const bufferWarnings = useShellStore((s) => s.bufferWarnings);
+  const unstored = removing ? unstoredDeviceDrafts(removing.id, editorTabs ?? [], bufferWarnings) : [];
   return (
     <>
       <Group title="Devices" note="Hide stores only a label and an SSH alias. Authentication stays in the daemon machine's SSH environment; no password or key is asked for.">
@@ -679,10 +682,17 @@ function DevicesTab({ actions }: { actions: Actions }) {
                 {line}
               </p>
             ))}
+            {unstored.length > 0 ? (
+              <Note tone="warn" data-device-remove-unstored="true">
+                {unstored.length === 1 ? "This draft is" : "These drafts are"} not stored in this browser, so removing the device would lose{" "}
+                {unstored.length === 1 ? "it" : "them"}. Export or save {unstored.length === 1 ? "it" : "each"} first: {unstored.join(", ")}
+              </Note>
+            ) : null}
             <div className="flex flex-wrap justify-end gap-sm">
               <Button onClick={() => setRemoving(null)}>Keep device</Button>
               <Button
                 appearance="danger"
+                disabled={unstored.length > 0}
                 data-device-remove-go="true"
                 onClick={() => {
                   setActedAt(Date.now());
