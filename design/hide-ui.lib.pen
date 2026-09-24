@@ -13885,6 +13885,22 @@
     "--color-file-yellow": {
       "type": "color",
       "value": "#CBCB41"
+    },
+    "--color-accent-choice-amber": {
+      "type": "color",
+      "value": "#FDBA74"
+    },
+    "--color-accent-choice-lime": {
+      "type": "color",
+      "value": "#B9FF66"
+    },
+    "--color-accent-choice-sky": {
+      "type": "color",
+      "value": "#7DD3FC"
+    },
+    "--color-accent-choice-violet": {
+      "type": "color",
+      "value": "#C4B5FD"
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"
