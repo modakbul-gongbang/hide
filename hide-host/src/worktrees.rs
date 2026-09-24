@@ -1012,12 +1012,13 @@ pub fn remove_worktree(repository_root: &Path, checkout: &Path) -> Result<String
     // What is on disk decides, so an answer cut short (a held pipe) after
     // Git removed the folder still reads as removed, and a failure whose
     // readback also fails keeps Git's own reason.
-    let remains = registered(repository_root).map(|rows| {
-        rows.iter().any(|row| Path::new(&row.path) == checkout)
-    });
+    let remains = registered(repository_root)
+        .map(|rows| rows.iter().any(|row| Path::new(&row.path) == checkout));
     let remains = match (remains, &answer) {
         (Ok(listed), Err(_)) => listed || checkout.try_exists().unwrap_or(true),
-        (Ok(listed), Ok(_)) => listed || checkout.try_exists().map_err(|error| error.to_string())?,
+        (Ok(listed), Ok(_)) => {
+            listed || checkout.try_exists().map_err(|error| error.to_string())?
+        }
         (Err(_), Err(_)) => true,
         (Err(error), Ok(_)) => return Err(error),
     };
