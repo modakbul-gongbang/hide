@@ -257,3 +257,102 @@ fn retrying_a_connected_device_is_refused() {
     );
     assert_eq!(diagnostic_count(&runtime, "device.retry"), 0);
 }
+
+/// Typing into a remote pane makes it the terminal pane. Selecting this
+/// machine again hands the keyboard back to the local selection at once, so a
+/// split or a zoom sent before the next local session event names a local
+/// pane rather than the remote one.
+#[test]
+fn returning_to_this_machine_gives_the_keyboard_back_to_the_local_pane() {
+    let mut runtime = runtime();
+    assert!(register_device(&mut runtime, "studio", "studio-host"));
+    runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
+        workspace_id: "w1".to_owned(),
+        tab_id: "w1:t1".to_owned(),
+        focused_pane_id: "w1:p1".to_owned(),
+        zoomed: false,
+        root: PaneLayoutNodeSnapshot::Pane {
+            pane_id: "w1:p1".to_owned(),
+        },
+    }];
+    runtime.snapshot.ui_state.selected_pane_id = Some("w1:p1".to_owned());
+    runtime.snapshot.terminal.pane_id = Some("w1:p1".to_owned());
+    assert!(dispatch_device(&mut runtime, "focus_device", "studio"));
+    let key = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "key",
+        "payload": { "pane_id": "remote:studio:pane:w9:p1", "bytes_base64": "YQ==" }
+    }))
+    .unwrap();
+    assert!(runtime.dispatch_json(&key));
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("remote:studio:pane:w9:p1")
+    );
+
+    assert!(dispatch_device(&mut runtime, "focus_device", "local"));
+
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w1:p1")
+    );
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    assert_eq!(
+        runtime.snapshot().ui_state.selected_pane_id.as_deref(),
+        Some("w1:p1")
+    );
+}
+
+/// Removing the selected device returns this machine's projects exactly as
+/// they were drawn, tabs included, and gives the keyboard back to the local
+/// pane; the remote host itself is not touched.
+#[test]
+fn removing_the_selected_device_keeps_the_local_tabs_and_keyboard() {
+    let mut runtime = runtime();
+    let path = "/tmp/hide-device-removal";
+    let mut local = checkout(
+        "workspace:local",
+        "checkout:local",
+        path,
+        Some(pane("w1:p1", path)),
+    );
+    local.tabs[0].id = Some("w1:t1".to_owned());
+    local.active_tab_id = Some("w1:t1".to_owned());
+    runtime.snapshot.navigator.workspaces =
+        vec![workspace("workspace:local", "Local", path, vec![local])];
+    runtime.snapshot.navigator.focused_checkout_id = Some("checkout:local".to_owned());
+    runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
+        workspace_id: "w1".to_owned(),
+        tab_id: "w1:t1".to_owned(),
+        focused_pane_id: "w1:p1".to_owned(),
+        zoomed: false,
+        root: PaneLayoutNodeSnapshot::Pane {
+            pane_id: "w1:p1".to_owned(),
+        },
+    }];
+    runtime.snapshot.ui_state.selected_pane_id = Some("w1:p1".to_owned());
+    assert!(register_device(&mut runtime, "studio", "studio-host"));
+    assert!(dispatch_device(&mut runtime, "focus_device", "studio"));
+    runtime.snapshot.terminal.pane_id = Some("remote:studio:pane:w9:p1".to_owned());
+    let before = runtime.snapshot().navigator.workspaces.clone();
+
+    assert!(dispatch_device(&mut runtime, "remove_device", "studio"));
+
+    assert_eq!(runtime.snapshot().navigator.workspaces, before);
+    assert_eq!(
+        runtime.snapshot().navigator.focused_device_id.as_deref(),
+        Some("local")
+    );
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w1:p1")
+    );
+    assert!(
+        runtime
+            .snapshot()
+            .navigator
+            .devices
+            .iter()
+            .all(|device| device.id != "studio")
+    );
+}

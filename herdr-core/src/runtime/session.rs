@@ -3326,6 +3326,10 @@ impl Runtime {
             }
         }
     }
+    /// Rebuilds the navigator from registrations alone, as test setup; the
+    /// product rebuilds it from each session publish and device rows with
+    /// `rebuild_device_rows`.
+    #[cfg(test)]
     pub(super) fn rebuild_catalog(&mut self) {
         let mut workspaces = workspace::build_catalog(
             &self.snapshot.ui_state.workspace_registrations,

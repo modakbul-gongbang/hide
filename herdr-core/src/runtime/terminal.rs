@@ -917,6 +917,56 @@ impl Runtime {
         }
         self.sync_focused_terminal_projection();
     }
+    /// Typing into a remote pane makes it the terminal pane (`Event::Key`),
+    /// while this machine's selection stays in `ui_state.selected_pane_id`.
+    /// Coming back to this machine hands the keyboard back to that pane, or to
+    /// the focused pane of the tab being drawn, so a split, a zoom or a find
+    /// never names a pane this machine's Herdr does not have. The next local
+    /// session ingest would repair it too, but an idle session sends nothing.
+    pub(super) fn return_keyboard_to_local_pane(&mut self) {
+        if !self
+            .snapshot
+            .terminal
+            .pane_id
+            .as_deref()
+            .is_some_and(is_remote_scoped_pane_id)
+        {
+            return;
+        }
+        let selected = self
+            .snapshot
+            .ui_state
+            .selected_pane_id
+            .clone()
+            .filter(|pane_id| {
+                !is_remote_scoped_pane_id(pane_id) && self.layout_holding_pane(pane_id).is_some()
+            });
+        let drawn = || {
+            let checkout_id = self.snapshot.navigator.focused_checkout_id.as_deref()?;
+            let tab_id = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.checkouts.iter())
+                .find(|checkout| checkout.id == checkout_id)?
+                .active_tab_id
+                .as_deref()?;
+            self.snapshot
+                .pane_layouts
+                .iter()
+                .find(|layout| layout.tab_id == tab_id)
+                .map(|layout| layout.focused_pane_id.clone())
+        };
+        let pane_id = selected.or_else(drawn);
+        crate::diagnostic!(serde_json::json!({
+            "component": "view_state",
+            "kind": "terminal.keyboard_returned_local",
+            "from_pane_id": self.snapshot.terminal.pane_id,
+            "to_pane_id": pane_id,
+        }));
+        self.select_terminal_pane(pane_id);
+    }
     pub(super) fn reset_terminal_projection(&mut self, pane_id: Option<String>) {
         self.clear_terminal_projection();
         self.select_terminal_pane(pane_id);

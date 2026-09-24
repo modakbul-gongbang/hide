@@ -1475,8 +1475,12 @@ impl Runtime {
                     );
                     return true;
                 }
+                let local = payload.device_id == workspace::LOCAL_DEVICE_ID;
                 self.snapshot.navigator.focused_device_id = Some(payload.device_id);
                 self.deactivate_editor_tab();
+                if local {
+                    self.return_keyboard_to_local_pane();
+                }
                 self.reconcile_remote_terminal_selection();
                 self.persist_current_ui_state();
                 true
@@ -1585,7 +1589,7 @@ impl Runtime {
                     .ui_state
                     .device_registrations
                     .push(registration.clone());
-                self.rebuild_catalog();
+                self.rebuild_device_rows();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.registered",
@@ -1617,7 +1621,7 @@ impl Runtime {
                     return true;
                 }
                 self.disconnect_remote_device(&payload.device_id);
-                self.rebuild_catalog();
+                self.rebuild_device_rows();
                 self.persist_current_ui_state();
                 self.push_diagnostic(
                     "device.unregistered",
