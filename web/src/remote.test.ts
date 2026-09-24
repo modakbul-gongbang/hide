@@ -4,6 +4,7 @@ import { deviceCatalogLine, remoteTargetOfPane, remoteView, supportsRemotePurpos
 import { queueBuffer, tabBufferKey } from "./buffers";
 import type { Device, EditorSnapshot, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
 import { useShellStore, type DaemonInfo } from "./store";
+import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { useUiStore } from "./ui";
 
 const LOCAL_PANE = "w1:p1";
@@ -299,5 +300,18 @@ describe("removing a device (S5.5 B26, B44)", () => {
     const { sent, actions } = recorder();
     await expect(actions.removeDevice("studio")).resolves.toEqual([]);
     expect(sent.filter((event) => event.kind === "remove_device")).toEqual([{ kind: "remove_device", payload: { device_id: "studio" }, schema_version: 2 }]);
+  });
+});
+
+describe("an exported draft and a device removal (S5.5 B26, B44)", () => {
+  it("releases the hold for the exact text exported, and holds again after a newer edit", () => {
+    const tabs = [{ id: "t", checkout_id: "remote:studio:checkout:w9", path: "/home/remote/app/a.ts" }];
+    const unstored = new Set(["t"]);
+    let current = "typed";
+    const exported = new Map([["t", "typed"]]);
+    expect(unstoredDeviceDrafts("studio", tabs, unstored, draftExported(exported, () => current))).toEqual([]);
+    current = "typed more";
+    expect(unstoredDeviceDrafts("studio", tabs, unstored, draftExported(exported, () => current))).toEqual(["/home/remote/app/a.ts"]);
+    expect(unstoredDeviceDrafts("studio", tabs, unstored)).toEqual(["/home/remote/app/a.ts"]);
   });
 });

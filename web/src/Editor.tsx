@@ -413,6 +413,9 @@ function exportDraft(tabId: string, path: string) {
   link.download = `${path.split("/").pop() || "draft"}.draft`;
   link.click();
   URL.revokeObjectURL(url);
+  // The exported text no longer depends on this tab, so a device removal
+  // held for it can go ahead (B26, B44).
+  useShellStore.getState().noteDraftExported(tabId, contents);
 }
 
 function ExportDraftButton({ tabId, path }: { tabId: string; path: string }) {

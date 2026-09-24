@@ -4,7 +4,7 @@
 
 import { closeWithSaveOutcome, deleteBuffer, flushBuffer, settledBuffer, storedDraftOnClose, tabBufferKey, type BufferKey } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
-import { unstoredDeviceDrafts } from "./settings";
+import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { latestDraft, noteSent } from "./editor/draft";
 import { lastCheckoutOf } from "./recent";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteTargetOfPane, remoteView, type RemoteAction, type RemoteView } from "./remote";
@@ -416,7 +416,7 @@ export function createActions(dispatch: DispatchFn) {
         .filter((key): key is BufferKey => key !== null);
       await Promise.all(keys.map((key) => flushBuffer(key)));
       const flushed = useShellStore.getState();
-      const unstored = unstoredDeviceDrafts(deviceId, flushed.editor?.tabs ?? [], flushed.bufferWarnings);
+      const unstored = unstoredDeviceDrafts(deviceId, flushed.editor?.tabs ?? [], flushed.bufferWarnings, draftExported(flushed.exportedDrafts, latestDraft));
       if (unstored.length > 0) {
         diagnostic(`remove_device: ${deviceId} kept because ${unstored.length} draft(s) could not be stored`);
         return unstored;

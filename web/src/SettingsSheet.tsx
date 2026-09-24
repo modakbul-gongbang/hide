@@ -18,6 +18,7 @@ import {
   deviceRemovalLines,
   deviceIdFor,
   unstoredDeviceDrafts,
+  draftExported,
   deviceLine,
   deviceProblemLine,
   diagnosticsText,
@@ -47,6 +48,7 @@ import {
   type CommandId,
 } from "./shortcuts";
 import type { AgentHookRuntime, Device } from "./snapshot";
+import { latestDraft } from "./editor/draft";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
@@ -530,7 +532,8 @@ function DevicesTab({ actions }: { actions: Actions }) {
   const recoveryDrafts = useShellStore((s) => s.recoveryDrafts);
   const removalLines = removing ? deviceRemovalLines(removing.id, registrations ?? [], editorTabs ?? [], recoveryDrafts) : [];
   const bufferWarnings = useShellStore((s) => s.bufferWarnings);
-  const unstored = removing ? unstoredDeviceDrafts(removing.id, editorTabs ?? [], bufferWarnings) : [];
+  const exportedDrafts = useShellStore((s) => s.exportedDrafts);
+  const unstored = removing ? unstoredDeviceDrafts(removing.id, editorTabs ?? [], bufferWarnings, draftExported(exportedDrafts, latestDraft)) : [];
   return (
     <>
       <Group title="Devices" note="Hide stores only a label and an SSH alias. Authentication stays in the daemon machine's SSH environment; no password or key is asked for.">
@@ -673,7 +676,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
         </Dialog>
       ) : null}
       {removing ? (
-        <Dialog label={`Remove ${removing.label}`} role="alertdialog" initialFocus="container" onClose={() => setRemoving(null)} data-device-remove-confirm={removing.id}>
+        <Dialog label={`Remove ${removing.label}`} role="alertdialog" initialFocus="container" onClose={() => { if (!removalBusy) setRemoving(null); }} data-device-remove-confirm={removing.id}>
           <div className="p-lg">
             <h2 className="mb-xs text-title font-semibold">Remove {removing.label}?</h2>
             <p className="mb-md text-body text-secondary">
@@ -691,7 +694,8 @@ function DevicesTab({ actions }: { actions: Actions }) {
               </Note>
             ) : null}
             <div className="flex flex-wrap justify-end gap-sm">
-              <Button onClick={() => setRemoving(null)}>Keep device</Button>
+              {/* A removal already storing drafts goes out when they land, so it cannot be kept from here. */}
+              <Button disabled={removalBusy} onClick={() => setRemoving(null)}>Keep device</Button>
               <Button
                 appearance="danger"
                 disabled={unstored.length > 0 || removalBusy}

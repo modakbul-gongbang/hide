@@ -229,15 +229,25 @@ export function deviceRemovalLines(
 /**
  * The device's open tabs whose draft lives only in the tab because storing it
  * failed (B44). Removing the device closes its tabs, which would lose those
- * drafts, so the removal waits until each is exported or saved (B26).
+ * drafts, so the removal waits until each is exported or saved (B26): a tab
+ * whose current draft is the text last exported is no longer held.
  */
 export function unstoredDeviceDrafts(
   deviceId: string,
   tabs: readonly { id: string; checkout_id: string; path: string }[],
   unstored: ReadonlySet<string>,
+  exported: (tabId: string) => boolean = () => false,
 ): string[] {
   const scope = `remote:${deviceId}:`;
-  return tabs.filter((tab) => tab.checkout_id.startsWith(scope) && unstored.has(tab.id)).map((tab) => tab.path);
+  return tabs.filter((tab) => tab.checkout_id.startsWith(scope) && unstored.has(tab.id) && !exported(tab.id)).map((tab) => tab.path);
+}
+
+/** Whether the tab's current draft is exactly the text the operator last exported. */
+export function draftExported(exported: ReadonlyMap<string, string>, current: (tabId: string) => string | null) {
+  return (tabId: string) => {
+    const text = exported.get(tabId);
+    return text !== undefined && text === current(tabId);
+  };
 }
 
 export function aliasProblem(alias: string): string | null {

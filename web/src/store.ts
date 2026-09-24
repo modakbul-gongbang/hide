@@ -129,6 +129,8 @@ type Store = {
   savingTabs: Set<string>;
   /** Tabs whose buffer could not be stored; they say "kept in this tab only" (D-14). */
   bufferWarnings: Set<string>;
+  /** The draft text last exported per tab, which no longer needs its tab to survive (B26, B44). */
+  exportedDrafts: Map<string, string>;
   /** Stored drafts no open tab stands for, to open, export or discard (S5.5 B10-B12). */
   recoveryDrafts: StoredBuffer[];
   setRecoveryDrafts: (drafts: StoredBuffer[]) => void;
@@ -147,6 +149,7 @@ type Store = {
   setAttachmentRefusal: (refusal: { pane_id: string; reason: string } | null) => void;
   noteSaving: (tabId: string, saving: boolean) => void;
   noteBufferWarning: (tabId: string, warned: boolean) => void;
+  noteDraftExported: (tabId: string, contents: string) => void;
   /** Drops cached listings so the Explorer re-reads those folders. */
   invalidateListings: (paths: string[]) => void;
   applyFrame: (frame: Frame) => TerminalChunk[];
@@ -203,6 +206,7 @@ export const useShellStore = create<Store>((set, get) => ({
   attachmentRefusal: null,
   savingTabs: new Set<string>(),
   bufferWarnings: new Set<string>(),
+  exportedDrafts: new Map<string, string>(),
   recoveryDrafts: [],
   setRecoveryDrafts: (recoveryDrafts) => set({ recoveryDrafts }),
   folderChanges: {},
@@ -217,6 +221,11 @@ export const useShellStore = create<Store>((set, get) => ({
     if (get().pathRefusal) set({ pathRefusal: null });
   },
   setAttachmentRefusal: (attachmentRefusal) => set({ attachmentRefusal }),
+  noteDraftExported: (tabId, contents) => {
+    const next = new Map(get().exportedDrafts);
+    next.set(tabId, contents);
+    set({ exportedDrafts: next });
+  },
   noteBufferWarning: (tabId, warned) => {
     const current = get().bufferWarnings;
     if (warned === current.has(tabId)) return;
