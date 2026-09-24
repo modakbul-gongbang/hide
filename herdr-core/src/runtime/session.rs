@@ -2026,7 +2026,7 @@ impl Runtime {
         self.sync_changes_root_path();
         self.refresh_inactive_groups();
         self.remeasure_disk();
-        self.deactivate_editor_tab();
+        self.yield_surface_to_terminal();
         crate::diagnostic!(serde_json::json!({
             "component": "view_state",
             "kind": "pane.focus_context_changed",
@@ -3377,7 +3377,7 @@ impl Runtime {
                         self.pending_tab_focus =
                             Some(PendingViewFocus::new(checkout_id, tab_id.clone()));
                     }
-                    self.deactivate_editor_tab();
+                    self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
                 }
                 self.push_diagnostic(
@@ -3674,6 +3674,7 @@ impl Runtime {
                         preview: false,
                         reload: false,
                         reveal: Some(documents::PendingReveal { front }),
+                        restore: None,
                     },
                 );
             }
@@ -3853,7 +3854,7 @@ impl Runtime {
         // that one frame cleared a question nobody had read.
         self.operator_focused_pane_id = None;
         self.refresh_pane_read_state();
-        self.deactivate_editor_tab();
+        self.yield_surface_to_terminal();
         if !has_herdr_tab
             && let Some(file_tab_id) = self
                 .snapshot

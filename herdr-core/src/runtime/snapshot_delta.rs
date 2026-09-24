@@ -51,6 +51,9 @@ impl Runtime {
     ) -> crate::model::SnapshotDeltaPayload {
         use crate::model::{RestSections, SnapshotDeltaPayload};
 
+        // A front Workspace moved by Herdr or by a device's own focus, not by
+        // an event, is followed here, before anything is stamped.
+        self.sync_workspace_view();
         if !self
             .delta
             .last_rest

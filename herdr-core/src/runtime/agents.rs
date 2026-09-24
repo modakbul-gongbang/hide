@@ -638,7 +638,7 @@ impl Runtime {
                 | RemoteControlAction::FocusWorkspace { .. }
         ) && self.active_editor_tab_on_device(&target_id)
         {
-            self.deactivate_editor_tab();
+            self.yield_surface_to_terminal();
         }
         let creation_key = remote_tab_creation_key(&target_id, &action);
         if let Some(key) = creation_key.as_ref()

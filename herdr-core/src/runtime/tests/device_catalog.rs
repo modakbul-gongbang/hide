@@ -743,6 +743,7 @@ fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_drop
         wrap: false,
         dirty: false,
         preview: false,
+        unavailable_reason: None,
     });
     runtime.rebuild_tab_strips();
     let t1 = format!("herdr:remote:{TARGET}:tab:t1");
@@ -863,6 +864,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         wrap: false,
         dirty: true,
         preview: false,
+        unavailable_reason: None,
     };
     runtime.snapshot.editor.tabs = vec![
         tab("file:here", "checkout:here"),

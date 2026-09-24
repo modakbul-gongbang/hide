@@ -797,6 +797,7 @@ pub(super) struct TerminalResizePayload {
 }
 
 pub(super) enum Event {
+    WorkspaceView(WorkspaceViewPayload),
     Key(KeyPayload),
     Attachment(AttachmentPayload),
     AttachmentReady(AttachmentCompletionPayload),
@@ -1053,6 +1054,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_drag" => decode!(PetDragPayload, PetDrag),
         "pet_activity" => Ok(Event::PetActivity),
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
+        "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
         _ => Err(EventValidationError {
             kind: "event.unknown_kind",
             message: format!("Unknown event kind: {kind}"),
@@ -1063,6 +1065,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
 impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
+            Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
             Event::SessionsRefresh => self.request_sessions_refresh(),
             Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
@@ -1365,7 +1368,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
                 self.snapshot.navigator.root_path = Some(cwd.clone());
                 self.sync_changes_root_path();
-                self.deactivate_editor_tab();
+                self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
                 let action = match session_workspace_id {
                     Some(session_workspace_id) => RemoteControlAction::CreateTab {
@@ -1465,7 +1468,7 @@ impl Runtime {
                 // while nobody was looking at it.
                 self.operator_focused_pane_id = next_pane_id;
                 self.refresh_pane_read_state();
-                self.deactivate_editor_tab();
+                self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
                 // A first visit attaches the tab's panes now. Waiting for the
                 // next session update to do it left the canvas empty until
@@ -1539,7 +1542,7 @@ impl Runtime {
                 }
                 let local = payload.device_id == workspace::LOCAL_DEVICE_ID;
                 self.snapshot.navigator.focused_device_id = Some(payload.device_id);
-                self.deactivate_editor_tab();
+                self.yield_surface_to_terminal();
                 if local {
                     self.return_keyboard_to_local_pane();
                 }
@@ -2879,5 +2882,24 @@ impl Runtime {
                 }
             }
         }
+    }
+}
+
+impl Event {
+    /// Terminal input and output, which arrive per keystroke and per chunk
+    /// and never move a Workspace's areas.
+    pub(super) fn is_terminal_io(&self) -> bool {
+        matches!(
+            self,
+            Event::Key(_)
+                | Event::TerminalOutput(_)
+                | Event::TerminalResize(_)
+                | Event::TerminalViewport(_)
+                | Event::TerminalScroll(_)
+                | Event::TerminalClick(_)
+                | Event::Attachment(_)
+                | Event::AttachmentReady(_)
+                | Event::AttachmentAction(_)
+        )
     }
 }
