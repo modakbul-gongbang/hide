@@ -12,6 +12,7 @@
 
 pub mod document;
 pub mod error;
+pub mod git;
 pub mod list;
 pub mod mutate;
 pub mod protocol;

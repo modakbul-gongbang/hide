@@ -14,7 +14,7 @@ use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -82,6 +82,15 @@ pub enum Call {
         root: RootRef,
         path: String,
         inode: Option<u64>,
+    },
+    /// The checkout's Git changes under `scope`, with the diff of `selected`
+    /// from the working or the committed group (`hide_host::git`).
+    Changes {
+        root: RootRef,
+        scope: String,
+        selected: Option<String>,
+        committed: bool,
+        base: Option<String>,
     },
     /// The project facts of a folder on this machine (`hide_project::facts`):
     /// a Herdr pane's directory or a registered project's path, which the

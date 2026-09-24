@@ -14,7 +14,7 @@ use crate::protocol::{
     Call, Hello, Outcome, PROTOCOL_VERSION, Request, Response, RevisionNow, RootOpened, RootRef,
 };
 use crate::root::{Root, relative_path};
-use crate::{document, list, mutate, save};
+use crate::{document, git, list, mutate, save};
 
 /// Requests the helper works on at once; the core also admits at most this
 /// many per device, so the helper never queues behind itself.
@@ -176,6 +176,26 @@ pub fn handle(call: Call) -> HostResult<Value> {
             })
         }
         Call::Project { path } => to_value(project_facts(&path)?),
+        Call::Changes {
+            root,
+            scope,
+            selected,
+            committed,
+            base,
+        } => {
+            let root = open_root(&root)?;
+            let scope_path = relative_path(&scope)?;
+            to_value(git::changes(
+                &root,
+                &scope_path,
+                &git::ChangesQuery {
+                    scope,
+                    selected,
+                    committed,
+                    base,
+                },
+            )?)
+        }
         Call::Create {
             root,
             parent,

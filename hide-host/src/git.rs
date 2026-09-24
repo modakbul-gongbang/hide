@@ -1,0 +1,724 @@
+//! A checkout's Git working-tree state, read on the machine that holds it.
+//!
+//! Git runs with its working directory set to the opened root's handle, so a
+//! checkout renamed or replaced after it was opened cannot redirect a status
+//! or a diff to another repository. The root must be the repository's own top
+//! level; a registered folder below it is a `scope`, and only paths under the
+//! scope are answered. Paths in the answer are relative to the scope (PRD
+//! S5.5 B19-B21).
+
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{ErrorCode, HostError, HostResult};
+use crate::root::Root;
+
+/// The diff text is carried whole on the snapshot wire, so it is bounded. A
+/// diff past this is cut with its reason stated rather than either silently
+/// cut or allowed to dominate the wire.
+pub const MAX_DIFF_BYTES: usize = 256 * 1024;
+
+/// What to read: the folder below the root the answer is limited to, the
+/// file whose diff to fetch and which group it is in, and the branch the
+/// committed group is measured against. `base: None` measures against the
+/// repository's default branch when it has one.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChangesQuery {
+    pub scope: String,
+    pub selected: Option<String>,
+    pub committed: bool,
+    pub base: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Changes {
+    /// The working tree against `HEAD`: what `git status` reports.
+    pub entries: Vec<ChangedFile>,
+    /// What this branch's commits changed since `base`. Absent when there is
+    /// no base to compare with, which is not the same as an empty group.
+    pub committed: Option<Vec<ChangedFile>>,
+    /// The base the committed group was measured against, as this checkout
+    /// resolved it.
+    pub base: Option<String>,
+    pub diff: Option<Diff>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub previous: Option<String>,
+    pub status: FileStatus,
+    pub added: Option<u32>,
+    pub removed: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Diff {
+    pub path: String,
+    pub text: String,
+    /// Set when the diff was cut short or could not be taken, naming why.
+    pub notice: Option<String>,
+}
+
+/// The six working-tree states the view presents. Git's porcelain codes
+/// carry more distinctions; [`FileStatus::from_porcelain`] is the single
+/// place they collapse.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Untracked,
+    Renamed,
+    Conflict,
+}
+
+impl FileStatus {
+    /// Maps one porcelain v1 `XY` pair onto the presented status. Index and
+    /// worktree columns are read together: a file staged as added and then
+    /// edited is still an addition to the reader, and a delete on either side
+    /// is a delete.
+    pub fn from_porcelain(code: &str) -> Self {
+        let mut characters = code.chars();
+        let index = characters.next().unwrap_or(' ');
+        let worktree = characters.next().unwrap_or(' ');
+        if matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") {
+            return Self::Conflict;
+        }
+        if index == '?' && worktree == '?' {
+            return Self::Untracked;
+        }
+        if index == 'R' || worktree == 'R' {
+            return Self::Renamed;
+        }
+        if index == 'D' || worktree == 'D' {
+            return Self::Deleted;
+        }
+        if index == 'A' || worktree == 'A' {
+            return Self::Added;
+        }
+        Self::Modified
+    }
+}
+
+/// Reads the checkout's changes under `scope`. A folder that is not a
+/// repository, a root that is not the repository's top level, a scope that
+/// is not a real folder of the checkout, and a failed Git read are errors,
+/// never an empty answer, so a failure is not shown as a clean tree.
+pub fn changes(root: &Root, scope: &Path, query: &ChangesQuery) -> HostResult<Changes> {
+    require_real_folder(root, scope)?;
+    let git = GitDirectory::of(root);
+    let toplevel = git_line(git, &["rev-parse", "--show-toplevel"]).map_err(|_| {
+        HostError::new(
+            ErrorCode::Unsupported,
+            format!("{} is not inside a Git repository", root.path().display()),
+        )
+    })?;
+    if std::fs::canonicalize(&toplevel).ok().as_deref() != Some(root.real_path()) {
+        return Err(HostError::new(
+            ErrorCode::Conflict,
+            "This History scope belongs to another checkout",
+        ));
+    }
+
+    let status = git_text(
+        git,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--find-renames",
+            "--untracked-files=all",
+        ],
+    )?;
+    let mut entries = parse_status(&status);
+    // One `--numstat` for the whole working tree rather than one per row: the
+    // per-file numbers are a column on a list that is already being read.
+    if let Ok(numstat) = git_text(git, &["diff", "--numstat", "-z", "HEAD"]) {
+        apply_line_counts(&mut entries, &numstat);
+    }
+    let entries = scope_entries(entries, scope);
+
+    let base = match query.base.clone() {
+        Some(base) => Some(base),
+        None => default_branch(git),
+    };
+    let (base, committed) = match base {
+        Some(base) => match read_committed(git, &base)? {
+            Some(committed) => (Some(base), Some(scope_entries(committed, scope))),
+            None => (None, None),
+        },
+        None => (None, None),
+    };
+
+    let group = if query.committed {
+        committed.as_deref().unwrap_or_default()
+    } else {
+        &entries
+    };
+    let diff = query
+        .selected
+        .as_ref()
+        .and_then(|selected| group.iter().find(|entry| &entry.path == selected))
+        .map(|entry| {
+            if query.committed {
+                committed_diff(git, scope, entry, base.as_deref())
+            } else {
+                working_diff(git, root, scope, entry)
+            }
+        });
+    Ok(Changes {
+        entries,
+        committed,
+        base,
+        diff,
+    })
+}
+
+/// A scope is a folder of the checkout named without a link anywhere along
+/// it, so a registered folder replaced by a link to a sibling answers
+/// nothing rather than the sibling's changes.
+fn require_real_folder(root: &Root, scope: &Path) -> HostResult<()> {
+    let mut prefix = PathBuf::new();
+    for component in scope.components() {
+        prefix.push(component);
+        let metadata = root
+            .dir()
+            .symlink_metadata(&prefix)
+            .map_err(|error| HostError::io(&error, "The History folder could not be opened"))?;
+        if !metadata.is_dir() {
+            return Err(HostError::new(
+                ErrorCode::Conflict,
+                "This History folder no longer matches its registered checkout",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct GitDirectory<'a> {
+    root: &'a Root,
+}
+
+impl<'a> GitDirectory<'a> {
+    fn of(root: &'a Root) -> Self {
+        Self { root }
+    }
+
+    fn command(self) -> Command {
+        let mut command = Command::new("git");
+        // A path is a path, never a pathspec pattern: a file named `*.rs` or
+        // `:(top)x` selects only itself.
+        command.arg("--literal-pathspecs");
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::process::CommandExt;
+            let fd = self.root.dir().as_raw_fd();
+            // fchdir is async-signal-safe in the child before exec. The
+            // borrowed root keeps this fd open until spawn completes.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fchdir(fd) == -1 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+        }
+        #[cfg(not(unix))]
+        command.current_dir(self.root.path());
+        command
+    }
+}
+
+fn git_output(git: GitDirectory<'_>, arguments: &[&str]) -> HostResult<std::process::Output> {
+    git.command()
+        .args(arguments)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| HostError::new(ErrorCode::Io, format!("git could not be run: {error}")))
+}
+
+fn git_text(git: GitDirectory<'_>, arguments: &[&str]) -> HostResult<String> {
+    let output = git_output(git, arguments)?;
+    if !output.status.success() {
+        return Err(HostError::new(
+            ErrorCode::Io,
+            format!(
+                "git {} failed: {}",
+                arguments[0],
+                git_error_text(&output.stderr)
+            ),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn git_line(git: GitDirectory<'_>, arguments: &[&str]) -> HostResult<String> {
+    let text = git_text(git, arguments)?.trim().to_owned();
+    if text.is_empty() {
+        return Err(HostError::new(ErrorCode::Io, "git answered nothing"));
+    }
+    Ok(text)
+}
+
+fn git_error_text(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr).trim().to_owned();
+    if text.is_empty() {
+        "no error output".to_owned()
+    } else {
+        text
+    }
+}
+
+/// The branch `origin/HEAD` names, the repository default the worktree card
+/// also measures against when no base was specified.
+fn default_branch(git: GitDirectory<'_>) -> Option<String> {
+    let output = git_line(
+        git,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .ok()?;
+    let branch = output.trim_start_matches("origin/").to_owned();
+    (!branch.is_empty()).then_some(branch)
+}
+
+/// The base as a ref this checkout can resolve: the local branch first, its
+/// remote-tracking form second, the same rule the worktree reader uses, so the
+/// card's counts and this list are measured against the same commit.
+fn resolvable_base(git: GitDirectory<'_>, base: &str) -> Option<String> {
+    [base.to_owned(), format!("origin/{base}")]
+        .into_iter()
+        .find(|candidate| {
+            git_text(
+                git,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{candidate}^{{commit}}"),
+                ],
+            )
+            .is_ok()
+        })
+}
+
+/// The files this branch's commits changed since `base`. An unresolved base
+/// omits the group; a failed read is an error.
+fn read_committed(git: GitDirectory<'_>, base: &str) -> HostResult<Option<Vec<ChangedFile>>> {
+    let Some(base_ref) = resolvable_base(git, base) else {
+        return Ok(None);
+    };
+    let range = format!("{base_ref}...HEAD");
+    let statuses = git_text(
+        git,
+        &["diff", "--name-status", "-z", "--find-renames", &range],
+    )?;
+    let mut entries = parse_name_status(&statuses);
+    if let Ok(numstat) = git_text(git, &["diff", "--numstat", "-z", &range]) {
+        apply_line_counts(&mut entries, &numstat);
+    }
+    Ok(Some(entries))
+}
+
+/// Keeps the entries under `scope`, relative to it. Git's rename source can
+/// cross the boundary, so an inbound rename is an addition and an outbound
+/// rename is a deletion from the scope's perspective, with unknown counts.
+fn scope_entries(entries: Vec<ChangedFile>, scope: &Path) -> Vec<ChangedFile> {
+    let within = |path: &str| {
+        Path::new(path)
+            .strip_prefix(scope)
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned())
+    };
+    let mut scoped = Vec::new();
+    for mut entry in entries {
+        let current = within(&entry.path);
+        let previous = entry.previous.as_deref().and_then(within);
+        match (current, previous) {
+            (Some(current), previous) => {
+                if entry.status == FileStatus::Renamed && previous.is_none() {
+                    entry.status = FileStatus::Added;
+                    // Repository-wide rename counts are not the scoped
+                    // addition's counts. Leave them unknown instead.
+                    entry.added = None;
+                    entry.removed = None;
+                }
+                entry.path = current;
+                entry.previous = previous;
+                scoped.push(entry);
+            }
+            (None, Some(previous)) if entry.status == FileStatus::Renamed => {
+                entry.path = previous;
+                entry.previous = None;
+                entry.status = FileStatus::Deleted;
+                entry.added = None;
+                entry.removed = None;
+                scoped.push(entry);
+            }
+            _ => {}
+        }
+    }
+    scoped.sort_by(|left, right| left.path.cmp(&right.path));
+    scoped
+}
+
+/// Splits porcelain v1 `-z` output. Records are NUL-terminated and each is
+/// `XY<space><path>`, so no quoting applies and a path containing a space or a
+/// newline survives intact.
+pub fn parse_status(output: &str) -> Vec<ChangedFile> {
+    let fields = output.split('\0').collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index < fields.len() {
+        let record = fields[index];
+        index += 1;
+        if record.len() <= 3 {
+            continue;
+        }
+        let Some(code) = record.get(0..2) else {
+            continue;
+        };
+        let path = record.get(3..).unwrap_or_default().to_owned();
+        let previous = if code.contains('R') || code.contains('C') {
+            let previous = fields
+                .get(index)
+                .copied()
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned);
+            if previous.is_some() {
+                index += 1;
+            }
+            previous
+        } else {
+            None
+        };
+        entries.push(ChangedFile {
+            path,
+            previous,
+            status: FileStatus::from_porcelain(code),
+            added: None,
+            removed: None,
+        });
+    }
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    entries
+}
+
+/// Splits `--name-status -z` output. Records alternate status and path, both
+/// NUL-terminated, so a path with a space or a newline survives intact.
+pub fn parse_name_status(output: &str) -> Vec<ChangedFile> {
+    let fields = output.split('\0').collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index < fields.len() {
+        let code = fields[index];
+        if code.is_empty() || index + 1 >= fields.len() {
+            break;
+        }
+        index += 1;
+        let (previous, path) = if code.starts_with('R') {
+            if index + 1 >= fields.len() {
+                break;
+            }
+            let previous = fields[index].to_owned();
+            let current = fields[index + 1];
+            index += 2;
+            (Some(previous), current)
+        } else {
+            let current = fields[index];
+            index += 1;
+            (None, current)
+        };
+        if path.is_empty() {
+            continue;
+        }
+        entries.push(ChangedFile {
+            path: path.to_owned(),
+            previous,
+            // `--name-status` reports one letter where porcelain reports two.
+            status: FileStatus::from_porcelain(&format!("{code} ")),
+            added: None,
+            removed: None,
+        });
+    }
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    entries
+}
+
+/// Splits `--numstat -z` output into per-path line counts. A binary file is
+/// reported as `-\t-`, which stays absent rather than becoming a zero.
+pub fn parse_numstat(output: &str) -> Vec<(String, Option<u32>, Option<u32>)> {
+    let fields = output.split('\0').collect::<Vec<_>>();
+    let mut counts = Vec::new();
+    let mut index = 0;
+    while index < fields.len() {
+        let record = fields[index];
+        if record.is_empty() {
+            index += 1;
+            continue;
+        }
+        let mut columns = record.splitn(3, '\t');
+        let added = columns.next().and_then(|value| value.parse().ok());
+        let removed = columns.next().and_then(|value| value.parse().ok());
+        let Some(path) = columns.next() else {
+            index += 1;
+            continue;
+        };
+        if path.is_empty() && index + 2 < fields.len() {
+            counts.push((fields[index + 2].to_owned(), added, removed));
+            index += 3;
+        } else {
+            counts.push((path.to_owned(), added, removed));
+            index += 1;
+        }
+    }
+    counts
+}
+
+fn apply_line_counts(entries: &mut [ChangedFile], counts: &str) {
+    for (path, added, removed) in parse_numstat(counts) {
+        if let Some(entry) = entries.iter_mut().find(|entry| entry.path == path) {
+            entry.added = added;
+            entry.removed = removed;
+        }
+    }
+}
+
+/// The pathspecs for an entry's diff, relative to the root: the scope's view
+/// of the file, so a rename source outside the scope is never named.
+fn pathspecs(scope: &Path, entry: &ChangedFile) -> (String, String) {
+    let current = scope.join(&entry.path).to_string_lossy().into_owned();
+    let previous = entry
+        .previous
+        .as_ref()
+        .map(|path| scope.join(path).to_string_lossy().into_owned())
+        .unwrap_or_else(|| current.clone());
+    (previous, current)
+}
+
+/// The working tree against `HEAD`. An untracked file has no index side, so
+/// it is compared with an empty file, read through the root's handle.
+fn working_diff(git: GitDirectory<'_>, root: &Root, scope: &Path, entry: &ChangedFile) -> Diff {
+    let (previous, current) = pathspecs(scope, entry);
+    let text = match entry.status {
+        FileStatus::Untracked => root
+            .dir()
+            .open(&current)
+            .map_err(|_| "The selected file could not be read".to_owned())
+            .and_then(|file| {
+                let file = file.into_std();
+                if !file.metadata().is_ok_and(|metadata| metadata.is_file()) {
+                    return Err("Only existing regular files can be opened".to_owned());
+                }
+                // `--no-index` reports a difference as exit code 1, which is
+                // the expected outcome here rather than an error.
+                git_diff_text(
+                    git,
+                    &["diff", "--no-index", "--", "/dev/null", "-"],
+                    true,
+                    Some(file),
+                )
+            }),
+        _ => git_diff_text(
+            git,
+            &["diff", "HEAD", "--", &previous, &current],
+            false,
+            None,
+        ),
+    };
+    bounded(entry.path.clone(), text)
+}
+
+/// A committed file's diff is against the base, not the index: the group is
+/// "what this branch changed", so its diff must be the same comparison.
+fn committed_diff(
+    git: GitDirectory<'_>,
+    scope: &Path,
+    entry: &ChangedFile,
+    base: Option<&str>,
+) -> Diff {
+    let Some(base) = base.and_then(|base| resolvable_base(git, base)) else {
+        return Diff {
+            path: entry.path.clone(),
+            text: String::new(),
+            notice: Some("The base branch could not be resolved in this checkout.".to_owned()),
+        };
+    };
+    let (previous, current) = pathspecs(scope, entry);
+    let text = git_diff_text(
+        git,
+        &["diff", &format!("{base}...HEAD"), "--", &previous, &current],
+        false,
+        None,
+    );
+    bounded(entry.path.clone(), text)
+}
+
+fn bounded(path: String, text: Result<(String, bool), String>) -> Diff {
+    let (text, truncated) = match text {
+        Ok(read) => read,
+        Err(reason) => {
+            return Diff {
+                path,
+                text: String::new(),
+                notice: Some(reason),
+            };
+        }
+    };
+    let cut = truncated || text.len() > MAX_DIFF_BYTES;
+    let mut end = text.len().min(MAX_DIFF_BYTES);
+    // Cut on a character boundary so the retained text stays valid UTF-8.
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    Diff {
+        path,
+        text: text[..end].to_owned(),
+        notice: cut.then(|| {
+            format!(
+                "This diff is larger than {} KB and is shown truncated",
+                MAX_DIFF_BYTES / 1024
+            )
+        }),
+    }
+}
+
+/// Captures at most one patch's wire budget plus a UTF-8 boundary, killing a
+/// diff that exceeds it rather than first buffering an arbitrarily large file.
+/// Stderr is drained concurrently so it cannot block a child that is
+/// reporting a failure.
+fn git_diff_text(
+    git: GitDirectory<'_>,
+    arguments: &[&str],
+    no_index: bool,
+    input: Option<std::fs::File>,
+) -> Result<(String, bool), String> {
+    let mut command = git.command();
+    command.args(arguments);
+    command.stdin(match input {
+        Some(input) => Stdio::from(input),
+        None => Stdio::null(),
+    });
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("git could not be run: {error}"))?;
+    let mut stdout = child.stdout.take().expect("piped Git stdout");
+    let mut stderr = child.stderr.take().expect("piped Git stderr");
+    let stderr_reader = std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut chunk = [0; 8192];
+        loop {
+            let count = stderr.read(&mut chunk)?;
+            if count == 0 {
+                break;
+            }
+            kept.extend_from_slice(&chunk[..count.min(8192usize.saturating_sub(kept.len()))]);
+        }
+        Ok::<_, std::io::Error>(kept)
+    });
+    let mut bytes = Vec::with_capacity(MAX_DIFF_BYTES + 4);
+    let mut chunk = [0; 8192];
+    let mut truncated = false;
+    let mut read_error = None;
+    loop {
+        match stdout.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => {
+                let remaining = (MAX_DIFF_BYTES + 4).saturating_sub(bytes.len());
+                bytes.extend_from_slice(&chunk[..count.min(remaining)]);
+                if count > remaining {
+                    truncated = true;
+                    let _ = child.kill();
+                    break;
+                }
+            }
+            Err(error) => {
+                read_error = Some(error);
+                let _ = child.kill();
+                break;
+            }
+        }
+    }
+    drop(stdout);
+    let status = child.wait();
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "git diff error output could not be read".to_owned())?
+        .map_err(|error| format!("git diff error output could not be read: {error}"))?;
+    let status = status.map_err(|error| format!("git diff could not finish: {error}"))?;
+    if let Some(error) = read_error {
+        return Err(format!("git diff output could not be read: {error}"));
+    }
+    if !truncated && !status.success() && !(no_index && status.code() == Some(1)) {
+        return Err(format!("git diff failed: {}", git_error_text(&stderr)));
+    }
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn porcelain_records_project_the_presented_statuses() {
+        let output = " M src/lib.rs\0A  src/new.rs\0 D src/gone.rs\0?? notes.txt\0UU src/conflict.rs\0R  src/새 이름.rs\0src/old name.rs\0";
+        let entries = parse_status(output);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.path.as_str(), entry.status))
+                .collect::<Vec<_>>(),
+            [
+                ("notes.txt", FileStatus::Untracked),
+                ("src/conflict.rs", FileStatus::Conflict),
+                ("src/gone.rs", FileStatus::Deleted),
+                ("src/lib.rs", FileStatus::Modified),
+                ("src/new.rs", FileStatus::Added),
+                ("src/새 이름.rs", FileStatus::Renamed),
+            ]
+        );
+        assert_eq!(
+            entries.last().unwrap().previous.as_deref(),
+            Some("src/old name.rs")
+        );
+        assert_eq!(FileStatus::from_porcelain("AD"), FileStatus::Deleted);
+        assert_eq!(FileStatus::from_porcelain("MM"), FileStatus::Modified);
+    }
+
+    #[test]
+    fn name_status_and_numstat_land_on_the_file_they_describe() {
+        let mut entries = parse_name_status(
+            "M\0src/lib.rs\0M\0src/bin.dat\0R100\0src/old name.rs\0src/새 이름.rs\0",
+        );
+        apply_line_counts(
+            &mut entries,
+            "12\t3\tsrc/lib.rs\0-\t-\tsrc/bin.dat\07\t2\t\0src/old name.rs\0src/새 이름.rs\0",
+        );
+        let counts = |path: &str| {
+            let entry = entries.iter().find(|entry| entry.path == path).unwrap();
+            (entry.added, entry.removed)
+        };
+        assert_eq!(counts("src/lib.rs"), (Some(12), Some(3)));
+        // A binary file counts no lines, so it shows no numbers rather than
+        // claiming it changed none.
+        assert_eq!(counts("src/bin.dat"), (None, None));
+        assert_eq!(counts("src/새 이름.rs"), (Some(7), Some(2)));
+    }
+
+    #[test]
+    fn an_oversized_diff_states_that_it_was_cut_on_a_character_boundary() {
+        let diff = bounded("x".to_owned(), Ok(("한".repeat(MAX_DIFF_BYTES), false)));
+        assert!(diff.text.len() <= MAX_DIFF_BYTES);
+        assert!(diff.notice.unwrap().contains("truncated"));
+    }
+}
