@@ -144,7 +144,9 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
     let Some(scope) = repository_scope(&toplevel, &request.root_path) else {
         return ChangesSnapshot {
             root_path: Some(root_path),
-            unavailable_reason: Some("This checkout is outside the Git repository".to_owned()),
+            unavailable_reason: Some(
+                "This History folder no longer matches its registered checkout".to_owned(),
+            ),
             ..ChangesSnapshot::default()
         };
     };
@@ -224,11 +226,13 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
 /// outbound rename is a deletion from this checkout's perspective.
 fn repository_scope(toplevel: &Path, root: &Path) -> Option<PathBuf> {
     let repository = toplevel.canonicalize().ok()?;
-    root.canonicalize()
-        .ok()?
-        .strip_prefix(repository)
-        .ok()
-        .map(Path::to_path_buf)
+    let registered_relative = root.strip_prefix(toplevel).ok()?;
+    let resolved = root.canonicalize().ok()?;
+    let resolved_relative = resolved.strip_prefix(repository).ok()?;
+    // Registration stores the canonical folder. If its path now resolves to
+    // a different in-repository folder, that folder is not registered even
+    // though Git reports the same checkout root.
+    (registered_relative == resolved_relative).then(|| resolved_relative.to_path_buf())
 }
 
 fn scope_entries(
@@ -933,6 +937,52 @@ mod tests {
         );
         assert!(!after_swap.text.contains("OUTSIDE_SENTINEL_CONTENT"));
         assert!(after_swap.notice.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_root_cannot_retarget_history_to_a_sibling() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().canonicalize().unwrap();
+        let registered = repository.join("registered");
+        let sibling = repository.join("sibling");
+        std::fs::create_dir(&registered).unwrap();
+        std::fs::create_dir(&sibling).unwrap();
+        assert!(
+            run_git(&repository, &["init", "-q"])
+                .unwrap()
+                .status
+                .success()
+        );
+        std::fs::write(registered.join("inside.txt"), "INSIDE_CONTENT\n").unwrap();
+        std::fs::write(sibling.join("outside.txt"), "OUTSIDE_SENTINEL_CONTENT\n").unwrap();
+        let roots = crate::files::FileRoots::from_opened(vec![(
+            repository.clone(),
+            std::fs::File::open(&repository).unwrap(),
+        )]);
+        let request = ChangesRequest {
+            root_path: registered.clone(),
+            file_roots: Some(roots),
+            checkout_path: repository,
+            selected_path: Some(registered.join("inside.txt").to_string_lossy().into_owned()),
+            selected_committed: false,
+            base_branch: None,
+        };
+        let inside = read(&request);
+        assert!(inside.unavailable_reason.is_none());
+        assert_eq!(inside.entries.len(), 1);
+        assert!(inside.diff.unwrap().text.contains("INSIDE_CONTENT"));
+
+        std::fs::rename(&registered, request.checkout_path.join("moved")).unwrap();
+        symlink("sibling", &registered).unwrap();
+        let retargeted = read(&request);
+        assert!(retargeted.unavailable_reason.is_some());
+        assert!(retargeted.entries.is_empty());
+        assert!(retargeted.committed.is_empty());
+        assert!(retargeted.diff.is_none());
+        assert!(!format!("{retargeted:?}").contains("OUTSIDE_SENTINEL_CONTENT"));
     }
 
     #[test]

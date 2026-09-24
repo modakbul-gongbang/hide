@@ -177,6 +177,46 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
         runtime.snapshot.navigator.changes_root_path.as_deref(),
         registered.to_str()
     );
+
+    // A delayed whole-state write can carry an older focus anchor. It must
+    // update checkout, workspace and History identity together.
+    let update_focus = |runtime: &mut Runtime, checkout_id: &str| {
+        let event = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "collapsed_workspace_ids": [],
+                "focused_checkout_id": checkout_id,
+                "right_panel_visible": true,
+                "right_panel_section": "changes"
+            }
+        }))
+        .unwrap();
+        assert!(runtime.dispatch_json(&event));
+    };
+    focus(&mut runtime, "sibling-local", "sibling-checkout");
+    update_focus(&mut runtime, &local_checkout_id);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
+        Some(local_id.as_str())
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.root_path.as_deref(),
+        repository.to_str()
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.changes_root_path.as_deref(),
+        registered.to_str()
+    );
+    assert_eq!(runtime.changes_request().unwrap().root_path, registered);
+    update_focus(&mut runtime, "remote-checkout");
+    assert_eq!(
+        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
+        Some("remote-collision")
+    );
+    assert!(runtime.snapshot.navigator.changes_root_path.is_none());
+    assert!(runtime.changes_request().is_none());
 }
 
 #[test]

@@ -2792,6 +2792,9 @@ impl Runtime {
                     self.snapshot.ui_state.focused_device_id.clone();
                 self.snapshot.navigator.focused_checkout_id =
                     self.snapshot.ui_state.focused_checkout_id.clone();
+                // UI-state writes can carry a focus anchor after a checkout
+                // event. Reconcile the whole navigator identity in this frame.
+                self.resync_navigator_focus();
                 self.refresh_inactive_groups();
                 self.reconcile_remote_terminal_selection();
                 Self::apply_workspace_expansion(
