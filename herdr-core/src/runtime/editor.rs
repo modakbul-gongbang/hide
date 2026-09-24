@@ -9,7 +9,8 @@ pub(super) enum PreparedFileTab {
         document: Box<EditorDocumentSnapshot>,
         place: crate::files::DocumentPlace,
     },
-    /// A device is being asked for the file; the tab shows when it answers.
+    /// The file is being read off the runtime lock; the tab shows when the
+    /// read lands.
     Reading {
         root: crate::files::DocumentRoot,
         channel: std::sync::Arc<dyn crate::host_access::HostChannel>,
@@ -159,7 +160,8 @@ impl Runtime {
         }) {
             return Ok(PreparedFileTab::Open(tab_id));
         }
-        self.read_file_tab(workspace_id, checkout_id, path)
+        let (root, channel) = self.document_source(workspace_id, checkout_id)?;
+        Ok(PreparedFileTab::Reading { root, channel })
     }
 
     /// Shows a prepared file tab. `preview` is what the click asked for: a
@@ -192,6 +194,7 @@ impl Runtime {
                         path: path.to_owned(),
                         preview,
                         reload: false,
+                        reveal: None,
                     },
                 );
                 self.snapshot.ui_state.selected_path = Some(path.to_owned());

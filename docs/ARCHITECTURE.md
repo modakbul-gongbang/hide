@@ -387,6 +387,7 @@ The daemon ships one helper build per device platform (`HelperPackages`); a devi
 The product's device platforms are macOS on arm64 and x86_64; the S5.5 verification covered two arm64 Macs, and x86_64 packaging is not finished.
 Admission per device is four running and thirty-two waiting requests; past that a request is refused as `busy`, never dropped.
 
+Every document read runs on a worker with the runtime lock released, this machine's disk included (`runtime/documents.rs::start_document_open`), and the tab lands when the read does; a reveal of a file moves the checkout, the panel and the tree only then, and only while the checkout the operator had in front is still in front, so a read that fails moves nothing.
 A document is pinned at open to its device, its root path with the identity the host reported, and its path relative to that root (`DocumentPlace`), and every save goes back through that pin: a root that was replaced since is refused, and a save after a reconnect goes to the new helper.
 The draft's base is a content revision (`sha256:<hex>`), not a modification time.
 A save is exchange-and-verify, not a compare-and-swap (`hide-host/src/save.rs` states exactly what it guarantees): the file is hashed against the base, the draft is written beside it and exchanged in one atomic rename (`RENAME_SWAP`, `RENAME_EXCHANGE`), and the displaced file is hashed again; a change that landed in between is exchanged back and the save is a conflict, so a change complete at the path is never overwritten and the original is never left truncated.

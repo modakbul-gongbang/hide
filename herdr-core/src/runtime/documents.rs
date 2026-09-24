@@ -66,6 +66,15 @@ pub(super) struct OpenRequest {
     preview: bool,
     /// Replaces the open tab's document (Reload) instead of adding a tab.
     reload: bool,
+    reveal: Option<PendingReveal>,
+}
+
+/// A reveal waiting on its file. The screen moves when the read lands, all
+/// at once, and only while the checkout the operator had in front when they
+/// asked is still in front; a failed read moves nothing.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PendingReveal {
+    pub(super) front: Option<(String, String)>,
 }
 
 type OpenResult = Result<(EditorDocumentSnapshot, DocumentPlace), OpenFailure>;
@@ -137,6 +146,11 @@ impl Runtime {
             .zip(session.focused_checkout_id.as_deref())
     }
 
+    pub(super) fn front_checkout_owned(&self) -> Option<(String, String)> {
+        self.front_checkout()
+            .map(|(workspace, checkout)| (workspace.to_owned(), checkout.to_owned()))
+    }
+
     pub(super) fn document_root(
         &self,
         workspace_id: &str,
@@ -169,27 +183,17 @@ impl Runtime {
         })
     }
 
-    /// Reads a file for a new tab: in place on this machine, or starts the
-    /// device read that shows the tab later.
-    pub(super) fn read_file_tab(
+    /// Where a file of the checkout is read from: its root and the channel
+    /// of the device that holds it. Nothing is read here; the read runs on a
+    /// worker (`start_document_open`), on this machine as on a device.
+    pub(super) fn document_source(
         &mut self,
         workspace_id: &str,
         checkout_id: &str,
-        path: &str,
-    ) -> Result<PreparedFileTab, String> {
+    ) -> Result<(DocumentRoot, Arc<dyn HostChannel>), String> {
         let root = self.document_root(workspace_id, checkout_id)?;
         let channel = self.device_channel(&root.device_id)?;
-        let tab_id = Self::file_tab_id(workspace_id, checkout_id, path);
-        if !channel.in_process() {
-            return Ok(PreparedFileTab::Reading { root, channel });
-        }
-        files::open_document(channel.as_ref(), &root, path)
-            .map(|(document, place)| PreparedFileTab::Read {
-                tab_id,
-                document: Box::new(document),
-                place,
-            })
-            .map_err(|failure| failure.message())
+        Ok((root, channel))
     }
 
     pub(super) fn start_document_open(
@@ -202,14 +206,6 @@ impl Runtime {
         if !request.reload && self.document_opens.contains_key(&tab_id) {
             return;
         }
-        let Some(context) = self.worker_context.clone() else {
-            self.set_error(
-                "file.open_worker_unavailable",
-                "The file reader is unavailable; the file was not opened",
-                true,
-            );
-            return;
-        };
         self.next_document_generation += 1;
         let generation = self.next_document_generation;
         self.document_opens.insert(
@@ -221,6 +217,7 @@ impl Runtime {
                 path: request.path.clone(),
                 preview: request.preview,
                 reload: request.reload,
+                reveal: request.reveal,
             },
         );
         self.sync_opening_snapshot();
@@ -232,6 +229,14 @@ impl Runtime {
             "reload": request.reload,
         }));
         let path = request.path;
+        // A runtime without a worker context has no shared mutex to hold, so
+        // the read runs in place; every shared runtime reads on a worker, the
+        // local disk included, because a slow volume must not stall input.
+        let Some(context) = self.worker_context.clone() else {
+            let result = files::open_document(channel.as_ref(), &root, &path);
+            self.ingest_document_open(&tab_id, generation, result);
+            return;
+        };
         let spawned = thread::Builder::new()
             .name("herdr-core-file-open".to_owned())
             .spawn(move || {
@@ -313,6 +318,22 @@ impl Runtime {
             }
         };
         let open = self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id);
+        if let Some(reveal) = &request.reveal
+            && !open
+            && self.front_checkout_owned() == reveal.front
+        {
+            self.settle_reveal(
+                &request.workspace_id,
+                &request.checkout_id,
+                &request.path,
+                Some(PreparedFileTab::Read {
+                    tab_id: tab_id.to_owned(),
+                    document: Box::new(document),
+                    place,
+                }),
+            );
+            return true;
+        }
         if request.reload {
             if open {
                 self.replace_document(tab_id, document, place);
@@ -383,12 +404,8 @@ impl Runtime {
             );
             return true;
         };
-        let prepared = self.read_file_tab(&tab.workspace_id, &tab.checkout_id, &tab.path);
-        match prepared {
-            Ok(PreparedFileTab::Read {
-                document, place, ..
-            }) => self.replace_document(tab_id, *document, place),
-            Ok(PreparedFileTab::Reading { root, channel }) => self.start_document_open(
+        match self.document_source(&tab.workspace_id, &tab.checkout_id) {
+            Ok((root, channel)) => self.start_document_open(
                 root,
                 channel,
                 OpenRequestFields {
@@ -397,9 +414,9 @@ impl Runtime {
                     path: tab.path,
                     preview: false,
                     reload: true,
+                    reveal: None,
                 },
             ),
-            Ok(PreparedFileTab::Open(_)) => {}
             Err(message) => self.set_error("file.reload_failed", message, true),
         }
         true
@@ -923,6 +940,7 @@ pub(super) struct OpenRequestFields {
     pub(super) path: String,
     pub(super) preview: bool,
     pub(super) reload: bool,
+    pub(super) reveal: Option<PendingReveal>,
 }
 
 fn outcome_word(outcome: &SaveOutcome) -> &'static str {

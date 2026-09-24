@@ -1346,7 +1346,11 @@ fn existing_local_file_opens_and_idempotent_save_preserves_its_contents() {
             "payload": {"path": path, "workspace_id": workspace_id, "checkout_id": checkout_id}
         }),
     );
-    let opened = snapshot(core);
+    // The read runs on a worker, off the runtime lock, so the tab lands in a
+    // later snapshot.
+    let opened = wait_for_snapshot(core, Duration::from_secs(2), |current| {
+        !current["editor"]["document"].is_null()
+    });
     assert_eq!(opened["editor"]["document"]["language"], "swift");
     assert_eq!(opened["editor"]["document"]["document_kind"], "text");
     assert_eq!(opened["editor"]["document"]["dirty"], false);
@@ -1402,13 +1406,22 @@ fn file_tabs_deduplicate_and_closing_active_restores_the_previous_file() {
     };
     open(&path);
     open(&path);
+    wait_for_snapshot(core, Duration::from_secs(2), |current| {
+        current["editor"]["opening"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+            && current["editor"]["tabs"].as_array().map(Vec::len) == Some(1)
+    });
+    open(&path);
     assert_eq!(
         snapshot(core)["editor"]["tabs"].as_array().map(Vec::len),
         Some(1)
     );
 
     open(&second_path);
-    let second = snapshot(core);
+    let second = wait_for_snapshot(core, Duration::from_secs(2), |current| {
+        current["editor"]["tabs"].as_array().map(Vec::len) == Some(2)
+    });
     assert_eq!(second["editor"]["tabs"].as_array().map(Vec::len), Some(2));
     let second_tab_id = second["editor"]["active_tab_id"]
         .as_str()

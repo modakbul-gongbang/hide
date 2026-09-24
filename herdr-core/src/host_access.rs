@@ -42,12 +42,14 @@ impl fmt::Display for HostCallError {
 
 /// One device's answerer for `hide_host` requests.
 pub trait HostChannel: Send + Sync {
-    /// Sends one request and waits at most `timeout` for its answer. Blocks;
-    /// never call it under the runtime lock unless [`Self::in_process`].
+    /// Sends one request and waits at most `timeout` for its answer. Blocks,
+    /// on this machine's disk as on a device; never call it under the
+    /// runtime lock.
     fn call(&self, call: Call, timeout: Duration) -> Result<Value, HostCallError>;
 
-    /// Whether the answer is computed in this process without a network
-    /// round trip, as the existing local open has always been.
+    /// Whether the answer is computed in this process, so a path the
+    /// operator spelled through a link to the checkout can be resolved on
+    /// this machine's filesystem (`files::open_document`).
     fn in_process(&self) -> bool {
         false
     }

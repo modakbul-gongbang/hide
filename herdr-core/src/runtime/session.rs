@@ -2887,12 +2887,13 @@ impl Runtime {
                     format!("explorer.{}", operation.kind.as_str()),
                     format!("{source} -> {destination}"),
                 );
-                // A created file opens as an editor tab in this same result,
-                // so the tree selection and the tab land in one frame with no
-                // second dispatch from the shell. New Folder, Rename and move
-                // open nothing. If the file cannot be read into a tab it still
-                // exists on disk, so the reason rides the finished slot's
-                // message and the tree keeps the created file (B10 pattern).
+                // A created file opens as an editor tab from this same result,
+                // with no second dispatch from the shell; its read runs on a
+                // worker like every open, so the tab follows the selection.
+                // New Folder, Rename and move open nothing. If the checkout
+                // cannot serve the file it still exists on disk, so the reason
+                // rides the finished slot's message and the tree keeps the
+                // created file (B10 pattern).
                 if operation.kind == files::ExplorerOperationKind::FileCreate
                     && let Some((workspace_id, checkout_id)) = self
                         .focused_local_checkout()
@@ -3386,20 +3387,10 @@ impl Runtime {
     /// checkout switch, then the panel appear, then the tree move, and a
     /// refusal partway would leave the screen in a state nobody asked for.
     pub(super) fn reveal_path(&mut self, payload: RevealPathPayload) -> bool {
-        let Some(checkout_path) = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .find(|workspace| workspace.id == payload.workspace_id)
-            .and_then(|workspace| {
-                workspace
-                    .checkouts
-                    .iter()
-                    .find(|checkout| checkout.id == payload.checkout_id)
-                    .map(|checkout| checkout.path.clone())
-            })
-        else {
+        if self
+            .reveal_checkout_path(&payload.workspace_id, &payload.checkout_id)
+            .is_none()
+        {
             self.set_error(
                 "reveal.unknown_checkout",
                 format!(
@@ -3409,22 +3400,86 @@ impl Runtime {
                 false,
             );
             return true;
-        };
-        // The file is read before anything moves. Reading is the only part of
-        // a reveal that can fail, and a reveal that settles the whole screen
-        // at once must not leave the checkout focused and the tree expanded
-        // around a document that never arrived.
-        let prepared = if payload.is_directory {
-            None
-        } else {
-            match self.prepare_file_tab(&payload.workspace_id, &payload.checkout_id, &payload.path)
-            {
-                Ok(prepared) => Some(prepared),
-                Err(message) => {
-                    self.set_error("file.open_failed", message, true);
-                    return true;
-                }
+        }
+        if payload.is_directory {
+            self.settle_reveal_path(&payload, None);
+            return true;
+        }
+        // Nothing moves before the file is read: a reveal settles the whole
+        // screen at once, and a file that cannot be read must not leave the
+        // checkout focused and the tree expanded around a document that never
+        // arrived. The read runs on a worker, so the moves wait for it.
+        match self.prepare_file_tab(&payload.workspace_id, &payload.checkout_id, &payload.path) {
+            Ok(super::editor::PreparedFileTab::Reading { root, channel }) => {
+                let front = self.front_checkout_owned();
+                self.start_document_open(
+                    root,
+                    channel,
+                    documents::OpenRequestFields {
+                        workspace_id: payload.workspace_id,
+                        checkout_id: payload.checkout_id,
+                        path: payload.path,
+                        preview: false,
+                        reload: false,
+                        reveal: Some(documents::PendingReveal { front }),
+                    },
+                );
             }
+            Ok(prepared) => self.settle_reveal_path(&payload, Some(prepared)),
+            Err(message) => self.set_error("file.open_failed", message, true),
+        }
+        true
+    }
+
+    fn reveal_checkout_path(&self, workspace_id: &str, checkout_id: &str) -> Option<String> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .and_then(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| checkout.id == checkout_id)
+                    .map(|checkout| checkout.path.clone())
+            })
+    }
+
+    /// A revealed file's read landed: the reveal settles now.
+    pub(super) fn settle_reveal(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        prepared: Option<super::editor::PreparedFileTab>,
+    ) {
+        let payload = RevealPathPayload {
+            path: path.to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            checkout_id: checkout_id.to_owned(),
+            is_directory: false,
+        };
+        self.settle_reveal_path(&payload, prepared);
+    }
+
+    fn settle_reveal_path(
+        &mut self,
+        payload: &RevealPathPayload,
+        prepared: Option<super::editor::PreparedFileTab>,
+    ) {
+        let Some(checkout_path) =
+            self.reveal_checkout_path(&payload.workspace_id, &payload.checkout_id)
+        else {
+            self.set_error(
+                "reveal.unknown_checkout",
+                format!(
+                    "Checkout {} is no longer registered, so {} was not revealed",
+                    payload.checkout_id, payload.path
+                ),
+                false,
+            );
+            return;
         };
         if self.snapshot.navigator.focused_checkout_id.as_deref()
             != Some(payload.checkout_id.as_str())
@@ -3465,7 +3520,6 @@ impl Runtime {
             ),
         );
         self.persist_current_ui_state();
-        true
     }
     pub(super) fn focus_checkout(&mut self, workspace_id: &str, checkout_id: &str) -> bool {
         // The checkout comes forward on the tab it was showing, with the

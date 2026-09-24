@@ -603,3 +603,102 @@ fn a_save_waiting_for_a_helper_that_fails_is_not_sent_and_keeps_the_draft() {
         "old\n"
     );
 }
+
+/// B47: this machine's disk is read on a worker too, so a slow volume holds
+/// no runtime lock. An unrelated action applies while the read waits, and a
+/// reveal of that file moves the screen only when the read lands.
+#[test]
+fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("nested")).unwrap();
+    std::fs::write(root.join("nested/b.txt"), "local\n").unwrap();
+    let root_text = root.to_string_lossy().into_owned();
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "workspace:local",
+        "Local",
+        &root_text,
+        vec![checkout(
+            "workspace:local",
+            "checkout:local",
+            &root_text,
+            None,
+        )],
+    )];
+    runtime.snapshot.navigator.focused_workspace_id = Some("workspace:local".to_owned());
+    runtime.snapshot.navigator.focused_checkout_id = Some("checkout:local".to_owned());
+    runtime.snapshot.navigator.root_path = Some(root_text.clone());
+    runtime.snapshot.ui_state.right_panel_visible = false;
+    let disk = FakeDevice::new();
+    runtime.local_host = disk.clone();
+    let shared = Arc::new(Mutex::new(runtime));
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(Arc::downgrade(&shared), crate::ffi::ChangeNotifier::noop());
+    let dispatch = |event: Vec<u8>| shared.lock().unwrap().dispatch_json(&event);
+    let file = root.join("nested/b.txt");
+
+    disk.hold();
+    dispatch(reveal_event(
+        "workspace:local",
+        "checkout:local",
+        &file,
+        false,
+    ));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while disk.waiting() == 0 {
+        assert!(Instant::now() < deadline, "the read never reached the disk");
+        thread::sleep(Duration::from_millis(5));
+    }
+    dispatch(
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": {
+                "expanded_paths": [],
+                "collapsed_workspace_ids": ["workspace:local"],
+                "collapsed_checkout_ids": [],
+                "selected_path": null,
+                "selected_pane_id": null,
+                "shortcut_bindings": {}
+            }
+        }))
+        .unwrap(),
+    );
+    {
+        let runtime = shared.lock().unwrap();
+        assert_eq!(
+            runtime.snapshot.ui_state.collapsed_workspace_ids,
+            vec!["workspace:local".to_owned()]
+        );
+        assert!(!runtime.snapshot.ui_state.right_panel_visible);
+        assert_eq!(runtime.snapshot.ui_state.selected_path, None);
+        assert!(runtime.snapshot.editor.tabs.is_empty());
+        assert_eq!(runtime.snapshot.editor.opening.len(), 1);
+    }
+
+    disk.release();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while shared.lock().unwrap().snapshot.editor.document.is_none() {
+        assert!(Instant::now() < deadline, "the local read never landed");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let runtime = shared.lock().unwrap();
+    let file_text = file.to_string_lossy().into_owned();
+    assert!(runtime.snapshot.ui_state.right_panel_visible);
+    assert_eq!(
+        runtime.snapshot.ui_state.selected_path.as_deref(),
+        Some(file_text.as_str())
+    );
+    assert!(
+        runtime
+            .snapshot
+            .ui_state
+            .expanded_paths
+            .contains(&root.join("nested").to_string_lossy().into_owned())
+    );
+    let document = runtime.snapshot.editor.document.as_ref().unwrap();
+    assert_eq!(document.contents_utf8.as_deref(), Some("local\n"));
+}
