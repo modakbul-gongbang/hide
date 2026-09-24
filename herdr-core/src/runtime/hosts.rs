@@ -111,7 +111,19 @@ impl Runtime {
                 "kind": "host.consent_revoked",
                 "target": device_id,
             }));
-            self.close_device_host(device_id, "consent revoked");
+            // New work stops here: the channel is no longer handed out. Work
+            // already admitted answers on the old connection, which closes
+            // once it is idle, so a save in flight settles to its real
+            // result rather than becoming unknown (B52).
+            if self.device_hosts.contains_key(device_id) {
+                self.advance_host_generation(device_id);
+                let entry = self.device_host_entry(device_id);
+                if let HostPhase::Ready { host, .. } =
+                    std::mem::replace(&mut entry.phase, HostPhase::NotAllowed)
+                {
+                    host.close_when_idle("consent revoked");
+                }
+            }
             self.set_host_phase(device_id, HostPhase::NotAllowed);
             // A save held for the helper to become ready would otherwise go
             // out on its own if consent is given again later (B52).

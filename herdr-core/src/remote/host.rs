@@ -343,6 +343,32 @@ impl HostChannel for RemoteHost {
         RemoteHost::call(self, call, timeout)
     }
 
+    fn close_when_idle(&self, reason: &str) {
+        let host = RemoteHost {
+            inner: Arc::clone(&self.inner),
+        };
+        let reason = reason.to_owned();
+        let _ = std::thread::Builder::new()
+            .name("remote-host-drain".into())
+            .spawn(move || {
+                // Admitted requests are bounded by their own timeouts; this
+                // bound only keeps a wedged count from holding the link open.
+                let deadline = std::time::Instant::now() + Duration::from_secs(120);
+                loop {
+                    let admission = lock_recover(&host.inner.admission);
+                    if admission.running == 0 && admission.queued == 0 {
+                        break;
+                    }
+                    drop(admission);
+                    if std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                host.close(&reason);
+            });
+    }
+
     fn closed_reason(&self) -> Option<String> {
         RemoteHost::closed_reason(self)
     }

@@ -45,6 +45,7 @@ pub(super) struct FakeDevice {
     released: Condvar,
     saves: Mutex<Vec<String>>,
     pins: Mutex<HashMap<String, hide_host::RootIdentity>>,
+    closes: Mutex<Vec<&'static str>>,
 }
 
 impl FakeDevice {
@@ -55,6 +56,7 @@ impl FakeDevice {
             released: Condvar::new(),
             saves: Mutex::new(Vec::new()),
             pins: Mutex::new(HashMap::new()),
+            closes: Mutex::new(Vec::new()),
         })
     }
 
@@ -81,6 +83,14 @@ impl FakeDevice {
 }
 
 impl HostChannel for FakeDevice {
+    fn close(&self, _reason: &str) {
+        self.closes.lock().unwrap().push("close");
+    }
+
+    fn close_when_idle(&self, _reason: &str) {
+        self.closes.lock().unwrap().push("when_idle");
+    }
+
     fn call(&self, call: Call, timeout: Duration) -> Result<Value, HostCallError> {
         {
             let mut gate = self.gate.lock().unwrap();
@@ -691,6 +701,44 @@ fn withdrawing_consent_drops_a_save_waiting_for_the_helper() {
         f.device.saves().is_empty(),
         "nothing goes out once allowed again"
     );
+}
+
+/// B52: a save already running when consent is withdrawn lands with its
+/// real result; the connection is closed only once it is idle, and no new
+/// save is sent.
+#[test]
+fn withdrawing_consent_lets_a_running_save_land() {
+    let f = Fixture::new();
+    f.open_and_wait("a.txt");
+    f.device.hold();
+    f.save("a.txt", "mine\n");
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .push(crate::model::DeviceRegistration {
+                id: DEVICE.to_owned(),
+                label: DEVICE.to_owned(),
+                ssh_alias: Some(DEVICE.to_owned()),
+                herdr_socket_path: None,
+                host_consent: None,
+            });
+        runtime.set_host_consent(DEVICE, false);
+    }
+    assert_eq!(*f.device.closes.lock().unwrap(), vec!["when_idle"]);
+    f.device.release();
+    f.wait_for_document("a.txt", "the running save", |document| {
+        !document.dirty && document.save.is_none()
+    });
+    assert_eq!(f.device.saves(), vec!["mine\n".to_owned()]);
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a.txt")).unwrap(),
+        "mine\n"
+    );
+    f.save("a.txt", "after\n");
+    assert_eq!(f.device.saves().len(), 1, "nothing new is sent");
 }
 
 /// B47: this machine's disk is read on a worker too, so a slow volume holds

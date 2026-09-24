@@ -62,6 +62,13 @@ pub trait HostChannel: Send + Sync {
     /// Ends the connection; requests still waiting become `Unknown`.
     fn close(&self, _reason: &str) {}
 
+    /// Ends the connection once the requests already admitted have answered,
+    /// so work in flight settles to its real result (B52). The caller has
+    /// already stopped handing the channel out.
+    fn close_when_idle(&self, reason: &str) {
+        self.close(reason);
+    }
+
     /// The identity this channel pinned for `root`, if any. A device pins a
     /// checkout root the first time a connection touches it, so a folder
     /// swapped in at that path later is refused rather than listed.
