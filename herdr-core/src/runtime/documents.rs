@@ -221,7 +221,8 @@ impl Runtime {
         channel: Arc<dyn HostChannel>,
         request: OpenRequestFields,
     ) {
-        let tab_id = Self::file_tab_id(&request.workspace_id, &request.checkout_id, &request.path);
+        let tab_id =
+            self.new_file_tab_id(&request.workspace_id, &request.checkout_id, &request.path);
         if !request.reload && self.document_opens.contains_key(&tab_id) {
             return;
         }

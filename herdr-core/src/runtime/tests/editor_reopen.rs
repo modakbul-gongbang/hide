@@ -1815,3 +1815,34 @@ fn completion_is_safe_after_the_in_flight_item_was_evicted() {
         Some("newer-19.rs")
     );
 }
+
+/// B9, B18: a renamed tab keeps the id its old path gave it, so a new file
+/// opened at that old path takes a free numbered id instead of being dropped
+/// as already open; the renamed file itself still finds its own tab.
+#[test]
+fn a_new_file_at_a_renamed_tabs_old_path_gets_its_own_tab_id() {
+    let (mut runtime, _root) = explorer_runtime();
+    let base = Runtime::file_tab_id("w", "c", "/r/a.txt");
+    assert_eq!(runtime.new_file_tab_id("w", "c", "/r/a.txt"), base);
+    runtime.snapshot.editor.tabs.push(EditorTabSnapshot {
+        id: base.clone(),
+        workspace_id: "w".to_owned(),
+        checkout_id: "c".to_owned(),
+        path: "/r/b.txt".to_owned(),
+        label: "b.txt".to_owned(),
+        kind: EditorTabKind::File,
+        diff_committed: None,
+        markdown_live: false,
+        wrap: false,
+        dirty: false,
+        preview: false,
+    });
+    assert_eq!(
+        runtime.new_file_tab_id("w", "c", "/r/a.txt"),
+        format!("{base}#2")
+    );
+    assert_eq!(
+        runtime.new_file_tab_id("w", "c", "/r/b.txt"),
+        Runtime::file_tab_id("w", "c", "/r/b.txt")
+    );
+}

@@ -22,6 +22,33 @@ impl Runtime {
         format!("file:{workspace_id}:{checkout_id}:{path}")
     }
 
+    /// The id a new tab for `path` takes. A renamed or moved tab keeps the id
+    /// its old path gave it, so a new file later opened at that old path
+    /// would collide with it and be dropped as already open; that tab gets
+    /// the first free numbered id instead (B9, B18).
+    pub(super) fn new_file_tab_id(
+        &self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+    ) -> String {
+        let base = Self::file_tab_id(workspace_id, checkout_id, path);
+        let taken = |id: &str| {
+            self.snapshot
+                .editor
+                .tabs
+                .iter()
+                .any(|tab| tab.id == id && tab.path != path)
+        };
+        if !taken(&base) {
+            return base;
+        }
+        (2..)
+            .map(|n| format!("{base}#{n}"))
+            .find(|id| !taken(id))
+            .expect("an unbounded range yields a free id")
+    }
+
     pub(super) fn activate_editor_tab(&mut self, tab_id: &str) -> Result<(), String> {
         let tab = self
             .snapshot
@@ -2165,7 +2192,7 @@ impl Runtime {
                             ..
                         } = &request.item
                         {
-                            let tab_id = Self::file_tab_id(workspace_id, checkout_id, path);
+                            let tab_id = self.new_file_tab_id(workspace_id, checkout_id, path);
                             let prepared = PreparedFileTab::Read {
                                 tab_id: tab_id.clone(),
                                 document: Box::new(document),
