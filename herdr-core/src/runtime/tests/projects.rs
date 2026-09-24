@@ -115,6 +115,30 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
         changes: listed,
     }));
 
+    // B22: a failed read of the same checkout keeps the confirmed list,
+    // marked stale with the reason, and the next good read clears the mark.
+    let confirmed = runtime.snapshot.changes.clone();
+    let failed = crate::model::ChangesSnapshot {
+        root_path: confirmed.root_path.clone(),
+        unavailable_reason: Some("The device is busy".to_owned()),
+        ..Default::default()
+    };
+    assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
+        key: runtime.changes_key(),
+        changes: failed,
+    }));
+    assert_eq!(runtime.snapshot.changes.entries, confirmed.entries);
+    assert_eq!(runtime.snapshot.changes.unavailable_reason, None);
+    assert_eq!(
+        runtime.snapshot.changes.stale_reason.as_deref(),
+        Some("The device is busy")
+    );
+    assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
+        key: runtime.changes_key(),
+        changes: confirmed.clone(),
+    }));
+    assert_eq!(runtime.snapshot.changes.stale_reason, None);
+
     let selected = registered
         .join("incoming.txt")
         .to_string_lossy()

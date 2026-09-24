@@ -75,7 +75,7 @@ function EditorTabView({
 function DiffBody({ tab, scale }: { tab: EditorTabSnapshot; scale: number }) {
   const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   if (!changes) return <Notice text="Reading the diff…" state="diff-loading" />;
-  if (changes.unavailable_reason) return <Notice text="History is unavailable for this checkout. Reselect the file to retry." state="diff-unavailable" />;
+  if (changes.unavailable_reason) return <Notice text={`History is unavailable: ${changes.unavailable_reason}`} state="diff-unavailable" />;
   const committed = tab.diff_committed === true;
   const group = committed ? changes.committed : changes.entries;
   if (!group.some((entry) => entry.path === tab.path)) {

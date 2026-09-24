@@ -289,6 +289,8 @@ export type ChangesSnapshot = {
   selected_committed: boolean;
   diff: { path: string; text: string; notice: string | null } | null;
   unavailable_reason: string | null;
+  /** Why the latest read failed while these entries, from the last good read, are still shown (S5.5 B22). */
+  stale_reason?: string | null;
 };
 
 export type DeviceTestStage = { stage: string; state: string; detail: string };

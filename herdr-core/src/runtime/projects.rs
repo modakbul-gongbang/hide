@@ -2129,7 +2129,19 @@ impl Runtime {
         if answer.key != self.changes_key() {
             return false;
         }
-        let changes = answer.changes;
+        let mut changes = answer.changes;
+        // A failed read of the checkout already on screen keeps the list its
+        // last successful read confirmed, marked stale with the reason,
+        // rather than replacing it with nothing (S5.5 B22).
+        if let Some(reason) = changes.unavailable_reason.clone()
+            && self.changes_published_key == answer.key
+            && self.snapshot.changes.unavailable_reason.is_none()
+            && self.snapshot.changes.root_path == changes.root_path
+        {
+            let mut kept = self.snapshot.changes.clone();
+            kept.stale_reason = Some(reason);
+            changes = kept;
+        }
         self.changes_published_key = answer.key;
         if self.snapshot.changes == changes {
             return false;

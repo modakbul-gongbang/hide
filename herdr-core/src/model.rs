@@ -1734,6 +1734,10 @@ pub struct ChangesSnapshot {
     /// Why there is nothing to list. Present whenever the reader could not
     /// produce entries, so an empty list is never mistaken for "no changes".
     pub unavailable_reason: Option<String>,
+    /// Why the latest read of this checkout failed while the entries above,
+    /// from the last read that succeeded, are still shown: they may be out of
+    /// date, and the next read replaces them (S5.5 B22).
+    pub stale_reason: Option<String>,
 }
 
 /// The four working-tree states this round presents. Git's porcelain codes

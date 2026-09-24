@@ -88,11 +88,25 @@ export function HistoryList({ actions }: { actions: Actions }) {
   if (!checkout) return <p className="px-md py-sm text-caption text-muted" data-history-state="no-workspace">Open a workspace to see History.</p>;
   if (!rootPath) return <p className="px-md py-sm text-caption text-muted" data-history-state="no-folder">History has no folder for this checkout.</p>;
   if (!changes) return <p className="px-md py-sm text-caption text-muted" data-history-state="loading">Reading changes…</p>;
-  if (changes.unavailable_reason) return <p className="px-md py-sm text-caption text-warning" data-history-state="unavailable">History is unavailable for this checkout. Reopen History to retry.</p>;
+  // The core's own reason, which names what to do where there is something
+  // to do (allow the helper, install Git); History reads again on its own.
+  if (changes.unavailable_reason) return <p className="break-words px-md py-sm text-caption text-warning" data-history-state="unavailable">History is unavailable: {changes.unavailable_reason}</p>;
+  const stale = changes.stale_reason ? (
+    <p className="break-words px-md py-xs text-caption text-warning" data-history-state="stale">
+      Showing the last confirmed changes; the latest read failed: {changes.stale_reason}
+    </p>
+  ) : null;
   if (items.length === 0) {
-    return <p className="px-md py-sm text-caption text-muted" data-history-state="clean">No changes in this checkout.</p>;
+    return (
+      <>
+        {stale}
+        <p className="px-md py-sm text-caption text-muted" data-history-state="clean">No changes in this checkout.</p>
+      </>
+    );
   }
   return (
+    <>
+    {stale}
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto" data-history-root={rootPath} aria-label="History changes">
       <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize()}px` }}>
         {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -115,5 +129,6 @@ export function HistoryList({ actions }: { actions: Actions }) {
         })}
       </div>
     </div>
+    </>
   );
 }

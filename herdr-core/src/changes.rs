@@ -283,6 +283,7 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
         base_branch,
         diff,
         unavailable_reason: None,
+        stale_reason: None,
     }
 }
 
