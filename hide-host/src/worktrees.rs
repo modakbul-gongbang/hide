@@ -673,34 +673,72 @@ fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
             "-z",
         ],
     )?;
-    Ok(listed
-        .split('\0')
-        .filter(|entry| entry.ends_with('/'))
-        .find(|folder| {
-            let folder = worktree.join(folder);
-            folder.join(".git").exists() || walkdir_has_git(&folder)
-        })
-        .map(|folder| folder.trim_end_matches('/').to_owned()))
+    let mut budget = WalkBudget {
+        entries: IGNORED_WALK_ENTRIES,
+        until: std::time::Instant::now() + IGNORED_WALK_TIME,
+    };
+    for folder in listed.split('\0').filter(|entry| entry.ends_with('/')) {
+        if holds_repository(&worktree.join(folder), &mut budget)? {
+            return Ok(Some(folder.trim_end_matches('/').to_owned()));
+        }
+    }
+    Ok(None)
 }
 
-/// Whether any folder below `folder` holds a `.git`, looked for at most a few
-/// levels down so a large ignored tree (`node_modules`) stays cheap.
-fn walkdir_has_git(folder: &Path) -> bool {
-    fn visit(folder: &Path, depth: usize) -> bool {
-        if depth == 0 {
-            return false;
+/// How much of the ignored folders one removal looks through for a nested
+/// repository. A walk that runs out, or a folder it cannot read, refuses the
+/// removal: `git worktree remove` would delete what was not looked at.
+const IGNORED_WALK_ENTRIES: usize = 2_000_000;
+const IGNORED_WALK_TIME: Duration = Duration::from_secs(30);
+
+struct WalkBudget {
+    entries: usize,
+    until: std::time::Instant,
+}
+
+/// Whether `folder` or any folder below it holds a `.git`. Links are not
+/// followed: removal deletes the link, not what it points to.
+fn holds_repository(folder: &Path, budget: &mut WalkBudget) -> Result<bool, String> {
+    let unchecked = |reason: String| {
+        format!(
+            "The worktree was not removed: {reason}, so Hide could not confirm it holds no other Git repository. Remove it in the terminal after checking."
+        )
+    };
+    let mut pending = vec![folder.to_path_buf()];
+    while let Some(folder) = pending.pop() {
+        if std::fs::symlink_metadata(folder.join(".git")).is_ok() {
+            return Ok(true);
         }
-        let Ok(entries) = std::fs::read_dir(folder) else {
-            return false;
-        };
-        entries.flatten().any(|entry| {
-            let Ok(kind) = entry.file_type() else {
-                return false;
-            };
-            kind.is_dir() && (entry.path().join(".git").exists() || visit(&entry.path(), depth - 1))
-        })
+        let entries = std::fs::read_dir(&folder).map_err(|error| {
+            unchecked(format!("{} could not be read ({error})", folder.display()))
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                unchecked(format!("{} could not be read ({error})", folder.display()))
+            })?;
+            budget.entries = budget.entries.checked_sub(1).ok_or_else(|| {
+                unchecked(format!(
+                    "its ignored folders hold more than {IGNORED_WALK_ENTRIES} entries"
+                ))
+            })?;
+            if std::time::Instant::now() >= budget.until {
+                return Err(unchecked(format!(
+                    "its ignored folders took longer than {} seconds to look through",
+                    IGNORED_WALK_TIME.as_secs()
+                )));
+            }
+            let kind = entry.file_type().map_err(|error| {
+                unchecked(format!(
+                    "{} could not be read ({error})",
+                    entry.path().display()
+                ))
+            })?;
+            if kind.is_dir() {
+                pending.push(entry.path());
+            }
+        }
     }
-    visit(folder, 3)
+    Ok(false)
 }
 
 /// `Command::output` within [`GIT_DEADLINE`], for the branch checks.
@@ -1088,5 +1126,22 @@ mod ignored_repository_tests {
         std::fs::create_dir_all(repo.join("vendor/lib")).unwrap();
         run(&repo.join("vendor/lib"), &["init", "-q"]);
         assert_eq!(ignored_repository(repo).unwrap(), Some("vendor".to_owned()));
+        std::fs::remove_dir_all(repo.join("vendor")).unwrap();
+
+        // Deeper than any fixed limit would look (GOPATH style).
+        let deep = repo.join("build/src/github.com/org/repo");
+        std::fs::create_dir_all(&deep).unwrap();
+        run(&deep, &["init", "-q"]);
+        assert_eq!(ignored_repository(repo).unwrap(), Some("build".to_owned()));
+        std::fs::remove_dir_all(deep.join(".git")).unwrap();
+
+        // A folder that cannot be read refuses rather than passing unseen.
+        use std::os::unix::fs::PermissionsExt;
+        let sealed = repo.join("build/src/sealed");
+        std::fs::create_dir_all(&sealed).unwrap();
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let refused = ignored_repository(repo);
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(refused.unwrap_err().contains("could not confirm"));
     }
 }
