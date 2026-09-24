@@ -297,6 +297,29 @@ fn a_device_file_is_read_on_a_worker_and_shows_as_a_tab_when_it_arrives() {
     );
 }
 
+/// A read still running when its device is removed opens no tab when its
+/// answer lands.
+#[test]
+fn a_device_read_that_lands_after_the_device_was_removed_opens_nothing() {
+    let f = Fixture::new();
+    f.device.hold();
+    f.open("a.txt");
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime.retire_device_editor_tabs(DEVICE);
+        assert!(runtime.snapshot.editor.opening.is_empty());
+    }
+    f.device.release();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while f.device.waiting() > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    let runtime = f.shared.lock().unwrap();
+    assert!(runtime.snapshot.editor.tabs.is_empty());
+    assert!(runtime.snapshot.editor.document.is_none());
+}
+
 /// B34: the answer belongs to the checkout that asked. The operator moved
 /// on meanwhile, so the tab joins that checkout without taking the screen.
 #[test]

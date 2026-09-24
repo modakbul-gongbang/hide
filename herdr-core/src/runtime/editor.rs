@@ -386,6 +386,7 @@ impl Runtime {
         self.recent_closed
             .retain(|item| item.device_id() != device_id);
         self.sync_recent_closed_snapshot();
+        self.forget_device_opens(&scope);
     }
 
     /// Makes a preview tab an ordinary tab in the same slot. Returns whether

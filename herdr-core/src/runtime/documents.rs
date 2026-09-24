@@ -291,6 +291,17 @@ impl Runtime {
         }
     }
 
+    /// Drops reads still running for checkouts under `scope` (a removed
+    /// device's `remote:<id>:`), so a late answer opens no tab for it.
+    pub(super) fn forget_device_opens(&mut self, scope: &str) {
+        let before = self.document_opens.len();
+        self.document_opens
+            .retain(|_, open| !open.checkout_id.starts_with(scope));
+        if self.document_opens.len() != before {
+            self.sync_opening_snapshot();
+        }
+    }
+
     fn sync_opening_snapshot(&mut self) {
         let mut opening: Vec<_> = self.document_opens.values().collect();
         opening.sort_by_key(|open| open.generation);

@@ -582,6 +582,18 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
         Weak::new(),
         ChangeNotifier::noop(),
     ));
+    // A registration answer comes from the device's ready helper.
+    runtime.device_hosts.insert(
+        TARGET.to_owned(),
+        hosts::DeviceHost {
+            phase: hosts::HostPhase::Ready {
+                host: FakeDevice::new(),
+                platform: "macos aarch64".to_owned(),
+                helper_path: "/fake/hide-host-helper".to_owned(),
+            },
+            generation: 1,
+        },
+    );
     assert!(runtime.ingest_device_registration(
         TARGET,
         "Other".to_owned(),
@@ -896,4 +908,21 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
     );
     assert!(runtime.recent_closed.is_empty());
     assert_eq!(runtime.snapshot.status.last_error, None);
+}
+
+/// A device removed while its helper judged a folder takes no registration
+/// from that late answer.
+#[test]
+fn a_registration_answer_after_its_device_was_removed_is_dropped() {
+    let t = tree();
+    let mut runtime = runtime();
+    assert!(!runtime.ingest_device_registration(
+        TARGET,
+        "Other".to_owned(),
+        Ok(hide_host::register::Registrable {
+            root: t.other.clone(),
+            is_git: false,
+        }),
+    ));
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
 }

@@ -500,6 +500,16 @@ impl Runtime {
         label: String,
         answer: Result<hide_host::register::Registrable, String>,
     ) -> bool {
+        // A device removed while its helper judged the folder takes no
+        // registration from that late answer.
+        // Removing a device forgets its host (`forget_device_host`).
+        if !self.device_hosts.contains_key(device) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "registration", "kind": "create.device_gone",
+                "target": device,
+            }));
+            return false;
+        }
         let registrable = match answer {
             Ok(registrable) => registrable,
             Err(message) => {
