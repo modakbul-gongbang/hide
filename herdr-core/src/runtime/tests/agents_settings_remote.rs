@@ -299,15 +299,13 @@ fn remote_file_results_are_scoped_and_generation_guarded() {
     }))
     .expect("remote file event");
     assert!(runtime.dispatch_json(&request));
-    // No helper consent: the device lists nothing and says why in place.
+    // No helper consent: the device lists nothing and says in place what
+    // allowing it installs and runs, for the shell to ask with (B50).
     let files = &runtime.snapshot.status.remote[0].files;
-    assert_eq!(files.state, "unavailable");
-    assert!(
-        files
-            .message
-            .as_deref()
-            .is_some_and(|message| !message.is_empty())
-    );
+    assert_eq!(files.state, "not_allowed");
+    let message = files.message.as_deref().unwrap();
+    assert!(message.contains(&runtime.host_helper_root()), "{message}");
+    assert!(message.contains("only while Hide is connected over SSH"));
 
     runtime.snapshot.status.remote[0].files = RemoteFileListSnapshot {
         root_path: Some(root_path.to_owned()),

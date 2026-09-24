@@ -55,6 +55,10 @@ cargo build --manifest-path "$worktree_root/herdr-core/Cargo.toml" --release
 # own executable; a bundle without it can report hook state but not install one.
 cargo build --manifest-path "$worktree_root/Cargo.toml" --release \
     -p hide-agent-hooks --bin hide-agent-hooks
+# The device helper is what Hide installs on a device the operator allowed,
+# so the app carries the build for this Mac's platform (PRD S5.5 D-20).
+cargo build --manifest-path "$worktree_root/Cargo.toml" --release \
+    -p hide-host --bin hide-host-helper
 rust_archive="$worktree_root/target/release/libherdr_core.a"
 rust_archive_hash="$(LC_ALL=C LANG=C /usr/bin/shasum -a 256 "$rust_archive" | /usr/bin/awk '{print $1}')"
 swift build --package-path "$macos_root" --disable-keychain --disable-sandbox \
@@ -75,6 +79,10 @@ install -m 755 \
 install -m 755 \
     "$worktree_root/target/release/hide-agent-hooks" \
     "$app_root/Contents/MacOS/hide-agent-hooks"
+mkdir -p "$app_root/Contents/Resources/host-helper"
+install -m 755 \
+    "$worktree_root/target/release/hide-host-helper" \
+    "$app_root/Contents/Resources/host-helper/hide-host-helper-macos-aarch64"
 install -m 644 \
     "$macos_root/Resources/Info.plist" \
     "$app_root/Contents/Info.plist"

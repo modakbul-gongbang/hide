@@ -702,7 +702,10 @@ mod tests {
         );
         apply_line_counts(
             &mut entries,
-            "12\t3\tsrc/lib.rs\0-\t-\tsrc/bin.dat\07\t2\t\0src/old name.rs\0src/새 이름.rs\0",
+            concat!(
+                "12\t3\tsrc/lib.rs\0-\t-\tsrc/bin.dat\0",
+                "7\t2\t\0src/old name.rs\0src/새 이름.rs\0",
+            ),
         );
         let counts = |path: &str| {
             let entry = entries.iter().find(|entry| entry.path == path).unwrap();

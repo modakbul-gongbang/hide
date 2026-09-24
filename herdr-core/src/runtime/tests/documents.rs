@@ -44,6 +44,7 @@ pub(super) struct FakeDevice {
     gate: Mutex<Gate>,
     released: Condvar,
     saves: Mutex<Vec<String>>,
+    pins: Mutex<HashMap<String, hide_host::RootIdentity>>,
 }
 
 impl FakeDevice {
@@ -53,6 +54,7 @@ impl FakeDevice {
             gate: Mutex::new(Gate::default()),
             released: Condvar::new(),
             saves: Mutex::new(Vec::new()),
+            pins: Mutex::new(HashMap::new()),
         })
     }
 
@@ -121,6 +123,18 @@ impl HostChannel for FakeDevice {
             }
             _ => InProcessHost.call(call, timeout),
         }
+    }
+
+    fn pinned(&self, root: &str) -> Option<hide_host::RootIdentity> {
+        self.pins.lock().unwrap().get(root).copied()
+    }
+
+    fn pin(&self, root: &str, identity: Option<hide_host::RootIdentity>) {
+        let mut pins = self.pins.lock().unwrap();
+        match identity {
+            Some(identity) => pins.insert(root.to_owned(), identity),
+            None => pins.remove(root),
+        };
     }
 }
 
@@ -834,5 +848,89 @@ fn a_device_explorer_change_runs_on_its_host_and_the_open_tab_follows_it() {
     assert!(
         !f.root.join("a.txt").exists(),
         "the save did not recreate the old path"
+    );
+}
+
+/// A device folder removed and made again at the same path after it was
+/// listed is a different folder: a change or an open names the root the
+/// listing pinned, so it is refused there instead of landing in the new one.
+#[test]
+fn a_device_folder_replaced_after_it_was_listed_takes_no_change_or_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap().join("checkout");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "first").unwrap();
+    let device = FakeDevice::new();
+    let root_text = root.to_string_lossy().into_owned();
+    crate::host_access::list_folder(device.as_ref(), &root_text, "").unwrap();
+
+    std::fs::rename(&root, dir.path().join("moved")).unwrap();
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a.txt"), "second").unwrap();
+    let place = files::DocumentRoot {
+        device_id: DEVICE.to_owned(),
+        path: root_text.clone(),
+        identity: None,
+    };
+    let rename = files::ExplorerOperation::rename(&root, &root.join("a.txt"), "b.txt").unwrap();
+    assert!(files::apply_explorer_operation(device.as_ref(), &place, &rename).is_err());
+    assert!(root.join("a.txt").is_file(), "the new folder is untouched");
+
+    let refused = files::open_document(
+        device.as_ref(),
+        &place,
+        &root.join("a.txt").to_string_lossy(),
+    );
+    assert!(refused.is_err());
+    // The refused open unpinned the root; the operator's next open adopts
+    // the folder now at that path.
+    let (document, _) = files::open_document(
+        device.as_ref(),
+        &place,
+        &root.join("a.txt").to_string_lossy(),
+    )
+    .unwrap();
+    assert_eq!(document.contents_utf8.as_deref(), Some("second"));
+}
+
+/// Reload and a save both decide which text and revision the tab holds, so
+/// one waits for the other instead of taking its state away: a reload
+/// landing mid-save would leave the save's revision on the reloaded text,
+/// and the next save would overwrite the file without a conflict.
+#[test]
+fn reload_and_save_do_not_overtake_each_other_on_one_tab() {
+    let f = Fixture::new();
+    f.open_and_wait("a.txt");
+    f.device.hold();
+    f.save("a.txt", "saved\n");
+    f.wait("the save to be sent", |_| f.device.waiting() == 1);
+    f.dispatch("file_conflict", serde_json::json!({"action": "reload"}));
+    assert_eq!(f.last_error().as_deref(), Some("file.reload_busy"));
+    f.device.release();
+    f.wait_for_document("a.txt", "the save", |document| !document.dirty);
+    assert_eq!(
+        f.document("a.txt").unwrap().revision.as_deref(),
+        Some(hide_host::document::revision_of(b"saved\n").as_str())
+    );
+
+    std::fs::write(f.root.join("a.txt"), "outside\n").unwrap();
+    f.device.hold();
+    f.dispatch("file_conflict", serde_json::json!({"action": "reload"}));
+    f.wait("the reload to be sent", |_| f.device.waiting() == 1);
+    f.save("a.txt", "typed during reload\n");
+    assert_eq!(f.last_error().as_deref(), Some("file.save_during_reload"));
+    assert!(
+        f.device
+            .saves()
+            .iter()
+            .all(|sent| sent != "typed during reload\n")
+    );
+    f.device.release();
+    f.wait_for_document("a.txt", "the reload", |document| {
+        document.contents_utf8.as_deref() == Some("outside\n")
+    });
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a.txt")).unwrap(),
+        "outside\n"
     );
 }

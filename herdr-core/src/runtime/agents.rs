@@ -22,6 +22,26 @@ impl Runtime {
         };
     }
 
+    /// Lists the device's file panel root again once its helper is ready, when
+    /// the last listing could not run for want of it.
+    pub(super) fn relist_remote_files(&mut self, target_id: &str) {
+        let Some(root_path) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target_id)
+            .filter(|status| matches!(status.files.state.as_str(), "unavailable" | "not_allowed"))
+            .and_then(|status| status.files.root_path.clone())
+        else {
+            return;
+        };
+        self.request_remote_file_list(RemoteFileListPayload {
+            target_id: target_id.to_owned(),
+            root_path,
+        });
+    }
+
     pub(super) fn request_remote_file_list(&mut self, payload: RemoteFileListPayload) -> bool {
         let target_id = payload.target_id;
         let root_path = payload.root_path;
@@ -102,6 +122,18 @@ impl Runtime {
             Err(message) => {
                 let generation = self.advance_remote_file_generation();
                 self.mark_remote_files_unavailable(status_index, root_path, message, generation);
+                // A device without consent says what allowing it installs
+                // and runs, so the shell can ask for it where the files are
+                // (PRD S5.5 B50).
+                let host = self.host_snapshot(&target_id);
+                if host.state == "not_allowed" {
+                    let helper_root = host.helper_root.unwrap_or_else(|| self.host_helper_root());
+                    let files = &mut self.snapshot.status.remote[status_index].files;
+                    files.state = "not_allowed".to_owned();
+                    files.message = Some(format!(
+                        "Hide reads this device's files through a small helper it installs at {helper_root} and runs only while Hide is connected over SSH. Allowing it lets Hide read and change files and Git in this device's checkouts; later updates within the same scope install without asking again."
+                    ));
+                }
                 return true;
             }
         };

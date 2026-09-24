@@ -114,7 +114,21 @@ struct RightPanel: View {
 
     @ViewBuilder
     private var remoteFileTree: some View {
-        if let fileError = model.remote.fileError {
+        if let prompt = model.remote.fileConsentPrompt {
+            VStack(spacing: HideTheme.spacingMD) {
+                HideEmptyState {
+                    Label("Allow Hide's helper on \(model.remote.targetLabel)", systemImage: "lock.shield")
+                } description: {
+                    Text(prompt)
+                }
+                Button("Allow helper", action: model.allowRemoteFileHelper)
+                    .buttonStyle(HideTextButtonStyle(appearance: .prominent))
+                    .accessibilityIdentifier("remote-files-allow-helper")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(ShellMetrics.panelPadding)
+            .accessibilityIdentifier("remote-files-consent")
+        } else if let fileError = model.remote.fileError {
             HideEmptyState {
                 Label("Remote files unavailable", systemImage: "exclamationmark.triangle")
             } description: {

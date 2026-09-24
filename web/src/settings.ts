@@ -118,7 +118,7 @@ export function socketProblem(path: string): string | null {
   const trimmed = path.trim();
   if (!trimmed) return null;
   // eslint-disable-next-line no-control-regex
-  if (!trimmed.startsWith("/") || trimmed === "/" || /[\u0000-\u001f]/.test(trimmed)) return "Enter an absolute socket path on the device, such as /Users/me/.config/herdr/herdr.sock.";
+  if (!trimmed.startsWith("/") || trimmed === "/" || /[\u0000-\u001f]/.test(trimmed)) return "Enter an absolute socket path on the device, such as /Users/example/.config/herdr/herdr.sock.";
   return null;
 }
 

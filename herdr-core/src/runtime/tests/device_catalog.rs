@@ -372,3 +372,35 @@ fn a_device_whose_helper_is_not_allowed_shows_its_workspaces_unconfirmed() {
         "remote:mini:workspace:w1"
     );
 }
+
+/// An attempt started before a device was removed and added again under the
+/// same id answers late: its failure or its close must not touch the new
+/// connection, whose attempt number the removal did not reset.
+#[test]
+fn a_helper_attempt_from_before_a_removal_cannot_settle_the_new_connection() {
+    let mut runtime = runtime();
+    let stale = runtime.advance_host_generation(TARGET);
+    runtime.forget_device_host(TARGET);
+    let current = runtime.advance_host_generation(TARGET);
+    assert_ne!(stale, current);
+    let device = FakeDevice::new();
+    runtime.device_hosts.get_mut(TARGET).unwrap().phase = hosts::HostPhase::Ready {
+        host: device,
+        platform: "macos aarch64".to_owned(),
+        helper_path: "/fake/hide-host-helper".to_owned(),
+    };
+
+    assert!(!runtime.ingest_host_established(
+        TARGET,
+        stale,
+        Err(crate::remote::host::EstablishError::Helper(
+            "old attempt".to_owned()
+        )),
+    ));
+    assert!(!runtime.ingest_host_closed(TARGET, stale, "old attempt closed".to_owned()));
+    assert!(matches!(
+        runtime.device_hosts[TARGET].phase,
+        hosts::HostPhase::Ready { .. }
+    ));
+    assert!(runtime.ingest_host_closed(TARGET, current, "closed".to_owned()));
+}

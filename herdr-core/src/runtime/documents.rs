@@ -419,6 +419,22 @@ impl Runtime {
             );
             return true;
         };
+        // A save in flight owns the tab's revision until its answer is
+        // settled; a reload landing first would take the slot with it and
+        // let the save's revision describe the reloaded text (PRD S5.5 B13).
+        if self.document_saves.get(tab_id).is_some_and(|slot| {
+            slot.running || slot.checking || slot.unsettled.is_some() || slot.queued.is_some()
+        }) {
+            self.set_error(
+                "file.reload_busy",
+                format!(
+                    "{} is still being saved; reload once the save has finished",
+                    tab.path
+                ),
+                true,
+            );
+            return true;
+        }
         match self.document_source(&tab.workspace_id, &tab.checkout_id) {
             Ok((root, channel)) => self.start_document_open(
                 root,
@@ -486,6 +502,26 @@ impl Runtime {
             self.set_error("file.save_rejected", message, false);
             return true;
         }
+        // The operator asked for the file's text in place of the draft; a
+        // save sent now would race the reload for which text the tab keeps.
+        if self
+            .document_opens
+            .get(&tab_id)
+            .is_some_and(|open| open.reload)
+        {
+            self.set_error(
+                "file.save_during_reload",
+                format!(
+                    "{} is being reloaded, so this save was not sent",
+                    payload.path
+                ),
+                true,
+            );
+            return true;
+        }
+        let Some(document) = self.editor_documents.get_mut(&tab_id) else {
+            return true;
+        };
         document.contents_utf8 = Some(payload.contents_utf8.clone());
         document.dirty = true;
         self.sync_file_tab_dirty(&tab_id);
@@ -798,7 +834,7 @@ impl Runtime {
                 slot.waiting = None;
                 self.set_error(
                     "file.save_not_applied",
-                    "The unanswered save did not reach the file. The draft is kept; save again when ready.",
+                    "The file was read back unchanged, so the unanswered save has not reached it yet. The device may still finish it; the draft is kept, and a save that finds the file changed will show the conflict.",
                     true,
                 );
             }

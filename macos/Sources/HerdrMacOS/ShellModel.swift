@@ -1315,6 +1315,11 @@ final class ShellModel: ObservableObject {
         setShortcutModifiersHeld(HideHintState.modifiers(in: NSEvent.modifierFlags))
     }
 
+    func allowRemoteFileHelper() {
+        guard let targetID = remote.navigation?.deviceID else { return }
+        core.allowDeviceHost(deviceID: targetID)
+    }
+
     func loadRemoteFiles(path: String) {
         guard isRemoteContext,
               remote.phase == .ready,

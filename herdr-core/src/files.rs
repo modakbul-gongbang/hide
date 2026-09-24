@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 use hide_host::document::Document;
-use hide_host::protocol::{Call, RevisionNow, RootOpened, RootRef};
+use hide_host::protocol::{Call, RevisionNow, RootRef};
 use hide_host::save::Saved;
 use hide_host::{ErrorCode, RootIdentity};
 
@@ -239,37 +239,29 @@ pub fn open_document(
         relative_under(&root.path, absolute)
     }
     .map_err(OpenFailure::Failed)?;
-    let identity = match root.identity {
-        Some(identity) => identity,
-        None => {
-            call_as::<RootOpened>(
-                channel,
-                Call::RootOpen {
-                    root: root.path.clone(),
-                },
-                OPEN_TIMEOUT,
-            )
-            .map_err(open_failure)?
-            .identity
-        }
-    };
     let place = DocumentPlace {
         device_id: root.device_id.clone(),
-        root: RootRef {
-            path: root.path.clone(),
-            identity,
-        },
+        root: root_ref(channel, root).map_err(open_failure)?,
         relative,
     };
-    let document: Document = call_as(
+    let document: Result<Document, _> = call_as(
         channel,
         Call::OpenDocument {
             root: place.root.clone(),
             path: place.relative.clone(),
         },
         OPEN_TIMEOUT,
-    )
-    .map_err(open_failure)?;
+    );
+    // An open is an explicit read, like a listing: a replaced root is
+    // refused once and unpinned, so the operator's next open adopts the
+    // folder now at that path.
+    if let Err(HostCallError::Refused(error)) = &document
+        && error.code == ErrorCode::RootReplaced
+        && root.identity.is_none()
+    {
+        channel.pin(&root.path, None);
+    }
+    let document = document.map_err(open_failure)?;
     Ok((document_snapshot(absolute, document), place))
 }
 
@@ -536,25 +528,20 @@ fn relative_or_root(root: &str, absolute: &Path) -> Result<String, String> {
 }
 
 /// The root as the checkout's host requests name it: the identity hided
-/// pinned, or the one a fresh `root_open` on that host reports.
-fn root_ref(channel: &dyn HostChannel, root: &DocumentRoot) -> Result<RootRef, HostCallError> {
-    let identity = match root.identity {
-        Some(identity) => identity,
-        None => {
-            call_as::<RootOpened>(
-                channel,
-                Call::RootOpen {
-                    root: root.path.clone(),
-                },
-                OPEN_TIMEOUT,
-            )?
-            .identity
-        }
-    };
-    Ok(RootRef {
-        path: root.path.clone(),
-        identity,
-    })
+/// pinned, or the one the channel pinned when it first touched the root, so
+/// a device folder replaced after it was listed is refused rather than
+/// opened or changed in its place.
+pub(crate) fn root_ref(
+    channel: &dyn HostChannel,
+    root: &DocumentRoot,
+) -> Result<RootRef, HostCallError> {
+    match root.identity {
+        Some(identity) => Ok(RootRef {
+            path: root.path.clone(),
+            identity,
+        }),
+        None => crate::host_access::pinned_root(channel, &root.path, OPEN_TIMEOUT),
+    }
 }
 
 /// Runs the change on the machine that holds the checkout, through the same

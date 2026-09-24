@@ -33,8 +33,10 @@ pub(super) enum HostPhase {
 
 pub(super) struct DeviceHost {
     pub(super) phase: HostPhase,
-    /// Advances on every connection attempt and close, so a late answer from
-    /// an older attempt is recognised and dropped.
+    /// Taken from the runtime-wide counter on every connection attempt and
+    /// close, so a late answer from an older attempt, including one made
+    /// before the device was removed and added again, is recognised and
+    /// dropped.
     pub(super) generation: u64,
 }
 
@@ -100,6 +102,7 @@ impl Runtime {
             }));
             self.close_device_host(device_id, "consent renewed");
             self.start_device_host(device_id);
+            self.relist_remote_files(device_id);
         } else {
             registration.host_consent = None;
             self.persist_current_ui_state();
@@ -109,14 +112,7 @@ impl Runtime {
                 "target": device_id,
             }));
             self.close_device_host(device_id, "consent revoked");
-            let host = self
-                .device_hosts
-                .entry(device_id.to_owned())
-                .or_insert(DeviceHost {
-                    phase: HostPhase::NotAllowed,
-                    generation: 0,
-                });
-            host.phase = HostPhase::NotAllowed;
+            self.set_host_phase(device_id, HostPhase::NotAllowed);
         }
         self.refresh_device_snapshots();
         true
@@ -128,20 +124,13 @@ impl Runtime {
         let Some(registration) = self.device_registration(device_id).cloned() else {
             return false;
         };
-        let generation = {
-            let host = self
-                .device_hosts
-                .entry(device_id.to_owned())
-                .or_insert(DeviceHost {
-                    phase: HostPhase::NotAllowed,
-                    generation: 0,
-                });
-            if matches!(host.phase, HostPhase::Connecting | HostPhase::Ready { .. }) {
-                return false;
-            }
-            host.generation += 1;
-            host.generation
-        };
+        if matches!(
+            self.device_hosts.get(device_id).map(|host| &host.phase),
+            Some(HostPhase::Connecting | HostPhase::Ready { .. })
+        ) {
+            return false;
+        }
+        let generation = self.advance_host_generation(device_id);
         let Some(consent) = registration.host_consent.clone() else {
             self.set_host_phase(device_id, HostPhase::NotAllowed);
             return self.refresh_device_snapshots();
@@ -213,18 +202,27 @@ impl Runtime {
         self.refresh_device_snapshots()
     }
 
-    fn set_host_phase(&mut self, device_id: &str, phase: HostPhase) {
-        let host = self
-            .device_hosts
+    fn device_host_entry(&mut self, device_id: &str) -> &mut DeviceHost {
+        self.device_hosts
             .entry(device_id.to_owned())
             .or_insert(DeviceHost {
                 phase: HostPhase::NotAllowed,
                 generation: 0,
-            });
-        host.phase = phase;
+            })
     }
 
-    fn ingest_host_established(
+    fn set_host_phase(&mut self, device_id: &str, phase: HostPhase) {
+        self.device_host_entry(device_id).phase = phase;
+    }
+
+    pub(super) fn advance_host_generation(&mut self, device_id: &str) -> u64 {
+        self.last_host_generation += 1;
+        let generation = self.last_host_generation;
+        self.device_host_entry(device_id).generation = generation;
+        generation
+    }
+
+    pub(super) fn ingest_host_established(
         &mut self,
         device_id: &str,
         generation: u64,
@@ -277,6 +275,7 @@ impl Runtime {
                 );
                 self.settle_device_saves(device_id);
                 self.reset_device_facts(device_id);
+                self.relist_remote_files(device_id);
             }
             Err(error) => {
                 let message = error.to_string();
@@ -318,7 +317,12 @@ impl Runtime {
         )
     }
 
-    fn ingest_host_closed(&mut self, device_id: &str, generation: u64, reason: String) -> bool {
+    pub(super) fn ingest_host_closed(
+        &mut self,
+        device_id: &str,
+        generation: u64,
+        reason: String,
+    ) -> bool {
         let Some(host) = self.device_hosts.get_mut(device_id) else {
             return false;
         };
@@ -333,8 +337,9 @@ impl Runtime {
     /// Ends the helper connection, if any. Work still waiting settles as
     /// unknown in its own caller.
     pub(super) fn close_device_host(&mut self, device_id: &str, reason: &str) {
-        if let Some(host) = self.device_hosts.get_mut(device_id) {
-            host.generation += 1;
+        if self.device_hosts.contains_key(device_id) {
+            self.advance_host_generation(device_id);
+            let host = self.device_host_entry(device_id);
             if let HostPhase::Ready { host: remote, .. } =
                 std::mem::replace(&mut host.phase, HostPhase::Unavailable(reason.to_owned()))
             {
