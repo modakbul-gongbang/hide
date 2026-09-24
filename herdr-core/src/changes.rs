@@ -95,6 +95,13 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
             };
         }
     };
+    let Some(scope) = repository_scope(&toplevel, &request.root_path) else {
+        return ChangesSnapshot {
+            root_path: Some(root_path),
+            unavailable_reason: Some("This checkout is outside the Git repository".to_owned()),
+            ..ChangesSnapshot::default()
+        };
+    };
 
     let mut entries = match git_status(&toplevel) {
         Ok(status) => parse_status(&status, &toplevel),
@@ -111,13 +118,17 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
     if let Ok(numstat) = git_numstat(&toplevel, &["diff", "--numstat", "-z", "HEAD"]) {
         apply_line_counts(&mut entries, &numstat);
     }
+    let entries = scope_entries(entries, &request.root_path, &scope);
 
     // A base the reader could not resolve means there is nothing to compare
     // against, so the committed group is absent rather than empty - an empty
     // group would claim the branch has no commits.
     let (base_branch, committed) = match request.base_branch.as_deref() {
         Some(base) => match read_committed(&toplevel, base) {
-            Some(committed) => (Some(base.to_owned()), committed),
+            Some(committed) => (
+                Some(base.to_owned()),
+                scope_entries(committed, &request.root_path, &scope),
+            ),
             None => (None, Vec::new()),
         },
         None => (None, Vec::new()),
@@ -136,9 +147,9 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
         .and_then(|path| group.iter().find(|entry| &entry.path == path));
     let diff = selected.map(|entry| {
         if request.selected_committed {
-            read_committed_diff(&toplevel, entry, base_branch.as_deref())
+            read_committed_diff(&toplevel, &scope, entry, base_branch.as_deref())
         } else {
-            read_diff(&toplevel, entry)
+            read_diff(&toplevel, &scope, entry)
         }
     });
 
@@ -152,6 +163,65 @@ fn read(request: &ChangesRequest) -> ChangesSnapshot {
         diff,
         unavailable_reason: None,
     }
+}
+
+/// A registration may name a folder below the Git root. Keep the existing
+/// reader, but project only paths owned by that folder. Git's rename source
+/// can cross the boundary, so an inbound rename is an addition and an
+/// outbound rename is a deletion from this checkout's perspective.
+fn repository_scope(toplevel: &Path, root: &Path) -> Option<PathBuf> {
+    let repository = toplevel.canonicalize().ok()?;
+    root.canonicalize()
+        .ok()?
+        .strip_prefix(repository)
+        .ok()
+        .map(Path::to_path_buf)
+}
+
+fn scope_entries(
+    entries: Vec<ChangedFileSnapshot>,
+    root: &Path,
+    scope: &Path,
+) -> Vec<ChangedFileSnapshot> {
+    let mut scoped = Vec::new();
+    for mut entry in entries {
+        let current = Path::new(&entry.relative_path)
+            .strip_prefix(scope)
+            .ok()
+            .map(Path::to_path_buf);
+        let previous = entry.previous_relative_path.as_deref().and_then(|path| {
+            Path::new(path)
+                .strip_prefix(scope)
+                .ok()
+                .map(Path::to_path_buf)
+        });
+        match (current, previous) {
+            (Some(current), previous) => {
+                let crosses_boundary =
+                    entry.status == ChangedFileStatus::Renamed && previous.is_none();
+                entry.relative_path = current.to_string_lossy().into_owned();
+                entry.path = root.join(current).to_string_lossy().into_owned();
+                entry.previous_relative_path =
+                    previous.map(|path| path.to_string_lossy().into_owned());
+                if crosses_boundary {
+                    entry.status = ChangedFileStatus::Added;
+                }
+                scoped.push(entry);
+            }
+            (None, Some(previous)) if entry.status == ChangedFileStatus::Renamed => {
+                entry.relative_path = previous.to_string_lossy().into_owned();
+                entry.path = root.join(previous).to_string_lossy().into_owned();
+                entry.previous_relative_path = None;
+                entry.status = ChangedFileStatus::Deleted;
+                entry.added_lines = None;
+                entry.removed_lines = None;
+                scoped.push(entry);
+            }
+            _ => {}
+        }
+    }
+    scoped.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    scoped
 }
 
 /// The files this branch's commits changed since `base`, with their line
@@ -294,6 +364,7 @@ fn git_text(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
 /// "what this branch changed", so its diff must be the same comparison.
 fn read_committed_diff(
     toplevel: &Path,
+    scope: &Path,
     entry: &ChangedFileSnapshot,
     base_branch: Option<&str>,
 ) -> ChangedFileDiffSnapshot {
@@ -304,18 +375,18 @@ fn read_committed_diff(
             notice: Some("The base branch could not be resolved in this checkout.".to_owned()),
         };
     };
+    let current = scope
+        .join(&entry.relative_path)
+        .to_string_lossy()
+        .into_owned();
+    let previous = entry
+        .previous_relative_path
+        .as_ref()
+        .map(|path| scope.join(path).to_string_lossy().into_owned())
+        .unwrap_or_else(|| current.clone());
     match git_text(
         toplevel,
-        &[
-            "diff",
-            &format!("{base}...HEAD"),
-            "--",
-            entry
-                .previous_relative_path
-                .as_deref()
-                .unwrap_or(&entry.relative_path),
-            &entry.relative_path,
-        ],
+        &["diff", &format!("{base}...HEAD"), "--", &previous, &current],
     ) {
         Ok(text) => truncate_diff(entry.path.clone(), text),
         Err(reason) => ChangedFileDiffSnapshot {
@@ -361,7 +432,20 @@ fn git_status(toplevel: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn read_diff(toplevel: &Path, entry: &ChangedFileSnapshot) -> ChangedFileDiffSnapshot {
+fn read_diff(
+    toplevel: &Path,
+    scope: &Path,
+    entry: &ChangedFileSnapshot,
+) -> ChangedFileDiffSnapshot {
+    let current = scope
+        .join(&entry.relative_path)
+        .to_string_lossy()
+        .into_owned();
+    let previous = entry
+        .previous_relative_path
+        .as_ref()
+        .map(|path| scope.join(path).to_string_lossy().into_owned())
+        .unwrap_or_else(|| current.clone());
     let text = match entry.status {
         // An untracked file has no index side to diff against, so it is
         // compared with an empty file. `--no-index` reports a difference as
@@ -377,20 +461,7 @@ fn read_diff(toplevel: &Path, entry: &ChangedFileSnapshot) -> ChangedFileDiffSna
                 git_error_text(&output.stderr)
             )),
         }),
-        _ => run_git(
-            toplevel,
-            &[
-                "diff",
-                "HEAD",
-                "--",
-                entry
-                    .previous_relative_path
-                    .as_deref()
-                    .unwrap_or(&entry.relative_path),
-                &entry.relative_path,
-            ],
-        )
-        .and_then(|output| {
+        _ => run_git(toplevel, &["diff", "HEAD", "--", &previous, &current]).and_then(|output| {
             if output.status.success() {
                 Ok(String::from_utf8_lossy(&output.stdout).into_owned())
             } else {
@@ -651,5 +722,172 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert!(projected.entries.is_empty());
         assert!(projected.unavailable_reason.is_some());
+    }
+
+    #[test]
+    fn a_registered_subfolder_keeps_its_history_without_exposing_siblings() {
+        let temporary = tempfile::tempdir().expect("fixture root");
+        let repository = temporary.path();
+        let registered = repository.join("registered");
+        std::fs::create_dir(&registered).unwrap();
+        let git = |arguments: &[&str]| {
+            let output = run_git(repository, arguments).expect("git runs");
+            assert!(
+                output.status.success(),
+                "git {arguments:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.name", "Fixture"]);
+        git(&["config", "user.email", "fixture@example.invalid"]);
+        for (path, content) in [
+            ("registered/inside.txt", "inside base\n"),
+            ("registered/delete.txt", "delete me\n"),
+            ("registered/rename-old.txt", "rename within\n"),
+            ("registered/outgoing.txt", "move out\n"),
+            ("registered/work-out.txt", "working outbound only\n"),
+            ("outside.txt", "outside base\n"),
+            ("outside-source.txt", "move in\n"),
+            ("work-in.txt", "working inbound only\n"),
+        ] {
+            std::fs::write(repository.join(path), content).unwrap();
+        }
+        git(&["add", "."]);
+        git(&["commit", "-m", "base"]);
+        git(&["checkout", "-b", "feature"]);
+        git(&[
+            "mv",
+            "registered/rename-old.txt",
+            "registered/rename-new.txt",
+        ]);
+        git(&["mv", "outside-source.txt", "registered/incoming.txt"]);
+        git(&["mv", "registered/outgoing.txt", "outside-outgoing.txt"]);
+        std::fs::write(registered.join("inside.txt"), "inside committed\n").unwrap();
+        std::fs::write(repository.join("outside.txt"), "outside committed\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "feature"]);
+        git(&["mv", "work-in.txt", "registered/work-in.txt"]);
+        git(&["mv", "registered/work-out.txt", "work-out.txt"]);
+        std::fs::write(registered.join("inside.txt"), "inside working\n").unwrap();
+        std::fs::remove_file(registered.join("delete.txt")).unwrap();
+        std::fs::write(registered.join("new.txt"), "untracked inside\n").unwrap();
+        std::fs::write(repository.join("outside.txt"), "outside working\n").unwrap();
+        std::fs::write(repository.join("outside-new.txt"), "untracked outside\n").unwrap();
+
+        let request = |path: Option<&str>, committed| ChangesRequest {
+            root_path: registered.clone(),
+            selected_path: path.map(|path| registered.join(path).to_string_lossy().into_owned()),
+            selected_committed: committed,
+            base_branch: Some("main".to_owned()),
+        };
+        let listed = read(&request(Some("inside.txt"), false));
+        assert!(listed.unavailable_reason.is_none());
+        assert_eq!(
+            listed
+                .entries
+                .iter()
+                .map(|entry| entry.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "delete.txt",
+                "inside.txt",
+                "new.txt",
+                "work-in.txt",
+                "work-out.txt"
+            ]
+        );
+        assert!(listed.entries.iter().all(|entry| {
+            entry
+                .path
+                .starts_with(&registered.to_string_lossy().to_string())
+        }));
+        assert!(
+            listed
+                .diff
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("inside working")
+        );
+        assert!(!listed.diff.as_ref().unwrap().text.contains("outside"));
+        let working_incoming = listed
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == "work-in.txt")
+            .unwrap();
+        assert_eq!(working_incoming.status, ChangedFileStatus::Added);
+        assert_eq!(working_incoming.previous_relative_path, None);
+        let working_outgoing = listed
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == "work-out.txt")
+            .unwrap();
+        assert_eq!(working_outgoing.status, ChangedFileStatus::Deleted);
+        assert_eq!(working_outgoing.previous_relative_path, None);
+        for (name, outside) in [
+            ("work-in.txt", "a/work-in.txt"),
+            ("work-out.txt", "b/work-out.txt"),
+        ] {
+            let selected = read(&request(Some(name), false));
+            let diff = selected.diff.unwrap();
+            assert!(!diff.text.is_empty(), "{name} has a working diff");
+            assert!(
+                !diff.text.contains(outside),
+                "outside working rename path is hidden"
+            );
+        }
+        assert_eq!(
+            listed
+                .committed
+                .iter()
+                .map(|entry| entry.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "incoming.txt",
+                "inside.txt",
+                "outgoing.txt",
+                "rename-new.txt"
+            ]
+        );
+        let renamed = listed
+            .committed
+            .iter()
+            .find(|entry| entry.relative_path == "rename-new.txt")
+            .unwrap();
+        assert_eq!(renamed.status, ChangedFileStatus::Renamed);
+        assert_eq!(
+            renamed.previous_relative_path.as_deref(),
+            Some("rename-old.txt")
+        );
+        let incoming = listed
+            .committed
+            .iter()
+            .find(|entry| entry.relative_path == "incoming.txt")
+            .unwrap();
+        assert_eq!(incoming.status, ChangedFileStatus::Added);
+        assert_eq!(incoming.previous_relative_path, None);
+        let outgoing = listed
+            .committed
+            .iter()
+            .find(|entry| entry.relative_path == "outgoing.txt")
+            .unwrap();
+        assert_eq!(outgoing.status, ChangedFileStatus::Deleted);
+        assert_eq!(outgoing.previous_relative_path, None);
+        for name in ["incoming.txt", "outgoing.txt", "rename-new.txt"] {
+            let selected = read(&request(Some(name), true));
+            let diff = selected.diff.unwrap();
+            assert!(!diff.text.is_empty(), "{name} has a diff");
+            assert!(
+                !diff.text.contains("outside-source.txt"),
+                "outside rename source is hidden"
+            );
+            assert!(
+                !diff.text.contains("outside-outgoing.txt"),
+                "outside rename destination is hidden"
+            );
+        }
+        let deleted = read(&request(Some("delete.txt"), false));
+        assert!(deleted.diff.unwrap().text.contains("delete me"));
     }
 }

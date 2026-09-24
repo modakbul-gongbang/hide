@@ -66,20 +66,19 @@ export function createActions(dispatch: DispatchFn) {
     ui().setSidebarMode(mode);
   };
 
-  /**
-   * Shows or hides the right panel's Explorer (D-13). The core owns the flag
-   * and computes a checkout's changed files only while the panel shows the
-   * Explorer (`Runtime::changes_request`), so the shell dispatches the ui
-   * state it wants and the panel follows the snapshot.
-   */
+  /** The core owns the right panel's section and visibility. */
   const showExplorerPanel = () => {
     updateUiState({ right_panel_visible: true, right_panel_section: "explorer" });
   };
 
   const toggleRightPanel = () => {
     const state = rest()?.ui_state;
-    const showing = !!state?.right_panel_visible && state.right_panel_section === "explorer";
-    updateUiState({ right_panel_visible: !showing, right_panel_section: "explorer" });
+    if (!state) return;
+    const supported = state.right_panel_section === "explorer" || state.right_panel_section === "changes";
+    updateUiState({
+      right_panel_visible: supported ? !state.right_panel_visible : true,
+      right_panel_section: supported ? state.right_panel_section : "explorer",
+    });
   };
 
   /**
@@ -349,6 +348,19 @@ export function createActions(dispatch: DispatchFn) {
 
     showExplorerPanel,
     toggleRightPanel,
+
+    showRightPanelSection(section: "explorer" | "changes") {
+      updateUiState({ right_panel_visible: true, right_panel_section: section });
+    },
+
+    selectChange(path: string, committed: boolean, preview: boolean) {
+      const here = current();
+      const changes = useShellStore.getState().changes;
+      if (!here || changes?.root_path !== here.checkout.path) return diagnostic("changes_select: checkout is unavailable");
+      const group = committed ? changes.committed : changes.entries;
+      if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
+      dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview } });
+    },
 
     openShortcuts() {
       ui().openOverlay(ui().overlay === "shortcuts" ? "none" : "shortcuts");

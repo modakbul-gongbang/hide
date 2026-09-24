@@ -2637,7 +2637,11 @@ impl Runtime {
                 let tab_id =
                     Self::diff_tab_id(&workspace_id, &checkout_id, &path, payload.committed);
                 if self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id.as_str()) {
-                    return false;
+                    return if payload.preview {
+                        false
+                    } else {
+                        self.promote_editor_tab(&tab_id)
+                    };
                 }
                 self.show_diff_tab(
                     &workspace_id,

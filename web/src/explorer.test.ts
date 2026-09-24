@@ -45,6 +45,7 @@ function changes(entries: [string, ChangedFileStatus][]): ChangesSnapshot {
     base_branch: null,
     selected_path: null,
     selected_committed: false,
+    diff: null,
     unavailable_reason: null,
   };
 }

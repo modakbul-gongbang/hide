@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { allBuffers, BUFFER_MAX_AGE_MS, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, flushBuffer, queueBuffer } from "./buffers";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
+import { PatchView } from "./editor/PatchView";
 import { clearDraft, noteDraft } from "./editor/draft";
-import { activeEditorTab, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
+import { activeEditorTab, changesFor, checkoutById, editorFor, type EditorDocumentSnapshot, type EditorTabSnapshot } from "./snapshot";
 import { downloadFile } from "./fileBytes";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -61,7 +62,29 @@ function EditorTabView({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-editor={tab.id} data-editor-kind={tab.kind}>
       <EditorHeader tab={tab} document={document} actions={actions} />
-      <EditorBody tab={tab} root={root} document={document} scale={scale} findRequest={findRequest} actions={actions} />
+      {tab.kind === "diff"
+        ? <DiffBody tab={tab} root={root} scale={scale} />
+        : <EditorBody tab={tab} root={root} document={document} scale={scale} findRequest={findRequest} actions={actions} />}
+    </div>
+  );
+}
+
+function DiffBody({ tab, root, scale }: { tab: EditorTabSnapshot; root: string; scale: number }) {
+  const changes = useShellStore((s) => changesFor(s.changes, root));
+  if (!changes) return <Notice text="Reading the diff…" state="diff-loading" />;
+  if (changes.unavailable_reason) return <Notice text="History is unavailable for this checkout. Reselect the file to retry." state="diff-unavailable" />;
+  const committed = tab.diff_committed === true;
+  const group = committed ? changes.committed : changes.entries;
+  if (!group.some((entry) => entry.path === tab.path)) {
+    return <Notice text="This file is no longer in the selected History group. Close this tab or choose another row." state="diff-unavailable" />;
+  }
+  const diff = changes.selected_path === tab.path && changes.selected_committed === committed && changes.diff?.path === tab.path
+    ? changes.diff : null;
+  if (!diff) return <Notice text="Reading the diff…" state="diff-loading" />;
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-diff-path={tab.path} data-diff-group={committed ? "committed" : "working"}>
+      {diff.notice ? <div className="border-b border-divider px-md py-xs text-caption text-warning" data-diff-notice="true">{diff.notice}</div> : null}
+      {diff.text ? <PatchView text={diff.text} scale={scale} /> : <div className="min-h-0 flex-1" data-diff-empty="true" />}
     </div>
   );
 }
@@ -75,12 +98,12 @@ function EditorHeader({
   document: EditorDocumentSnapshot | null;
   actions: Actions;
 }) {
-  const isMarkdown = document?.document_kind === "markdown";
+  const isMarkdown = tab.kind === "file" && document?.document_kind === "markdown";
   const editable = document?.document_kind === "text" || isMarkdown;
   return (
     <div className="flex shrink-0 items-center gap-sm border-b border-divider px-md py-xs text-caption text-secondary">
-      <span className="min-w-0 flex-1 truncate" title={tab.path} data-editor-path="true">
-        {tab.path}
+      <span className="min-w-0 flex-1 truncate" title={tab.kind === "diff" ? `${tab.diff_committed ? "Committed on branch" : "Uncommitted"}: ${tab.path}` : tab.path} data-editor-path="true">
+        {tab.kind === "diff" ? `${tab.diff_committed ? "Branch diff" : "Working diff"} · ` : ""}{tab.path}
       </span>
       {document?.dirty ? (
         <span className="text-warning" data-editor-dirty="true">
@@ -98,7 +121,7 @@ function EditorHeader({
           {tab.markdown_live ? "Live" : "Source"}
         </button>
       ) : null}
-      {editable ? (
+      {tab.kind === "file" && editable ? (
         <button
           type="button"
           className={tab.wrap ? "text-primary" : "text-muted hover:text-primary"}
@@ -109,7 +132,7 @@ function EditorHeader({
           Wrap
         </button>
       ) : null}
-      <button
+      {tab.kind === "file" ? <button
         type="button"
         className="text-muted hover:text-primary"
         aria-label="Find in document"
@@ -118,7 +141,7 @@ function EditorHeader({
         onClick={() => actions.requestEditorFind()}
       >
         Find
-      </button>
+      </button> : null}
       {tab.preview ? (
         <button
           type="button"

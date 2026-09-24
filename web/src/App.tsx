@@ -86,6 +86,7 @@ export function App() {
     const rest = useShellStore.getState().rest;
     const open = new Set<string>();
     for (const tab of editorTabs) {
+      if (tab.kind !== "file") continue;
       open.add(tab.id);
       const root = checkoutById(rest, tab.checkout_id)?.path ?? "";
       const before = identities.current.get(tab.id);

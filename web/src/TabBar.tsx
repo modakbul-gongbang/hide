@@ -1,5 +1,6 @@
 import { memo, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { fileIcon } from "./fileIcons";
 import { editorFor, focusedCheckout, type AsyncOperation, type Checkout, type EditorSnapshot, type StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 
@@ -85,10 +86,15 @@ const Strip = memo(function Strip({
         // entries are not drawn; the core does not create them in S3.
         if (entry.kind === "session" || entry.kind === "memory") return null;
         const isEditor = entry.kind === "file" || entry.kind === "diff";
+        const editorTab = isEditor ? editor?.tabs.find((tab) => tab.id === entry.source_id) : null;
+        const identity = editorTab
+          ? `${entry.kind === "diff" ? `${editorTab.diff_committed ? "Committed on branch" : "Uncommitted"} diff` : "File"}: ${editorTab.path}${entry.preview ? " · Preview" : ""}`
+          : entry.label;
         return (
           <TabButton
             key={entry.id}
             entry={entry}
+            identity={identity}
             active={showingEditor === isEditor && entry.source_id === activeId}
             dirty={dirty.has(entry.source_id)}
             saving={savingTabs.has(entry.source_id)}
@@ -97,6 +103,7 @@ const Strip = memo(function Strip({
             dragging={dragging === entry.id}
             over={over === entry.id && dragging !== entry.id}
             onSelect={() => (isEditor ? actions.focusFileTab(entry.source_id) : actions.focusTab(entry.source_id))}
+            onDoubleClick={() => { if (isEditor) actions.keepOpenFile(); }}
             onClose={() => (isEditor ? actions.closeFileTab(entry.source_id) : actions.closeTab(entry.source_id))}
             onPointerDown={(x) => {
               drag.current = { id: entry.id, x, active: false };
@@ -140,6 +147,7 @@ const Strip = memo(function Strip({
 
 const TabButton = memo(function TabButton({
   entry,
+  identity,
   active,
   dirty,
   saving,
@@ -148,6 +156,7 @@ const TabButton = memo(function TabButton({
   dragging,
   over,
   onSelect,
+  onDoubleClick,
   onClose,
   onPointerDown,
   onPointerMove,
@@ -155,6 +164,7 @@ const TabButton = memo(function TabButton({
   onPointerUp,
 }: {
   entry: StripTab;
+  identity: string;
   active: boolean;
   dirty: boolean;
   saving: boolean;
@@ -163,6 +173,7 @@ const TabButton = memo(function TabButton({
   dragging: boolean;
   over: boolean;
   onSelect: () => void;
+  onDoubleClick: () => void;
   onClose: () => void;
   onPointerDown: (x: number) => void;
   onPointerMove: (x: number) => void;
@@ -173,6 +184,9 @@ const TabButton = memo(function TabButton({
     <div
       role="tab"
       aria-selected={active}
+      aria-label={identity}
+      title={identity}
+      tabIndex={0}
       data-tab={entry.source_id}
       data-tab-kind={entry.kind}
       data-preview={entry.preview ? "true" : "false"}
@@ -190,8 +204,18 @@ const TabButton = memo(function TabButton({
       onPointerEnter={onPointerEnter}
       onPointerUp={onPointerUp}
       onClick={onSelect}
+      onDoubleClick={onDoubleClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
     >
       {over ? <span className="absolute inset-y-0 left-0 w-[var(--size-tab-indicator)] bg-accent" /> : null}
+      {entry.kind === "diff" ? <span aria-hidden="true" className="shrink-0 text-warning">±</span> : entry.kind === "file" ? (
+        <span aria-hidden="true" className={`shrink-0 ${fileIcon(entry.label).color}`} style={{ fontFamily: "seti" }}>{fileIcon(entry.label).glyph}</span>
+      ) : null}
       <span className={`min-w-0 flex-1 truncate ${entry.preview ? "italic" : ""}`}>
         {entry.label}
         {saving ? <span className="text-muted"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}

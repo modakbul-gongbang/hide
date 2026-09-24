@@ -384,6 +384,36 @@ fn file_and_diff_previews_share_one_slot() {
     std::fs::remove_dir_all(&directory).ok();
 }
 
+#[test]
+fn double_clicking_the_active_diff_keeps_it_open_in_the_same_slot() {
+    let (mut runtime, checkout_id, directory) = strip_checkout("preview-diff-promote");
+    let changed = directory.join("second.md");
+    runtime.snapshot.changes.root_path = Some(directory.to_string_lossy().into_owned());
+    runtime.snapshot.changes.entries = vec![crate::model::ChangedFileSnapshot {
+        path: changed.to_string_lossy().into_owned(),
+        relative_path: "second.md".to_owned(),
+        previous_relative_path: None,
+        status: crate::model::ChangedFileStatus::Deleted,
+        added_lines: None,
+        removed_lines: Some(1),
+    }];
+    let select = |preview| {
+        explorer_event(
+            "changes_select",
+            serde_json::json!({"path": changed, "committed": false, "preview": preview}),
+        )
+    };
+    assert!(runtime.dispatch_json(&select(true)));
+    assert!(runtime.snapshot().editor.tabs[0].preview);
+    assert!(runtime.dispatch_json(&select(false)));
+    let snapshot = runtime.snapshot();
+    assert_eq!(snapshot.editor.tabs.len(), 1);
+    assert_eq!(snapshot.editor.tabs[0].checkout_id, checkout_id);
+    assert!(!snapshot.editor.tabs[0].preview);
+    assert!(!strip_previews(&runtime, &checkout_id)[0].1);
+    std::fs::remove_dir_all(&directory).ok();
+}
+
 /// B3, D-02: each checkout has its own preview slot.
 #[test]
 fn preview_tabs_are_per_checkout() {
