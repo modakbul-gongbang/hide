@@ -30,6 +30,28 @@ fn fake_default_app(dir: &Path) -> PathBuf {
     script
 }
 
+/// The hided binary the supervisor runs as, launched once before any test
+/// times it. macOS holds the first exec of a freshly linked binary for about
+/// two seconds while it assesses it (measured 2.08-2.14 s, no user or system
+/// time), and `cargo build` and `cargo test` link different hided binaries,
+/// so a test run usually starts with a new one. Without this, that one-time
+/// hold falls inside the supervisor's two-second acceptance window and a
+/// launch fails as if the supervisor could not start. The daemon never pays
+/// it: its supervisor is the binary it is already running.
+fn supervisor() -> &'static Path {
+    static WARM: std::sync::Once = std::sync::Once::new();
+    let path = Path::new(env!("CARGO_BIN_EXE_hided"));
+    WARM.call_once(|| {
+        let _ = Command::new(path)
+            .arg("--open-helper")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    });
+    path
+}
+
 fn wait_for_pid(path: &Path) -> i32 {
     let until = Instant::now() + Duration::from_secs(5);
     loop {
@@ -64,11 +86,7 @@ fn owner_process() {
     };
     let marker = PathBuf::from(marker);
     let script = marker.parent().unwrap().join("fake-opener");
-    let launched = hided::spawn::spawn_opener(
-        Path::new(env!("CARGO_BIN_EXE_hided")),
-        script.as_os_str(),
-        &marker,
-    );
+    let launched = hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker);
     if std::env::var_os("HIDED_EXPECT_OPENER_TIMEOUT").is_some() {
         assert!(launched.is_err());
         return;
@@ -101,6 +119,7 @@ fn acceptance_timeout_ends_cli_spawned_before_watcher() {
     let dir = tempfile::tempdir().unwrap();
     fake_opener(dir.path());
     let marker = dir.path().join("acceptance-timeout");
+    supervisor();
     let owner = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "owner_process", "--nocapture"])
         .env("HIDED_OWNED_OPENER_TEST_MARKER", &marker)
@@ -124,12 +143,7 @@ fn normal_close_reaps_cli_and_its_child() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_opener(dir.path());
     let marker = dir.path().join("normal");
-    let mut opener = hided::spawn::spawn_opener(
-        Path::new(env!("CARGO_BIN_EXE_hided")),
-        script.as_os_str(),
-        &marker,
-    )
-    .unwrap();
+    let mut opener = hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
     let pid = wait_for_pid(&sidecar(&marker, "pid"));
     let child = wait_for_pid(&sidecar(&marker, "child"));
     opener.stop();
@@ -142,12 +156,7 @@ fn unexpected_supervisor_exit_still_ends_owned_cli_group() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_opener(dir.path());
     let marker = dir.path().join("supervisor-crash");
-    let mut opener = hided::spawn::spawn_opener(
-        Path::new(env!("CARGO_BIN_EXE_hided")),
-        script.as_os_str(),
-        &marker,
-    )
-    .unwrap();
+    let mut opener = hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
     let pid = wait_for_pid(&sidecar(&marker, "pid"));
     let child = wait_for_pid(&sidecar(&marker, "child"));
     assert_eq!(
@@ -179,6 +188,7 @@ fn sigkill_of_owner_reaps_cli_and_its_child() {
     let dir = tempfile::tempdir().unwrap();
     fake_opener(dir.path());
     let marker = dir.path().join("crash");
+    supervisor();
     let owner = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "owner_process", "--nocapture"])
         .env("HIDED_OWNED_OPENER_TEST_MARKER", &marker)
@@ -203,12 +213,8 @@ fn repeated_owned_helpers_are_reaped_between_requests() {
     let script = fake_opener(dir.path());
     for index in 0..16 {
         let marker = dir.path().join(format!("request-{index}"));
-        let mut opener = hided::spawn::spawn_opener(
-            Path::new(env!("CARGO_BIN_EXE_hided")),
-            script.as_os_str(),
-            &marker,
-        )
-        .unwrap();
+        let mut opener =
+            hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker).unwrap();
         let pid = wait_for_pid(&sidecar(&marker, "pid"));
         let child = wait_for_pid(&sidecar(&marker, "child"));
         opener.stop();
@@ -221,7 +227,7 @@ fn handler(script: &Path, shutdown: Arc<Notify>) -> hided::opener::OpenHandler {
     hided::opener::OpenHandler::new(
         Some(script.to_path_buf()),
         shutdown,
-        PathBuf::from(env!("CARGO_BIN_EXE_hided")),
+        supervisor().to_path_buf(),
     )
 }
 
