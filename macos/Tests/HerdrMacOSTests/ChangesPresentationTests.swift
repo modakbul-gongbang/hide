@@ -104,6 +104,25 @@ struct ChangesPresentationTests {
         #expect(decoded.unavailableReason == "/tmp/plain is not inside a Git repository")
     }
 
+    @Test func aFailedReadKeepsTheLastListAndSaysItIsStale() throws {
+        let payload = """
+        {
+            "root_path": "/repo",
+            "entries": [{"path": "/repo/a.rs", "relative_path": "a.rs", "status": "modified"}],
+            "selected_path": null,
+            "diff": null,
+            "unavailable_reason": null,
+            "stale_reason": "git status timed out"
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(CoreChangesSnapshot.self, from: Data(payload.utf8))
+
+        #expect(decoded.entries.count == 1)
+        #expect(decoded.unavailableReason == nil)
+        #expect(decoded.staleReason == "git status timed out")
+    }
+
     @Test func diffLinesAreClassifiedByPrefixWithHeadersReadBeforeTheSingleCharacterForms() {
         #expect(DiffLineKind.of("+added") == .added)
         #expect(DiffLineKind.of("-removed") == .removed)

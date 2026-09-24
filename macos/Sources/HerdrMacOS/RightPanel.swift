@@ -258,7 +258,9 @@ struct ChangesView: View {
                 systemImage: "externaldrive",
                 message: "Git is read on this Mac, so a remote checkout has no changes view."
             )
-        } else if let reason = changes.unavailableReason {
+        } else if let reason = changes.unavailableReason
+            ?? (changes.entries.isEmpty && changes.committed.isEmpty ? changes.staleReason : nil)
+        {
             ChangesNotice(
                 title: "Changes unavailable",
                 systemImage: "exclamationmark.triangle",
@@ -277,8 +279,18 @@ struct ChangesView: View {
                 message: "This checkout matches its last commit."
             )
         } else {
-            changedFileList
-            .accessibilityIdentifier("changes-view")
+            // A failed read keeps the last list on screen, said to be stale,
+            // never presented as the checkout's current state.
+            VStack(spacing: HideTheme.spacingNone) {
+                if let stale = changes.staleReason {
+                    ExplorerGitNotice(
+                        systemImage: "exclamationmark.triangle",
+                        text: "Showing the last list read. \(stale)"
+                    )
+                }
+                changedFileList
+                .accessibilityIdentifier("changes-view")
+            }
         }
     }
 
