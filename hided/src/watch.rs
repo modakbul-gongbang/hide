@@ -64,14 +64,60 @@ pub fn watched_folders(root: &str, expanded: &[String]) -> Vec<PathBuf> {
 enum Command {
     Reconcile {
         root: Option<PathBuf>,
+        desired: Vec<PathBuf>,
         opened: Vec<(PathBuf, File)>,
     },
 }
 
+#[cfg(unix)]
+type DirectoryIdentity = (u64, u64);
+#[cfg(windows)]
+type DirectoryIdentity = (u32, u64);
+#[cfg(not(any(unix, windows)))]
+type DirectoryIdentity = ();
+
 struct Watched {
     directory: Dir,
+    identity: DirectoryIdentity,
     modified: SystemTime,
     dirty: Option<Instant>,
+}
+
+fn directory_identity(metadata: &cap_std::fs::Metadata) -> Option<DirectoryIdentity> {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt;
+        Some((metadata.dev(), metadata.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::MetadataExt;
+        metadata.volume_serial_number().zip(metadata.file_index())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = metadata;
+        None
+    }
+}
+
+impl Watched {
+    fn from_file(file: File) -> std::io::Result<Self> {
+        let directory = Dir::from_std_file(file);
+        let metadata = directory.dir_metadata()?;
+        let identity = directory_identity(&metadata).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "directory identity unavailable",
+            )
+        })?;
+        Ok(Self {
+            directory,
+            identity,
+            modified: metadata.modified()?,
+            dirty: None,
+        })
+    }
 }
 
 /// The daemon's one watch service: a command channel into the owning task and
@@ -124,20 +170,21 @@ impl WatchService {
                         boundary
                             .open_directory(std::path::Path::new(root), &path.to_string_lossy())
                             .ok()
+                            .map(|(_, file)| (path.clone(), file))
                     })
                     .collect()
             })
             .unwrap_or_default();
-        let actual = opened.iter().map(|(path, _)| path.clone()).collect();
         if self
             .commands
             .send(Command::Reconcile {
                 root: root.map(PathBuf::from),
+                desired: desired.clone(),
                 opened,
             })
             .is_ok()
         {
-            *self.requested.lock().expect("watch request set") = actual;
+            *self.requested.lock().expect("watch request set") = desired;
         }
     }
 
@@ -168,9 +215,12 @@ async fn run(
             command = commands.recv() => {
                 let Some(command) = command else { return };
                 match command {
-                    Command::Reconcile { root: selected, opened } => {
+                    Command::Reconcile { root: selected, desired, opened } => {
                         root = selected;
-                        reconcile(&mut watched, opened);
+                        *requested.lock().expect("watch request set") = desired;
+                        for path in reconcile(&mut watched, opened) {
+                            let _ = frames.send(frame(&path));
+                        }
                     }
                 }
             }
@@ -180,14 +230,26 @@ async fn run(
                     requested.lock().expect("watch request set").clear();
                     continue;
                 }
-                for path in poll(&mut watched, Instant::now()) {
+                let changed = poll(&mut watched, Instant::now());
+                let desired = requested.lock().expect("watch request set").clone();
+                let selected = root.as_ref();
+                let mut emitted = HashSet::new();
+                for path in changed {
                     if boundary.resolve_target(&path.to_string_lossy()).is_ok() {
-                        let _ = frames.send(frame(&path));
+                        if emitted.insert(path.clone()) {
+                            let _ = frames.send(frame(&path));
+                        }
+                        if let Some(root) = selected {
+                            for rebound in refresh_on_change(&boundary, root, &desired, &mut watched, &path) {
+                                if emitted.insert(rebound.clone()) {
+                                    let _ = frames.send(frame(&rebound));
+                                }
+                            }
+                        }
                     } else {
                         watched.remove(&path);
                     }
                 }
-                requested.lock().expect("watch request set").retain(|path| watched.contains_key(path));
             }
         }
     }
@@ -236,32 +298,66 @@ fn poll(watched: &mut HashMap<PathBuf, Watched>, now: Instant) -> Vec<PathBuf> {
 
 /// Retain existing handles for unchanged folders, and own each new handle
 /// until that folder leaves the capped set or the daemon ends.
-fn reconcile(watched: &mut HashMap<PathBuf, Watched>, opened: Vec<(PathBuf, File)>) {
+fn reconcile(
+    watched: &mut HashMap<PathBuf, Watched>,
+    opened: Vec<(PathBuf, File)>,
+) -> Vec<PathBuf> {
     let keep: HashSet<PathBuf> = opened
         .iter()
         .take(WATCH_CAP)
         .map(|(path, _)| path.clone())
         .collect();
     watched.retain(|path, _| keep.contains(path));
+    let mut replaced = Vec::new();
     for (path, file) in opened.into_iter().take(WATCH_CAP) {
-        if watched.contains_key(&path) {
-            continue;
-        }
-        let directory = Dir::from_std_file(file);
-        if let Ok(modified) = directory
-            .dir_metadata()
-            .and_then(|metadata| metadata.modified())
-        {
-            watched.insert(
-                path,
-                Watched {
-                    directory,
-                    modified,
-                    dirty: None,
-                },
-            );
+        if let Ok(next) = Watched::from_file(file) {
+            match watched.get(&path) {
+                Some(current) if current.identity == next.identity => continue,
+                Some(_) => replaced.push(path.clone()),
+                None => {}
+            }
+            watched.insert(path, next);
         }
     }
+    replaced
+}
+
+/// A changed parent can replace a watched child's pathname without changing
+/// the old child's opened handle. Re-open only its capped descendants through
+/// the registered boundary and notify the client when identity changes.
+fn refresh_on_change(
+    boundary: &crate::boundary::Boundary,
+    root: &std::path::Path,
+    desired: &[PathBuf],
+    watched: &mut HashMap<PathBuf, Watched>,
+    changed: &std::path::Path,
+) -> Vec<PathBuf> {
+    let mut rebound = Vec::new();
+    for path in desired
+        .iter()
+        .take(WATCH_CAP)
+        .filter(|path| path.starts_with(changed))
+    {
+        let opened = boundary.open_directory(root, &path.to_string_lossy());
+        let Ok((_, file)) = opened else {
+            if watched.remove(path).is_some() {
+                rebound.push(path.clone());
+            }
+            continue;
+        };
+        let Ok(next) = Watched::from_file(file) else {
+            continue;
+        };
+        if watched
+            .get(path)
+            .is_some_and(|current| current.identity == next.identity)
+        {
+            continue;
+        }
+        watched.insert(path.clone(), next);
+        rebound.push(path.clone());
+    }
+    rebound
 }
 
 #[cfg(test)]
@@ -324,9 +420,12 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         std::fs::create_dir(&outside).unwrap();
         let mut watched = HashMap::new();
-        reconcile(
-            &mut watched,
-            vec![(root.clone(), File::open(&root).unwrap())],
+        assert!(
+            reconcile(
+                &mut watched,
+                vec![(root.clone(), File::open(&root).unwrap())],
+            )
+            .is_empty()
         );
         std::fs::rename(&root, sandbox.path().join("moved")).unwrap();
         symlink(&outside, &root).unwrap();
@@ -337,5 +436,51 @@ mod tests {
         let now = Instant::now();
         assert!(poll(&mut watched, now).is_empty());
         assert_eq!(poll(&mut watched, now + COALESCE), vec![root]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_of_an_expanded_folder_rebinds_and_reports_its_new_child() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("checkout");
+        let expanded = root.join("expanded");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&expanded).unwrap();
+        let boundary = crate::boundary::Boundary::new(sandbox.path()).unwrap();
+        boundary.set_roots(vec![crate::boundary::Root {
+            workspace_id: "w".to_owned(),
+            checkout_id: "c".to_owned(),
+            path: root.clone(),
+        }]);
+        let desired = vec![root.clone(), expanded.clone()];
+        let opened = desired
+            .iter()
+            .map(|path| {
+                boundary
+                    .open_directory(&root, &path.to_string_lossy())
+                    .unwrap()
+            })
+            .collect();
+        let mut watched = HashMap::new();
+        assert!(reconcile(&mut watched, opened).is_empty());
+        assert!(
+            refresh_on_change(&boundary, &root, &desired, &mut watched, &root).is_empty(),
+            "unchanged handles do not send another refresh"
+        );
+
+        std::fs::rename(&expanded, root.join("old-expanded")).unwrap();
+        std::fs::create_dir(&expanded).unwrap();
+        assert_eq!(
+            refresh_on_change(&boundary, &root, &desired, &mut watched, &root),
+            vec![expanded.clone()],
+            "the replacement invalidates its cached listing"
+        );
+        std::fs::write(expanded.join("new-child.txt"), "new").unwrap();
+        let now = Instant::now();
+        assert!(poll(&mut watched, now).is_empty());
+        assert!(
+            poll(&mut watched, now + COALESCE).contains(&expanded),
+            "subsequent writes in the replacement folder stay live"
+        );
     }
 }

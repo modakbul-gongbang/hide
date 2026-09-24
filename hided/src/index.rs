@@ -12,7 +12,7 @@
 //! adjacent and word-boundary matches score higher, and a shorter path wins a
 //! tie. The result limit is the Swift sheet's 80.
 
-use cap_std::fs::Dir;
+use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::collections::HashMap;
@@ -200,21 +200,32 @@ impl Default for IndexService {
 /// with the truncation flag. The walk is the only place a checkout is read
 /// whole; it runs on its own thread, never under the runtime lock.
 fn build(root: &Path, opened: File) -> IndexData {
-    // Every recursive step opens from an already opened directory. A checkout
-    // pathname replaced after the query cannot redirect the walk.
-    let dir = Dir::from_std_file(opened);
+    // Keep only the verified root handle open across siblings. A wide tree
+    // must not consume one descriptor for every pending directory.
+    let root_dir = Dir::from_std_file(opened);
     let (global, _) = GitignoreBuilder::new(root).build_global();
-    let exclude = ignore_file(&dir, root, ".git/info/exclude");
-    let mut stack = vec![(dir, PathBuf::new(), exclude.into_iter().collect::<Vec<_>>())];
+    let exclude = ignore_file(&root_dir, root, ".git/info/exclude");
+    let mut stack = vec![(PathBuf::new(), exclude.into_iter().collect::<Vec<_>>())];
     let mut paths = Vec::new();
     let mut truncated = false;
     let mut directories = 0usize;
-    'walk: while let Some((dir, relative_dir, inherited)) = stack.pop() {
+    'walk: while let Some((relative_dir, inherited)) = stack.pop() {
         directories += 1;
         if directories > DIRECTORY_CAP {
             truncated = true;
             break;
         }
+        let dir = match root_dir.open_dir(if relative_dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            &relative_dir
+        }) {
+            Ok(dir) => dir,
+            Err(_) => {
+                truncated = true;
+                continue;
+            }
+        };
         let absolute_dir = root.join(&relative_dir);
         let mut rules = inherited;
         if let Some(matcher) = ignore_file(&dir, &absolute_dir, ".gitignore") {
@@ -250,10 +261,7 @@ fn build(root: &Path, opened: File) -> IndexData {
                     truncated = true;
                     continue;
                 }
-                match entry.open_dir() {
-                    Ok(child) => stack.push((child, relative, rules.clone())),
-                    Err(_) => truncated = true,
-                }
+                stack.push((relative, rules.clone()));
             } else if kind.is_file() {
                 if paths.len() == INDEX_CAP {
                     truncated = true;
@@ -268,7 +276,17 @@ fn build(root: &Path, opened: File) -> IndexData {
 }
 
 fn ignore_file(dir: &Dir, base: &Path, name: &str) -> Option<Gitignore> {
-    let mut file = dir.open(name).ok()?;
+    let mut options = CapOpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+    }
+    let mut file = dir.open_with(name, &options).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
     let mut bytes = Vec::new();
     file.by_ref()
         .take(1024 * 1024 + 1)
@@ -371,6 +389,36 @@ mod tests {
                 .iter()
                 .any(|path| path == ".git" || path.starts_with(".git/"))
         );
+        assert!(!data.truncated);
+    }
+
+    #[test]
+    fn a_wide_checkout_keeps_all_files_without_opening_sibling_handles() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path();
+        for index in 0..512 {
+            let folder = root.join(format!("folder-{index:03}"));
+            std::fs::create_dir(&folder).unwrap();
+            std::fs::write(folder.join("entry.txt"), "entry").unwrap();
+        }
+        let data = build(root, open_test_dir(root));
+        assert_eq!(data.paths.len(), 512);
+        assert!(data.paths.contains(&"folder-511/entry.txt".to_owned()));
+        assert!(!data.truncated);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_named_gitignore_cannot_block_the_index() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path();
+        let fifo = CString::new(root.join(".gitignore").as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        std::fs::write(root.join("visible.txt"), "visible").unwrap();
+        let data = build(root, open_test_dir(root));
+        assert_eq!(data.paths, vec!["visible.txt"]);
         assert!(!data.truncated);
     }
 

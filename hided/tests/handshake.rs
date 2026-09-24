@@ -795,6 +795,34 @@ async fn the_explorer_listing_shows_a_checkout_folder_in_the_swift_order() {
     );
     assert!(nested["payload"]["entries"].as_array().unwrap().is_empty());
 
+    // The daemon resolves an absolute in-checkout link before the core's
+    // capability operation sees the path. The created file must land in the
+    // linked folder, while the outside link above remains excluded.
+    socket
+        .send(Message::Text(
+            json!({
+                "schema_version": 2,
+                "kind": "file_create",
+                "payload": {
+                    "root": checkout_path,
+                    "parent": checkout.join("alias").display().to_string(),
+                    "name": "through-link.txt"
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !checkout.join("src/through-link.txt").is_file() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("an in-checkout link allows file creation through the daemon");
+    assert!(!outside.path().join("through-link.txt").exists());
+
     // The root the listing names has to be a registered one, and the folder has
     // to be under it: a folder under home that no checkout covers, and a
     // symlink out of the checkout, are both refused as outside_checkout.

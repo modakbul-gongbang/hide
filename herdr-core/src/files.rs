@@ -85,6 +85,7 @@ fn open_handle(path: &Path, roots: Option<&FileRoots>, write: bool) -> io::Resul
     }
 }
 
+#[cfg(test)]
 pub fn open(path: &Path) -> Result<EditorDocumentSnapshot, String> {
     open_with_roots(path, None)
 }
@@ -196,6 +197,7 @@ pub fn update_draft(editor: &mut EditorDocumentSnapshot, contents: String) -> Re
     Ok(())
 }
 
+#[cfg(test)]
 pub fn save(
     editor: &mut EditorDocumentSnapshot,
     path: &Path,
@@ -283,10 +285,6 @@ pub fn save_with_roots(
     editor.dirty = false;
     editor.conflict = None;
     Ok(())
-}
-
-pub fn reload(editor: &mut EditorDocumentSnapshot) -> Result<(), String> {
-    reload_with_roots(editor, None)
 }
 
 pub fn reload_with_roots(
@@ -462,6 +460,7 @@ impl ExplorerOperation {
 /// Runs the change on disk. Nothing here overwrites: every call is the
 /// exclusive form, so a name that appears between the runtime's decision
 /// and this call is refused rather than replaced.
+#[cfg(test)]
 pub fn apply_explorer_operation(operation: &ExplorerOperation) -> Result<(), String> {
     apply_explorer_operation_with_roots(operation, None)
 }
@@ -551,7 +550,7 @@ fn apply_rooted_explorer_operation(
                     operation.item_name()
                 ));
             }
-            move_rooted_to_trash(&source_parent, &source_name, operation)
+            move_rooted_to_trash(&source_parent, &source_name, operation, roots)
         }
     }
 }
@@ -617,7 +616,37 @@ fn rename_rooted_exclusive(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn rename_rooted_exclusive(
+    from_dir: &Dir,
+    from: &std::ffi::OsStr,
+    to_dir: &Dir,
+    to: &std::ffi::OsStr,
+) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let from = CString::new(from.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid source name"))?;
+    let to = CString::new(to.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid destination name"))?;
+    let result = unsafe {
+        libc::renameat2(
+            from_dir.as_raw_fd(),
+            from.as_ptr(),
+            to_dir.as_raw_fd(),
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn rename_rooted_exclusive(
     from_dir: &Dir,
     from: &std::ffi::OsStr,
@@ -634,57 +663,58 @@ fn move_rooted_to_trash(
     parent: &Dir,
     name: &std::ffi::OsStr,
     operation: &ExplorerOperation,
+    roots: &FileRoots,
 ) -> Result<(), String> {
-    let mut random = [0u8; 16];
-    getrandom::getrandom(&mut random)
-        .map_err(|_| "The Trash staging name could not be made".to_owned())?;
-    let stage_name = format!(
-        ".hide-trash-{}",
-        random
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    );
-    let stage_path = operation
-        .source
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(&stage_name);
-    let item_path = stage_path.join(name);
-    let mut builder = cap_std::fs::DirBuilder::new();
-    #[cfg(unix)]
+    // The platform Trash API takes a pathname. Move the selected item through
+    // its checked parent handle into a private directory outside the mutable
+    // checkout spelling, then hand that independent path to the OS.
+    let stage = tempfile::Builder::new()
+        .prefix("hide-trash-")
+        .tempdir()
+        .map_err(|error| format!("Trash staging could not be created: {error}"))?;
+    if stage_is_inside_root(stage.path(), roots)
+        .map_err(|error| format!("Trash staging could not be inspected: {error}"))?
     {
-        use cap_std::fs::DirBuilderExtUnix;
-        builder.mode(0o700);
+        return Err("Trash staging must be outside registered checkouts".to_owned());
     }
-    parent
-        .create_dir_with(&stage_name, &builder)
-        .map_err(|error| describe_explorer_error(operation, error))?;
-    let staged = parent
-        .open_dir(&stage_name)
-        .map_err(|error| describe_explorer_error(operation, error))?;
+    let staged = Dir::open_ambient_dir(stage.path(), cap_std::ambient_authority())
+        .map_err(|error| format!("Trash staging could not be opened: {error}"))?;
+    let item_path = stage.path().join(name);
+    let mut preserve_stage = false;
     let result = (|| {
-        rename_rooted_exclusive(parent, name, &staged, name)
-            .map_err(|error| describe_explorer_error(operation, error))?;
-        if let Some(expected) = operation.expected_inode {
-            let actual = staged.symlink_metadata(Path::new(name)).map_err(|error| {
-                format!(
-                    "{} could not be inspected after staging: {error}",
-                    operation.item_name()
-                )
-            })?;
-            if rooted_inode_of(&actual) != expected {
-                rename_rooted_exclusive(&staged, name, parent, name).map_err(|error| {
+        rename_rooted_exclusive(parent, name, &staged, name).map_err(|error| {
+            if error.kind() == io::ErrorKind::CrossesDevices {
+                "Trash staging is on another volume; the item was left in place".to_owned()
+            } else {
+                describe_explorer_error(operation, error)
+            }
+        })?;
+        let before_handoff = (|| {
+            if let Some(expected) = operation.expected_inode {
+                let actual = staged.symlink_metadata(Path::new(name)).map_err(|error| {
                     format!(
-                        "{} changed and could not be restored: {error}",
+                        "{} could not be inspected after staging: {error}",
                         operation.item_name()
                     )
                 })?;
-                return Err(format!(
-                    "{} changed while the prompt was open; nothing was moved",
-                    operation.item_name()
-                ));
+                if rooted_inode_of(&actual) != expected {
+                    return Err(format!(
+                        "{} changed while the prompt was open; nothing was moved",
+                        operation.item_name()
+                    ));
+                }
             }
+            Ok(())
+        })();
+        if let Err(error) = before_handoff {
+            rename_rooted_exclusive(&staged, name, parent, name).map_err(|restore_error| {
+                preserve_stage = true;
+                format!(
+                    "{} could not be restored after staging: {restore_error}",
+                    operation.item_name()
+                )
+            })?;
+            return Err(error);
         }
         let outcome = move_to_trash(&item_path).map_err(|error| {
             format!(
@@ -694,6 +724,7 @@ fn move_rooted_to_trash(
         });
         if outcome.is_err() {
             rename_rooted_exclusive(&staged, name, parent, name).map_err(|error| {
+                preserve_stage = true;
                 format!(
                     "Trash failed and {} could not be restored: {error}",
                     operation.item_name()
@@ -702,8 +733,54 @@ fn move_rooted_to_trash(
         }
         outcome
     })();
-    let _ = parent.remove_dir(&stage_name);
+    if preserve_stage {
+        let recovery = stage.keep();
+        return Err(format!(
+            "{}; inspect recovery staging at {}",
+            result.unwrap_err(),
+            recovery.display()
+        ));
+    }
     result
+}
+
+/// Compare the temporary path's ancestors with the *opened* checkout roots,
+/// not their mutable names. This also covers an environment temp directory
+/// placed inside a checkout whose original spelling has since been replaced.
+fn stage_is_inside_root(stage: &Path, roots: &FileRoots) -> io::Result<bool> {
+    let real = stage.canonicalize()?;
+    for (_, root) in roots.0.iter() {
+        let root_metadata = root.dir_metadata()?;
+        for ancestor in real.ancestors() {
+            if same_directory_identity(&root_metadata, &fs::metadata(ancestor)?) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(unix)]
+fn same_directory_identity(root: &cap_std::fs::Metadata, other: &fs::Metadata) -> bool {
+    use cap_std::fs::MetadataExt as _;
+    use std::os::unix::fs::MetadataExt as _;
+    root.dev() == other.dev() && root.ino() == other.ino()
+}
+
+#[cfg(windows)]
+fn same_directory_identity(root: &cap_std::fs::Metadata, other: &fs::Metadata) -> bool {
+    use cap_std::fs::MetadataExt as _;
+    use std::os::windows::fs::MetadataExt as _;
+    root.volume_serial_number()
+        .zip(root.file_index())
+        .is_some_and(|identity| {
+            Some(identity) == other.volume_serial_number().zip(other.file_index())
+        })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_directory_identity(_root: &cap_std::fs::Metadata, _other: &fs::Metadata) -> bool {
+    true
 }
 
 /// A rename, move or trash of an item that is already gone is named as
@@ -1111,25 +1188,14 @@ pub(crate) mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn rooted_mutations_refuse_outside_symlink_and_allow_local_symlink() {
+    fn rooted_mutations_refuse_outside_symlink() {
         use std::os::unix::fs::symlink;
         let sandbox = tempfile::tempdir().unwrap();
         let root = sandbox.path().join("checkout");
         let outside = sandbox.path().join("outside");
         fs::create_dir(&root).unwrap();
         fs::create_dir(&outside).unwrap();
-        fs::create_dir(root.join("inside")).unwrap();
         let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
-        symlink(root.join("inside"), root.join("local")).unwrap();
-        let local = ExplorerOperation::create(
-            ExplorerOperationKind::FileCreate,
-            &root,
-            &root.join("local"),
-            "new.txt",
-        )
-        .unwrap();
-        apply_explorer_operation_with_roots(&local, Some(&roots)).unwrap();
-        assert!(root.join("inside/new.txt").is_file());
         fs::create_dir(root.join("escape")).unwrap();
         let escaped = ExplorerOperation::create(
             ExplorerOperationKind::FileCreate,
@@ -1142,6 +1208,53 @@ pub(crate) mod tests {
         symlink(&outside, root.join("escape")).unwrap();
         assert!(apply_explorer_operation_with_roots(&escaped, Some(&roots)).is_err());
         assert!(!outside.join("bad.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rooted_trash_hands_off_the_selected_item_after_checkout_path_replacement() {
+        use std::os::unix::fs::symlink;
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("checkout");
+        let moved = sandbox.path().join("moved");
+        let outside = sandbox.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let (name, _) = unique_trash_names();
+        fs::write(root.join(&name), "selected").unwrap();
+        fs::write(outside.join(&name), "outside").unwrap();
+        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
+        let shown = inode_of(&fs::symlink_metadata(root.join(&name)).unwrap());
+        let operation =
+            ExplorerOperation::trash(&root, &root.join(&name), &root, Some(shown)).unwrap();
+
+        fs::rename(&root, &moved).unwrap();
+        symlink(&outside, &root).unwrap();
+        apply_explorer_operation_with_roots(&operation, Some(&roots)).unwrap();
+        assert!(!moved.join(&name).exists());
+        assert_eq!(fs::read_to_string(outside.join(&name)).unwrap(), "outside");
+        fs::remove_file(&root).unwrap();
+        remove_from_trash(&[&name]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trash_stage_checks_the_opened_root_even_after_its_name_moves() {
+        use std::os::unix::fs::symlink;
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("checkout");
+        let outside = sandbox.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
+        let inside_stage = tempfile::tempdir_in(&root).unwrap();
+        let outside_stage = tempfile::tempdir_in(&outside).unwrap();
+        let moved = sandbox.path().join("moved");
+        fs::rename(&root, &moved).unwrap();
+        symlink(&outside, &root).unwrap();
+        let moved_stage = moved.join(inside_stage.path().file_name().unwrap());
+        assert!(stage_is_inside_root(&moved_stage, &roots).unwrap());
+        assert!(!stage_is_inside_root(outside_stage.path(), &roots).unwrap());
     }
 
     /// Names no other Trash entry can carry, so a trashed fixture can be
