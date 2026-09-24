@@ -468,14 +468,11 @@ fn start_device_read(
             "superseded",
         ));
     }
-    let text = |key: &str| {
-        event
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    let (request_id, path) = (text("request_id"), text("path"));
+    // Kept to answer this read by its own id if a newer one ends it.
+    let (request_id, path) = (
+        payload_str(&event, "request_id"),
+        payload_str(&event, "path"),
+    );
     let task = tokio::spawn(stream_device_file_bytes(
         frames,
         Arc::clone(&state.core),
