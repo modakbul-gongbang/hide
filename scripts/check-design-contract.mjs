@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync, spawnSync} from 'node:child_process';
 
-const commands = ['check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-design-controls.mjs', 'check-pen.mjs', 'check-web-tokens.mjs'];
+const commands = ['check-hide-theme-literals.mjs', 'check-hide-components.mjs', 'check-design-controls.mjs', 'check-pen.mjs', 'check-pen-gallery.mjs', 'check-web-tokens.mjs'];
 function run(root) {
   for (const command of commands) {
     const result = spawnSync(process.execPath, [path.join(root, 'scripts', command)], {cwd: root, stdio: 'inherit'});
@@ -27,7 +27,7 @@ try {
         || file === 'design/hide-ui.lib.pen'
         || file === 'design/tokens.json'
         || file.startsWith('web/src/')
-        || [...commands, 'swift-source-tokens.mjs', 'design-control-policy.json', 'pen-tokens.mjs', 'pen-token-map.json', 'pen-bands.mjs', 'pen-foundations.mjs', 'pen-canvas.mjs', 'gen-tokens.mjs'].some(name => file === 'scripts/' + name);
+        || [...commands, 'swift-source-tokens.mjs', 'design-control-policy.json', 'pen-tokens.mjs', 'pen-token-map.json', 'pen-bands.mjs', 'pen-foundations.mjs', 'pen-canvas.mjs', 'pen-system.mjs', 'gen-tokens.mjs'].some(name => file === 'scripts/' + name);
       if (!input) continue;
       if (stage !== '0') throw new Error(`Resolve staged conflict before design check: ${file}`);
       if (!['100644', '100755'].includes(mode)) throw new Error(`Design inputs must be ordinary files: ${file}`);
