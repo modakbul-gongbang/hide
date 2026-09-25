@@ -17,16 +17,38 @@
 // Light-tagged and a Dark-tagged frame). Only the ref ids differ between the two
 // frames, since two instances of one master still need two distinct node ids.
 //
+// D-02: where Pen's bundled pencil:shadcn library
+// ($(npm root -g)/@pen.dev/cli/dist/out/data/shadcn.lib.pen) has a master for a
+// part, that master's own node structure is what this file builds, re-dressed with
+// this library's `$--` variables, hide's control/icon sizes and no drop shadows -
+// never drawn free-hand. A committed library must not depend on a node_modules path
+// at render time, so the shadcn node is not imported live; instead this file's own
+// `frame`/`text`/`icon` calls reproduce its composition (children, order, roles)
+// by hand, which is also the schema translation shadcn's file needs: it encodes
+// icons as `icon_font`, strokes as a combined object, and shadows as `effect`,
+// none of which this library's schema uses. Each builder below says in its sheet's
+// spec line which shadcn master it is shaped from, or that no shadcn master exists
+// and it is drawn from primitives in the same idiom (Toggle Group, Slider, Kbd,
+// Separator, Sheet, Sonner; Popover reuses Dropdown Menu's content-surface idiom
+// since shadcn has no separate Popover master). Where hide's own web component
+// (`web/src/components/ui/*.tsx`) makes a deliberate token choice shadcn's example
+// does not (Tabs' list/active-trigger fill, for instance), that web choice wins:
+// the instruction is that the rendering must match web/src/components/ui, not that
+// shadcn's own numbers are copied verbatim.
+//
 // The four System masters this replaces (Icon Button, Panel Tab, Badge, Keycap) are
 // still referenced by many `Component /` sheets; `foldLegacyMasters` finds each by
 // its existing node id and folds it into the part sheet that plays its old role,
 // unchanged beyond the variable rename gen-pen already applied, so no Component ref
 // dangles. Badge's old master doubles as the new Badge part's master directly
-// (same shape: optional leading icon + label); Icon Button's old master doubles as
-// Button's Icon/Icon Small states directly (same shape: one centered icon, no
-// label). Panel Tab and Keycap are a different idiom from Tabs and Kbd, so their
-// masters live on as an inert `Legacy master` sibling of Light/Dark, ignored by
-// check-pen-gallery.mjs (it only reads children named exactly `Light` or `Dark`).
+// (same shape: optional leading icon + label, already the shadcn Badge/Default
+// shape); Icon Button's old master doubles as Button's Icon/Icon Small states
+// directly (same shape: one centered icon, no label, already the shadcn Icon
+// Button/Default shape - a ref of Button/Default with its label hidden). Panel Tab
+// and Keycap are hide composites, not shadcn parts; they no longer live in a System
+// sheet at all (a System sheet holds only its shadcn part) - `componentFoldSheets`
+// gives each its own `Component / Panel Tab` / `Component / Keycap` sheet instead,
+// generated the same way as every other sheet here.
 
 const UI = '$--font-ui';
 const MONO = '$--font-mono';
@@ -98,29 +120,77 @@ function buildSheet(id, name, spec, masters, lightCells, darkCells) {
   ]);
 }
 
-// -- menu idiom shared by Select, Dropdown Menu, Context Menu, Command -------------
+// -- menu idiom shared by Select, Dropdown Menu, Context Menu, Command, and the
+// hide-composite menus (Component / Explorer file menu, Component / View tab menu)
+// that draw their own rows: both a shadcn-shaped row (icon + single-line label, for
+// Dropdown Menu/Context Menu/Command) and hide's own entry-menu.tsx row (label with
+// an optional stacked disabled-reason caption, no icon) are one reusable master,
+// `mnu-item-m` - a Component sheet points at the same id these gallery cells do,
+// rather than a menu row staying hand-drawn text forever.
 
 const MENU_ITEM_STATE = {default: {}, highlighted: {fill: '$--accent', text: '$--accent-foreground'}, disabled: {text: '$--muted-foreground'}, destructive: {text: '$--destructive'}};
+const MENUITEM_MASTER_ID = 'mnu-item-m';
+const MENUSEP_MASTER_ID = 'mnu-sep-m';
 
+function menuItemMaster() {
+  return frame(MENUITEM_MASTER_ID, 'Menu Item', {
+    reusable: true, width: 'fill_container', layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', cornerRadius: '$--radius-xs',
+    padding: ['$--spacing-xs', '$--spacing-sm'], fill: '#00000000',
+  }, [
+    icon('mnu-item-icon', 'pencil', {size: 14, fill: '$--muted-foreground'}),
+    frame('mnu-item-body', 'Body', {layout: 'vertical', gap: 0, alignItems: 'start'}, [
+      text('mnu-item-label', 'Item', {fill: '$--foreground', size: '$--text-body'}),
+      text('mnu-item-reason', 'Reason', {fill: '$--muted-foreground', size: '$--text-caption', enabled: false}),
+    ]),
+    text('mnu-item-shortcut', '⌘K', {fill: '$--muted-foreground', size: '$--text-caption', mono: true, enabled: false}),
+  ]);
+}
+
+// The icon+single-line shape Dropdown Menu, Context Menu and Command's gallery
+// cells demonstrate.
 function menuItem(id, label, state = 'default', glyph) {
   const s = MENU_ITEM_STATE[state];
-  return frame(id, 'Item', {
-    layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', cornerRadius: '$--radius-xs',
-    padding: ['$--spacing-xs', '$--spacing-sm'], fill: s.fill ?? '#00000000',
-    ...(state === 'disabled' ? {opacity: 0.45} : {}),
-  }, [
-    ...(glyph ? [icon(`${id}-i`, glyph, {size: 14, fill: s.text ?? '$--muted-foreground'})] : []),
-    text(`${id}-t`, label, {fill: s.text ?? '$--foreground', size: '$--text-body'}),
+  return ref(id, MENUITEM_MASTER_ID, 'Item', {fill: s.fill ?? '#00000000', ...(state === 'disabled' ? {opacity: 0.45} : {})}, {
+    'mnu-item-icon': glyph ? {icon: glyph, fill: s.text ?? '$--muted-foreground', enabled: true} : {enabled: false},
+    'mnu-item-label': {content: label, fill: s.text ?? '$--foreground'},
+    'mnu-item-reason': {enabled: false},
+    'mnu-item-shortcut': {enabled: false},
+  });
+}
+
+// The label-with-optional-stacked-reason shape entry-menu.tsx's `EntryItems`
+// actually renders (no leading icon): a disabled item keeps its reason visible
+// under the label, per design principle 9 (a disabled state shown with its cause).
+function menuItemReason(id, label, {reason = null, disabled = false, destructive = false, shortcut = null} = {}) {
+  const textFill = destructive ? '$--destructive' : '$--foreground';
+  return ref(id, MENUITEM_MASTER_ID, label, {opacity: disabled ? 0.45 : 1}, {
+    'mnu-item-icon': {enabled: false},
+    'mnu-item-label': {content: label, fill: textFill},
+    'mnu-item-reason': reason ? {content: reason, enabled: true} : {enabled: false},
+    'mnu-item-shortcut': shortcut ? {content: shortcut, enabled: true} : {enabled: false},
+  });
+}
+
+// Shaped from shadcn's List Divider (D24KC): a padded row holding one zero-height
+// `line` node, not a filled rectangle - Pen's `line` type is the primitive shadcn's
+// own menu and list content uses for a hairline rule.
+function menuSepMaster() {
+  return frame(MENUSEP_MASTER_ID, 'Separator', {reusable: true, width: 'fill_container', padding: ['$--spacing-xxs', 0], justifyContent: 'center'}, [
+    {type: 'line', id: 'mnu-sep-line', name: 'Line', width: 'fill_container', height: 0, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'center'},
   ]);
 }
 
 function menuSeparator(id) {
-  return frame(id, 'Separator', {height: 1, width: 'fill_container', fill: '$--border'}, []);
+  return ref(id, MENUSEP_MASTER_ID, 'Separator');
 }
 
+// Shaped from shadcn's Dropdown (cTN8T): rounded-sm (its own 6px), a --popover
+// surface with a hairline --border, no drop shadow. Its item padding stays hide's
+// menu-styles.ts px-sm/py-xs (--spacing-sm/--spacing-xs) rather than shadcn's raw
+// [6,12], since hide's own menu already renders that way.
 function menuContent(id, width, children) {
   return frame(id, 'Content', {
-    layout: 'vertical', gap: 0, padding: '$--spacing-xxs', width, cornerRadius: '$--radius-md',
+    layout: 'vertical', gap: 0, padding: '$--spacing-xxs', width, cornerRadius: '$--radius-sm',
     fill: '$--popover', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner',
   }, children);
 }
@@ -157,7 +227,7 @@ function buildButton(tokens, legacy) {
       cell('Icon Small', ref(`btn-iconsm-${suffix}`, legacy.iconButton.master.id, 'Icon Small', {})),
     ];
   }
-  return buildSheet('sys-button', 'System / Button', 'shadcn Button variants and sizes: rounded-sm, text-body medium, gap-xs, disabled at --opacity-disabled. Icon and Icon Small reuse the folded Icon Button master below.',
+  return buildSheet('sys-button', 'System / Button', 'Shaped from shadcn Button/Default (a leading icon slot + label, centered, rounded-sm, text-body medium, gap-xs); disabled at --opacity-disabled. Icon and Icon Small reuse the folded Icon Button master below (already shadcn Icon Button/Default: a ref of Button/Default with its label hidden).',
     [masterCard('btn-master-card', 'Master', master), masterCard('btn-legacy-card', 'Legacy master (Icon Button)', legacy.iconButton.master)], states('l'), states('d'));
 }
 
@@ -167,7 +237,7 @@ function buildInput(tokens) {
   const H = num(tokens, '--size-control');
   const master = frame('inp-m', 'Input', {
     reusable: true, height: H, width: 220, cornerRadius: '$--radius-sm', fill: '$--background',
-    stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
+    stroke: '$--input', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
     layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-sm'],
   }, [text('inp-t', 'Value', {fill: '$--foreground'})]);
   function states(suffix) {
@@ -181,7 +251,7 @@ function buildInput(tokens) {
       cell('Mono', ref(`inp-mono-${suffix}`, master.id, 'Mono', {}, {'inp-t': {content: 'origin/main', fontFamily: MONO}})),
     ];
   }
-  return buildSheet('sys-input', 'System / Input', 'shadcn Input: height --size-control, rounded-sm, hairline border-input. `mono` swaps the interface face for machine text.', [masterCard('inp-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-input', 'System / Input', 'Shaped from shadcn Input Group/Default’s Input frame: height --size-control, rounded-sm, hairline --input border. `mono` swaps the interface face for machine text.', [masterCard('inp-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Select ----------------------------------------------------------------------
@@ -190,7 +260,7 @@ function buildSelect(tokens) {
   const H = num(tokens, '--size-control'), W = num(tokens, '--size-settings-control-w');
   const master = frame('sel-m', 'Select Trigger', {
     reusable: true, height: H, width: W, cornerRadius: '$--radius-sm', fill: '$--background',
-    stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
+    stroke: '$--input', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
     layout: 'horizontal', alignItems: 'center', justifyContent: 'space_between', padding: [0, '$--spacing-sm'],
   }, [text('sel-t', 'Value', {fill: '$--foreground'}), icon('sel-i', 'chevron-down', {size: 14, fill: '$--muted-foreground'})]);
   function states(suffix) {
@@ -205,7 +275,7 @@ function buildSelect(tokens) {
       cell('Open', frame(`sel-openwrap-${suffix}`, 'Open', {layout: 'vertical', gap: '$--spacing-xxs'}, [ref(`sel-opentrig-${suffix}`, master.id, 'Trigger'), openContent])),
     ];
   }
-  return buildSheet('sys-select', 'System / Select', 'shadcn Select over Radix: trigger matches Input height, content shares the menu idiom with Dropdown Menu and Command.', [masterCard('sel-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-select', 'System / Select', 'Shaped from shadcn Select Group/Default’s Select Trigger over Radix: same hairline --input border as Input, trigger matches Input height, its open content shares the menu idiom with Dropdown Menu and Command.', [masterCard('sel-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Checkbox ----------------------------------------------------------------------
@@ -227,7 +297,7 @@ function buildCheckbox(tokens) {
       cell('Checked Disabled', ref(`chk-ondis-${suffix}`, master.id, 'Checked Disabled', {...checked, opacity: num(tokens, '--opacity-disabled')}, {'chk-i': {enabled: true}})),
     ];
   }
-  return buildSheet('sys-checkbox', 'System / Checkbox', 'shadcn Checkbox over Radix: --size-checkbox square, rounded-xs, checked fills --primary.', [masterCard('chk-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-checkbox', 'System / Checkbox', 'Shaped from shadcn Checkbox/Checked’s Checkbox frame over Radix: --size-checkbox square, rounded-xs, a --size-icon-sm check glyph, checked fills --primary - hide’s sizes already match the shadcn node’s own 16/4/12.', [masterCard('chk-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Switch --------------------------------------------------------------------
@@ -236,8 +306,8 @@ function buildSwitch(tokens) {
   const W = num(tokens, '--size-control'), H = num(tokens, '--size-checkbox'), T = num(tokens, '--size-icon');
   const master = frame('sw-m', 'Switch', {
     reusable: true, width: W, height: H, cornerRadius: '$--radius-xl', fill: '$--input',
-    layout: 'horizontal', alignItems: 'center', padding: ['$--spacing-xxs'],
-  }, [{type: 'rectangle', id: 'sw-thumb', name: 'Thumb', width: T, height: T, fill: '$--background', cornerRadius: '$--radius-xl'}]);
+    layout: 'horizontal', alignItems: 'center', padding: '$--spacing-xxs',
+  }, [{type: 'ellipse', id: 'sw-thumb', name: 'Thumb', width: T, height: T, fill: '$--background'}]);
   function states(suffix) {
     return [
       cell('Off', ref(`sw-off-${suffix}`, master.id, 'Off')),
@@ -246,18 +316,23 @@ function buildSwitch(tokens) {
       cell('Disabled', ref(`sw-disabled-${suffix}`, master.id, 'Disabled', {opacity: num(tokens, '--opacity-disabled')})),
     ];
   }
-  return buildSheet('sys-switch', 'System / Switch', 'shadcn Switch over Radix: --size-control wide, --size-checkbox tall track, --size-icon thumb.', [masterCard('sw-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-switch', 'System / Switch', 'Shaped from shadcn Switch/Checked’s Switch frame over Radix: --size-control wide, --size-checkbox tall track, an ellipse thumb (shadcn’s own shape) at --size-icon.', [masterCard('sw-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Radio Group -----------------------------------------------------------------
 
 function buildRadioGroup(tokens) {
-  const S = num(tokens, '--size-checkbox');
+  const S = num(tokens, '--size-checkbox'), DOT = num(tokens, '--size-icon-sm');
+  // web/src/components/ui/radio-group.tsx fills its indicator with a lucide
+  // CircleIcon at --size-icon-sm, and shadcn's Radio/Selected (LbK20) draws a
+  // filled circle in the same role. Pen's icon glyphs render lucide's `circle` as
+  // a stroke-only ring even with `fill` set, so a filled ellipse at the same size
+  // is what actually renders the solid dot both of those draw.
   const master = frame('rad-m', 'Radio Item', {
     reusable: true, width: S, height: S, cornerRadius: S / 2, fill: '$--background',
     stroke: '$--input', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
     layout: 'horizontal', alignItems: 'center', justifyContent: 'center',
-  }, [{type: 'ellipse', id: 'rad-dot', name: 'Indicator', width: 6, height: 6, fill: '$--primary', enabled: false}]);
+  }, [{type: 'ellipse', id: 'rad-dot', name: 'Indicator', width: DOT, height: DOT, fill: '$--primary', enabled: false}]);
   function states(suffix) {
     const on = ref(`rad-on-${suffix}`, master.id, 'On', {stroke: '$--primary', strokeWidth: '$--size-hairline'}, {'rad-dot': {enabled: true}});
     const off = ref(`rad-off-${suffix}`, master.id, 'Off');
@@ -268,7 +343,7 @@ function buildRadioGroup(tokens) {
       cell('Disabled', ref(`rad-disabled-${suffix}`, master.id, 'Disabled', {opacity: num(tokens, '--opacity-disabled')})),
     ];
   }
-  return buildSheet('sys-radio', 'System / Radio Group', 'shadcn Radio Group over Radix: --size-checkbox circle, --spacing-sm gap between items, filled dot indicator.', [masterCard('rad-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-radio', 'System / Radio Group', 'Shaped from shadcn Radio/Selected’s Radio frame over Radix: --size-checkbox circle, --spacing-sm gap between items, a filled --size-icon-sm dot indicator matching web/src/components/ui/radio-group.tsx’s CircleIcon.', [masterCard('rad-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Toggle Group ------------------------------------------------------------------
@@ -291,7 +366,7 @@ function buildToggleGroup(tokens) {
       cell('Disabled', ref(`tog-disabled-${suffix}`, master.id, 'Disabled', {opacity: num(tokens, '--opacity-disabled')}, {'tog-t': {content: 'Tabbed'}})),
     ];
   }
-  return buildSheet('sys-toggle', 'System / Toggle Group', 'shadcn Toggle Group over Radix (Layout, Provider, Theme choices): a --spacing-xxs padded track, the active item on --secondary.', [masterCard('tog-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-toggle', 'System / Toggle Group', 'No Toggle Group master exists in pencil:shadcn; drawn from primitives in the same track idiom as Tabs: a --spacing-xxs padded track, the active item on --secondary.', [masterCard('tog-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Slider ------------------------------------------------------------------------
@@ -311,7 +386,7 @@ function buildSlider(tokens) {
       cell('Disabled', ref(`sld-disabled-${suffix}`, master.id, 'Disabled', {opacity: num(tokens, '--opacity-disabled')})),
     ];
   }
-  return buildSheet('sys-slider', 'System / Slider', 'shadcn Slider over Radix: --spacing-xs track on --secondary, --primary range, --size-checkbox thumb.', [masterCard('sld-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-slider', 'System / Slider', 'No Slider master exists in pencil:shadcn; drawn from primitives: --spacing-xs track on --secondary, --primary range, --size-checkbox thumb.', [masterCard('sld-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Tabs (also carries the folded Panel Tab legacy master) -----------------------
@@ -334,8 +409,8 @@ function buildTabs(tokens, legacy) {
     ];
   }
   return buildSheet('sys-tabs', 'System / Tabs',
-    'shadcn Tabs over Radix: a --spacing-xxs padded track, the active trigger on --secondary. Panel Tab (the pane-header underline tab) is a different idiom and lives on as a Legacy master below.',
-    [masterCard('tab-master-card', 'Master', master), masterCard('tab-legacy-card', 'Legacy master (Panel Tab)', legacy.panelTab.master)], states('l'), states('d'));
+    'Shaped from shadcn’s Tab Item Active/Inactive and Tabs container over Radix: a --spacing-xxs padded track. The track and active-trigger fills follow web/src/components/ui/tabs.tsx’s own choice (list on --card, active trigger on --secondary) rather than shadcn’s example (list on --secondary, active trigger on --background), since the built component is what this must match. Panel Tab (the pane-header underline tab) is a hide composite, not a shadcn part; it now has its own Component / Panel Tab sheet.',
+    [masterCard('tab-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Badge (reuses the folded Badge master directly) -------------------------------
@@ -371,8 +446,8 @@ function buildKbd(tokens, legacy) {
     ];
   }
   return buildSheet('sys-kbd', 'System / Kbd',
-    'shadcn Kbd: --size-keycap-height tall, rounded-xs, --secondary fill, text-caption. Keycap (the divider-bordered mono keycap) is a different idiom and lives on as a Legacy master below.',
-    [masterCard('kbd-master-card', 'Master', master), masterCard('kbd-legacy-card', 'Legacy master (Keycap)', legacy.keycap.master)], states('l'), states('d'));
+    'No shadcn Kbd master exists in pencil:shadcn; drawn from primitives in hide’s own idiom: --size-keycap-height tall, rounded-xs, --secondary fill, text-caption. Keycap (the divider-bordered mono keycap) is a different, older idiom; it now has its own Component / Keycap sheet.',
+    [masterCard('kbd-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Separator -----------------------------------------------------------------
@@ -385,13 +460,14 @@ function buildSeparator(tokens) {
       cell('Vertical', frame(`sep-v-${suffix}`, 'Vertical', {width: H, height: 48, fill: '$--border'}, [])),
     ];
   }
-  return buildSheet('sys-separator', 'System / Separator', 'shadcn Separator over Radix: --size-hairline on --border, either axis.', [], states('l'), states('d'));
+  return buildSheet('sys-separator', 'System / Separator', 'No Separator master exists in pencil:shadcn; drawn from primitives in List Divider\u2019s (D24KC) idiom: --size-hairline on --border, either axis.', [], states('l'), states('d'));
 }
 
 // -- Dropdown Menu (also the model Context Menu shares) ----------------------------
 
 function buildDropdownMenu(tokens) {
   const H = num(tokens, '--size-control'), W = num(tokens, '--size-settings-control-w');
+  const itemMaster = menuItemMaster(), sepMaster = menuSepMaster();
   const master = frame('ddm-m', 'Trigger', {
     reusable: true, height: H, cornerRadius: '$--radius-sm', fill: '$--secondary', stroke: '$--border',
     strokeWidth: '$--size-hairline', strokeAlignment: 'inner', layout: 'horizontal', alignItems: 'center',
@@ -423,7 +499,7 @@ function buildDropdownMenu(tokens) {
       ])),
     ];
   }
-  return buildSheet('sys-dropdown-menu', 'System / Dropdown Menu', 'shadcn Dropdown Menu over Radix: rounded-md popover, --radius-xs items, --accent highlight. Context Menu draws the identical menu content over a point anchor.', [masterCard('ddm-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-dropdown-menu', 'System / Dropdown Menu', 'Shaped from shadcn’s Dropdown (cTN8T) for the open content (rounded-sm, --popover fill, hairline --border, no drop shadow) and List Item/List Divider (2JGXl, D24KC) for each row: --radius-xs items, --accent highlight, a `line`-type separator. The trigger itself has no shadcn master and is drawn as a --secondary control. Context Menu draws the identical menu content over a point anchor. Menu Item and Separator are their own reusable masters (mnu-item-m, mnu-sep-m) - every Component sheet that draws a menu row points at them instead of hand-drawing one.', [masterCard('ddm-master-card', 'Master', master), masterCard('mnu-item-card', 'Menu Item master', itemMaster), masterCard('mnu-sep-card', 'Separator master', sepMaster)], states('l'), states('d'));
 }
 
 function buildContextMenu(tokens) {
@@ -442,35 +518,51 @@ function buildContextMenu(tokens) {
       cell('Disabled Item', menuContent(`ctx-dic-${suffix}`, W, [menuItem(`ctx-dii0-${suffix}`, 'Copy path', 'default', 'copy'), menuItem(`ctx-dii1-${suffix}`, 'Reveal in Finder', 'disabled', 'folder-open')])),
     ];
   }
-  return buildSheet('sys-context-menu', 'System / Context Menu', 'shadcn’s DropdownMenu over a controlled point anchor: same menu idiom as Dropdown Menu, opened at the pointer or under the target for the menu key and ⇧F10.', [], states('l'), states('d'));
+  return buildSheet('sys-context-menu', 'System / Context Menu', 'shadcn’s DropdownMenu over a controlled point anchor: the identical Dropdown/List Item content as System / Dropdown Menu, opened at the pointer or under the target for the menu key and ⇧F10.', [], states('l'), states('d'));
 }
 
 // -- Dialog / Alert Dialog / Sheet / Popover / Tooltip / Command / Sonner ---------
 
+// Dialog and Alert Dialog's footer buttons are refs of Button's own master
+// ('btn-m', built by buildButton above), the same reassembly D-21/B18 asks of
+// every Component sheet: a part that contains a button points at the Button
+// master with overrides rather than drawing one by hand.
+function dialogButton(id, label, overrides, textFill) {
+  return ref(id, 'btn-m', label, overrides, {'btn-ic': {enabled: false}, 'btn-lb': {content: label, fill: textFill}});
+}
+
 function buildDialog(tokens) {
   const W = num(tokens, '--size-worktree-dialog'), PAD = num(tokens, '--spacing-lg');
+  // Shaped from shadcn's Card (pcGlv) through its Modal/Left override (oVUJY):
+  // a Header slot holding a stacked Title + Subtitle, an Actions slot holding two
+  // Button refs, rounded-lg, --popover fill, hairline --border, no drop shadow.
   function surface(id, withClose) {
     return frame(id, withClose ? 'With Close Button' : 'Open', {
       width: W, cornerRadius: '$--radius-lg', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline',
       strokeAlignment: 'inner', layout: 'vertical', gap: '$--spacing-md',
     }, [
-      frame(`${id}-hdr`, 'Header', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'start', padding: ['$--spacing-lg', '$--spacing-lg', 0, '$--spacing-lg']}, [
-        text(`${id}-title`, 'Rename worktree', {fill: '$--foreground', size: '$--text-title', weight: '600'}),
-        ...(withClose ? [icon(`${id}-x`, 'x', {size: 14, fill: '$--muted-foreground'})] : []),
+      frame(`${id}-hdr`, 'Header', {layout: 'vertical', gap: '$--spacing-xs', padding: ['$--spacing-lg', '$--spacing-lg', 0, '$--spacing-lg']}, [
+        frame(`${id}-hdrtop`, 'Header Top', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'start'}, [
+          text(`${id}-title`, 'Rename worktree', {fill: '$--foreground', size: '$--text-title', weight: '600'}),
+          ...(withClose ? [icon(`${id}-x`, 'x', {size: 14, fill: '$--muted-foreground'})] : []),
+        ]),
+        text(`${id}-desc`, 'Choose a new name for this worktree. Panes stay attached.', {fill: '$--subtle-foreground', width: W - 2 * PAD}),
       ]),
-      text(`${id}-desc`, 'Choose a new name for this worktree. Panes stay attached.', {fill: '$--subtle-foreground', width: W - 2 * PAD}),
       frame(`${id}-ftr`, 'Footer', {layout: 'horizontal', justifyContent: 'end', gap: '$--spacing-sm', padding: [0, '$--spacing-lg', '$--spacing-lg', '$--spacing-lg']}, [
-        text(`${id}-cancel`, 'Cancel', {fill: '$--subtle-foreground'}),
-        frame(`${id}-ok`, 'Action', {fill: '$--primary', cornerRadius: '$--radius-sm', height: num(tokens, '--size-control'), padding: [0, '$--spacing-md'], layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [text(`${id}-okt`, 'Rename', {fill: '$--primary-foreground', weight: '500'})]),
+        dialogButton(`${id}-cancel`, 'Cancel', {fill: '#00000000'}, '$--subtle-foreground'),
+        dialogButton(`${id}-ok`, 'Rename', {}, '$--primary-foreground'),
       ]),
     ]);
   }
   function states(suffix) { return [cell('Open', surface(`dlg-open-${suffix}`, false)), cell('With Close Button', surface(`dlg-close-${suffix}`, true))]; }
-  return buildSheet('sys-dialog', 'System / Dialog', 'shadcn Dialog over Radix: --size-worktree-dialog wide, rounded-lg, an overlay at --opacity-secondary behind it.', [], states('l'), states('d'));
+  return buildSheet('sys-dialog', 'System / Dialog', 'Shaped from shadcn’s Card through its Modal/Left override: --size-worktree-dialog wide, rounded-lg, a stacked title+description header, footer actions as refs of System / Button, an overlay at --opacity-secondary behind it.', [], states('l'), states('d'));
 }
 
 function buildAlertDialog(tokens) {
   const W = num(tokens, '--size-add-device-sheet-w'), PAD = num(tokens, '--spacing-lg');
+  // web/src/components/ui/alert-dialog.tsx wraps title, description and actions in
+  // one --spacing-lg pad, not Card's three separately-padded slots - that choice
+  // stays, but the actions are now Button refs like Dialog's.
   function surface(id, pending) {
     return frame(id, pending ? 'Pending' : 'Open', {
       width: W, cornerRadius: '$--radius-lg', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline',
@@ -479,13 +571,13 @@ function buildAlertDialog(tokens) {
       text(`${id}-title`, 'Delete this worktree?', {fill: '$--foreground', size: '$--text-title', weight: '600'}),
       text(`${id}-desc`, 'This removes the checkout and its build cache. The branch itself is not deleted.', {fill: '$--subtle-foreground', width: W - 2 * PAD}),
       frame(`${id}-ftr`, 'Footer', {layout: 'horizontal', justifyContent: 'end', gap: '$--spacing-sm'}, [
-        frame(`${id}-cancel`, 'Cancel', {fill: '$--secondary', cornerRadius: '$--radius-sm', height: num(tokens, '--size-control'), padding: [0, '$--spacing-md'], layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [text(`${id}-cancelt`, 'Cancel', {fill: '$--subtle-foreground', weight: '500'})]),
-        frame(`${id}-del`, 'Action', {fill: '$--destructive', cornerRadius: '$--radius-sm', height: num(tokens, '--size-control'), padding: [0, '$--spacing-md'], layout: 'horizontal', alignItems: 'center', justifyContent: 'center', opacity: pending ? 0.72 : 1}, [text(`${id}-delt`, pending ? 'Deleting…' : 'Delete worktree', {fill: '$--destructive-foreground', weight: '500'})]),
+        dialogButton(`${id}-cancel`, 'Cancel', {fill: '$--secondary'}, '$--subtle-foreground'),
+        dialogButton(`${id}-del`, pending ? 'Deleting…' : 'Delete worktree', {fill: '$--destructive', opacity: pending ? 0.72 : 1}, '$--destructive-foreground'),
       ]),
     ]);
   }
   function states(suffix) { return [cell('Open', surface(`adlg-open-${suffix}`, false)), cell('Pending', surface(`adlg-pending-${suffix}`, true))]; }
-  return buildSheet('sys-alert-dialog', 'System / Alert Dialog', 'shadcn Alert Dialog: a confirmation for an irreversible effect. Cancel keeps things as they are; the destructive action names its result.', [], states('l'), states('d'));
+  return buildSheet('sys-alert-dialog', 'System / Alert Dialog', 'Shaped from shadcn’s Card/Modal, single-padded per web/src/components/ui/alert-dialog.tsx: a confirmation for an irreversible effect. Cancel and the destructive action are refs of System / Button; the destructive action names its result.', [], states('l'), states('d'));
 }
 
 function buildSheetPart(tokens) {
@@ -497,7 +589,7 @@ function buildSheetPart(tokens) {
     }, [text(`${id}-title`, 'Device details', {fill: '$--foreground', size: '$--text-title', weight: '600'}), text(`${id}-desc`, `Slides in from the ${side.toLowerCase()} edge, --size-panel-ideal wide when vertical.`, {fill: '$--subtle-foreground', width: 220})]);
   }
   function states(suffix) { return [cell('Right', panel(`sheet-right-${suffix}`, 'Right')), cell('Left', panel(`sheet-left-${suffix}`, 'Left'))]; }
-  return buildSheet('sys-sheet', 'System / Sheet', `shadcn Sheet over Radix Dialog: a panel on one window edge, --size-panel-ideal (${W}px) wide on the left or right, an overlay at --opacity-dimmed behind it.`, [], states('l'), states('d'));
+  return buildSheet('sys-sheet', 'System / Sheet', `No Sheet master exists in pencil:shadcn; drawn from primitives in Dialog\u2019s surface idiom: a panel on one window edge, --size-panel-ideal (${W}px) wide on the left or right, an overlay at --opacity-dimmed behind it.`, [], states('l'), states('d'));
 }
 
 function buildPopover(tokens) {
@@ -509,18 +601,23 @@ function buildPopover(tokens) {
     }, [text(`pop-t-${suffix}`, 'Open a pull request', {fill: '$--foreground', weight: '500'}), text(`pop-d-${suffix}`, '#118 into main · CI green', {fill: '$--subtle-foreground', size: '$--text-caption'})]);
     return [cell('Open', content)];
   }
-  return buildSheet('sys-popover', 'System / Popover', `shadcn Popover over Radix: --size-pr-popover (${W}px) wide, rounded-md, the same surface idiom as Dropdown Menu content.`, [], states('l'), states('d'));
+  return buildSheet('sys-popover', 'System / Popover', `No separate Popover master exists in pencil:shadcn; its content reuses the same --popover/--border/rounded surface idiom as Dropdown Menu's content (cTN8T), at --size-pr-popover (${W}px) wide.`, [], states('l'), states('d'));
 }
 
 function buildTooltip(tokens) {
+  // Shaped from shadcn's Tooltip (lxrnE): rounded-sm (its own 6px, an exact hide
+  // token match), --popover fill, a hairline --border, no drop shadow, its
+  // horizontal padding at --spacing-md (its own 12px, also an exact match). hide's
+  // Hint balloon keeps text-caption rather than shadcn's text-title-sized label,
+  // since a hint is the smallest form of a state (design principle 9).
   function balloon(id, withShortcut) {
     return frame(id, withShortcut ? 'With Shortcut' : 'Open', {
       cornerRadius: '$--radius-sm', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline',
-      strokeAlignment: 'inner', layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', padding: ['$--spacing-xs', '$--spacing-sm'],
-    }, [text(`${id}-t`, 'Split terminal', {fill: '$--foreground', size: '$--text-caption'}), ...(withShortcut ? [text(`${id}-k`, '⌘D', {fill: '$--muted-foreground', size: '$--text-caption', mono: true})] : [])]);
+      strokeAlignment: 'inner', layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', padding: ['$--spacing-xs', '$--spacing-md'],
+    }, [text(`${id}-t`, 'Split terminal', {fill: '$--foreground', size: '$--text-caption', weight: '500'}), ...(withShortcut ? [text(`${id}-k`, '⌘D', {fill: '$--muted-foreground', size: '$--text-caption', mono: true})] : [])]);
   }
   function states(suffix) { return [cell('Open', balloon(`tip-open-${suffix}`, false)), cell('With Shortcut', balloon(`tip-shortcut-${suffix}`, true))]; }
-  return buildSheet('sys-tooltip', 'System / Tooltip', 'shadcn Tooltip over Radix: --size-tooltip-max-width cap, rounded-sm, text-caption. Its label is the trigger’s accessible name.', [], states('l'), states('d'));
+  return buildSheet('sys-tooltip', 'System / Tooltip', 'Shaped from shadcn’s Tooltip (lxrnE): rounded-sm, --popover fill, hairline --border, --spacing-md horizontal padding. Its label is the trigger’s accessible name.', [], states('l'), states('d'));
 }
 
 function buildCommand(tokens) {
@@ -541,7 +638,7 @@ function buildCommand(tokens) {
     const empty = surface(`cmd-empty-${suffix}`, [inputRow(`cmd-ine-${suffix}`), frame(`cmd-emptyrow-${suffix}`, 'Empty', {padding: '$--spacing-md', layout: 'horizontal', justifyContent: 'center'}, [text(`cmd-emptyt-${suffix}`, 'No matches', {fill: '$--muted-foreground', size: '$--text-caption'})])]);
     return [cell('Default', withList), cell('Filtered', filtered), cell('Empty', empty)];
   }
-  return buildSheet('sys-command', 'System / Command', `shadcn Command over cmdk: --size-search-sheet-w (${W}px) wide, a --size-control-lg field, the shared menu-item idiom for its list.`, [], states('l'), states('d'));
+  return buildSheet('sys-command', 'System / Command', `Command over cmdk has no single shadcn master; its input row is shaped from List Search Box/Default (O0rdg: a leading search icon, muted placeholder, no clear icon) and each row from List Item, the same idiom Dropdown Menu uses. --size-search-sheet-w (${W}px) wide, a --size-control-lg field.`, [], states('l'), states('d'));
 }
 
 function buildSonner(tokens) {
@@ -562,7 +659,39 @@ function buildSonner(tokens) {
       cell('With Action', toast(`son-action-${suffix}`, 'With Action', null, true)),
     ];
   }
-  return buildSheet('sys-sonner', 'System / Sonner', 'shadcn Toaster (sonner): a transient confirmation, never the only place a state the operator must act on lives (design 13).', [], states('l'), states('d'));
+  return buildSheet('sys-sonner', 'System / Sonner', 'No Toast/Sonner master exists in pencil:shadcn; drawn from primitives in the popover-surface idiom: a transient confirmation, never the only place a state the operator must act on lives (design 13).', [], states('l'), states('d'));
+}
+
+// -- Component / Panel Tab, Component / Keycap (the two folded legacy masters that
+// are hide composites, not shadcn parts, so they no longer sit inside a System
+// sheet) -------------------------------------------------------------------------
+
+function buildLegacyComponentSheet(id, name, spec, master) {
+  return frame(id, name, {
+    layout: 'vertical', gap: '$--spacing-lg', padding: '$--spacing-xl', fill: '$--card',
+    cornerRadius: '$--radius-lg', width: 'fit_content',
+  }, [
+    text(`${id}-title`, name.replace('Component / ', ''), {size: '$--text-headline', weight: '600'}),
+    text(`${id}-spec`, spec, {size: '$--text-caption', fill: '$--subtle-foreground', width: 720}),
+    masterCard(`${id}-master-card`, 'Master', master),
+  ]);
+}
+
+export function componentFoldSheets(legacy) {
+  return [
+    {
+      name: 'Component / Panel Tab',
+      build: () => buildLegacyComponentSheet('cmp-panel-tab', 'Component / Panel Tab',
+        'The pane-header underline tab: a different idiom from shadcn Tabs (System / Tabs), so it keeps its own sheet rather than folding into that part. Folded from the former System / Panel Tab master, unchanged beyond the variable rename gen-pen already applied - existing Component refs to it still resolve.',
+        legacy.panelTab.master),
+    },
+    {
+      name: 'Component / Keycap',
+      build: () => buildLegacyComponentSheet('cmp-keycap', 'Component / Keycap',
+        'The divider-bordered mono keycap: a different idiom from shadcn Kbd (System / Kbd), so it keeps its own sheet rather than folding into that part. Folded from the former System / Keycap master, unchanged beyond the variable rename gen-pen already applied - existing Component refs to it still resolve.',
+        legacy.keycap.master),
+    },
+  ];
 }
 
 // -- assembly ------------------------------------------------------------------

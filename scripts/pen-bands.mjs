@@ -1,10 +1,13 @@
 // The library holds foundations and System/Component sheets only.
 // Screen proposals belong in ignored agents/runs/<task>/ documents.
-// Regeneration owns Foundations and every System / <Part> sheet's content, never
-// the designer's placement of the sheet itself, and never Component / content.
+// Regeneration owns Foundations, every System / <Part> sheet's content, and the two
+// Component / Panel Tab and Component / Keycap sheets that carry the folded legacy
+// masters (they are generated content, not hand-authored, the same way a System
+// sheet is) - never the designer's placement of any sheet, and never any other
+// Component / content.
 
 import {foundations} from './pen-foundations.mjs';
-import {systemSheets, RETIRED_SHEETS} from './pen-system.mjs';
+import {systemSheets, componentFoldSheets, RETIRED_SHEETS} from './pen-system.mjs';
 
 export const FOUNDATIONS = 'System / Foundations';
 export const BANDS = [{prefix: 'System /'}, {prefix: 'Component /'}];
@@ -23,7 +26,7 @@ export function layout(document, tokens, legacy) {
     .filter(node => !BANDS.some(band => (node.name ?? '').startsWith(band.prefix)))
     .map(node => node.name || `<${node.type} ${node.id}>`);
 
-  const generated = [{name: FOUNDATIONS, build: () => foundations(document.variables)}, ...systemSheets(tokens, legacy)];
+  const generated = [{name: FOUNDATIONS, build: () => foundations(document.variables)}, ...systemSheets(tokens, legacy), ...componentFoldSheets(legacy)];
 
   let children = kept;
   let placed = 0;
