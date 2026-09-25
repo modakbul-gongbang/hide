@@ -21,6 +21,10 @@ use crate::root::Root;
 /// cut or allowed to dominate the wire.
 pub const MAX_DIFF_BYTES: usize = 256 * 1024;
 
+/// The further diffs one read answers at most: one per View area the shell
+/// can show side by side (PRD S7 A5), so a read stays bounded whoever asks.
+pub const MAX_DIFFS: usize = 6;
+
 /// What to read: the folder below the root the answer is limited to, the
 /// file whose diff to fetch and which group it is in, and the branch the
 /// committed group is measured against. `base: None` measures against the
@@ -31,6 +35,18 @@ pub struct ChangesQuery {
     pub selected: Option<String>,
     pub committed: bool,
     pub base: Option<String>,
+    /// Further diffs to take in the same read, one per View display of a
+    /// diff; past `MAX_DIFFS` they are not answered.
+    #[serde(default)]
+    pub diffs: Vec<DiffTarget>,
+}
+
+/// A file whose diff a View display shows, relative to the scope like every
+/// path in the answer, and the group it is taken in.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiffTarget {
+    pub path: String,
+    pub committed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -44,6 +60,18 @@ pub struct Changes {
     /// resolved it.
     pub base: Option<String>,
     pub diff: Option<Diff>,
+    /// One diff per answered target of `ChangesQuery::diffs`, in order. A
+    /// target no longer in its group is answered with empty text and a
+    /// notice saying so, never left out.
+    #[serde(default)]
+    pub diffs: Vec<GroupDiff>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupDiff {
+    pub committed: bool,
+    #[serde(flatten)]
+    pub diff: Diff,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,28 +183,63 @@ pub fn changes(root: &Root, scope: &Path, query: &ChangesQuery) -> HostResult<Ch
         None => (None, None),
     };
 
-    let group = if query.committed {
-        committed.as_deref().unwrap_or_default()
-    } else {
-        &entries
-    };
-    let diff = query
-        .selected
-        .as_ref()
-        .and_then(|selected| group.iter().find(|entry| &entry.path == selected))
-        .map(|entry| {
-            if query.committed {
+    let diff_of = |path: &str, in_committed: bool| {
+        let group = if in_committed {
+            committed.as_deref().unwrap_or_default()
+        } else {
+            &entries
+        };
+        group.iter().find(|entry| entry.path == path).map(|entry| {
+            if in_committed {
                 committed_diff(git, scope, entry, base.as_deref())
             } else {
                 working_diff(git, root, scope, entry)
             }
-        });
+        })
+    };
+    let answered: Vec<(&DiffTarget, Option<Diff>)> = query
+        .diffs
+        .iter()
+        .take(MAX_DIFFS)
+        .map(|target| (target, diff_of(&target.path, target.committed)))
+        .collect();
+    // The selected file is often one a View display shows too; its diff is
+    // taken once.
+    let diff = query.selected.as_ref().and_then(|selected| {
+        answered
+            .iter()
+            .find(|(target, _)| &target.path == selected && target.committed == query.committed)
+            .map(|(_, diff)| diff.clone())
+            .unwrap_or_else(|| diff_of(selected, query.committed))
+    });
+    let has_base = committed.is_some();
+    let diffs = answered
+        .into_iter()
+        .map(|(target, diff)| GroupDiff {
+            committed: target.committed,
+            diff: diff.unwrap_or_else(|| Diff {
+                path: target.path.clone(),
+                text: String::new(),
+                notice: Some(absent_notice(target.committed, has_base)),
+            }),
+        })
+        .collect();
     Ok(Changes {
         entries,
         committed,
         base,
         diff,
+        diffs,
     })
+}
+
+/// Why a View display's file has no diff in its group now.
+fn absent_notice(in_committed: bool, has_base: bool) -> String {
+    match (in_committed, has_base) {
+        (true, false) => "This checkout has no base branch to compare with".to_owned(),
+        (true, true) => "This file has no changes on this branch".to_owned(),
+        (false, _) => "This file has no uncommitted changes".to_owned(),
+    }
 }
 
 /// A scope is a folder of the checkout named without a link anywhere along

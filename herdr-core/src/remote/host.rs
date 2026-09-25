@@ -600,12 +600,9 @@ pub fn establish(
     let hello: Hello = call_as(&host, Call::Hello, HELLO_TIMEOUT).map_err(|error| {
         EstablishError::Helper(format!("The device helper did not start: {error}"))
     })?;
-    if hello.protocol != PROTOCOL_VERSION {
+    if let Some(reason) = helper_protocol_refusal(&hello) {
         host.close("helper protocol mismatch");
-        return Err(EstablishError::Helper(format!(
-            "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}",
-            hello.protocol
-        )));
+        return Err(EstablishError::Helper(reason));
     }
     Ok(Established {
         host,
@@ -613,6 +610,20 @@ pub fn establish(
         hello,
         installed,
         helper_path,
+    })
+}
+
+/// Why a started helper is not used: one that answers another protocol reads
+/// this build's requests with other shapes (a helper on protocol 8 ignores
+/// the View diffs a `changes` read carries and answers none, PRD S7 A5).
+/// The refusal is the device's unavailable reason; the next connection
+/// installs this build's helper, because a helper is keyed by its bytes.
+fn helper_protocol_refusal(hello: &Hello) -> Option<String> {
+    (hello.protocol != PROTOCOL_VERSION).then(|| {
+        format!(
+            "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}",
+            hello.protocol
+        )
     })
 }
 
@@ -1280,6 +1291,28 @@ mod tests {
         idle.join().unwrap();
         let admission = lock_recover(&gate.state);
         assert_eq!((admission.running, admission.queued), (0, 0));
+    }
+
+    /// PRD S7 A5: a helper still on the protocol before the View diffs is
+    /// refused with a reason naming both versions, never used.
+    #[test]
+    fn a_helper_on_the_previous_protocol_is_refused_with_both_versions() {
+        let hello = |protocol| Hello {
+            protocol,
+            version: "0.0.0".to_owned(),
+            os: "linux".to_owned(),
+            arch: "x86_64".to_owned(),
+            home: None,
+        };
+        let refusal = helper_protocol_refusal(&hello(PROTOCOL_VERSION - 1)).expect("refused");
+        assert_eq!(
+            refusal,
+            format!(
+                "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}",
+                PROTOCOL_VERSION - 1
+            )
+        );
+        assert_eq!(helper_protocol_refusal(&hello(PROTOCOL_VERSION)), None);
     }
 
     /// An answer line keeps its result as the helper's own text, `null`

@@ -251,6 +251,7 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
             selected,
             committed: request.selected_committed,
             base: request.base_branch.clone(),
+            diffs: Vec::new(),
         },
         READ_TIMEOUT,
     );
