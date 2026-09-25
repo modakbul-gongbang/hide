@@ -410,6 +410,52 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
   }
 });
 
+/** Whether the page hided serves (`web/dist`) was built with `text` in it. */
+function builtPageHas(text: string): boolean {
+  const assets = path.resolve("dist", "assets");
+  return fs.readdirSync(assets).some((name) => name.endsWith(".js") && fs.readFileSync(path.join(assets, name), "utf8").includes(text));
+}
+
+const BESIDE_TOO_NARROW = "This view area is too narrow to open a second view beside it.";
+
+test("Open to the side from the only area is refused with its reason until that area has room to split", async ({ page }) => {
+  test.skip(!builtPageHas(BESIDE_TOO_NARROW), "needs a web/dist built with the Open to the side room rule");
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const stack = await startStack(page, "s7-beside-room", { "a.txt": "a\n" });
+  try {
+    const row = explorerRow(page, stack, "a.txt");
+    await row.click();
+    await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
+    await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeLessThan(450);
+
+    // The one area cannot be halved, so Open to the side stays listed,
+    // disabled with the reason, in the Explorer's menu and the palette (B4, B9, D-06).
+    await row.click({ button: "right" });
+    const item = page.locator('[data-explorer-menu] [data-menu-item="open-beside"]');
+    await expect(item).toBeDisabled();
+    await expect(item).toContainText(BESIDE_TOO_NARROW);
+    await page.keyboard.press("Escape");
+    await page.mouse.click(5, 5);
+    await page.keyboard.press("Meta+KeyK");
+    await page.keyboard.type("Open file to the side");
+    const command = page.locator('[data-palette-row="command:open_beside"]');
+    await expect(command).toHaveAttribute("aria-disabled", "true");
+    await expect(command).toContainText(BESIDE_TOO_NARROW);
+    await page.keyboard.press("Escape");
+    expect(stack.events.filter((event) => event.kind === "file_open" && event.payload.beside === true)).toHaveLength(0);
+
+    // With room (Views only), the same item opens the second view to the right.
+    await page.locator('[data-layout-choice="views"]').click();
+    await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeGreaterThan(450);
+    await row.click({ button: "right" });
+    await expect(item).toBeEnabled();
+    await item.click();
+    await expect.poll(() => shape(page)).toBe("(>a.txt*) | @(>a.txt)");
+  } finally {
+    stopStack(stack);
+  }
+});
+
 type Box = { x: number; y: number; width: number; height: number };
 
 async function boxOf(locator: Locator): Promise<Box> {
