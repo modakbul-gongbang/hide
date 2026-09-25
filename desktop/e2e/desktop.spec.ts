@@ -114,7 +114,7 @@ test("links: external links open in the default browser and the window stays on 
   expect(await page.evaluate(() => [location.origin, !!document.querySelector("[data-main-screen], [data-workspace-screen]")])).toEqual([origin, true]);
 });
 
-test("lifetime: quitting leaves hided running, the next launch attaches to it, and a second launch focuses the first", async () => {
+test("lifetime: a second launch focuses the first, closing the window keeps the app, and quitting leaves hided for the next launch", async () => {
   ({ app } = await launch(run.env));
   let page = await app.firstWindow();
   await shellShown(page);
@@ -129,6 +129,15 @@ test("lifetime: quitting leaves hided running, the next launch attaches to it, a
   await expect.poll(() => hostLog(run.env).some((line) => line.event === "host.reopen" && line.trigger === "second-instance")).toBe(true);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
 
+  // B7: closing the last window keeps the app; a Dock click (activate) brings a window back.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+  await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(0);
+  const reopened = app.waitForEvent("window");
+  await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
+  page = await reopened;
+  await shellShown(page);
+  expect(run.daemonPid()).toBe(pid);
+
   // B8: the size and position come back on the next launch.
   const bounds = { x: 120, y: 140, width: 1000, height: 700 };
   await app.evaluate(({ BrowserWindow }, next) => BrowserWindow.getAllWindows()[0]!.setBounds(next), bounds);
@@ -142,7 +151,8 @@ test("lifetime: quitting leaves hided running, the next launch attaches to it, a
   await shellShown(page);
   expect(run.daemonPid()).toBe(pid);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getBounds())).toEqual(bounds);
-  expect(hostLog(run.env).filter((line) => line.event === "window.bounds").map((line) => line.source)).toEqual(["default", "stored"]);
+  // First launch, the reopened window (bounds written when the first closed), then the relaunch.
+  expect(hostLog(run.env).filter((line) => line.event === "window.bounds").map((line) => line.source)).toEqual(["default", "stored", "stored"]);
 });
 
 test("failure: a missing CLI shows its reason and Retry attaches once it exists", async () => {

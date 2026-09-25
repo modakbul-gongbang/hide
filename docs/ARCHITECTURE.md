@@ -600,8 +600,9 @@ While a row records, the listener runs no command, and IME composition never rec
 The Electron column is the Swift chord set (`ShellMenuCommand.swift`, `PaneShortcutSettings.swift`), with ⌘/ kept from the browser because Swift has none: the desktop app has no browser keeping chords, so the moved ones return to ⌘.
 Each surface reads the running host's column (`web/src/host.ts`: `window.hideHost` means the desktop app): the window listener, the ⌘/ sheet, which drops the "moved for Chrome" note there, and every hint that names a chord.
 The browser overrides in `browser_shortcut_bindings` apply on the browser host only; the desktop app runs its column as it stands, and its Settings > Shortcuts says so.
-The desktop app menu is built from the same column (`desktop/src/main/menu.ts`), and a click reaches the same `run` path as a chord through the bridge; a chord the listener answers is consumed in the page, so on the Electron key path, where the renderer sees a key before the menu, its accelerator does not fire as well.
-That last property is Electron's documented order and is covered only at the renderer: the e2e presses the chord through Playwright and clicks the menu item from the main process, and neither reaches NSMenu, so a native keystroke is still to be checked by hand.
+The desktop app menu is built from the same column (`desktop/src/main/menu.ts`), and a click reaches the same `run` path as a chord through the bridge; a chord the listener answers calls `preventDefault` in the page.
+The design relies on Electron handing a key to the page first and to the menu only when the page leaves it unhandled, so one press runs one command; that order is an assumption, not a verified fact here.
+The e2e covers each path alone (a Playwright chord, a main-process menu click, one `create_tab` each), neither reaches NSMenu, and a native keystroke against the app has not been checked: if one press runs twice, the listener stops answering the chords the menu owns in Electron.
 
 | Command | Swift | Browser | Electron |
 | --- | --- | --- | --- |
