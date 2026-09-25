@@ -139,8 +139,19 @@ test("lifetime: a second launch focuses the first, closing the window keeps the 
   expect(run.daemonPid()).toBe(pid);
 
   // B8: the size and position come back on the next launch.
-  const bounds = { x: 120, y: 140, width: 1000, height: 700 };
-  await app.evaluate(({ BrowserWindow }, next) => BrowserWindow.getAllWindows()[0]!.setBounds(next), bounds);
+  // Fitted inside this machine's primary work area: macOS moves a window that
+  // does not fit, and a CI runner's display is smaller than a workstation's.
+  const bounds = await app.evaluate(({ BrowserWindow, screen }) => {
+    const area = screen.getPrimaryDisplay().workArea;
+    const next = {
+      x: area.x + 20,
+      y: area.y + 20,
+      width: Math.min(1000, area.width - 40),
+      height: Math.min(700, area.height - 40),
+    };
+    BrowserWindow.getAllWindows()[0]!.setBounds(next);
+    return next;
+  });
 
   // B5: quitting the app leaves the daemon; the next launch attaches to it.
   await app.close();
