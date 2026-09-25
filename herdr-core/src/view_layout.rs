@@ -830,11 +830,72 @@ impl Layout {
         })
     }
 
+    /// Gives every id a new number in tree order, keeping the display each
+    /// area shows and the area in use.
+    fn renumber(&mut self) {
+        let in_use = self
+            .areas()
+            .iter()
+            .position(|area| area.id == self.active_area);
+        let mut next = 1u64;
+        let mut mint = |prefix: char| {
+            let id = format!("{prefix}{next}");
+            next += 1;
+            id
+        };
+        self.root.visit_mut(&mut |node| match node {
+            Node::Area(area) => {
+                let shown = area.active.as_ref().and_then(|active| {
+                    area.displays
+                        .iter()
+                        .position(|display| &display.id == active)
+                });
+                area.id = mint('a');
+                for display in &mut area.displays {
+                    display.id = mint('d');
+                }
+                area.active = shown.map(|index| area.displays[index].id.clone());
+            }
+            Node::Split(split) => split.id = mint('s'),
+        });
+        self.next_id = next;
+        if let Some(index) = in_use {
+            self.active_area = self.areas()[index].id.clone();
+        }
+    }
+
+    /// Replaces focus stamps near the end of their numbers by their order,
+    /// so the display focused last stays last and the next stamp has room.
+    /// Returns whether it had to.
+    fn renumber_stamps(&mut self) -> bool {
+        if self
+            .displays()
+            .all(|display| display.last_focused_unix_ms < NUMBER_LIMIT)
+        {
+            return false;
+        }
+        let mut stamps: Vec<u64> = self
+            .displays()
+            .map(|display| display.last_focused_unix_ms)
+            .filter(|stamp| *stamp > 0)
+            .collect();
+        stamps.sort_unstable();
+        stamps.dedup();
+        for display in self.displays_mut() {
+            if let Ok(rank) = stamps.binary_search(&display.last_focused_unix_ms) {
+                display.last_focused_unix_ms = rank as u64 + 1;
+            }
+        }
+        true
+    }
+
     /// Makes a stored tree hold the invariants every operation keeps: unique
-    /// ids and a `next_id` past them, ratios in bounds, the display, depth
-    /// and area caps, no empty area but the root, at most one preview per
-    /// area, active names that exist. Returns what it had to change, for the
-    /// diagnostic log; a tree this build wrote returns nothing.
+    /// ids and a `next_id` past them with room to mint, ratios in bounds, the
+    /// display, depth and area caps, no empty area but the root, at most one
+    /// preview per area, active names that exist, focus stamps with room.
+    /// Returns what it had to change as counts, for the diagnostic log, in
+    /// one pass over the tree per rule; a tree this build wrote returns
+    /// nothing.
     pub fn repair(&mut self) -> Vec<String> {
         let mut notes = Vec::new();
         let mut highest = 0u64;
@@ -852,8 +913,16 @@ impl Layout {
                 Node::Split(split) => note(&split.id),
             }
         });
-        if self.next_id <= highest {
+        // Only a crafted file holds numbers this high; minting past them
+        // would overflow, so the tree takes new ones.
+        if highest >= NUMBER_LIMIT || self.next_id >= NUMBER_LIMIT {
+            self.renumber();
+            notes.push("ids near the end of their numbers were renumbered".to_owned());
+        } else if self.next_id <= highest {
             self.next_id = highest + 1;
+        }
+        if self.renumber_stamps() {
+            notes.push("focus stamps near the end of their numbers were renumbered".to_owned());
         }
 
         let mut seen = HashSet::new();
@@ -926,16 +995,17 @@ impl Layout {
             ));
         }
 
-        let empty: Vec<String> = self
-            .areas()
-            .iter()
-            .filter(|area| area.displays.is_empty())
-            .map(|area| area.id.clone())
-            .collect();
-        for area_id in empty {
-            if self.area_count() > 1 && self.root.remove_area(&area_id).is_some() {
-                notes.push(format!("empty area {area_id} was removed"));
-            }
+        // One pass however many areas a file holds; the last area stays,
+        // empty, when every one is.
+        let survivor = self.root.first_area().id.clone();
+        let root = std::mem::replace(&mut self.root, Node::Area(Area::empty(String::new())));
+        let mut emptied = 0usize;
+        self.root = without_empty_areas(root, &mut emptied).unwrap_or_else(|| {
+            emptied -= 1;
+            Node::Area(Area::empty(survivor))
+        });
+        if emptied > 0 {
+            notes.push(format!("{emptied} empty areas were removed"));
         }
 
         self.root.flatten_below(0, &mut notes);
@@ -994,6 +1064,45 @@ impl Layout {
             self.active_area = self.root.first_area().id.clone();
         }
         notes
+    }
+}
+
+/// Ids and focus stamps stay below this, so minting the next one can never
+/// overflow; only a crafted file comes near it, and loading renumbers it.
+const NUMBER_LIMIT: u64 = u64::MAX / 2;
+
+/// `node` without its empty areas: a split that loses one side becomes its
+/// other side, and `None` when nothing is left. Counts what it dropped.
+fn without_empty_areas(node: Node, dropped: &mut usize) -> Option<Node> {
+    match node {
+        Node::Area(area) if area.displays.is_empty() => {
+            *dropped += 1;
+            None
+        }
+        Node::Area(area) => Some(Node::Area(area)),
+        Node::Split(split) => {
+            let Split {
+                id,
+                axis,
+                ratio,
+                first,
+                second,
+            } = split;
+            match (
+                without_empty_areas(*first, dropped),
+                without_empty_areas(*second, dropped),
+            ) {
+                (Some(first), Some(second)) => Some(Node::Split(Split {
+                    id,
+                    axis,
+                    ratio,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                })),
+                (Some(only), None) | (None, Some(only)) => Some(only),
+                (None, None) => None,
+            }
+        }
     }
 }
 
@@ -1208,6 +1317,80 @@ mod tests {
         assert_eq!(layout.neighbour(&b, Edge::Down), Some(c.clone()));
         assert_eq!(layout.neighbour(&d, Edge::Up), Some(b.clone()));
         assert_eq!(layout.neighbour(&b, Edge::Up), None);
+    }
+
+    /// A crafted file can hold ids and focus stamps at the top of their
+    /// numbers, where minting the next one overflows: loading renumbers
+    /// them and keeps what the area shows and which view was focused last.
+    #[test]
+    fn a_tree_at_the_top_of_its_numbers_is_renumbered_on_load() {
+        let mut layout = with_files(&["a", "b"]);
+        let b = id(&layout, "b");
+        for display in layout.displays_mut() {
+            let last = display.id == b;
+            display.last_focused_unix_ms = if last { u64::MAX } else { u64::MAX - 1 };
+            if last {
+                display.id = format!("d{}", u64::MAX);
+            }
+        }
+        layout.area_mut("a1").unwrap().active = Some(format!("d{}", u64::MAX));
+        layout.next_id = u64::MAX;
+
+        let notes = layout.repair();
+
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert_eq!(names(&layout), vec![vec!["a", "b"]]);
+        let area = layout.active_area();
+        assert_eq!(area.active, Some(id(&layout, "b")));
+        let shown = successor(&area.displays, 0).unwrap();
+        assert_eq!(shown, id(&layout, "b"), "b stays the one focused last");
+        let area_id = area.id.clone();
+        let fresh = layout.new_display("/repo/c", DisplayKind::File, None, false);
+        assert!(layout.displays().all(|display| display.id != fresh.id));
+        let stamp = layout.next_stamp(1_700_000_000_000);
+        layout.insert(&area_id, fresh, stamp).unwrap();
+        assert_eq!(names(&layout), vec![vec!["a", "b", "c"]]);
+        assert!(
+            layout.clone().repair().is_empty(),
+            "a repaired tree is stable"
+        );
+    }
+
+    /// A crafted file can hold thousands of empty areas: loading drops them
+    /// in one pass over the tree and says so in one line.
+    #[test]
+    fn thousands_of_empty_areas_are_dropped_with_one_note() {
+        fn empties(depth: u32, next: &mut u64) -> Node {
+            *next += 1;
+            if depth == 0 {
+                return Node::Area(Area::empty(format!("a{next}")));
+            }
+            let id = format!("s{next}");
+            Node::Split(Split {
+                id,
+                axis: SplitAxis::Row,
+                ratio: 0.5,
+                first: Box::new(empties(depth - 1, next)),
+                second: Box::new(empties(depth - 1, next)),
+            })
+        }
+        let mut layout = with_files(&["a"]);
+        let mut next = layout.next_id;
+        let second = empties(12, &mut next);
+        layout.root = Node::Split(Split {
+            id: format!("s{}", next + 1),
+            axis: SplitAxis::Row,
+            ratio: 0.5,
+            first: Box::new(layout.root.clone()),
+            second: Box::new(second),
+        });
+        layout.next_id = next + 2;
+
+        let notes = layout.repair();
+
+        assert_eq!(names(&layout), vec![vec!["a"]]);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].contains("4096"), "{notes:?}");
     }
 
     #[test]
