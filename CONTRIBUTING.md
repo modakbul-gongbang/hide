@@ -103,6 +103,7 @@ A script that stops earning its place here is deleted rather than left unreferen
 | Command | Checks | Needs |
 | --- | --- | --- |
 | `bash scripts/check-hide-full.sh` | Everything CI requires plus every local gate below that runs unattended | A full build; writes `target/hide-full.log` in the checkout |
+| `node scripts/check-hide-design-enforcement.mjs` | `design-contract.yml` still binds the real checkers, so this list cannot drift from CI | - |
 | `zsh scripts/check-herdr-contract.sh` | The full contract, including the responses only a live server answers | A running Herdr server |
 | `bash scripts/check-hide-copy.sh <base-sha>` | User-facing copy against the inventory at an immutable pre-change commit | The base commit of the change under review |
 | `bash scripts/check-hide-accessibility.sh` | The accessibility tree of the built dev app | Builds and launches the dev bundle |
