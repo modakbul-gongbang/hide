@@ -136,7 +136,7 @@ function issueHelp(link: IssueLink | null, github: GithubStatus | null, now: num
   if (github && (github.loading || github.stale) && github.last_success_at_unix_ms != null) {
     lines.push(`GitHub: 마지막 성공 ${Math.max(0, Math.floor((now - github.last_success_at_unix_ms) / 60_000))}분 전`);
   }
-  return lines.join("\n");
+  return lines.join(" · ");
 }
 
 function card(

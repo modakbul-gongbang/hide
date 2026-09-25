@@ -5,7 +5,7 @@
 // has no session to show. Nothing here is counted that the snapshot does not
 // carry, and a device that cannot answer says so instead of showing zeros.
 
-import { focusedRemoteDevice, frontCheckout, type AgentRow, type Checkout, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
+import { focusedRemoteDevice, frontCheckout, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
 export const AGENT_GROUPS: readonly { group: AgentGroup; label: string }[] = [
@@ -140,12 +140,6 @@ function descendantsIn(agent: AgentRow, byPane: Map<string, AgentRow>): number {
   return seen.size;
 }
 
-/** The agents of one checkout. */
-export function checkoutAgents(checkout: Checkout, agents: AgentRow[]): AgentRow[] {
-  const panes = new Set(checkout.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id)));
-  return agents.filter((agent) => panes.has(agent.pane_id));
-}
-
 /**
  * This machine's Projects count agents only while its Herdr answers: an
  * unreachable Herdr has no agents to list, and "No agents" would be a zero
@@ -238,6 +232,12 @@ export type OverviewProject = {
   workspace: Workspace;
   /** The Project's agents, or null while its device cannot say which are current. */
   agents: AgentRow[] | null;
+  /**
+   * Every agent its device last reported, current or not: the Overview board
+   * keeps the last rows while a device is unreachable, and a descendant may
+   * work in another project's checkout (web-project-overview D-06).
+   */
+  deviceAgents: AgentRow[];
   device: Device | null;
   availability: DeviceAvailability;
 };
@@ -255,6 +255,7 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
     return {
       workspace: local,
       agents: availability.state === "ready" ? projectAgents(local, localAgents) : null,
+      deviceAgents: localAgents,
       device: rest?.navigator?.devices?.find((row) => row.kind !== "remote") ?? null,
       availability,
     };
@@ -267,6 +268,7 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
       return {
         workspace,
         agents: availability.state === "ready" ? projectAgents(workspace, status.session?.agents ?? []) : null,
+        deviceAgents: status.session?.agents ?? [],
         device,
         availability,
       };

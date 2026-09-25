@@ -147,7 +147,7 @@ describe("the Tasks board", () => {
     const [value] = buildBoard(workspace([linked]), [agent("t")], NOW).tasks;
     expect(value?.mismatch).toBe("Done");
     expect(value?.mismatchHelp).toBe("Project: Done · git: 변경 1");
-    expect(value?.issueHelp).toBe("acme/project#9 · 열림\nFix\nProject: Done\nbranch\nGitHub: 마지막 성공 5분 전");
+    expect(value?.issueHelp).toBe("acme/project#9 · 열림 · Fix · Project: Done · branch · GitHub: 마지막 성공 5분 전");
     const fresh = buildBoard(workspace([{ ...linked, github: { ...stale, stale: false } }]), [agent("t")], NOW).tasks[0];
     expect(fresh?.issueHelp).not.toContain("GitHub");
   });
