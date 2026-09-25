@@ -1,5 +1,6 @@
 use super::*;
 use crate::model::{DeviceSnapshot, ProjectSessionsSnapshot, SessionsSnapshot};
+use crate::runtime::project_sessions::settle_history;
 use std::fs;
 
 /// A private HOME holding one Claude Code and one Codex session in `alpha`,
@@ -244,7 +245,7 @@ fn a_history_read_for_a_project_no_longer_named_cannot_land() {
         memories: Vec::new(),
         state: None,
     };
-    let landed = runtime.ingest_project_sessions(stale, Ok(load));
+    let landed = runtime.ingest_project_sessions(stale, Ok(settle_history(load, &[])));
 
     assert!(!landed);
     let sessions = runtime.snapshot.project_sessions.clone().unwrap();
@@ -368,6 +369,44 @@ fn opening_a_session_reads_it_beside_the_history_and_a_retry_rereads_it() {
 }
 
 #[test]
+fn a_session_whose_file_is_still_there_but_left_the_project_leaves_its_history() {
+    let fixture = fixture();
+    let shared = shared(&fixture);
+    let alpha = workspace_id(&fixture.alpha);
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id": alpha}),
+    );
+    let locator = settled(&shared)
+        .rows
+        .into_iter()
+        .find(|row| row.id == "claude-alpha")
+        .expect("listed")
+        .locator;
+
+    // Its recorded folder now resolves to another Project, as when its
+    // checkout was removed. The file is still there, so it is not gone: it
+    // leaves this history as the catalog decided (B5, D-04).
+    fs::write(
+        &locator,
+        claude_line(&fixture.zeta, "2026-09-21T01:00:00Z", "user", "moved on") + "\n",
+    )
+    .unwrap();
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id": alpha}),
+    );
+    let ids = settled(&shared)
+        .rows
+        .into_iter()
+        .map(|row| row.id)
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["claude-broken", "codex-alpha"]);
+}
+
+#[test]
 fn naming_another_project_closes_the_open_session() {
     let fixture = fixture();
     let shared = shared(&fixture);
@@ -423,7 +462,7 @@ fn refreshes_during_a_history_read_coalesce_into_one_more_read() {
         memories: Vec::new(),
         state: None,
     };
-    runtime.ingest_project_sessions(running, Ok(load));
+    runtime.ingest_project_sessions(running, Ok(settle_history(load, &[])));
     assert!(!runtime.project_sessions_work.list_waiting);
     assert!(runtime.project_sessions_work.list_in_flight);
     assert!(runtime.snapshot.project_sessions.as_ref().unwrap().loading);

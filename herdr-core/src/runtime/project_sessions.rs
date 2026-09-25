@@ -12,6 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::{fs, io};
 
 use serde_json::json;
 
@@ -46,13 +47,14 @@ pub(super) struct ProjectSessionsWork {
     pub(super) detail_generation: u64,
     pub(super) detail_in_flight: bool,
     pub(super) detail_waiting: bool,
-    /// Every session each Project's history has listed since the daemon
-    /// started, by Project. One whose file is no longer found keeps its row,
-    /// unavailable, instead of vanishing as if it never existed; only the
-    /// Memory store remembers such a session across a restart, and the web
-    /// shell's store has no record of any. A session belongs to one Project,
-    /// so this holds at most what the catalog can list.
-    pub(super) known: HashMap<String, Vec<SessionRowSnapshot>>,
+    /// The rows each Project's last history read produced, by Project, for
+    /// as long as the daemon runs: the next read keeps a session it no longer
+    /// lists, unavailable, when that session's file is gone, instead of it
+    /// vanishing as if it never existed (B5). Only the Memory store remembers
+    /// such a session across a restart, and the web shell's store has no
+    /// record of any. A kept row stays until its file is found again, so this
+    /// grows only with the sessions deleted while the daemon runs.
+    pub(super) known: HashMap<String, Arc<Vec<SessionRowSnapshot>>>,
 }
 
 impl Runtime {
@@ -169,13 +171,23 @@ impl Runtime {
             return false;
         };
         let generation = self.project_sessions_work.list_generation;
+        // The Project's last rows go to the worker by pointer, so the files of
+        // the ones this read no longer lists are checked off the lock.
+        let previous = self
+            .snapshot
+            .project_sessions
+            .as_ref()
+            .and_then(|sessions| self.project_sessions_work.known.get(&sessions.workspace_id))
+            .cloned()
+            .unwrap_or_default();
         let started = match (self.worker_context.clone(), self.home_path.clone()) {
             (Some(context), Some(home)) => {
                 let database = self.memory_database_path();
                 thread::Builder::new()
                     .name("hide-project-sessions-read".to_owned())
                     .spawn(move || {
-                        let result = load_sessions(&home, &database, &path);
+                        let result = load_sessions(&home, &database, &path)
+                            .map(|load| settle_history(load, &previous));
                         let Some(runtime) = context.runtime.upgrade() else {
                             return;
                         };
@@ -214,7 +226,7 @@ impl Runtime {
     pub(super) fn ingest_project_sessions(
         &mut self,
         generation: u64,
-        result: Result<memory::SessionsLoad, String>,
+        result: Result<ProjectHistory, String>,
     ) -> bool {
         self.project_sessions_work.list_in_flight = false;
         if generation != self.project_sessions_work.list_generation {
@@ -254,49 +266,13 @@ impl Runtime {
                 sessions.failure = Some(failure);
                 true
             }
-            Ok(load) => {
+            Ok(history) => {
                 sessions.failure = None;
-                let mut rows = load
-                    .rows
-                    .into_iter()
-                    .map(|mut row| {
-                        row.unavailable_reason =
-                            row.unavailable_reason.as_deref().map(session_reason);
-                        row
-                    })
-                    .collect::<Vec<_>>();
-                // A session listed before and not found now stays listed as
-                // unavailable with its last location, so a moved or deleted
-                // file reads differently from one that never existed (B5).
-                let listed = rows
-                    .iter()
-                    .map(|row| (row.provider.clone(), row.id.clone()))
-                    .collect::<HashSet<_>>();
-                let known = self
-                    .project_sessions_work
+                sessions.rows = history.rows;
+                self.project_sessions_work
                     .known
-                    .entry(sessions.workspace_id.clone())
-                    .or_default();
-                let gone = known
-                    .iter()
-                    .filter(|row| !listed.contains(&(row.provider.clone(), row.id.clone())))
-                    .map(|row| SessionRowSnapshot {
-                        unavailable_reason: Some(SESSION_GONE.to_owned()),
-                        ..row.clone()
-                    })
-                    .collect::<Vec<_>>();
-                if !gone.is_empty() {
-                    rows.extend(gone);
-                    rows.sort_by(|left, right| {
-                        right
-                            .updated_at_unix_ms
-                            .cmp(&left.updated_at_unix_ms)
-                            .then_with(|| left.id.cmp(&right.id))
-                    });
-                }
-                *known = rows.clone();
-                sessions.rows = rows;
-                self.project_sessions_work.project_id = Some(load.project_id);
+                    .insert(sessions.workspace_id.clone(), history.kept);
+                self.project_sessions_work.project_id = Some(history.project_id);
                 // A Retry reads the history and then the open session against
                 // its fresh row, so a source that came back opens and one that
                 // went away says so: one action, one event (A6).
@@ -503,6 +479,67 @@ impl Runtime {
             }
         }
         true
+    }
+}
+
+/// A Project's history as its worker settled it, off the lock: the rows to
+/// show, and the same rows kept for the next read of the Project.
+pub(super) struct ProjectHistory {
+    project_id: String,
+    rows: Vec<SessionRowSnapshot>,
+    kept: Arc<Vec<SessionRowSnapshot>>,
+}
+
+/// Settles a history read on its worker (B5, D-04): each reason in words,
+/// and each session the Project's `previous` rows hold that this read no
+/// longer lists kept, unavailable with its last location, when its file is
+/// gone. One whose file is still there no longer belongs to the Project -
+/// its checkout was removed, say - and leaves the list as the catalog
+/// decided.
+pub(super) fn settle_history(
+    load: memory::SessionsLoad,
+    previous: &[SessionRowSnapshot],
+) -> ProjectHistory {
+    let memory::SessionsLoad {
+        project_id, rows, ..
+    } = load;
+    let mut rows = rows
+        .into_iter()
+        .map(|mut row| {
+            row.unavailable_reason = row.unavailable_reason.as_deref().map(session_reason);
+            row
+        })
+        .collect::<Vec<_>>();
+    let listed = rows
+        .iter()
+        .map(|row| (row.provider.as_str(), row.id.as_str()))
+        .collect::<HashSet<_>>();
+    let gone = previous
+        .iter()
+        .filter(|row| !listed.contains(&(row.provider.as_str(), row.id.as_str())))
+        .filter(|row| {
+            !row.locator.is_empty()
+                && fs::metadata(&row.locator)
+                    .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+        })
+        .map(|row| SessionRowSnapshot {
+            unavailable_reason: Some(SESSION_GONE.to_owned()),
+            ..row.clone()
+        })
+        .collect::<Vec<_>>();
+    if !gone.is_empty() {
+        rows.extend(gone);
+        rows.sort_by(|left, right| {
+            right
+                .updated_at_unix_ms
+                .cmp(&left.updated_at_unix_ms)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+    }
+    ProjectHistory {
+        project_id,
+        kept: Arc::new(rows.clone()),
+        rows,
     }
 }
 
