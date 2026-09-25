@@ -90,9 +90,14 @@ export function branchChip(agent: Pick<AgentRow, "delegated" | "lineage_worktree
   return badge ? badge : null;
 }
 
-/** The row's accessible name: title, kind, status word, then the sentence (docs/status-model.md). */
+/**
+ * The row's accessible name: title, the device and branch chips the row
+ * shows, kind, status word, then the sentence (docs/status-model.md). The
+ * row's visible text is hidden from assistive technology, so everything it
+ * shows has to be here.
+ */
 export function rowAccessibleName(agent: AgentRow, device: string | null): string {
-  return [agent.identity_label, device, agent.agent_kind, agent.status_label, agent.detail].filter(Boolean).join(", ");
+  return [agent.identity_label, device, branchChip(agent), agent.agent_kind, agent.status_label, agent.detail].filter(Boolean).join(", ");
 }
 
 /** A row in a drawn agent tree: the row, its device, and how deep it sits under the root drawn above it. */

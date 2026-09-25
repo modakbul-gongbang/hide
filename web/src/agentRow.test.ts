@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeLabel, badgeParts, branchChip, directChildren, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree } from "./agentRow";
+import { badgeLabel, badgeParts, branchChip, directChildren, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree } from "./agentRow";
 import type { AgentRow } from "./snapshot";
 
 function row(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
@@ -67,6 +67,13 @@ describe("the branch chip (B9)", () => {
     expect(branchChip(row("child", { delegated: true, lineage_worktree_badge: "web-design-system-reset" }))).toBe("web-design-system-reset");
     expect(branchChip(row("same", { delegated: true, lineage_worktree_badge: null }))).toBeNull();
     expect(branchChip(row("root", { delegated: false, lineage_worktree_badge: "main" }))).toBeNull();
+  });
+});
+
+describe("the row's accessible name", () => {
+  it("reads out everything the row shows, since its visible text is hidden from assistive technology", () => {
+    const child = row("child", { identity_label: "웹 디자인 시스템 리셋 구현", delegated: true, lineage_worktree_badge: "web-design-system-reset", detail: "토큰 이관 중" });
+    expect(rowAccessibleName(child, "mini")).toBe("웹 디자인 시스템 리셋 구현, mini, web-design-system-reset, claude, Working, 토큰 이관 중");
   });
 });
 
