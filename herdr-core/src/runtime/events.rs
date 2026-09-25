@@ -385,6 +385,10 @@ pub(super) struct FileOpenPayload {
     /// click does, a double-click, Cmd+P and every other entry point do not.
     #[serde(default)]
     pub(super) preview: bool,
+    /// Open to the side: the View area next to the one in use, or a new one
+    /// to its right (PRD S7 B4). Only a shell with View areas reads it.
+    #[serde(default)]
+    pub(super) beside: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -488,13 +492,20 @@ pub(super) struct FileViewPayload {
     pub(super) wrap: bool,
 }
 
+/// `tab_id` names the document the draft is for; the web shell always
+/// sends it, because several documents show at once (PRD S7 A4). Absent,
+/// the draft is the active tab's, as the Swift shell sends it.
 #[derive(Debug, Deserialize)]
 pub(super) struct FileDraftPayload {
+    #[serde(default)]
+    pub(super) tab_id: Option<String>,
     pub(super) contents_utf8: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct FileConflictPayload {
+    #[serde(default)]
+    pub(super) tab_id: Option<String>,
     pub(super) action: String,
 }
 
@@ -601,6 +612,9 @@ pub(super) struct ChangesSelectPayload {
     /// click on a Changes row asks for.
     #[serde(default)]
     pub(super) preview: bool,
+    /// Open to the side, as `FileOpenPayload::beside`.
+    #[serde(default)]
+    pub(super) beside: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -812,6 +826,7 @@ pub(super) struct TerminalResizePayload {
 
 pub(super) enum Event {
     WorkspaceView(WorkspaceViewPayload),
+    ViewLayout(ViewLayoutPayload),
     Key(KeyPayload),
     Attachment(AttachmentPayload),
     AttachmentReady(AttachmentCompletionPayload),
@@ -1069,6 +1084,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_activity" => Ok(Event::PetActivity),
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
         "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
+        "view_layout" => decode!(ViewLayoutPayload, ViewLayout),
         _ => Err(EventValidationError {
             kind: "event.unknown_kind",
             message: format!("Unknown event kind: {kind}"),
@@ -1080,6 +1096,7 @@ impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
+            Event::ViewLayout(payload) => self.apply_view_layout(payload),
             Event::SessionsRefresh => self.request_sessions_refresh(),
             Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
@@ -2134,12 +2151,22 @@ impl Runtime {
                     );
                     return true;
                 }
-                self.open_file_tab(
-                    &payload.workspace_id,
-                    &payload.checkout_id,
-                    &payload.path,
-                    payload.preview,
-                );
+                if self.separate_view_areas() {
+                    self.open_file_in_view(
+                        &payload.workspace_id,
+                        &payload.checkout_id,
+                        &payload.path,
+                        payload.preview,
+                        payload.beside,
+                    );
+                } else {
+                    self.open_file_tab(
+                        &payload.workspace_id,
+                        &payload.checkout_id,
+                        &payload.path,
+                        payload.preview,
+                    );
+                }
                 self.persist_current_ui_state();
                 true
             }
@@ -2229,9 +2256,23 @@ impl Runtime {
                 true
             }
             Event::FileDraft(payload) => {
-                let Some(tab_id) = self.snapshot.editor.active_tab_id.clone() else {
-                    self.set_error("file.draft_rejected", "No file tab is active", false);
-                    return true;
+                let tab_id = match payload.tab_id {
+                    Some(tab_id) if self.file_document_open(&tab_id) => tab_id,
+                    Some(tab_id) => {
+                        self.set_error(
+                            "file.draft_rejected",
+                            format!("File tab {tab_id} is not open"),
+                            false,
+                        );
+                        return true;
+                    }
+                    None => match self.snapshot.editor.active_tab_id.clone() {
+                        Some(tab_id) => tab_id,
+                        None => {
+                            self.set_error("file.draft_rejected", "No file tab is active", false);
+                            return true;
+                        }
+                    },
                 };
                 let Some(document) = self.editor_documents.get_mut(&tab_id) else {
                     self.set_error(
@@ -2258,9 +2299,27 @@ impl Runtime {
             }
             Event::FileSave(payload) => self.request_file_save(payload, false),
             Event::FileConflict(payload) => {
-                let Some(tab_id) = self.snapshot.editor.active_tab_id.clone() else {
-                    self.set_error("file.conflict_without_tab", "No file tab is active", false);
-                    return true;
+                let tab_id = match payload.tab_id {
+                    Some(tab_id) if self.file_document_open(&tab_id) => tab_id,
+                    Some(tab_id) => {
+                        self.set_error(
+                            "file.conflict_without_tab",
+                            format!("File tab {tab_id} is not open"),
+                            false,
+                        );
+                        return true;
+                    }
+                    None => match self.snapshot.editor.active_tab_id.clone() {
+                        Some(tab_id) => tab_id,
+                        None => {
+                            self.set_error(
+                                "file.conflict_without_tab",
+                                "No file tab is active",
+                                false,
+                            );
+                            return true;
+                        }
+                    },
                 };
                 match payload.action.as_str() {
                     "reload" => self.reload_document(&tab_id),
@@ -2682,6 +2741,20 @@ impl Runtime {
                     );
                     return true;
                 };
+                if self.separate_view_areas() {
+                    let changed = self.show_diff_in_view(
+                        &workspace_id,
+                        &checkout_id,
+                        &path,
+                        payload.committed,
+                        payload.preview,
+                        payload.beside,
+                    );
+                    if changed {
+                        self.persist_current_ui_state();
+                    }
+                    return changed;
+                }
                 let tab_id =
                     Self::diff_tab_id(&workspace_id, &checkout_id, &path, payload.committed);
                 if self.snapshot.editor.active_tab_id.as_deref() == Some(tab_id.as_str()) {

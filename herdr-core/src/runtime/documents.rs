@@ -17,6 +17,8 @@
 use std::sync::Arc;
 
 use super::editor::PreparedFileTab;
+use super::view_areas::ViewPlacement;
+use super::workspace_view::WorkspaceKey;
 use super::*;
 use crate::files::{DocumentPlace, DocumentRoot, OpenFailure, SaveOutcome};
 use crate::host_access::{HostCallError, HostChannel};
@@ -81,11 +83,15 @@ pub(super) struct OpenRequest {
     /// Replaces the open tab's document (Reload) instead of adding a tab.
     reload: bool,
     reveal: Option<PendingReveal>,
-    /// A View tab read back after a restart (`workspace_view.rs`): it joins
-    /// the strip without taking the screen unless it was the Workspace's
-    /// active tab (`Some(true)`), and a failed read becomes an unavailable
-    /// tab rather than an error.
-    restore: Option<bool>,
+    /// A View display's file read back after a restart, or retried
+    /// (`view_areas.rs`): it joins the editor without taking the screen, the
+    /// display binds to it by what it shows, and a failed read makes an
+    /// unavailable tab rather than an error.
+    restore: bool,
+    /// Where the document shows once it is read, in a shell with View areas
+    /// (PRD S7 B1): nothing moves until the read lands, and a failed read
+    /// moves nothing.
+    placement: Option<ViewPlacement>,
 }
 
 /// A reveal waiting on its file. The screen moves when the read lands, all
@@ -149,12 +155,37 @@ impl Runtime {
         })
     }
 
-    /// The checkouts that still have a restored View tab being read back.
-    pub(super) fn document_restores(&self) -> impl Iterator<Item = (&str, &str)> {
+    /// Opens still being read that will add a View display to the
+    /// Workspace `key`, so the display cap counts them before they land.
+    pub(super) fn pending_view_placements(&self, key: &WorkspaceKey) -> usize {
         self.document_opens
             .values()
-            .filter(|open| open.restore.is_some())
-            .map(|open| (open.workspace_id.as_str(), open.checkout_id.as_str()))
+            .filter(|open| {
+                open.placement
+                    .as_ref()
+                    .is_some_and(|placement| &placement.key == key)
+            })
+            .count()
+    }
+
+    /// Stops waiting for a read of `path` that no View display needs any
+    /// more: its answer then lands nowhere, and no tab appears for it.
+    pub(super) fn cancel_document_read(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+    ) {
+        let before = self.document_opens.len();
+        self.document_opens.retain(|_, open| {
+            open.reload
+                || open.workspace_id != workspace_id
+                || open.checkout_id != checkout_id
+                || open.path != path
+        });
+        if self.document_opens.len() != before {
+            self.sync_opening_snapshot();
+        }
     }
 
     /// The checkout the operator is looking at: this machine's focus while
@@ -278,6 +309,7 @@ impl Runtime {
                 reload: request.reload,
                 reveal: request.reveal,
                 restore: request.restore,
+                placement: request.placement,
             },
         );
         self.sync_opening_snapshot();
@@ -375,7 +407,9 @@ impl Runtime {
         self.sync_opening_snapshot();
         let (document, place) = match result {
             Ok(opened) => opened,
-            Err(failure) if request.restore.is_some() => {
+            // A View display's file read back after a restart, or retried:
+            // its tab says why, and nothing else moves (S6 B20).
+            Err(failure) if request.restore => {
                 self.insert_unavailable_file_tab(
                     &request.workspace_id,
                     &request.checkout_id,
@@ -383,7 +417,6 @@ impl Runtime {
                     request.preview,
                     failure.message(),
                 );
-                self.settle_restored_order(&request.workspace_id, &request.checkout_id);
                 return true;
             }
             Err(failure) => {
@@ -399,10 +432,10 @@ impl Runtime {
                 return true;
             }
         };
-        // A restored tab that said its file was unavailable takes the file now
-        // that it could be read, and shows it like any open would (B20).
+        // A tab that said its file was unavailable takes the file now that
+        // it could be read (B20). A retry shows it where it is; an open shows
+        // it like any open would.
         if !request.reload
-            && request.restore.is_none()
             && let Some(tab) = self
                 .snapshot
                 .editor
@@ -412,6 +445,9 @@ impl Runtime {
         {
             tab.unavailable_reason = None;
             self.replace_document(tab_id, document, place);
+            if request.restore {
+                return true;
+            }
             let prepared = PreparedFileTab::Open(tab_id.to_owned());
             if let Some(reveal) = &request.reveal
                 && self.front_checkout_owned() == reveal.front
@@ -460,34 +496,6 @@ impl Runtime {
             return true;
         }
         if open {
-            if request.restore.is_some() {
-                self.settle_restored_order(&request.workspace_id, &request.checkout_id);
-            }
-            return true;
-        }
-        if let Some(active) = request.restore {
-            let prepared = PreparedFileTab::Read {
-                tab_id: tab_id.to_owned(),
-                document: Box::new(document),
-                place,
-            };
-            let inserted = self.insert_file_tab(
-                prepared,
-                &request.workspace_id,
-                &request.checkout_id,
-                &request.path,
-                request.preview,
-            );
-            let in_front = self.front_checkout()
-                == Some((request.workspace_id.as_str(), request.checkout_id.as_str()));
-            if active
-                && in_front
-                && let Some(tab_id) = inserted
-                && let Err(message) = self.activate_editor_tab(&tab_id)
-            {
-                self.set_error("file.focus_failed", message, false);
-            }
-            self.settle_restored_order(&request.workspace_id, &request.checkout_id);
             return true;
         }
         let in_front = self.front_checkout()
@@ -497,6 +505,43 @@ impl Runtime {
             document: Box::new(document),
             place,
         };
+        // A View display's file read back after a restart joins the editor
+        // without taking the screen; the display binds to it by what it
+        // shows (`view_areas.rs`).
+        if request.restore {
+            self.insert_file_tab(
+                prepared,
+                &request.workspace_id,
+                &request.checkout_id,
+                &request.path,
+                request.preview,
+            );
+            return true;
+        }
+        // With View areas the document lands where it was asked for, in its
+        // own Workspace, whichever Workspace is in front now (B1, B34).
+        if let Some(placement) = request.placement {
+            if let Some(tab_id) = self.insert_file_tab(
+                prepared,
+                &request.workspace_id,
+                &request.checkout_id,
+                &request.path,
+                request.preview,
+            ) {
+                self.place_document(
+                    &placement.key,
+                    &tab_id,
+                    placement.preview,
+                    placement.beside,
+                    Some(&placement.area),
+                );
+            }
+            if in_front {
+                self.snapshot.ui_state.selected_path = Some(request.path.clone());
+            }
+            self.persist_current_ui_state();
+            return true;
+        }
         if in_front {
             self.show_file_tab(
                 prepared,
@@ -520,7 +565,7 @@ impl Runtime {
 
     /// Puts a freshly read document in place of the tab's current one: the
     /// operator chose Reload, so the draft and any save state go with it.
-    fn replace_document(
+    pub(super) fn replace_document(
         &mut self,
         tab_id: &str,
         document: EditorDocumentSnapshot,
@@ -578,7 +623,8 @@ impl Runtime {
                     preview: false,
                     reload: true,
                     reveal: None,
-                    restore: None,
+                    restore: false,
+                    placement: None,
                 },
             ),
             Err(message) => self.set_error("file.reload_failed", message, true),
@@ -1162,7 +1208,8 @@ pub(super) struct OpenRequestFields {
     pub(super) preview: bool,
     pub(super) reload: bool,
     pub(super) reveal: Option<PendingReveal>,
-    pub(super) restore: Option<bool>,
+    pub(super) restore: bool,
+    pub(super) placement: Option<ViewPlacement>,
 }
 
 fn outcome_word(outcome: &SaveOutcome) -> &'static str {

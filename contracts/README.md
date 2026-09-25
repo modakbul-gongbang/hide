@@ -32,4 +32,5 @@ The core is the writer of those strings and the shell decodes them strictly, so 
 Add the variant to this file in the same change as the Rust variant and the Swift case; either test fails until all three agree.
 
 `workspace_view.mode` (`agents`, `together`, `views`) is not listed: the core writes `workspace_view` only for a shell with separate View areas, which today is the web shell, and omits it from the Swift snapshot, so no strict decoder reads it.
-List it here, with a Swift case, in the change that lets the Swift shell draw separate areas.
+The View area tree inside it (PRD S7) takes the same exception for the same reason: a split's `axis` (`row`, `column`), a display's `kind` (`file`, `diff`) and a display's `state` (`open`, `opening`, `waiting`, `unavailable`).
+List them here, with Swift cases, in the change that lets the Swift shell draw separate areas.

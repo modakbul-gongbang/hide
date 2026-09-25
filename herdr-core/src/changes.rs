@@ -10,14 +10,16 @@
 //! request changes or the refresh window lapses, and reads nothing at all
 //! while neither Changes nor Explorer is visible and no diff tab needs it.
 //! Each answer names the device and folder it describes, so the runtime drops
-//! one that arrives after the operator moved on.
+//! one that arrives after the operator moved on. The same read takes the
+//! diff of every diff the front Workspace's View areas show (PRD S7 A5), so
+//! several diffs on screen cost one read, not one each.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use hide_host::git::{ChangedFile, Changes, FileStatus};
+use hide_host::git::{ChangedFile, Changes, DiffTarget, FileStatus};
 use hide_host::protocol::Call;
 
 use crate::ffi::ChangeNotifier;
@@ -25,6 +27,7 @@ use crate::files::DocumentRoot;
 use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::model::{
     ChangedFileDiffSnapshot, ChangedFileSnapshot, ChangedFileStatus, ChangesSnapshot,
+    ViewDiffSnapshot,
 };
 use crate::reader::BackgroundRead;
 use crate::runtime::Runtime;
@@ -84,6 +87,9 @@ pub struct ChangesRequest {
     /// reader's answer. `None` lets the host use the repository's default
     /// branch, and without one only the uncommitted group is produced.
     pub base_branch: Option<String>,
+    /// The diffs the front Workspace's View areas show, by absolute path,
+    /// at most one per area; empty in a shell without View areas.
+    pub diffs: Vec<DiffTarget>,
 }
 
 impl ChangesRequest {
@@ -233,12 +239,26 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
             "This History folder no longer matches its registered checkout".to_owned(),
         );
     };
-    let selected = request.selected_path.as_ref().and_then(|path| {
+    let relative = |path: &str| {
         Path::new(path)
             .strip_prefix(&request.root_path)
             .ok()
             .map(|relative| relative.to_string_lossy().into_owned())
-    });
+    };
+    let selected = request.selected_path.as_deref().and_then(&relative);
+    // A View diff outside the folder History describes cannot be taken here;
+    // its display says so rather than waiting for text that never comes.
+    let mut diffs = Vec::new();
+    let mut outside = Vec::new();
+    for target in &request.diffs {
+        match relative(&target.path) {
+            Some(path) => diffs.push(DiffTarget {
+                path,
+                committed: target.committed,
+            }),
+            None => outside.push(target),
+        }
+    }
     let root = match crate::files::root_ref(channel.as_ref(), &request.root) {
         Ok(root) => root,
         Err(error) => return unavailable(reason(error)),
@@ -251,7 +271,7 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
             selected,
             committed: request.selected_committed,
             base: request.base_branch.clone(),
-            diffs: Vec::new(),
+            diffs,
         },
         READ_TIMEOUT,
     );
@@ -275,6 +295,22 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
         text: diff.text,
         notice: diff.notice,
     });
+    let diffs = changes
+        .diffs
+        .into_iter()
+        .map(|shown| ViewDiffSnapshot {
+            path: absolute(&request.root_path, &shown.diff.path),
+            committed: shown.committed,
+            text: shown.diff.text,
+            notice: shown.diff.notice,
+        })
+        .chain(outside.into_iter().map(|target| ViewDiffSnapshot {
+            path: target.path.clone(),
+            committed: target.committed,
+            text: String::new(),
+            notice: Some("This file is outside the folder History describes".to_owned()),
+        }))
+        .collect();
     ChangesSnapshot {
         root_path: Some(root_path),
         selected_path: diff.as_ref().map(|diff| diff.path.clone()),
@@ -283,6 +319,7 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
         committed: committed.unwrap_or_default(),
         base_branch,
         diff,
+        diffs,
         unavailable_reason: None,
         stale_reason: None,
     }
@@ -344,6 +381,7 @@ mod tests {
             selected_path: selected.map(|path| path.to_string_lossy().into_owned()),
             selected_committed: false,
             base_branch: None,
+            diffs: Vec::new(),
         }
     }
 

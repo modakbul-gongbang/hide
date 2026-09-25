@@ -3680,7 +3680,8 @@ impl Runtime {
                         preview: false,
                         reload: false,
                         reveal: Some(documents::PendingReveal { front }),
-                        restore: None,
+                        restore: false,
+                        placement: None,
                     },
                 );
             }

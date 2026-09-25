@@ -29,6 +29,17 @@ pub(super) struct DeltaState {
     last_rest: Option<Arc<crate::model::RestSections>>,
     last_editor: Option<Arc<crate::model::EditorSnapshot>>,
     last_changes: Option<Arc<crate::model::ChangesSnapshot>>,
+    /// The View documents on screen, each stamped with its own revision
+    /// (PRD S7 contract 3.1), so a keystroke re-sends only its document.
+    /// Empty in a shell without View areas.
+    documents: HashMap<String, StampedDocument>,
+    documents_visible: Vec<String>,
+    documents_visible_revision: u64,
+}
+
+struct StampedDocument {
+    revision: u64,
+    document: Arc<EditorDocumentSnapshot>,
 }
 
 impl Runtime {
@@ -73,6 +84,10 @@ impl Runtime {
             self.delta.revision += 1;
             self.delta.changes_revision = self.delta.revision;
             self.delta.last_changes = Some(Arc::new(self.snapshot.changes.clone()));
+        }
+        let views = self.separate_view_areas();
+        if views {
+            self.stamp_view_documents();
         }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
@@ -129,11 +144,75 @@ impl Runtime {
                         .expect("the changes section is stamped before a delta is taken"),
                 )
             }),
+            documents: views
+                .then(|| self.view_documents_delta(have_revision))
+                .flatten(),
             find: self.snapshot.find.clone(),
             input_generation: self.snapshot.input_generation,
             terminal_sequence: self.snapshot.terminal.sequence,
             chunks,
             chunks_dropped,
         }
+    }
+
+    /// Stamps each visible View document whose contents differ from its last
+    /// stamped copy, and the visible set when it changed. At most one
+    /// document per View area is compared, the comparison the editor section
+    /// makes for its one document.
+    fn stamp_view_documents(&mut self) {
+        let visible = self.visible_view_documents();
+        for tab_id in &visible {
+            let Some(document) = self.editor_documents.get(tab_id) else {
+                continue;
+            };
+            if self
+                .delta
+                .documents
+                .get(tab_id)
+                .is_some_and(|stamped| *stamped.document == *document)
+            {
+                continue;
+            }
+            self.delta.revision += 1;
+            self.delta.documents.insert(
+                tab_id.clone(),
+                StampedDocument {
+                    revision: self.delta.revision,
+                    document: Arc::new(document.clone()),
+                },
+            );
+        }
+        // A document off screen is dropped, so it is sent again, whole, when
+        // it comes back: the shell drops it too.
+        self.delta
+            .documents
+            .retain(|tab_id, _| visible.contains(tab_id));
+        if visible != self.delta.documents_visible {
+            self.delta.revision += 1;
+            self.delta.documents_visible_revision = self.delta.revision;
+            self.delta.documents_visible = visible;
+        }
+    }
+
+    /// The `documents` section for a reader at `have_revision`: absent when
+    /// nothing in it changed past that revision, complete for a fresh reader.
+    fn view_documents_delta(&self, have_revision: u64) -> Option<crate::model::DocumentsDelta> {
+        let changed: Vec<_> = self
+            .delta
+            .documents_visible
+            .iter()
+            .filter_map(|tab_id| {
+                let stamped = self.delta.documents.get(tab_id)?;
+                (stamped.revision > have_revision)
+                    .then(|| (tab_id.clone(), Arc::clone(&stamped.document)))
+            })
+            .collect();
+        (have_revision == 0
+            || self.delta.documents_visible_revision > have_revision
+            || !changed.is_empty())
+        .then(|| crate::model::DocumentsDelta {
+            visible: self.delta.documents_visible.clone(),
+            changed,
+        })
     }
 }

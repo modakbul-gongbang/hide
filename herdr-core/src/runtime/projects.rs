@@ -32,7 +32,8 @@ fn remote_purpose_unavailable_reason(version: Option<&str>) -> String {
 impl Runtime {
     /// What the changes view needs read, or `None` while nothing on screen
     /// shows it. The checkout in front may be on this machine or on a device;
-    /// either is read by its own host.
+    /// either is read by its own host. The diffs the front Workspace's View
+    /// areas show ride the same read (PRD S7 A5).
     pub fn changes_request(&mut self) -> Option<crate::changes::ChangesRequest> {
         let (workspace_id, checkout_id, root_path) = self.changes_target()?;
         let root = self.document_root(&workspace_id, &checkout_id).ok()?;
@@ -59,6 +60,7 @@ impl Runtime {
             selected_path,
             selected_committed,
             base_branch,
+            diffs: self.visible_view_diffs(),
         })
     }
 
@@ -105,6 +107,7 @@ impl Runtime {
         if !section_visible(RightPanelSection::Changes)
             && !section_visible(RightPanelSection::Explorer)
             && self.active_diff_tab().is_none()
+            && self.visible_view_diffs().is_empty()
         {
             return None;
         }

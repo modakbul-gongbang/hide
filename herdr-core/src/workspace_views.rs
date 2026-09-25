@@ -1,17 +1,21 @@
 //! Each Workspace's presentation in a shell that draws Agent and View areas
-//! side by side (PRD S6 D-10, B8, B19, B20).
+//! side by side (PRD S6 D-10, B8, B19, B20; S7 D-09, D-10, B14, B17).
 //!
 //! A Workspace is one checkout on one device, keyed by the device id and the
 //! checkout path, because a Herdr workspace id is not stable across a Herdr
 //! restart and one checkout can hold tabs from several Herdr workspaces. The
 //! state is Hide's own presentation - which areas show, which tools are open,
-//! where the boundary sits, which View tabs are open and which one is active -
-//! and never a terminal layout: Herdr keeps panes, splits and zoom.
+//! where the boundary sits, and the View area tree with its displays
+//! ([`crate::view_layout`]) - and never a terminal layout: Herdr keeps panes,
+//! splits and zoom.
 //!
 //! It lives in its own versioned file, apart from `core-state.json` and the
 //! Swift shell's state, so a shell that does not know it never reads it and an
-//! older build's settings are never rewritten by it. A file this build cannot
-//! read is moved aside, never overwritten, and the defaults load.
+//! older build's settings are never rewritten by it. A schema 1 file (S6, one
+//! strip of View tabs per Workspace) migrates on load into one area and is
+//! written as schema 2 by the next save. A file this build cannot read, of
+//! another version or one whose migration fails, is moved aside, never
+//! overwritten, and the defaults load.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -19,14 +23,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+use crate::view_layout::{DisplayKind, Layout};
+
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The Workspaces remembered at once. The least recently used is forgotten
 /// first, so the file stays bounded however many checkouts come and go.
 pub const MAX_WORKSPACES: usize = 256;
-
-/// The View tabs remembered per Workspace; a longer strip keeps its newest.
-pub const MAX_VIEW_TABS: usize = 64;
 
 /// The Agent area's share of the width while both areas show. The bounds
 /// keep each area at a readable width on the narrowest supported window; the
@@ -67,33 +70,6 @@ impl ViewMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ViewTabKind {
-    File,
-    Diff,
-}
-
-/// One open View tab, by what it shows rather than by a tab id, so it
-/// survives a restart that mints new ids.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ViewTabRecord {
-    pub path: String,
-    pub kind: ViewTabKind,
-    /// The Changes group a diff tab compares against; absent for a file.
-    #[serde(default)]
-    pub committed: Option<bool>,
-    #[serde(default)]
-    pub preview: bool,
-}
-
-impl ViewTabRecord {
-    /// Whether two records name the same tab, preview aside.
-    pub fn same_target(&self, other: &Self) -> bool {
-        self.path == other.path && self.kind == other.kind && self.committed == other.committed
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WorkspaceView {
     pub device_id: String,
@@ -107,11 +83,9 @@ pub struct WorkspaceView {
     #[serde(default = "default_agent_share")]
     pub agent_share: f32,
     #[serde(default)]
-    pub tabs: Vec<ViewTabRecord>,
-    #[serde(default)]
-    pub active: Option<ViewTabRecord>,
-    #[serde(default)]
     pub last_used_unix_ms: u64,
+    #[serde(default)]
+    pub layout: Layout,
 }
 
 fn default_explorer() -> bool {
@@ -131,9 +105,8 @@ impl WorkspaceView {
             explorer: default_explorer(),
             changes: false,
             agent_share: DEFAULT_AGENT_SHARE,
-            tabs: Vec::new(),
-            active: None,
             last_used_unix_ms: 0,
+            layout: Layout::default(),
         }
     }
 
@@ -158,6 +131,12 @@ pub struct WorkspaceViews {
 impl WorkspaceViews {
     pub fn get(&self, device_id: &str, path: &str) -> Option<&WorkspaceView> {
         self.workspaces.iter().find(|view| view.is(device_id, path))
+    }
+
+    pub fn get_mut(&mut self, device_id: &str, path: &str) -> Option<&mut WorkspaceView> {
+        self.workspaces
+            .iter_mut()
+            .find(|view| view.is(device_id, path))
     }
 
     /// The Workspace's entry, made with the defaults on first use. Making one
@@ -192,9 +171,92 @@ struct StoredWorkspaceViews {
     workspaces: Vec<WorkspaceView>,
 }
 
+/// Only the version, read before the body so each version is parsed as what
+/// it is.
+#[derive(Deserialize)]
+struct StoredVersion {
+    schema_version: u32,
+}
+
+/// Schema 1 (S6): one strip of View tabs per Workspace. Read only to migrate.
+#[derive(Deserialize)]
+struct StoredV1 {
+    #[serde(default)]
+    workspaces: Vec<V1View>,
+}
+
+#[derive(Deserialize)]
+struct V1View {
+    device_id: String,
+    path: String,
+    #[serde(default)]
+    mode: ViewMode,
+    #[serde(default = "default_explorer")]
+    explorer: bool,
+    #[serde(default)]
+    changes: bool,
+    #[serde(default = "default_agent_share")]
+    agent_share: f32,
+    #[serde(default)]
+    tabs: Vec<V1Tab>,
+    #[serde(default)]
+    active: Option<V1Tab>,
+    #[serde(default)]
+    last_used_unix_ms: u64,
+}
+
+#[derive(Deserialize)]
+struct V1Tab {
+    path: String,
+    kind: DisplayKind,
+    #[serde(default)]
+    committed: Option<bool>,
+    #[serde(default)]
+    preview: bool,
+}
+
+impl V1View {
+    /// The strip becomes the displays of one area, in saved order, with the
+    /// active tab as that area's active display.
+    fn migrate(self) -> WorkspaceView {
+        let mut layout = Layout::default();
+        let area = layout.active_area.clone();
+        let mut active = None;
+        for tab in &self.tabs {
+            let display = layout.new_display(&tab.path, tab.kind, tab.committed, tab.preview);
+            if self.active.as_ref().is_some_and(|saved| {
+                saved.path == tab.path && saved.kind == tab.kind && saved.committed == tab.committed
+            }) {
+                active = Some(display.id.clone());
+            }
+            layout
+                .insert(&area, display, 0)
+                .expect("the default layout has its area");
+        }
+        if let Some(area) = layout.area_mut(&area) {
+            area.active = active.or_else(|| area.displays.last().map(|display| display.id.clone()));
+        }
+        WorkspaceView {
+            device_id: self.device_id,
+            path: self.path,
+            mode: self.mode,
+            explorer: self.explorer,
+            changes: self.changes,
+            agent_share: self.agent_share,
+            last_used_unix_ms: self.last_used_unix_ms,
+            layout,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadOutcome {
-    Loaded,
+    /// Read as this version, or migrated from `migrated_from`. `repairs`
+    /// says what the load had to change to hold the layout invariants.
+    Loaded {
+        migrated_from: Option<u32>,
+        repairs: Vec<String>,
+    },
     Missing,
     /// The file could not be read as this version. `preserved_as` is where
     /// the original now sits; `None` means it could not be moved and is left
@@ -205,9 +267,10 @@ pub enum LoadOutcome {
     },
 }
 
-/// Reads the file. An unreadable or unknown-version file is renamed beside
-/// itself (`<name>.unreadable-<ms>`) before the defaults load, so the next
-/// save cannot destroy what an operator or another build wrote there.
+/// Reads the file. An unreadable, unknown-version or unmigratable file is
+/// renamed beside itself (`<name>.unreadable-<ms>`) before the defaults
+/// load, so the next save cannot destroy what an operator or another build
+/// wrote there.
 pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -224,20 +287,25 @@ pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
             );
         }
     };
-    let reason = match serde_json::from_slice::<StoredWorkspaceViews>(&bytes) {
-        Ok(stored) if stored.schema_version == SCHEMA_VERSION => {
-            let mut workspaces = stored.workspaces;
-            for view in &mut workspaces {
-                view.agent_share = clamp_agent_share(view.agent_share);
-                view.tabs.truncate(MAX_VIEW_TABS);
+    let reason = match serde_json::from_slice::<StoredVersion>(&bytes) {
+        Ok(StoredVersion { schema_version: 2 }) => {
+            match serde_json::from_slice::<StoredWorkspaceViews>(&bytes) {
+                Ok(stored) => return settle(stored.workspaces, None),
+                Err(error) => format!("the file is not valid: {error}"),
             }
-            workspaces.truncate(MAX_WORKSPACES);
-            return (WorkspaceViews { workspaces }, LoadOutcome::Loaded);
         }
-        Ok(stored) => format!(
-            "schema version {} is not {SCHEMA_VERSION}",
-            stored.schema_version
-        ),
+        Ok(StoredVersion { schema_version: 1 }) => {
+            match serde_json::from_slice::<StoredV1>(&bytes) {
+                Ok(stored) => {
+                    let migrated = stored.workspaces.into_iter().map(V1View::migrate).collect();
+                    return settle(migrated, Some(1));
+                }
+                Err(error) => format!("the schema 1 file could not be migrated: {error}"),
+            }
+        }
+        Ok(StoredVersion { schema_version }) => {
+            format!("schema version {schema_version} is not {SCHEMA_VERSION}")
+        }
         Err(error) => format!("the file is not valid: {error}"),
     };
     let preserved = preserved_path(path, now_unix_ms);
@@ -247,6 +315,29 @@ pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
         LoadOutcome::Unreadable {
             reason,
             preserved_as,
+        },
+    )
+}
+
+/// Brings loaded entries inside the bounds every operation keeps; excess is
+/// trimmed here, never on an operator's action.
+fn settle(
+    mut workspaces: Vec<WorkspaceView>,
+    migrated_from: Option<u32>,
+) -> (WorkspaceViews, LoadOutcome) {
+    let mut repairs = Vec::new();
+    for view in &mut workspaces {
+        view.agent_share = clamp_agent_share(view.agent_share);
+        for note in view.layout.repair() {
+            repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
+        }
+    }
+    workspaces.truncate(MAX_WORKSPACES);
+    (
+        WorkspaceViews { workspaces },
+        LoadOutcome::Loaded {
+            migrated_from,
+            repairs,
         },
     )
 }
@@ -291,6 +382,7 @@ pub fn save(path: &Path, views: &WorkspaceViews) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::view_layout::{Edge, Node, SplitAxis};
 
     fn scratch(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -302,8 +394,20 @@ mod tests {
         root
     }
 
+    fn unbound(mut views: WorkspaceViews) -> WorkspaceViews {
+        for view in &mut views.workspaces {
+            for display in view.layout.displays_mut() {
+                display.tab_id = None;
+            }
+        }
+        views
+    }
+
+    /// S7 B14: a nested tree comes back with its axes, ratios, order,
+    /// previews, active displays and the area in use; runtime bindings are
+    /// never written.
     #[test]
-    fn a_saved_workspace_loads_back_with_its_tabs_and_tools() {
+    fn a_saved_nested_layout_loads_back_as_it_was() {
         let root = scratch("roundtrip");
         let path = root.join("workspace-views.json");
         let mut views = WorkspaceViews::default();
@@ -311,29 +415,146 @@ mod tests {
         entry.mode = ViewMode::Views;
         entry.changes = true;
         entry.agent_share = 0.3;
-        entry.tabs.push(ViewTabRecord {
-            path: "/repo/a.md".into(),
-            kind: ViewTabKind::File,
-            committed: None,
-            preview: false,
-        });
-        entry.active = entry.tabs.first().cloned();
+        let layout = &mut entry.layout;
+        for (path, kind, committed, preview) in [
+            ("/repo/a.md", DisplayKind::File, None, false),
+            ("/repo/b.rs", DisplayKind::Diff, Some(true), false),
+            ("/repo/c.rs", DisplayKind::File, None, false),
+            ("/repo/d.md", DisplayKind::File, None, true),
+        ] {
+            let display = layout.new_display(path, kind, committed, preview);
+            layout.insert("a1", display, 1).unwrap();
+        }
+        let b = layout.displays().nth(1).unwrap().id.clone();
+        let right = layout.split(&b, "a1", Edge::Right, 2).unwrap();
+        let c = layout.displays().nth(1).unwrap().id.clone();
+        layout.split(&c, &right, Edge::Down, 3).unwrap();
+        layout.focus_area("a1", 4).unwrap();
+        if let Node::Split(split) = &mut layout.root {
+            split.ratio = 0.7;
+        }
+        for display in layout.displays_mut() {
+            display.tab_id = Some("file:bound-at-runtime".to_owned());
+        }
         save(&path, &views).unwrap();
+
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("\"schema_version\": 2"));
+        assert!(!written.contains("bound-at-runtime"));
         let (loaded, outcome) = load(&path, 1);
-        assert_eq!(outcome, LoadOutcome::Loaded);
-        assert_eq!(loaded, views);
+        assert_eq!(
+            outcome,
+            LoadOutcome::Loaded {
+                migrated_from: None,
+                repairs: Vec::new()
+            }
+        );
+        assert_eq!(loaded, unbound(views));
+        let layout = &loaded.workspaces[0].layout;
+        let Node::Split(root_split) = &layout.root else {
+            panic!("a split root")
+        };
+        assert_eq!(root_split.axis, SplitAxis::Row);
+        assert_eq!(root_split.ratio, 0.7);
+        assert_eq!(layout.active_area, "a1");
+        let kept: Vec<_> = layout
+            .area("a1")
+            .unwrap()
+            .displays
+            .iter()
+            .map(|display| (display.path.as_str(), display.preview))
+            .collect();
+        assert_eq!(kept, vec![("/repo/a.md", false), ("/repo/d.md", true)]);
         let _ = fs::remove_dir_all(&root);
     }
 
-    // B20: a file this build cannot read is kept, byte for byte, beside the
-    // path, and the defaults load.
+    /// S7 D-10, B17: an S6 file becomes one area holding its tabs in saved
+    /// order, with its active tab and its preview, and the next save writes
+    /// schema 2.
     #[test]
-    fn an_unreadable_or_future_file_is_preserved_and_defaults_load() {
+    fn a_schema_1_file_migrates_into_one_area() {
+        let root = scratch("migrate");
+        let path = root.join("workspace-views.json");
+        fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 1,
+                "workspaces": [{
+                    "device_id": "local", "path": "/repo", "mode": "together",
+                    "explorer": false, "changes": true, "agent_share": 0.4,
+                    "last_used_unix_ms": 7,
+                    "tabs": [
+                        {"path": "/repo/a.md", "kind": "file", "committed": null, "preview": false},
+                        {"path": "/repo/b.rs", "kind": "diff", "committed": true, "preview": false},
+                        {"path": "/repo/c.md", "kind": "file", "committed": null, "preview": true}
+                    ],
+                    "active": {"path": "/repo/b.rs", "kind": "diff", "committed": true, "preview": false}
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (loaded, outcome) = load(&path, 1);
+
+        assert!(matches!(
+            outcome,
+            LoadOutcome::Loaded {
+                migrated_from: Some(1),
+                ..
+            }
+        ));
+        let view = &loaded.workspaces[0];
+        assert_eq!(
+            (
+                view.mode,
+                view.explorer,
+                view.changes,
+                view.last_used_unix_ms
+            ),
+            (ViewMode::Together, false, true, 7)
+        );
+        assert_eq!(view.layout.area_count(), 1);
+        let area = view.layout.active_area();
+        let displays: Vec<_> = area
+            .displays
+            .iter()
+            .map(|display| (display.path.as_str(), display.kind, display.preview))
+            .collect();
+        assert_eq!(
+            displays,
+            vec![
+                ("/repo/a.md", DisplayKind::File, false),
+                ("/repo/b.rs", DisplayKind::Diff, false),
+                ("/repo/c.md", DisplayKind::File, true),
+            ]
+        );
+        assert_eq!(area.active.as_ref(), Some(&area.displays[1].id));
+
+        save(&path, &loaded).unwrap();
+        let (again, outcome) = load(&path, 2);
+        assert_eq!(
+            outcome,
+            LoadOutcome::Loaded {
+                migrated_from: None,
+                repairs: Vec::new()
+            }
+        );
+        assert_eq!(again, loaded);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// S6 B20, S7 B17: a file this build cannot read, of an unknown version
+    /// or one whose migration fails, is kept byte for byte beside the path,
+    /// and the defaults load.
+    #[test]
+    fn an_unreadable_future_or_unmigratable_file_is_preserved_and_defaults_load() {
         let root = scratch("unreadable");
         let path = root.join("workspace-views.json");
         for (index, body) in [
             b"{not json".as_slice(),
             br#"{"schema_version":9,"workspaces":[]}"#.as_slice(),
+            br#"{"schema_version":1,"workspaces":[{"device_id":"local"}]}"#.as_slice(),
         ]
         .into_iter()
         .enumerate()

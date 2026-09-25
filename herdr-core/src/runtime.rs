@@ -19,12 +19,14 @@ mod projects;
 mod session;
 mod snapshot_delta;
 mod terminal;
+mod view_areas;
 mod workspace_view;
 
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use events::*;
 use operations::*;
+use view_areas::ViewLayoutPayload;
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
 use crate::ffi::ChangeNotifier;
@@ -1215,19 +1217,19 @@ impl Runtime {
             });
         }
         let workspace_views = options.workspace_views_path.as_ref().map(|path| {
-            let (store, diagnostic) = WorkspaceViewStore::open(
+            let (store, diagnostics) = WorkspaceViewStore::open(
                 PathBuf::from(path),
                 (
                     snapshot.ui_state.right_panel_visible,
                     snapshot.ui_state.right_panel_section,
                 ),
             );
-            if let Some((kind, message)) = diagnostic {
+            for (kind, message) in diagnostics {
                 crate::diagnostic!(serde_json::json!({
                     "component": "workspace_views",
                     "kind": kind,
                     "message": message,
-                    "fallback": "defaults"
+                    "fallback": if kind == "workspace_views.unreadable" { "defaults" } else { "none" }
                 }));
                 snapshot.status.diagnostics.push(DiagnosticSnapshot {
                     kind: kind.to_owned(),

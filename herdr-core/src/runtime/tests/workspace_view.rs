@@ -6,7 +6,7 @@ use crate::workspace_views::ViewMode;
 // after a restart; the Swift shell keeps its document-in-place-of-terminal
 // rule (Risks: Swift wire).
 
-fn views_path(name: &str) -> PathBuf {
+pub(super) fn views_path(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "hide-workspace-views-{name}-{}-{}",
         std::process::id(),
@@ -17,7 +17,7 @@ fn views_path(name: &str) -> PathBuf {
 }
 
 /// A daemon runtime whose local checkout roots are open.
-fn with_views(mut runtime: Runtime, path: &Path) -> Runtime {
+pub(super) fn with_views(mut runtime: Runtime, path: &Path) -> Runtime {
     let roots = runtime
         .catalog_workspaces()
         .filter(|workspace| workspace.device_id == workspace::LOCAL_DEVICE_ID)
@@ -33,7 +33,7 @@ fn with_views(mut runtime: Runtime, path: &Path) -> Runtime {
 
 /// The daemon's own order: the views file is open and the first snapshot is
 /// read before any root is pinned.
-fn with_views_only(mut runtime: Runtime, path: &Path) -> Runtime {
+pub(super) fn with_views_only(mut runtime: Runtime, path: &Path) -> Runtime {
     let panel = (
         runtime.snapshot.ui_state.right_panel_visible,
         runtime.snapshot.ui_state.right_panel_section,
@@ -55,7 +55,7 @@ fn open(runtime: &mut Runtime, checkout_id: &str, path: &Path) {
     )));
 }
 
-fn layout(runtime: &mut Runtime, payload: serde_json::Value) {
+pub(super) fn layout(runtime: &mut Runtime, payload: serde_json::Value) {
     runtime.dispatch_json(&explorer_event("workspace_view", payload));
     assert_eq!(runtime.snapshot.status.last_error, None);
 }
@@ -69,7 +69,7 @@ fn mode(runtime: &Runtime) -> ViewMode {
         .mode
 }
 
-fn active_label(runtime: &Runtime) -> Option<String> {
+pub(super) fn active_label(runtime: &Runtime) -> Option<String> {
     let active = runtime.snapshot.editor.active_tab_id.as_deref()?;
     runtime
         .snapshot
@@ -109,7 +109,12 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
 
         if separate {
             assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
-            assert!(runtime.snapshot.editor.document.is_some());
+            let shown = runtime
+                .snapshot_delta_payload(0, 0)
+                .documents
+                .map(|documents| documents.visible)
+                .unwrap_or_default();
+            assert_eq!(shown, vec![runtime.snapshot.editor.tabs[0].id.clone()]);
         } else {
             assert_eq!(active_label(&runtime), None);
             assert!(runtime.snapshot.workspace_view.is_none());
@@ -200,50 +205,6 @@ fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
     );
 }
 
-/// B19, B20: after a restart the Workspace comes back with its layout, its
-/// tools, its View tabs and its active tab; a file that is gone comes back as
-/// a tab that says why, and the others are untouched.
-#[test]
-fn a_restart_restores_the_workspace_and_marks_a_missing_file_unavailable() {
-    let (runtime, checkout_id, directory) = strip_checkout("restart");
-    let state = views_path("restart");
-    let mut runtime = with_views(runtime, &state);
-    std::fs::write(directory.join("gone.md"), "gone\n").expect("fixture");
-    open(&mut runtime, &checkout_id, &directory.join("gone.md"));
-    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    layout(
-        &mut runtime,
-        serde_json::json!({"mode": "views", "changes": true, "agent_share": 0.3}),
-    );
-    drop(runtime);
-    std::fs::remove_file(directory.join("gone.md")).expect("remove fixture");
-
-    let (restarted, checkout_id) = tab_order_runtime(&directory.to_string_lossy());
-    let restarted = with_views(restarted, &state);
-
-    let view = restarted
-        .snapshot
-        .workspace_view
-        .clone()
-        .expect("front Workspace");
-    assert_eq!(view.mode, ViewMode::Views);
-    assert!(view.changes);
-    assert!((view.agent_share - 0.3).abs() < f32::EPSILON);
-    let tabs: Vec<_> = restarted
-        .snapshot
-        .editor
-        .tabs
-        .iter()
-        .filter(|tab| tab.checkout_id == checkout_id)
-        .map(|tab| (tab.label.clone(), tab.unavailable_reason.is_some()))
-        .collect();
-    assert_eq!(
-        tabs,
-        vec![("gone.md".to_owned(), true), ("notes.md".to_owned(), false)]
-    );
-    assert_eq!(active_label(&restarted).as_deref(), Some("notes.md"));
-}
-
 /// B19: the daemon opens a checkout's root after the first snapshot names
 /// it, so a restore waits for that root instead of reading too early, around
 /// the pinned root, or marking every saved file unavailable; the tabs it has not restored yet
@@ -273,14 +234,24 @@ fn a_restore_waits_for_the_daemon_to_open_the_checkout_root() {
         "nothing is read before the root is open"
     );
     restarted.sync_workspace_view();
+    let waiting = |runtime: &Runtime| {
+        let layout = &runtime.snapshot.workspace_view.as_ref().unwrap().layout;
+        let crate::model::ViewNodeSnapshot::Area(area) = &layout.root else {
+            panic!("one area");
+        };
+        area.displays
+            .iter()
+            .map(|display| (display.label.clone(), display.state, display.reason.clone()))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        restarted
-            .workspace_views
-            .as_ref()
-            .and_then(|store| store.views.get("local", &directory.to_string_lossy()))
-            .map(|entry| entry.tabs.len()),
-        Some(1),
-        "the saved tab is kept while the restore waits"
+        waiting(&restarted),
+        vec![(
+            "notes.md".to_owned(),
+            crate::model::ViewDisplayState::Waiting,
+            Some("Waiting for this checkout to open".to_owned())
+        )],
+        "the saved display is kept, and says what it waits for"
     );
     assert!(
         !restarted.set_file_roots(crate::files::FileRoots::from_opened(Vec::new())),
@@ -295,6 +266,15 @@ fn a_restore_waits_for_the_daemon_to_open_the_checkout_root() {
         )]))
     );
     assert_eq!(restored(&restarted), vec![("notes.md".to_owned(), false)]);
+    restarted.sync_workspace_view();
+    assert_eq!(
+        waiting(&restarted),
+        vec![(
+            "notes.md".to_owned(),
+            crate::model::ViewDisplayState::Open,
+            None
+        )]
+    );
     assert!(
         !restarted.set_file_roots(crate::files::FileRoots::from_opened(Vec::new())),
         "a Workspace is restored once per process"
@@ -307,11 +287,14 @@ fn a_restore_waits_for_the_daemon_to_open_the_checkout_root() {
 fn an_unreadable_views_file_is_kept_and_reported_in_the_diagnostic_log() {
     let state = views_path("unreadable");
     std::fs::write(&state, b"{broken").expect("fixture");
-    let (store, diagnostic) = WorkspaceViewStore::open(state.clone(), Default::default());
+    let (store, diagnostics) = WorkspaceViewStore::open(state.clone(), Default::default());
     drop(store);
     assert_eq!(
-        diagnostic.map(|(kind, _)| kind),
-        Some("workspace_views.unreadable")
+        diagnostics
+            .into_iter()
+            .map(|(kind, _)| kind)
+            .collect::<Vec<_>>(),
+        vec!["workspace_views.unreadable"]
     );
     assert!(!state.exists());
     let kept = std::fs::read_dir(state.parent().unwrap())
@@ -445,19 +428,24 @@ fn second_checkout(runtime: &mut Runtime, directory: &Path) -> (PathBuf, String)
     (other, checkout)
 }
 
-fn saved_tabs(runtime: &Runtime, path: &Path) -> Vec<String> {
+fn saved_displays(runtime: &Runtime, path: &Path) -> Vec<String> {
     runtime
         .workspace_views
         .as_ref()
         .and_then(|store| store.views.get("local", &path.to_string_lossy()))
-        .map(|entry| entry.tabs.iter().map(|tab| tab.path.clone()).collect())
+        .map(|entry| {
+            entry
+                .layout
+                .displays()
+                .map(|display| display.path.clone())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 /// B19: a restore opens into the Workspace in front, so when the front moved
 /// after the last sync saw it, nothing is opened until the sync catches up;
-/// otherwise one Workspace's saved tabs would land in another and the first
-/// one's list would be recorded empty.
+/// otherwise one Workspace's saved documents would land in another.
 #[test]
 fn a_restore_waits_while_the_front_moved_since_the_last_sync() {
     let (runtime, checkout_id, directory) = strip_checkout("front-moved");
@@ -494,60 +482,10 @@ fn a_restore_waits_while_the_front_moved_since_the_last_sync() {
     );
     restarted.sync_workspace_view();
     assert_eq!(
-        saved_tabs(&restarted, &directory),
+        saved_displays(&restarted, &directory),
         vec![directory.join("notes.md").to_string_lossy().into_owned()],
-        "the Workspace that did not come back keeps its saved tabs"
+        "the Workspace that did not come back keeps its saved displays"
     );
-}
-
-/// B19: restored tabs take the order they were saved in, whichever read
-/// lands first.
-#[test]
-fn restored_view_tabs_settle_in_their_saved_order() {
-    let (runtime, checkout_id, directory) = strip_checkout("restore-order");
-    let mut runtime = with_views(runtime, &views_path("restore-order"));
-    std::fs::write(directory.join("b.md"), "b\n").expect("fixture");
-    open(&mut runtime, &checkout_id, &directory.join("b.md"));
-    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    let saved = |name: &str| crate::workspace_views::ViewTabRecord {
-        path: directory.join(name).to_string_lossy().into_owned(),
-        kind: crate::workspace_views::ViewTabKind::File,
-        committed: None,
-        preview: false,
-    };
-    runtime
-        .workspace_views
-        .as_mut()
-        .unwrap()
-        .views
-        .entry("local", &directory.to_string_lossy())
-        .tabs = vec![saved("notes.md"), saved("b.md")];
-
-    runtime.settle_restored_order("workspace:order", &checkout_id);
-
-    let labels = |runtime: &Runtime| {
-        runtime
-            .snapshot
-            .editor
-            .tabs
-            .iter()
-            .filter(|tab| tab.checkout_id == checkout_id)
-            .map(|tab| tab.label.clone())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(labels(&runtime), vec!["notes.md", "b.md"]);
-    let strip = runtime
-        .catalog_checkout("workspace:order", &checkout_id)
-        .map(|(_, checkout)| {
-            checkout
-                .strip
-                .iter()
-                .filter(|entry| entry.kind != StripTabKind::Herdr)
-                .map(|entry| entry.label.clone())
-                .collect::<Vec<_>>()
-        })
-        .expect("checkout");
-    assert_eq!(strip, vec!["notes.md", "b.md"]);
 }
 
 /// B20: a restored tab whose file was missing reads it again when the file
@@ -580,14 +518,17 @@ fn opening_a_file_that_came_back_clears_its_unavailable_tab() {
 
     assert_eq!(gone(&restarted), vec![false]);
     assert_eq!(active_label(&restarted).as_deref(), Some("gone.md"));
+    let shown = restarted
+        .snapshot_delta_payload(0, 0)
+        .documents
+        .expect("a fresh reader gets the documents on screen");
     assert_eq!(
-        restarted
-            .snapshot
-            .editor
-            .document
-            .as_ref()
-            .and_then(|document| document.contents_utf8.as_deref()),
-        Some("back\n")
+        shown
+            .changed
+            .iter()
+            .map(|(_, document)| document.contents_utf8.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("back\n")]
     );
 }
 

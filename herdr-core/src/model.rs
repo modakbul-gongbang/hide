@@ -71,9 +71,9 @@ pub struct Snapshot {
     pub workspace_view: Option<WorkspaceViewSnapshot>,
 }
 
-/// What the front Workspace shows: its areas, its tools and the boundary
-/// between the areas. The View area's active document is the editor's own
-/// `active_tab_id`, which the core keeps on this Workspace's View tab.
+/// What the front Workspace shows: its areas, its tools, the boundary
+/// between the areas and its View area tree. The editor's `active_tab_id` is
+/// the document of the active area's active display.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceViewSnapshot {
     pub device_id: String,
@@ -86,6 +86,77 @@ pub struct WorkspaceViewSnapshot {
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).
     pub resumed: bool,
+    pub layout: ViewLayoutSnapshot,
+}
+
+/// The front Workspace's View areas (PRD S7): the tree the shell draws, the
+/// area in use, and the caps a split or an open is refused at.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ViewLayoutSnapshot {
+    pub root: ViewNodeSnapshot,
+    pub active_area: String,
+    pub limits: ViewLimitsSnapshot,
+    pub display_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct ViewLimitsSnapshot {
+    pub areas: usize,
+    pub depth: usize,
+    pub displays: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewNodeSnapshot {
+    Area(ViewAreaSnapshot),
+    Split(ViewSplitSnapshot),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ViewAreaSnapshot {
+    pub id: String,
+    pub active: Option<String>,
+    pub displays: Vec<ViewDisplaySnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ViewSplitSnapshot {
+    pub id: String,
+    pub axis: crate::view_layout::SplitAxis,
+    pub ratio: f32,
+    pub first: Box<ViewNodeSnapshot>,
+    pub second: Box<ViewNodeSnapshot>,
+}
+
+/// One display: which document it shows and whether it can show it now.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ViewDisplaySnapshot {
+    pub id: String,
+    /// The editor tab (document buffer) it shows: set while `open`, and for
+    /// an `unavailable` display whose unavailable tab exists.
+    pub tab_id: Option<String>,
+    pub path: String,
+    pub label: String,
+    pub kind: crate::view_layout::DisplayKind,
+    pub committed: Option<bool>,
+    pub preview: bool,
+    pub state: ViewDisplayState,
+    /// Why a `waiting` or `unavailable` display shows no document.
+    pub reason: Option<String>,
+}
+
+/// `waiting` while its Workspace's root cannot be read yet (a device helper
+/// or catalog not ready, or this machine's root not opened), `opening` while
+/// its file is read, `open` with its document, `unavailable` when the read
+/// failed (Close and Retry).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewDisplayState {
+    Open,
+    Opening,
+    Waiting,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -1217,8 +1288,15 @@ pub struct TerminalPaneSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorSnapshot {
+    /// Every open document; with View areas (PRD S7) a tab's `preview` says
+    /// whether every display of it is a preview.
     pub tabs: Vec<EditorTabSnapshot>,
+    /// With View areas, the document of the front Workspace's active area's
+    /// active display, and null while that display cannot show it.
     pub active_tab_id: Option<String>,
+    /// The active tab's document for the Swift shell. Always null with View
+    /// areas, whose documents ride the delta's `documents` section so a
+    /// keystroke re-sends one document rather than the editor.
     pub document: Option<EditorDocumentSnapshot>,
     pub archive_detail: Option<ArchiveDetailSnapshot>,
     /// Files being read on a device before their tabs can show; one per
@@ -1769,6 +1847,12 @@ pub struct ChangesSnapshot {
     /// its two diffs are different, so the group is part of the selection.
     pub selected_committed: bool,
     pub diff: Option<ChangedFileDiffSnapshot>,
+    /// The diff of every visible View display that shows one (PRD S7 A5):
+    /// one per distinct file and group among the front Workspace's
+    /// area-active displays. Empty, and absent from the wire, in a shell
+    /// without View areas.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diffs: Vec<ViewDiffSnapshot>,
     /// Why there is nothing to list. Present whenever the reader could not
     /// produce entries, so an empty list is never mistaken for "no changes".
     pub unavailable_reason: Option<String>,
@@ -1855,6 +1939,18 @@ pub struct ChangedFileDiffSnapshot {
     pub text: String,
     /// Set when the diff was cut short, naming the limit that cut it. A
     /// silently truncated diff would read as a complete one.
+    pub notice: Option<String>,
+}
+
+/// A diff a View display shows: the file, the group it is taken in, and the
+/// text, bounded like every diff.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ViewDiffSnapshot {
+    pub path: String,
+    pub committed: bool,
+    pub text: String,
+    /// Set when the diff was cut short, or when the file is no longer in
+    /// its group, naming why.
     pub notice: Option<String>,
 }
 
@@ -2780,11 +2876,23 @@ pub struct SnapshotDeltaPayload {
     pub rest: Option<Arc<RestSections>>,
     pub editor: Option<Arc<EditorSnapshot>>,
     pub changes: Option<Arc<ChangesSnapshot>>,
+    /// The visible View documents (PRD S7 contract 3.1); always `None` in a
+    /// shell without View areas.
+    pub documents: Option<DocumentsDelta>,
     pub find: PaneFindSnapshot,
     pub input_generation: u64,
     pub terminal_sequence: u64,
     pub chunks: Vec<TerminalChunk>,
     pub chunks_dropped: bool,
+}
+
+/// The documents the front Workspace's area-active displays show, in tree
+/// order, and those among them that changed past the reader's revision. The
+/// shell keeps the documents it has whose ids are in `visible`, overwrites
+/// `changed`, and drops the rest, so a keystroke re-sends one document.
+pub struct DocumentsDelta {
+    pub visible: Vec<String>,
+    pub changed: Vec<(String, Arc<EditorDocumentSnapshot>)>,
 }
 
 /// One delta response on the snapshot wire. `rest`, `editor`, and `changes`
@@ -2802,6 +2910,11 @@ pub struct SnapshotDeltaWire<'a> {
     pub rest: Option<RestWire<'a>>,
     pub editor: Option<&'a EditorSnapshot>,
     pub changes: Option<&'a ChangesSnapshot>,
+    /// Absent unless a visible View document changed for this reader, and
+    /// always absent in a shell without View areas, so the Swift wire keeps
+    /// exactly its keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documents: Option<DocumentsWire<'a>>,
     /// Find state rides top-level rather than in `rest`, because it changes on
     /// every keystroke while a search is open. In `rest` each keystroke would
     /// restamp that revision and resend the whole navigator, ui state, and pet
@@ -2822,6 +2935,14 @@ impl<'a> SnapshotDeltaWire<'a> {
             rest: payload.rest.as_deref().map(RestWire::borrow),
             editor: payload.editor.as_deref(),
             changes: payload.changes.as_deref(),
+            documents: payload.documents.as_ref().map(|documents| DocumentsWire {
+                visible: &documents.visible,
+                changed: documents
+                    .changed
+                    .iter()
+                    .map(|(tab_id, document)| ChangedDocumentWire { tab_id, document })
+                    .collect(),
+            }),
             find: &payload.find,
             input_generation: payload.input_generation,
             terminal_sequence: payload.terminal_sequence,
@@ -2829,6 +2950,18 @@ impl<'a> SnapshotDeltaWire<'a> {
             chunks_dropped: payload.chunks_dropped,
         }
     }
+}
+
+#[derive(Serialize)]
+pub struct DocumentsWire<'a> {
+    pub visible: &'a [String],
+    pub changed: Vec<ChangedDocumentWire<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct ChangedDocumentWire<'a> {
+    pub tab_id: &'a str,
+    pub document: &'a EditorDocumentSnapshot,
 }
 
 #[derive(Serialize)]
