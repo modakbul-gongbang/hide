@@ -14,6 +14,9 @@ import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 import { drawnViews, viewAreaInUse } from "./viewFocus";
 
+/** A dialog, menu or popover Radix has open; each closes on its own Escape. */
+const OPEN_LAYER = '[role="dialog"], [role="alertdialog"], [role="menu"], [data-radix-popper-content-wrapper]:not(:has([role="tooltip"]))';
+
 /** The checkout whose tabs ⌥` walks: this machine's focused one, or the selected device's visible one. */
 function cycleCheckout(rest: SnapshotRest | null) {
   return remoteContext(rest) ? (remoteView(remoteContext(rest)?.session ?? null)?.checkout ?? null) : focusedCheckout(rest);
@@ -80,7 +83,7 @@ export function installKeyboard(actions: Actions): () => void {
       case "open_file":
         return actions.openFilePalette();
       case "project_home":
-        return actions.notReady("Project home (⌘⇧H)");
+        return actions.openProjectOverview();
       case "toggle_right_panel":
         return actions.toggleRightPanel();
       case "toggle_left_sidebar":
@@ -163,6 +166,13 @@ export function installKeyboard(actions: Actions): () => void {
         ui().closeOverlay();
         consume();
         return;
+      }
+      // With no layer open, Escape leaves a Project's Overview for the
+      // Workspace in front, or Main when there is none (web-project-overview B1).
+      // A dialog, menu or popover answers its own Escape first.
+      if (ui().screen?.kind === "overview" && !ui().workspaceDialog && !document.querySelector(OPEN_LAYER)) {
+        actions.leaveProjectOverview();
+        consume();
       }
       return;
     }
