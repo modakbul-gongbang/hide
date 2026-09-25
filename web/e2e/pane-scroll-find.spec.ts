@@ -29,6 +29,9 @@ async function paneText(page: Page, pane: string): Promise<string> {
   return page.evaluate((id) => window.__hideProbe?.paneText(id) ?? "", pane);
 }
 
+/** The last rows sit on adjacent lines: a frame drawn at another grid wraps each row onto two. */
+const DRAWN_AT_GRID = /row-159 *\nrow-160/;
+
 test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an empty View region leaves", async ({ page }) => {
   await page.setViewportSize({ width: 1680, height: 900 });
   const herdr = await startHerdr();
@@ -71,6 +74,9 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
     // opens that pane's find bar, not the document's.
     await page.locator(`[data-explorer-row$="/notes.txt"]`).dblclick();
     await expect(page.locator("[data-view-area]")).toBeVisible();
+    // Both panes narrow and redraw at the new grid, the observed one by
+    // attaching again at it.
+    for (const pane of herdr.panes) await expect.poll(() => paneText(page, pane), { timeout: 15_000 }).toMatch(DRAWN_AT_GRID);
     await page.locator(`[data-pane-view="${focused}"] [data-terminal-host]`).click();
     await expect(page.locator(`[data-pane-view="${focused}"]`)).toHaveAttribute("data-focused", "true");
     await page.keyboard.press("Meta+f");
@@ -121,7 +127,7 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
     await expect(workspace).toHaveAttribute("data-layout", "together");
     // Both panes widen into the space and redraw at the new grid, the
     // observed one by attaching again at it.
-    for (const pane of herdr.panes) await expect.poll(() => paneText(page, pane), { timeout: 15_000 }).toContain("row-160");
+    for (const pane of herdr.panes) await expect.poll(() => paneText(page, pane), { timeout: 15_000 }).toMatch(DRAWN_AT_GRID);
     await screenshot(page, "view-region-gone");
     await page.locator(`[data-explorer-row$="/notes.txt"]`).dblclick();
     await expect(page.locator("[data-view-area]")).toBeVisible();
