@@ -27,8 +27,6 @@ export type AgentRow = {
   lineage_child_pane_ids?: string[];
   /** What every live descendant is doing, counted by state; unknown activity is in none. */
   descendant_counts?: DescendantCounts;
-  /** The checkout the agent's pane is in, once the navigator has placed it. */
-  checkout_label?: string | null;
   /** A quiet root whose live descendant is still working or asking: drawn as a ring in Working (docs/status-model.md). */
   waiting_on_descendants?: boolean;
   /** How deep under its lineage root; a root is 0. */

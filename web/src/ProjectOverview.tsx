@@ -1,7 +1,7 @@
 import { ArrowDownIcon, ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderIcon, GitBranchIcon, GitCommitHorizontalIcon, GitMergeIcon, GitPullRequestIcon, HouseIcon, PlusIcon } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { AgentLine } from "./components/agent-line";
+import { AgentRowItem } from "./components/agent-row";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
@@ -10,7 +10,7 @@ import { cn } from "./lib/utils";
 import { OpeningStatus, UnavailableNotice } from "./MainScreen";
 import { overviewProject } from "./navigation";
 import { AGENT_COLUMNS, STAGES, agentColumnCards, buildBoard, stageCards, type Board, type BoardCard, type Stage } from "./projectBoard";
-import type { Checkout, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
@@ -290,6 +290,9 @@ function checkoutIcon(checkout: Checkout) {
   return FolderIcon;
 }
 
+/** A card draws its whole lineage, so no row lists folded children. */
+const NO_ROWS: AgentRow[] = [];
+
 /**
  * A checkout's card: its header opens the checkout and each agent row its
  * pane (B8). An Agents card is its lineage, root first, with the checkout
@@ -347,11 +350,21 @@ function CheckoutCard({
         </Hint>
       ) : null}
       {card.rows.length > 0 ? (
-        <div className="flex flex-col gap-xxs">
+        <ul className="flex flex-col" role="list" data-overview-rows="true">
           {card.rows.map((row) => (
-            <AgentLine key={row.agent.pane_id} agent={row.agent} depth={row.depth} foreignBranch={row.foreignBranch} selected={row.agent.pane_id === focusedPaneId} onOpen={actions.openAgent} />
+            <AgentRowItem
+              key={row.agent.pane_id}
+              agent={row.agent}
+              device={null}
+              depth={row.depth}
+              descendants={0}
+              childRows={NO_ROWS}
+              selected={row.agent.pane_id === focusedPaneId}
+              onOpen={actions.openAgent}
+              onToggleTree={null}
+            />
           ))}
-        </div>
+        </ul>
       ) : null}
       <Footer card={card} agentsView={agentsView} />
     </article>

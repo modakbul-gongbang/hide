@@ -176,7 +176,7 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 ## Project Home
 
 Native owner: `HideTheme.Home` and the SwiftUI Project Home views.
-Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/projectBoard.ts` (the board rules), `web/src/components/agent-line.tsx` (a card's agent row).
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
 Both shells place a checkout by the same rules; `web/src/projectBoard.test.ts` carries the Swift `ProjectHomeTests` cases.
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
@@ -196,8 +196,8 @@ The header carries the path back, the Tasks/Agents choice, the worktree count, t
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
 A project with no agent at all shows only an empty state with New agent, a folder with agents only the ad hoc strip, and before the first snapshot the shell's own connecting state shows instead.
 While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
-A card's agent row is one line - status mark, provider mark, title, elapsed time - and gains a second line only while the agent waits on the operator (in warning), changed since it was seen, or is the pane in front; a descendant working in another checkout carries that checkout's branch chip, and a parent waiting on a live descendant shows a hollow ring.
-The whole lineage is drawn inside its card, so a card row carries no descendant badge.
+A card's agent row follows the Agents list's row rules above (`web/src/agentRow.ts`): the same first line, second line and branch chip, and the core's waiting-on-children ring.
+The whole lineage is drawn inside its card whatever the sidebar has folded, so a card row carries no chevron and no descendant badge.
 
 ## Explorer file management
 

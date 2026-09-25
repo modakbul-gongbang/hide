@@ -41,8 +41,6 @@ export type BoardRow = {
   agent: AgentRow;
   /** 0 for a root, one more per delegation step. */
   depth: number;
-  /** A descendant's branch, only when it works in another checkout than its card's. */
-  foreignBranch: string | null;
 };
 
 /** The one delivery fact a card's footer states. */
@@ -201,15 +199,16 @@ export function buildBoard(workspace: Workspace, agents: AgentRow[], now: number
   const byPane = new Map<string, AgentRow>();
   for (const agent of agents) if (!byPane.has(agent.pane_id)) byPane.set(agent.pane_id, agent);
 
-  const treeRows = (roots: AgentRow[], home: Checkout | null): BoardRow[] => {
+  // A card draws its whole lineage whatever the sidebar has folded, so its
+  // rows carry no descendant badge; a row's branch chip is the Agents list's rule
+  // (`branchChip`), a checkout that differs from its parent's.
+  const treeRows = (roots: AgentRow[]): BoardRow[] => {
     const rows: BoardRow[] = [];
     const seen = new Set<string>();
     const append = (agent: AgentRow, depth: number) => {
       if (seen.has(agent.pane_id)) return;
       seen.add(agent.pane_id);
-      const owner = owners.get(agent.pane_id);
-      const foreign = depth > 0 && owner?.id !== home?.id ? (owner?.branch ?? agent.checkout_label ?? null) : null;
-      rows.push({ agent, depth, foreignBranch: foreign });
+      rows.push({ agent, depth });
       for (const childId of agent.lineage_child_pane_ids ?? []) {
         const child = byPane.get(childId);
         if (child) append(child, depth + 1);
@@ -227,7 +226,7 @@ export function buildBoard(workspace: Workspace, agents: AgentRow[], now: number
     const localIds = new Set(local.map((agent) => agent.pane_id));
     const roots = local.filter((agent) => !agent.lineage_parent_pane_id || !localIds.has(agent.lineage_parent_pane_id));
     const onBoard = checkout.is_worktree && git;
-    const value = card(`task:${checkout.id}`, checkout, treeRows(roots, checkout), checkout.issue ?? null, onBoard ? stageOf(checkout) : null, false, null, now);
+    const value = card(`task:${checkout.id}`, checkout, treeRows(roots), checkout.issue ?? null, onBoard ? stageOf(checkout) : null, false, null, now);
     if (onBoard) tasks.push(value);
     else if (local.length > 0) adHoc.push(value);
   }
@@ -243,11 +242,11 @@ export function buildBoard(workspace: Workspace, agents: AgentRow[], now: number
   const roots = agents.filter((agent) => {
     const parent = agent.lineage_parent_pane_id;
     if (parent && byPane.has(parent)) return false;
-    return treeRows([agent], owners.get(agent.pane_id) ?? null).some((row) => owners.has(row.agent.pane_id));
+    return treeRows([agent]).some((row) => owners.has(row.agent.pane_id));
   });
   const agentCards = roots.map((root) => {
     const checkout = owners.get(root.pane_id) ?? null;
-    return card(`agent:${root.pane_id}`, checkout, treeRows([root], checkout), checkout?.issue ?? null, checkout?.is_worktree ? stageOf(checkout) : null, false, null, now);
+    return card(`agent:${root.pane_id}`, checkout, treeRows([root]), checkout?.issue ?? null, checkout?.is_worktree ? stageOf(checkout) : null, false, null, now);
   });
 
   const state: BoardState = projectAgents(workspace, agents).length === 0 ? "empty" : git ? "board" : "adhoc";
@@ -274,25 +273,4 @@ export function stageCards(board: Board, stage: Stage): BoardCard[] {
 export function agentColumnCards(board: Board, column: AgentColumn): BoardCard[] {
   const groups = AGENT_COLUMNS.find((row) => row.column === column)?.groups ?? [];
   return board.agents.filter((value) => groups.includes(value.rows[0]?.agent.group ?? ""));
-}
-
-/**
- * Whether a row carries its second line (sidebar-agent-status D-05): the
- * question or approval it waits on, a change the operator has not seen, or
- * the whole sentence of the selected row. Otherwise a row is one line.
- */
-export function showsDetail(agent: AgentRow, selected: boolean): boolean {
-  if (!agent.detail) return false;
-  return agent.group === "needs_you" || agent.unread || selected;
-}
-
-/**
- * A parent whose own turn is over while a live descendant still works or
- * asks: drawn as a hollow ring instead of its own idle mark (sidebar-agent-
- * status D-01). Derived from the descendant counts the snapshot carries.
- */
-export function waitingOnDescendants(agent: AgentRow): boolean {
-  if (agent.activity === "working" || (agent.demand && agent.demand !== "none")) return false;
-  const counts = agent.descendant_counts;
-  return Boolean(counts && counts.working + counts.question + counts.approval + counts.error > 0);
 }

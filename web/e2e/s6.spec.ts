@@ -54,9 +54,9 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await project.click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await expect(page.locator("[data-overview-workspace]")).toHaveCount(1);
-    await expect(page.locator("[data-overview-agent]")).toHaveCount(2);
+    await expect(page.locator("[data-overview-screen] [data-agent-open]")).toHaveCount(2);
     await screenshot(page, "s6-overview");
-    await page.locator(`[data-overview-agent="${parent}"]`).click();
+    await page.locator(`[data-overview-screen] [data-agent-open="${parent}"]`).click();
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     // A new Workspace starts with its agents alone and the Explorer shown.

@@ -124,7 +124,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     // The primary checkout is on the ad hoc strip; each worktree in its Git column (B4, B5).
     const adhoc = page.locator("[data-overview-adhoc]");
     await expect(adhoc.locator("[data-overview-card]")).toHaveCount(1);
-    await expect(adhoc.locator(`[data-overview-agent="${mainPane}"]`)).toBeVisible();
+    await expect(adhoc.locator(`[data-agent-open="${mainPane}"]`)).toBeVisible();
     const column = (id: string) => page.locator(`[data-overview-column="${id}"]`);
     await expect(column("working").locator("[data-overview-card]")).toHaveCount(2, { timeout: 20_000 });
     await expect(column("ready").locator("[data-overview-card]")).toHaveCount(0);
@@ -132,7 +132,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     const asking = column("working").locator("[data-overview-card]").first();
     await expect(asking).toHaveAttribute("data-needs-you", "true", { timeout: 20_000 });
     // Its row carries the question on a second line (B8).
-    await expect(asking.locator(`[data-overview-agent="${askingPane}"][data-agent-detail="true"]`)).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
+    await expect(asking.locator(`[data-pane="${askingPane}"] [data-agent-line="request"]`)).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
     const working = column("working").locator("[data-overview-card]", { hasText: "prd/web-overview-with-a-long-branch-name" });
     await expect(working.locator('[data-overview-delivery="working"]')).toContainText("변경 1 · ↑1 커밋");
     // Merged starts folded and lists only its names until opened.
@@ -181,14 +181,14 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     // An agent row opens its pane (B8).
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toBeVisible();
-    await page.locator(`[data-overview-agent="${mainPane}"]`).click();
+    await page.locator(`[data-overview-screen] [data-agent-open="${mainPane}"]`).click();
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toHaveAttribute("data-focused", "true");
 
     // A folder with agents shows only the ad hoc strip (B10).
     await page.locator("[data-project-row]", { hasText: /^fixture/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "adhoc");
-    await expect(page.locator("[data-overview-adhoc] [data-overview-agent]")).toHaveCount(2);
+    await expect(page.locator("[data-overview-adhoc] [data-agent-open]")).toHaveCount(2);
     await expect(page.locator("[data-overview-column]")).toHaveCount(0);
     await screenshot(page, "overview-folder-light");
 

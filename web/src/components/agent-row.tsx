@@ -39,6 +39,7 @@ export const AgentRowItem = memo(function AgentRowItem({
   childRows: AgentRow[];
   selected: boolean;
   onOpen: (paneId: string) => void;
+  /** Null for a list that draws every descendant and so has nothing to fold. */
   onToggleTree: ((paneId: string) => void) | null;
 }) {
   const main = useRef<HTMLButtonElement>(null);
@@ -74,20 +75,23 @@ export const AgentRowItem = memo(function AgentRowItem({
           onClick={() => onOpen(agent.pane_id)}
         />
       </Hint>
-      <span className="relative flex w-(--size-agent-badge-compact) shrink-0 justify-center self-center">
-        {hasChildren && onToggleTree ? (
-          <button
-            type="button"
-            aria-label={folded ? `Show ${agent.identity_label}'s agents` : `Hide ${agent.identity_label}'s agents`}
-            aria-expanded={!folded}
-            data-agent-tree-toggle={agent.pane_id}
-            className="rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-            onClick={() => onToggleTree(agent.pane_id)}
-          >
-            <ChevronRightIcon className={`size-(--size-icon) transition-transform ${folded ? "" : "rotate-90"}`} />
-          </button>
-        ) : null}
-      </span>
+      {/* A list that draws every descendant (an Overview card) has no fold, so no chevron column. */}
+      {onToggleTree ? (
+        <span className="relative flex w-(--size-agent-badge-compact) shrink-0 justify-center self-center">
+          {hasChildren ? (
+            <button
+              type="button"
+              aria-label={folded ? `Show ${agent.identity_label}'s agents` : `Hide ${agent.identity_label}'s agents`}
+              aria-expanded={!folded}
+              data-agent-tree-toggle={agent.pane_id}
+              className="rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+              onClick={() => onToggleTree(agent.pane_id)}
+            >
+              <ChevronRightIcon className={`size-(--size-icon) transition-transform ${folded ? "" : "rotate-90"}`} />
+            </button>
+          ) : null}
+        </span>
+      ) : null}
       <span
         className={`pointer-events-none w-(--size-agent-mark) shrink-0 pt-xxs text-center font-mono text-caption ${markTone(agent)}`}
         data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_label}

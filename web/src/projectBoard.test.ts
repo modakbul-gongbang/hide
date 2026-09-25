@@ -2,7 +2,7 @@
 // board, so both shells put the same checkout in the same column (D-03).
 
 import { describe, expect, it } from "vitest";
-import { agentColumnCards, buildBoard, showsDetail, stageCards, stageMatches, stageOf, waitingOnDescendants } from "./projectBoard";
+import { agentColumnCards, buildBoard, stageCards, stageMatches, stageOf } from "./projectBoard";
 import type { AgentRow, Checkout, Issue, PullRequest, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -95,14 +95,14 @@ describe("the Tasks board", () => {
     expect(board.tasks).toEqual([]);
   });
 
-  it("keeps a cross-checkout descendant under its root, names its branch, and warns without moving the stage", () => {
-    const parent = agent("p", "needs_you", { demand: "question", lineage_child_pane_ids: ["child"] });
+  it("keeps a cross-checkout descendant under its root, folded in the sidebar or not, and warns without moving the stage", () => {
+    const parent = agent("p", "needs_you", { demand: "question", lineage_child_pane_ids: ["child"], lineage_collapsed: true });
     const child = agent("child", "working", { lineage_parent_pane_id: "p", delegated: true });
     const board = buildBoard(workspace([checkout("parent-branch", { changed: 1, panes: ["p"] }), checkout("child-branch", { changed: 1, panes: ["child"] })]), [child, parent], NOW);
     expect(board.agents).toHaveLength(1);
-    expect(board.agents[0]?.rows.map((row) => [row.agent.pane_id, row.depth, row.foreignBranch])).toEqual([
-      ["p", 0, null],
-      ["child", 1, "child-branch"],
+    expect(board.agents[0]?.rows.map((row) => [row.agent.pane_id, row.depth])).toEqual([
+      ["p", 0],
+      ["child", 1],
     ]);
     const parentCard = board.tasks.find((row) => row.id === "task:parent-branch");
     expect(parentCard?.needsYou).toBe(true);
@@ -189,23 +189,5 @@ describe("what the Overview draws", () => {
     expect(buildBoard(workspace(read), [], NOW).stats.openPullRequests).toBe(2);
     const even = { ...main, worktree: { is_main: true, behind_upstream: 0 } as Checkout["worktree"] };
     expect(buildBoard(workspace([even]), [], NOW).stats.behind).toBeNull();
-  });
-});
-
-describe("an agent row", () => {
-  it("carries a second line only while it waits, changed unseen, or is selected", () => {
-    expect(showsDetail(agent("a", "working", { detail: "진행 중" }), false)).toBe(false);
-    expect(showsDetail(agent("a", "needs_you", { detail: "질문" }), false)).toBe(true);
-    expect(showsDetail(agent("a", "done", { detail: "완료", unread: true }), false)).toBe(true);
-    expect(showsDetail(agent("a", "seen", { detail: "완료" }), true)).toBe(true);
-    expect(showsDetail(agent("a", "needs_you", { detail: null }), true)).toBe(false);
-  });
-
-  it("is a parent waiting on descendants only when its own turn is over and a descendant still works or asks", () => {
-    const counts = { error: 0, approval: 0, question: 0, working: 1, done: 0 };
-    expect(waitingOnDescendants(agent("p", "working", { activity: "stopped", descendant_counts: counts }))).toBe(true);
-    expect(waitingOnDescendants(agent("p", "working", { activity: "working", descendant_counts: counts }))).toBe(false);
-    expect(waitingOnDescendants(agent("p", "needs_you", { activity: "stopped", demand: "question", descendant_counts: counts }))).toBe(false);
-    expect(waitingOnDescendants(agent("p", "done", { activity: "stopped", descendant_counts: { ...counts, working: 0, done: 2 } }))).toBe(false);
   });
 });
