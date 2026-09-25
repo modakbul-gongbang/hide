@@ -48,8 +48,10 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
 /**
  * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
  * through its Project's Overview (the one named `project`, else the first)
- * to that Project's first Workspace. A page that already shows a Workspace
- * is left where it is.
+ * to that Project's first Workspace. A Project with no agent has no card on
+ * its Overview (web-project-overview B10), so its first checkout is opened
+ * from the sidebar's project list, and the sidebar is put back on the list
+ * it showed. A page that already shows a Workspace is left where it is.
  */
 export async function enterWorkspace(page: Page, project?: string): Promise<void> {
   const main = page.locator("[data-main-screen]");
@@ -57,7 +59,18 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   await expect(main.or(workspace)).toBeVisible({ timeout: 20_000 });
   if ((await workspace.count()) > 0) return;
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
-  await page.locator("[data-overview-workspace]").first().click();
+  const overview = page.locator("[data-overview-screen]");
+  const card = overview.locator("[data-overview-workspace]").first();
+  await expect(card.or(overview.locator("[data-overview-empty]"))).toBeVisible();
+  if ((await card.count()) > 0) {
+    await card.click();
+  } else {
+    const id = await overview.getAttribute("data-overview-screen");
+    const mode = await page.locator("[data-sidebar]").getAttribute("data-sidebar");
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    await page.locator(`[data-project="${id}"] [data-checkout]`).first().click();
+    if (mode && mode !== "projects") await page.locator(`[data-sidebar-mode="${mode}"]`).click();
+  }
   await expect(workspace).toBeVisible();
 }
 
