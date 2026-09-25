@@ -77,6 +77,12 @@
   height: 100%;
 }
 
+/* xterm's own sheet paints the viewport black; the part below the last row
+   shows it, so it takes the terminal's background in either theme. */
+.xterm .xterm-viewport {
+  background-color: var(--background);
+}
+
 /*
  * A View tab drag (PRD S7 B8): the pointer says whether the place under it
  * would land, whatever it passes over, and no text is selected on the way.
