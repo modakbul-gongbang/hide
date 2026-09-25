@@ -137,6 +137,27 @@ import Testing
     #expect(child.group == "seen", "a delegated question is not the operator's Needs You")
 }
 
+/// sidebar-agent-status B11, D-10: a root waiting on its children reaches the
+/// frozen shell as `group: working` plus an additive flag it does not know.
+/// It decodes, and it lands in Working like any other working row.
+@Test func aRootWaitingOnItsChildrenDecodesAsAnOrdinaryWorkingRow() throws {
+    let payload = """
+    {
+        "id": "Observer", "pane_id": "w1:p1", "workspace_label": "hide",
+        "agent_kind": "claude", "demand": "none", "activity": "stopped",
+        "unread": false, "blocked": false, "group": "working",
+        "symbol": "\\u25cb", "emphasized": false, "status_label": "Waiting",
+        "requires_close_confirmation": false, "identity_label": "Observer",
+        "elapsed": "6m", "last_activity": "1", "delegated": false,
+        "waiting_on_descendants": true,
+        "descendant_counts": {"error": 0, "approval": 0, "question": 0, "working": 1, "done": 0}
+    }
+    """
+    let agent = try JSONDecoder().decode(SidebarAgent.self, from: Data(payload.utf8))
+    #expect(AgentGroup(agent: agent) == .working)
+    #expect(agent.descendantCounts == CoreDescendantCounts(working: 1))
+}
+
 @Test func aTabHoldingOnlyDelegatedChildrenSaysSo() throws {
     let payload = """
     {"id": "t2", "workspace_id": "w1", "label": "Implementor", "empty": false,

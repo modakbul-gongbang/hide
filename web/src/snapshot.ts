@@ -27,6 +27,14 @@ export type AgentRow = {
   lineage_child_pane_ids?: string[];
   /** What every live descendant is doing, counted by state; unknown activity is in none. */
   descendant_counts?: DescendantCounts;
+  /** A quiet root whose live descendant is still working or asking: drawn as a ring in Working (docs/status-model.md). */
+  waiting_on_descendants?: boolean;
+  /** How deep under its lineage root; a root is 0. */
+  lineage_depth?: number;
+  /** Whether the operator has this row's descendants folded away; folded is the default. */
+  lineage_collapsed?: boolean;
+  /** The checkout this row runs in, set only when it differs from its parent's. */
+  lineage_worktree_badge?: string | null;
 };
 
 export type DescendantCounts = { error: number; approval: number; question: number; working: number; done: number };

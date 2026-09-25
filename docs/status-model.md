@@ -55,11 +55,28 @@ A descendant entering a question, approval or error, moving between those three,
 A signal that goes away does not turn anything on: a question being answered, a finished child starting new work, or a child pane closing is trimmed from the record on the next projection, so the same descendant is news again the next time it asks or finishes.
 Reading the ancestor records the signals it shows at that moment and nothing more.
 
-Nothing here moves an ancestor between groups.
-An ancestor's group is decided by its own demand, activity, completion and read axes, so a child's question leaves a working root in Working and an idle, completed root in Done, and never puts either in Needs You.
-That is the whole boundary: a child is asked for its status through its parent, and a parent that has heard from a child is drawn bright until the operator looks at it.
+A descendant's signal never puts an ancestor in Needs You: a child's question leaves a working root in Working.
+That is the boundary: a child is asked for its status through its parent, and a parent that has heard from a child is drawn bright until the operator looks at it.
+The one way a descendant moves its root between groups is the waiting state below, and it moves the root into Working, never into an attention group.
 
 Regression owners: `a_descendants_demand_or_completion_turns_every_ancestor_unread_and_nothing_else_does`, `an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_you`.
+
+## A quiet root waiting on its children
+
+A lineage root that is quiet itself - no demand of its own, not blocked, stopped whether idle or done - while at least one live descendant is working or holds a question, approval or error is waiting on its children.
+It has not finished: the work it started is still running under it, so it sits in Working, and it reaches Done (when its own completion is unread) or Seen only once it and every descendant are quiet.
+A merely ready or finished descendant is quiet, and one whose activity Herdr reports as unknown does not make its root wait, because a waiting state the projection cannot vouch for is not drawn.
+A descendant's question keeps the root waiting in Working, carries `?1` on its badge and turns it unread through the descendant signals above; it never moves the root to Needs You.
+
+Mark precedence on a root is its own demand, then its own work, then waiting on children, then idle or done.
+The flag is only ever set on a row with no demand of its own that is not working, so the precedence is the order of the checks in `agent_group_for`, not a second rule.
+Only a lineage root waits: a delegated middle row keeps its own mark, because its group is already Working or Seen by delegation and its parent's badge already counts the grandchild.
+
+`apply_lineage` decides it on the same pass that sums `descendant_counts`, and publishes it as the additive `waiting_on_descendants` flag beside `group: working`; the row's mark stays the hollow ring `○`, its status word is `Waiting`, and it is not emphasized.
+No new group value reaches the wire, so a decoder that does not know the flag, such as the frozen Swift shell, draws an ordinary Working row.
+The web row draws the ring in the working color from the flag, and the pet's Working badge and the Workspace representative count the row in Working because both read `group_of`, which reads the flag.
+
+Regression owners: `a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet`, `a_root_waiting_on_its_children_counts_as_working_not_done`, the Swift `aRootWaitingOnItsChildrenDecodesAsAnOrdinaryWorkingRow`, and the web `agentRow.test.ts`.
 
 ## Herdr token contract: both forms mean the same demand
 
@@ -79,7 +96,7 @@ The suffix is Herdr's answer to a question Hide no longer asks it, so reading th
 | --- | --- |
 | Needs You | An unread demand - question, approval or error - or a pane Herdr reports as blocked right now |
 | Done | No demand, stopped, completion reported, and unread |
-| Working | Running |
+| Working | Running, or a quiet root waiting on a busy descendant |
 | Seen | Everything else: ready idle, read demands, read completions, unknown |
 
 A blocked pane stays in Needs You whether or not it has been read.
@@ -156,6 +173,7 @@ The symbol and accessible text accompany color, so color alone never carries the
 | No demand, stopped, completion reported, unread | `✓` | Green | Done; completion awaiting the operator's review |
 | No demand, stopped, no completion | `○` | Gray | Idle; a newly opened agent is ready for its first instruction |
 | No demand, working | `●` | Blue | Working |
+| Root with no demand, stopped, a live descendant working or asking | `○` | Blue ring | Waiting; Working group until every descendant is quiet |
 | No demand, stopped, read | `○` | Gray | Idle; a read completion is not another unread Done |
 | No demand, unknown activity | `~` | Gray | Unknown; never silently labeled Idle |
 | Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
@@ -340,12 +358,18 @@ The sentences come from the plugin's tokens: `expected_reply` is the one action 
 | --- | --- |
 | Needs You | `expected_reply`, else `progress` |
 | Done (unread) | `expected_reply`, else `progress` |
-| Working | `progress` |
-| Seen (read demands, read completions, idle, unknown) | none |
+| Working | `progress`; a row with an unresolved demand, `expected_reply`, else `progress` |
+| Seen with an unresolved demand (a read demand, a delegated child's request) | `expected_reply`, else `progress` |
+| Seen (read completions, idle, unknown) | none |
 
-`status_word_visible` is true only when the group wanted a sentence and the tokens carried none: the status word stands in for it, so an emphasized or working row never has an empty second line and a plugin that is absent or has not labelled the pane yet reads as before, title and status word.
+A request outlives reading: a question, approval or error keeps its sentence until it is resolved, whatever group the row sits in, so a view can keep showing what is being asked after the operator has looked.
+
+`status_word_visible` is true only when the group wanted a sentence and the tokens carried none (a Seen row never shows the word): the status word stands in for it, so an emphasized or working row never has an empty second line and a plugin that is absent or has not labelled the pane yet reads as before, title and status word.
 Beside a sentence the word is never drawn; the mark and the group heading already say it.
-A delegated row follows the same table for its own group, which for a child is Working or Seen, so a delegated child that has stopped shows only its title.
+A delegated row follows the same table for its own group, which for a child is Working or Seen, so a delegated child that has stopped shows only its title unless it is still asking.
+
+The core publishes the sentence; when a view shows it is that view's presentation.
+The web sidebar row keeps a request line in the warning color until the request resolves, shows the sentence of an unread row as a bright line that goes once the row is read, reveals the full sentence up to two lines on the selected or hovered row with the rest in a tooltip, and otherwise draws one line (`web/src/agentRow.ts`, owned by `agentRow.test.ts`; docs/UI_BEHAVIOR.md).
 The pane header is one line: `title · sentence`, or `title · word` for a row with no sentence, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
 The accessibility label of a row and of a header always carries the status word, in the order title, agent kind, status word, sentence, so a row whose word left the screen is still read out with it.
 

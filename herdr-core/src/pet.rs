@@ -286,6 +286,7 @@ mod tests {
             spawned_from_pane_id: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
+            waiting_on_descendants: false,
             descendant_signals: std::collections::BTreeSet::new(),
             lineage_parent_pane_id: None,
             lineage_path_pane_ids: Vec::new(),
@@ -307,6 +308,17 @@ mod tests {
             seen: 1,
             ..Default::default()
         }
+    }
+
+    /// sidebar-agent-status Risks: a root waiting on its children moved
+    /// from Done to Working, and the pet's badges follow the group the
+    /// projection decided rather than the root's own completion.
+    #[test]
+    fn a_root_waiting_on_its_children_counts_as_working_not_done() {
+        let mut waiting = agent("root", "done");
+        waiting.waiting_on_descendants = true;
+        let summary = summarize(&[waiting, agent("other", "done")], true);
+        assert_eq!((summary.working, summary.done), (1, 1));
     }
 
     #[test]
