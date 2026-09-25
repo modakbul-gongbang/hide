@@ -166,8 +166,13 @@ export class DesktopHost {
   }
 
   private runCli(file: string, args: readonly string[], timeoutMs: number): Promise<ChildResult> {
-    // A call queued behind the one quit killed never starts.
-    const run = this.cliChain.then(() => (this.quitting ? Promise.reject(new Error("host is quitting")) : this.runner.run(file, args, timeoutMs)));
+    // A call queued behind the one quit killed never starts; it answers as a
+    // child that could not start, which every caller already reads as a stop.
+    const run = this.cliChain.then(() =>
+      this.quitting
+        ? { code: null, signal: null, stdout: "", stderr: "", timedOut: false, spawnError: "host is quitting" }
+        : this.runner.run(file, args, timeoutMs),
+    );
     this.cliChain = run.catch(() => undefined);
     return run;
   }
