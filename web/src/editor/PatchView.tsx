@@ -43,7 +43,7 @@ export function PatchView({ text, scale }: { text: string; scale: number }) {
     const state = EditorState.create({
       doc,
       extensions: [
-        ...baseTheme,
+        ...baseTheme(),
         patchTheme,
         scaleTheme(scale),
         EditorState.readOnly.of(true),

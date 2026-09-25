@@ -4,12 +4,35 @@
 // (`scripts/check-web-tokens.mjs` refuses a literal).
 
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { EditorView } from "@codemirror/view";
+import { Compartment } from "@codemirror/state";
+import { EditorView, ViewPlugin } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
+
+// CodeMirror draws a few things of its own (bracket and selection matches, fold
+// markers) in a light or a dark variant; which one follows the page theme, so
+// every open editor is told when the theme changes and a new one starts on it.
+const appearance = new Compartment();
+const openEditors = new Set<EditorView>();
+const tracked = ViewPlugin.define((view) => {
+  openEditors.add(view);
+  return { destroy: () => openEditors.delete(view) };
+});
+
+function pageIsDark(): boolean {
+  return !document.documentElement.classList.contains("light");
+}
+
+/** Re-theme every open editor after the page theme changed; content, selection and history stay. */
+export function applyEditorTheme() {
+  const effects = appearance.reconfigure(EditorView.darkTheme.of(pageIsDark()));
+  for (const view of openEditors) view.dispatch({ effects });
+}
 
 /** The base chrome: transparent over the shell background, with a caret and
  * selection that read against it, and a search panel in the shell's palette. */
-export const baseTheme = [
+export const baseTheme = () => [
+  appearance.of(EditorView.darkTheme.of(pageIsDark())),
+  tracked,
   EditorView.theme(
     {
       "&": {
@@ -32,23 +55,22 @@ export const baseTheme = [
       },
       ".cm-activeLineGutter": { backgroundColor: "var(--card)", color: "var(--subtle-foreground)" },
       ".cm-panels": { backgroundColor: "var(--card)", color: "var(--foreground)" },
-      ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
-      ".cm-searchMatch": { backgroundColor: "var(--secondary)", outline: "1px solid var(--border)" },
+      ".cm-panels.cm-panels-top": { borderBottom: "var(--size-hairline) solid var(--border)" },
+      ".cm-searchMatch": { backgroundColor: "var(--secondary)", outline: "var(--size-hairline) solid var(--border)" },
       ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--popover)" },
       ".cm-button": {
         backgroundImage: "none",
         backgroundColor: "var(--secondary)",
         color: "var(--foreground)",
-        border: "1px solid var(--border)",
+        border: "var(--size-hairline) solid var(--border)",
       },
       ".cm-textfield": {
         backgroundColor: "var(--background)",
         color: "var(--foreground)",
-        border: "1px solid var(--border)",
+        border: "var(--size-hairline) solid var(--border)",
       },
-      ".cm-tooltip": { backgroundColor: "var(--popover)", border: "1px solid var(--border)" },
+      ".cm-tooltip": { backgroundColor: "var(--popover)", border: "var(--size-hairline) solid var(--border)" },
     },
-    { dark: true },
   ),
   syntaxHighlighting(
     HighlightStyle.define([

@@ -185,7 +185,7 @@ export function CodeMirrorEditor({
       indentOnInput(),
       bracketMatching(),
       highlightActiveLine(),
-      baseTheme,
+      baseTheme(),
       readonlyConf.of(readonlyExtensions(readonly)),
       wrapConf.of(wrap ? EditorView.lineWrapping : []),
       scaleConf.of(scaleTheme(scale)),

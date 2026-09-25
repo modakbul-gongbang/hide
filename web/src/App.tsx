@@ -19,6 +19,7 @@ import { focusedCheckout, focusedRemoteDevice, frontCheckout } from "./snapshot"
 import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
+import { applyEditorTheme } from "./editor/theme";
 import { applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { primaryValue, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
@@ -126,6 +127,7 @@ export function App() {
       root.toggle("dark", theme === "dark");
       root.toggle("light", theme === "light");
       applyTerminalTheme();
+      applyEditorTheme();
     };
     apply();
     if (choice !== "system") return;
