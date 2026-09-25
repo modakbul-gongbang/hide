@@ -2556,17 +2556,27 @@ impl Runtime {
                 crate::diagnostic!(
                     serde_json::json!({"kind":"terminal.resize_settled", "pane_id":payload.pane_id, "rows":payload.rows, "cols":payload.cols})
                 );
-                if self.terminal_sessions.contains_key(&payload.pane_id) {
-                    if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
-                        && session.mode == TerminalSessionMode::Control
-                        && let Err(message) = session.resize(payload.rows, payload.cols)
-                    {
-                        self.set_error("terminal.resize_failed", message, true);
-                        return true;
-                    }
+                let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id) else {
                     return false;
+                };
+                match session.mode {
+                    TerminalSessionMode::Control => {
+                        if let Err(message) = session.resize(payload.rows, payload.cols) {
+                            self.set_error("terminal.resize_failed", message, true);
+                            return true;
+                        }
+                        false
+                    }
+                    // An observer cannot resize and Herdr keeps drawing it at
+                    // the grid it attached with; an idle pane sends no frame
+                    // that would show the change, so the view would keep the
+                    // old frame reflowed. It attaches again at the new grid.
+                    TerminalSessionMode::Observe if previous != Some(size) => {
+                        self.reattach_observer(&payload.pane_id, "resize");
+                        true
+                    }
+                    TerminalSessionMode::Observe => false,
                 }
-                false
             }
             Event::PaneFind(payload) => {
                 if payload.term.is_empty() {

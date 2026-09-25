@@ -799,6 +799,31 @@ impl Runtime {
             .or_else(|| self.terminal_sizes.get(pane_id))
             .copied()
     }
+    /// Starts the pane's observer again at the view's grid. Herdr draws an
+    /// observer at the grid it attached with, so this is how an observed
+    /// view changes size. One attach is in flight at a time: the pane has no
+    /// session until the attach lands, so a resize meanwhile only records the
+    /// grid, and the check on the new session's first frame catches it.
+    pub(super) fn reattach_observer(&mut self, pane_id: &str, cause: &'static str) {
+        let lifecycle = self
+            .terminal_session_lifecycles
+            .get(pane_id)
+            .cloned()
+            .unwrap_or_default();
+        crate::diagnostic!(serde_json::json!({
+            "component": "terminal", "kind": "terminal.observer_reattached",
+            "pane_id": pane_id, "cause": cause,
+            "view": self.expected_terminal_size(pane_id).map(|(rows, cols)| [cols, rows]),
+        }));
+        self.start_terminal_session(
+            pane_id,
+            TerminalSessionMode::Observe,
+            lifecycle.attempt,
+            lifecycle.retry_decision,
+            lifecycle.message,
+        );
+    }
+
     /// Appends only the decoded frame bytes when the delivering official
     /// terminal session is still the current generation and mode.
     /// None retires the reader; Some(false) keeps reading a held frame without
@@ -826,26 +851,8 @@ impl Runtime {
             // observer has no writer to resize, so a view that changed size
             // since would hold every frame from now on. It attaches again at
             // the view's grid; this generation's reader retires.
-            if mode == TerminalSessionMode::Observe
-                && let Some(view) = expected
-            {
-                let lifecycle = self
-                    .terminal_session_lifecycles
-                    .get(pane_id)
-                    .cloned()
-                    .unwrap_or_default();
-                crate::diagnostic!(serde_json::json!({
-                    "component": "terminal", "kind": "terminal.observer_reattached",
-                    "pane_id": pane_id, "frame": [frame.width, frame.height],
-                    "view": [view.1, view.0],
-                }));
-                self.start_terminal_session(
-                    pane_id,
-                    TerminalSessionMode::Observe,
-                    lifecycle.attempt,
-                    lifecycle.retry_decision,
-                    lifecycle.message,
-                );
+            if mode == TerminalSessionMode::Observe && expected.is_some() {
+                self.reattach_observer(pane_id, "frame_grid");
                 return None;
             }
             self.terminal_frames_need_full.insert(pane_id.to_owned());

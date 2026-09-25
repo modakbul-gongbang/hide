@@ -144,6 +144,42 @@ fn an_observed_frame_at_an_old_grid_reattaches_the_observer_at_the_views_grid() 
     );
 }
 
+fn resize_event(pane_id: &str, cols: u16, rows: u16) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "terminal_resize",
+        "payload": {"pane_id": pane_id, "cols": cols, "rows": rows}
+    }))
+    .expect("resize event")
+}
+
+/// B2, B8. An idle observed pane sends no frame after its view changes size
+/// (the View region leaving widens it), so waiting for one left the old
+/// frame reflowed at the new width. The settled size attaches the observer
+/// again at once; the size it already has attaches nothing.
+#[test]
+fn an_observed_view_that_changes_size_reattaches_without_waiting_for_a_frame() {
+    let mut runtime = runtime();
+    runtime.suppress_terminal_session_workers = true;
+    let pane = "w-observed:p1";
+    runtime.terminal_view_sizes.insert(pane.into(), (33, 143));
+    runtime.start_terminal_session(pane, TerminalSessionMode::Observe, 1, "initial", None);
+    let first = runtime.terminal_session_generations[pane];
+    runtime.dispatch_json(&resize_event(pane, 143, 33));
+    assert_eq!(runtime.terminal_session_generations[pane], first);
+
+    runtime.terminal_view_sizes.insert(pane.into(), (33, 200));
+    runtime.dispatch_json(&resize_event(pane, 200, 33));
+    let second = runtime.terminal_session_generations[pane];
+    assert_ne!(second, first, "the observer attaches again");
+    assert_eq!(runtime.terminal_sizes[pane], (33, 200));
+    assert_eq!(
+        runtime.terminal_sessions[pane].mode,
+        TerminalSessionMode::Observe
+    );
+    assert!(runtime.snapshot.status.last_error.is_none());
+}
+
 /// A view that reported 41x18 while the settled size still said 50x25
 /// had every attach frame held and its retries exhausted: the attach
 /// asks for the grid the frame guard accepts.
