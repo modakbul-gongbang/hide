@@ -1,4 +1,7 @@
 import type { Actions } from "./actions";
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
+import { Kbd } from "./components/ui/kbd";
+import { Hint } from "./components/ui/tooltip";
 import { displayChord, resolvedRegistry, type Command } from "./shortcuts";
 import { useShellStore } from "./store";
 
@@ -13,47 +16,43 @@ export function ShortcutSheet({ actions }: { actions: Actions }) {
   // a rebound pane chord is what it lists (PRD S5 B9).
   const stored = useShellStore((s) => s.rest?.ui_state?.browser_shortcut_bindings);
   const { registry, diagnostic } = resolvedRegistry(stored);
+  // The gate in App.tsx only mounts this component while the overlay is
+  // "shortcuts", so the dialog is always open here; closing it (Escape, a
+  // click outside, or the trigger elsewhere) toggles that overlay off.
   return (
-    <div className="absolute inset-0 z-40 flex items-start justify-center p-xl" role="presentation" onClick={() => actions.openShortcuts()}>
-      <div className="absolute inset-0 bg-background opacity-[var(--opacity-secondary)]" />
-      <div
-        role="dialog"
-        aria-label="Keyboard shortcuts"
-        data-shortcut-sheet="true"
-        className="relative max-h-full w-[var(--size-search-sheet-w)] overflow-auto rounded-lg border border-divider bg-balloon p-lg text-body text-primary shadow-lg"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-md flex items-baseline justify-between">
-          <h2 className="text-title">Keyboard shortcuts</h2>
-          <span className="text-caption text-muted">browser host · Electron column TODO</span>
-        </div>
-        {diagnostic ? (
-          <p className="mb-md text-caption text-warning" data-shortcut-diagnostic="true">
-            {diagnostic}
-          </p>
-        ) : null}
-        {GROUPS.map((group) => (
-          <section key={group} className="mb-md">
-            <h3 className="mb-xs text-caption uppercase text-muted">{group}</h3>
-            <ul>
-              {registry.filter((command) => command.group === group).map((command) => (
-                <li key={command.id} className="flex items-center gap-md py-xxs" data-shortcut={command.id}>
-                  <span className="min-w-0 flex-1 truncate">{command.title}</span>
-                  {command.moved ? (
-                    <span className="text-caption text-warning" title={`Chrome reserves ${command.movedFrom}`}>
-                      moved for Chrome ({command.movedFrom})
-                    </span>
-                  ) : null}
-                  {command.passthrough ? <span className="text-caption text-muted">{command.passthrough}</span> : null}
-                  <kbd className="rounded-xs bg-elevated px-xs font-mono text-caption leading-[var(--size-keycap-height)] text-secondary">
-                    {command.browser ? displayChord(command.browser) : "-"}
-                  </kbd>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
-    </div>
+    <Dialog open onOpenChange={(next) => { if (!next) actions.openShortcuts(); }}>
+      <DialogContent data-shortcut-sheet="true" className="w-(--size-search-sheet-w)">
+        <DialogHeader className="flex-row items-baseline justify-between">
+          <DialogTitle>Keyboard shortcuts</DialogTitle>
+          <span className="text-caption text-muted-foreground">browser host · Electron column TODO</span>
+        </DialogHeader>
+        <DialogBody>
+          {diagnostic ? (
+            <p className="mb-md text-caption text-warning" data-shortcut-diagnostic="true">
+              {diagnostic}
+            </p>
+          ) : null}
+          {GROUPS.map((group) => (
+            <section key={group} className="mb-md">
+              <h3 className="mb-xs text-caption uppercase text-muted-foreground">{group}</h3>
+              <ul>
+                {registry.filter((command) => command.group === group).map((command) => (
+                  <li key={command.id} className="flex items-center gap-md py-xxs" data-shortcut={command.id}>
+                    <span className="min-w-0 flex-1 truncate">{command.title}</span>
+                    {command.moved ? (
+                      <Hint label={`Chrome reserves ${command.movedFrom}`}>
+                        <span className="text-caption text-warning">moved for Chrome ({command.movedFrom})</span>
+                      </Hint>
+                    ) : null}
+                    {command.passthrough ? <span className="text-caption text-muted-foreground">{command.passthrough}</span> : null}
+                    <Kbd>{command.browser ? displayChord(command.browser) : "-"}</Kbd>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
   );
 }

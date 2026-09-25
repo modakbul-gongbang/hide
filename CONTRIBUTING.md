@@ -3,7 +3,7 @@
 hide is a macOS shell over the [Herdr](https://herdr.dev) runtime.
 The Rust core in `herdr-core/` owns every piece of state; the SwiftUI shell in `macos/` renders a snapshot of it and dispatches typed events back.
 `AGENTS.md` keeps the rules; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) owns the architecture and the Herdr wire boundary with their reasons, [docs/BUILD.md](docs/BUILD.md) the build output and worktree rules, and [docs/PERFORMANCE_TESTING.md](docs/PERFORMANCE_TESTING.md) the performance rules that came out of real incidents.
-Read `AGENTS.md` and the architecture guide before changing anything under `herdr-core/` or `macos/`; `DESIGN.md` before changing anything a user looks at.
+Read `AGENTS.md` and the architecture guide before changing anything under `herdr-core/` or `macos/`; [docs/UI_BEHAVIOR.md](docs/UI_BEHAVIOR.md) before changing anything a user looks at, and [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md) before making a design change.
 Use [docs/README.md](docs/README.md) to find current guides and distinguish historical/reference-only material.
 
 ## Before you open a pull request
@@ -63,7 +63,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 | no workstation identity | No tracked text file names a real home directory or machine, no run-artifact path is tracked, and no browser profile file is tracked | `bash scripts/check-no-workstation-identity.sh` | Use `/Users/example` in fixtures and a neutral placeholder in UI. Move run artifacts under `agents/runs/<slug>/`; a `git add -f` past the ignore rule is what this refuses. |
 | script suite | Measurement semantics stay honest, and no gate a workflow runs calls a tool the runner lacks or a script that is untracked or absent | `python3 -m unittest discover -s scripts/tests -p 'test_*.py'` | Fix the measurement semantics; do not trim inconvenient observations. For a portability failure, reach for `git grep` rather than installing the tool on the runner. |
 | toolchain reuse | Every script that runs cargo sources `scripts/toolchain-env.sh`, so a runner HOME reuses the machine's toolchain instead of installing a private copy | `python3 -m unittest discover -s scripts/tests -p 'test_*.py'` | Source the resolver rather than recovering the toolchain yourself. rustup auto-installs into an empty `$HOME/.rustup` and still exits 0, which is what made the two earlier failure-guarded workarounds dead code. |
-| git worktree presentation | Overview Git documentation and its view keep using shared theme tokens, with no inline color, spacing or font size | `bash scripts/check-git-worktree-presentation.sh` | Add the token to `HideTheme` and `DESIGN.md`, then use it; do not write the value in the view. |
+| git worktree presentation | Overview Git documentation and its view keep using shared theme tokens, with no inline color, spacing or font size | `bash scripts/check-git-worktree-presentation.sh` | Add the token to `design/tokens.json`, then use it; do not write the value in the view. |
 | git worktree states | Overview keeps an explicit loading, local-only, refresh, disconnected and unreadable state, and reads an unreadable value as `?` and a pending one as `…`, never as zero | `bash scripts/check-git-worktree-states.sh` | Keep the state visible in `CheckoutOverview.swift`; update the assertion in the same change when the wording moves. |
 | worktree base policy | The worktree row still offers base selection and still excludes detached rows | `bash scripts/check-worktree-base-policy.sh` | Restore the control, or move the assertion with it. |
 | worktree catalog presentation | Overview keeps the main-checkout identity, the empty-group row and the no-match state | `bash scripts/check-worktree-catalog-presentation.sh` | Same. |
@@ -73,9 +73,9 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 
 The gates that read a running Herdr server, drive the built app, or reach the network are local steps and are not required in CI.
 They are listed under "Local gates" below; every script in `scripts/` is either a required gate above, a local gate there, or a fixture in [verification-fixtures.md](docs/verification-fixtures.md).
-The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs`, `node --test scripts/tests/design-controls.test.mjs`, and `node --test scripts/tests/design-scratch.test.mjs`.
-The shared entrypoint runs the token, component ownership and counted control-policy checks, and the design library check, which compares `design/hide-ui.lib.pen` with tokens from `HideTheme.swift` and the generated Foundations sheet, rejects product-screen or scratch boards in the shared library, and preserves designer-owned sheet placement; it performs static checks, not desktop interaction.
-The tests plant default controls, duplicate owners and style literals in nested files and verify staged/unstaged separation in a private Git fixture.
+The separate `design-contract.yml` workflow runs `node scripts/check-design-contract.mjs`, `node --test scripts/tests/pen-gallery.test.mjs`, `node --test scripts/tests/pen-transplant.test.mjs`, `node --test scripts/tests/design-scratch.test.mjs`, and `node --test scripts/tests/hide-screens.test.mjs`.
+The shared entrypoint runs `check-pen.mjs` (the Pen library against what the token generator would write: token values, the Foundations sheet, the `System /`/`Component /` sheet-naming band, and one id per node), `check-pen-gallery.mjs` (the library's `System /` sheets against `web/src/gallery/manifest.ts`, part by part and state by state), `check-web-tokens.mjs` (every web source reaching a color, size, or radius through a token rather than a literal), and `check-hide-screens.mjs` (`design/hide-screens.pen` against the library it imports: `Screen /` sheets with Light and Dark frames, resolving references, locally restated colors, and variables matching `design/tokens.json`); it performs static checks, not desktop interaction. See [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md) for what each one refuses.
+The gallery test exercises the comparison against fixtures; the screens test exercises each `check-hide-screens.mjs` refusal and a transplanted result; the transplant test exercises `pen-transplant.mjs` against fixture sheets for a clean move, a missing sheet id, and an untouched neighbour sheet.
 Scratch tests exercise the creator against a fake third-party Pen CLI: worktree-local linking, overwrite/path guards, failed imports and process cancellation.
 They do not prove Pen rendering; import, rendering and reopen verification with the real CLI stays a local step.
 
@@ -89,12 +89,11 @@ If an existing hook is already configured, retain it and call the shared staged 
 CI independently runs the same checks even when the local hook was not enabled.
 No branch-protection setting is changed by this repository patch.
 
-Stage the checker, policy and affected sources together: staged verification executes the staged checker files and reads staged Swift sources, ignoring unstaged repairs or new violations.
+Stage the checker and affected sources together: staged verification executes the staged checker files and reads staged design and web sources (`design/hide-ui.lib.pen`, `design/tokens.json`, `web/src/**`), ignoring unstaged repairs or new violations.
 A missing script, conflict, non-ordinary source input or checker failure blocks the hook with its cause.
 The checker does not stage, stash, restore or modify files.
-When a check fails, reuse the documented owner or fix the source; if an existing usage was removed, retire its counted allowance in `scripts/design-control-policy.json` in the same change.
-Adding an exception requires an explicit design decision and reason in DESIGN.md, not an automatic baseline update.
-Keep visual acceptance separate: DESIGN.md owns the future native catalog and human screenshot-review procedure; neither exists as an automated aesthetic approval gate.
+When a check fails, reuse the documented owner (`web/src/components/ui` for a `System /` part, `web/src/components` for a `Component /`) or fix the source; see [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md) for the token/System-part/Component procedures.
+Keep visual acceptance separate: a passing check proves the Pen library, the gallery, and the tokens agree with each other, not that a composition looks right; human comparison against a gallery or app capture, recorded under `agents/runs/<slug>/`, is what proves that.
 
 ## Local gates
 
@@ -104,9 +103,8 @@ A script that stops earning its place here is deleted rather than left unreferen
 | Command | Checks | Needs |
 | --- | --- | --- |
 | `bash scripts/check-hide-full.sh` | Everything CI requires plus every local gate below that runs unattended | A full build; writes `target/hide-full.log` in the checkout |
-| `zsh scripts/check-herdr-contract.sh` | The full contract, including the responses only a live server answers | A running Herdr server |
-| `node scripts/check-hide-design.mjs` | `DESIGN.md` lints clean and still carries the clauses the contract names | Network, for `npx @google/design.md` |
 | `node scripts/check-hide-design-enforcement.mjs` | `design-contract.yml` still binds the real checkers, so this list cannot drift from CI | - |
+| `zsh scripts/check-herdr-contract.sh` | The full contract, including the responses only a live server answers | A running Herdr server |
 | `bash scripts/check-hide-copy.sh <base-sha>` | User-facing copy against the inventory at an immutable pre-change commit | The base commit of the change under review |
 | `bash scripts/check-hide-accessibility.sh` | The accessibility tree of the built dev app | Builds and launches the dev bundle |
 | `bash scripts/check-typed-contract.sh <stage>` | The typed wire boundary: `generated`, `behavior`, `structure`, `suites` or `e2e` | `suites` and `e2e` build and launch |
@@ -116,7 +114,7 @@ A script that stops earning its place here is deleted rather than left unreferen
 | `python3 scripts/check-worktree-performance-evidence.py [dir]` | A worktree performance run recorded what the guide requires | A completed native run directory |
 | `bash macos/scripts/check_workbench_native_evidence.sh ...` | A native Workbench run used one identified app and an isolated server | A completed native run |
 | `zsh scripts/install-local-runtime.sh --herdr-root PATH` | Not a gate: installs a locally built Herdr for runtime work | A Herdr checkout |
-| `node scripts/design-scratch.mjs <task-slug>` | Not a gate: creates an ignored scratch linked to this worktree's design library; see `DESIGN.md` for editing and human review | The verified Pen CLI version and an existing Pen login |
+| `node scripts/design-scratch.mjs <task-slug>` | Not a gate: creates an ignored scratch linked to this worktree's design library; see [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md) for editing and human review | The verified Pen CLI version and an existing Pen login |
 
 ## Performance-sensitive changes
 

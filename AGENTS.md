@@ -123,48 +123,14 @@ Conventions:
 
 ## Design Reference
 
-Read `DESIGN.md` before changing any surface a user looks at; it is the design source of truth for the macOS shell.
-`design/tokens.json` is the numeric token authority. `scripts/gen-tokens.mjs` writes `web/src/tokens.css` and must keep `HideTheme.swift` in sync for the coexistence period: a new color, radius, or spacing value is added to `design/tokens.json` and used from the generated CSS or `HideTheme`, never written inline, and a case the system does not cover is raised as a proposed addition rather than settled with a one-off value.
-Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception.
+Read [docs/UI_BEHAVIOR.md](docs/UI_BEHAVIOR.md) before changing any surface a user looks at; it owns what the UI does.
+Read [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md) before making a design change; it owns how a change moves from scratch to a shipped PR, including the token/System-part/Component procedures and the screen transplant procedure.
+Visual authority is the Pen library (`design/hide-ui.lib.pen`), numeric authority is `design/tokens.json`, and code authority is `web/src/components/ui` and `web/src/components`.
+`design/tokens.json` is web-only: `scripts/gen-tokens.mjs` writes `web/src/tokens.css`, and it no longer generates or updates `HideTheme.swift`, which is frozen for the Swift shell's remaining coexistence period (see `macos/AGENTS.md`).
 Run `node scripts/check-design-contract.mjs` before delivery; it is the entrypoint `design-contract.yml` runs.
 
 ### The Design Library
 
-`design/hide-ui.lib.pen` is the committed design-system library: tokens, primitive controls, reusable components and their state sheets.
-Only `System /` and `Component /` top-level sheets belong there.
-Product screens, proposals, audits and scratch do not.
-Read [DESIGN.md: Design library and exploration](DESIGN.md#design-library-and-exploration) for ownership, human review and local scratch.
-
-`design/tokens.json` remains the numeric token authority.
-Use `$--` variables for supported visual properties; propose missing tokens in `HideTheme` rather than introducing one-off values.
-Run `node scripts/gen-pen.mjs` after editing the library; it refreshes mapped variables and Foundations without moving authored sheets.
-Run `node scripts/check-design-contract.mjs` before delivery.
-A component state is a `ref` of its reusable master with descendant overrides, not a redrawn copy.
-Preserve master IDs when editing so existing instances keep their identity.
-
-Agents use independent Pen CLI headless sessions, not the shared desktop MCP or `--app desktop`.
-An explicit MCP `filePath` did not isolate the active desktop document in verification; it is not a lock or a routing guarantee.
-Start a task with `node scripts/design-scratch.mjs <task-slug>`; it checks the verified CLI version, imports this worktree's library and refuses an existing scratch.
-Use the exact document path printed by the command and confirm it with `get_app_state()` before editing.
-Only one writer edits a library document at a time; worktree agents explore in their own ignored files.
-Save and exit the CLI before human review; save and close the desktop document before resuming CLI edits of the same file.
-Do not resolve conflicting design edits by line-merging JSON: preserve both versions and reapply the approved change through Pen.
-When invoking Pen's own agent, `--repo .` is required for it to read project instructions:
-
-    pen interactive --in agents/runs/<task-slug>/design/scratch.pen --out agents/runs/<task-slug>/design/scratch.pen
-    pen --repo . --in agents/runs/<task-slug>/design/scratch.pen --out agents/runs/<task-slug>/design/scratch.pen --prompt "..."
-
-The desktop app's built-in agent does not automatically receive these repository rules.
-Inspect its output before promoting anything to the library.
-Use CLI `import_library({path: ...})` or `--library` for cross-document reuse, not a handwritten ordinary-file `imports` entry.
-Use the import ID reported by `list_libraries()` to qualify component and variable references; never hardcode another scratch's alias.
-Library imports were verified with CLI 0.3.8; 0.3.7 could reject the newer document format while presenting an empty document.
-Library changes load after the importing document is closed and reopened; instance overrides survive.
-Each worktree reads its own library revision, not a mutable library path in another checkout.
-
-Pen is not CSS: unsupported alignment, margin and percentage properties must not be invented.
-Width and height use numeric literals because variable references have rendered at zero in this toolchain.
-Variable-bound node opacity also renders invisible in this toolchain; the four state bindings in `pen-token-map.json` materialize their numeric values from `HideTheme` during generation and checking.
-The canvas uses JetBrains Mono in place of unavailable SF Mono, and plain Inter because `ss03` does not travel on a token.
-These substitutions are not a pixel-comparison acceptance gate.
-Use screenshots to inspect actual component rendering; keep them under `agents/runs/<slug>/`.
+`design/hide-ui.lib.pen` is the committed design-system library: tokens, `System /` shadcn-part sheets, and `Component /` hide-composite sheets with their state sheets.
+Only `System /` and `Component /` top-level sheets belong there; product screens live in `design/hide-screens.pen` instead, and proposals, audits, and scratch never enter either committed file.
+Read [DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md) in full before editing it: it owns the scratch-to-PR flow, human review, local scratch, Pen toolchain limits, the screen transplant procedure, and how to add a token, a System part, or a Component.

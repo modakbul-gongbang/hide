@@ -116,5 +116,5 @@ Before visual verification, read [Which app is actually running](docs/dev-runtim
 
 ## Design and license
 
-The interface follows the design contract in [DESIGN.md](DESIGN.md) and uses original SwiftUI code.
+The interface follows the behavior contract in [docs/UI_BEHAVIOR.md](docs/UI_BEHAVIOR.md), styled from the Pen design-system library and `design/tokens.json`, and uses original SwiftUI and React code.
 hide is available under the [MIT License](LICENSE).

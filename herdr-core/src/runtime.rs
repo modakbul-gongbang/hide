@@ -1214,6 +1214,10 @@ impl Runtime {
         );
         let diagnostic = match disposition {
             persistence::LoadDisposition::Loaded => None,
+            persistence::LoadDisposition::UnknownTheme => Some((
+                "ui_state.theme_unknown",
+                "The stored theme was not recognized; Dark was used",
+            )),
             persistence::LoadDisposition::Missing => Some((
                 "ui_state.missing",
                 "UI state was not found; safe defaults were loaded",

@@ -676,6 +676,8 @@ export type SnapshotRest = {
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;
+    /** `system`, `light` or `dark`; the page reads anything else as Dark. */
+    theme?: string;
     font_size?: number;
     browser_shortcut_bindings?: Record<string, string>;
     [key: string]: unknown;

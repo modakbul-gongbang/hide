@@ -784,6 +784,11 @@ pub(super) struct EditorTextScalePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct ThemeSetPayload {
+    pub(super) theme: crate::model::ThemePreference,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct PetVisibilityPayload {
     pub(super) visible: bool,
 }
@@ -914,6 +919,7 @@ pub(super) enum Event {
     PaneFind(PaneFindPayload),
     PaneTextScale(PaneTextScalePayload),
     EditorTextScale(EditorTextScalePayload),
+    ThemeSet(ThemeSetPayload),
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
@@ -1077,6 +1083,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_find" => decode!(PaneFindPayload, PaneFind),
         "pane_text_scale" => decode!(PaneTextScalePayload, PaneTextScale),
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
+        "theme_set" => decode!(ThemeSetPayload, ThemeSet),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
@@ -2750,6 +2757,14 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
+            Event::ThemeSet(payload) => {
+                if self.snapshot.ui_state.theme == payload.theme {
+                    return false;
+                }
+                self.snapshot.ui_state.theme = payload.theme;
+                self.persist_ui_state();
+                true
+            }
             Event::ChangesSelect(payload) => {
                 let Some(path) = payload.path else {
                     if self.snapshot.changes.selected_path.is_none() {
@@ -2946,6 +2961,8 @@ impl Runtime {
                         .device_registrations
                         .unwrap_or(current.device_registrations),
                     accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
+                    // `theme_set` owns the theme; a shared UI-state save carries it through.
+                    theme: current.theme,
                     font_size: payload.font_size.unwrap_or(current.font_size),
                     // The zoom chords own this map; a navigator or keyboard
                     // save must not erase it, for the same reason the pet

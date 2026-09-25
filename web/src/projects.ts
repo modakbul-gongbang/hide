@@ -95,7 +95,7 @@ export function pullRequestBadge(pr: PullRequest): { label: string; color: strin
         case "approved":
           return { label: "approved", color: "text-success" };
         case "changes_requested":
-          return { label: "changes", color: "text-danger" };
+          return { label: "changes", color: "text-destructive" };
         default:
           return { label: "review", color: "text-warning" };
       }

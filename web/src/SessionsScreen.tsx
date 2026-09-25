@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { Button, Field, Status } from "./components/ui/controls";
+import { Status } from "./components/settings-rows";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+import { Hint } from "./components/ui/tooltip";
 import { overviewProject } from "./navigation";
 import {
   PROVIDER_FILTERS,
@@ -34,9 +38,11 @@ export function SessionsScreen({ projectId, actions }: { projectId: string; acti
   const found = useMemo(() => overviewProject(rest, agents, projectId), [rest, agents, projectId]);
   if (!found) {
     return (
-      <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted" data-sessions-missing={projectId}>
+      <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-sessions-missing={projectId}>
         <p>This project is no longer in the catalog.</p>
-        <Button onClick={() => setScreen({ kind: "main" })}>Back to Main</Button>
+        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>
+          Back to Main
+        </Button>
       </section>
     );
   }
@@ -85,30 +91,31 @@ function ProjectSessions({ workspace, deviceLabel, actions }: { workspace: Works
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" aria-label={`Sessions of ${workspace.label}`} data-sessions-screen={workspace.id}>
-      <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xs border-b border-divider bg-sidebar px-sm text-caption">
-        <button type="button" className="rounded-xs px-xs text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
+      <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xs border-b border-border bg-sidebar px-sm text-caption">
+        <button type="button" className="rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
           Main
         </button>
-        <span aria-hidden="true" className="text-muted">/</span>
+        <span aria-hidden="true" className="text-muted-foreground">/</span>
+        <Hint label={workspace.path}>
         <button
           type="button"
-          title={workspace.path}
-          className="min-w-0 truncate rounded-xs px-xs text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
+          className="min-w-0 truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
           data-go-overview={workspace.id}
           onClick={() => setScreen({ kind: "overview", projectId: workspace.id })}
         >
           {workspace.label}
         </button>
-        <span aria-hidden="true" className="text-muted">/</span>
-        <h1 className="shrink-0 text-subhead font-semibold text-primary" aria-current="page">
+        </Hint>
+        <span aria-hidden="true" className="text-muted-foreground">/</span>
+        <h1 className="shrink-0 text-subhead font-semibold text-foreground" aria-current="page">
           Sessions
         </h1>
-        {deviceLabel ? <span className="shrink-0 rounded-xs bg-elevated px-xs text-micro text-secondary">{deviceLabel}</span> : null}
+        {deviceLabel ? <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro text-subtle-foreground">{deviceLabel}</span> : null}
       </header>
       <div className="flex min-h-0 flex-1">
         <section
           aria-label="Session history"
-          className="flex min-h-0 min-w-[var(--size-panel-min)] shrink basis-[var(--size-panel-ideal)] flex-col border-r border-divider bg-sidebar"
+          className="flex min-h-0 min-w-[var(--size-panel-min)] shrink basis-[var(--size-panel-ideal)] flex-col border-r border-border bg-sidebar"
           data-sessions-list={list.kind}
         >
           <HistoryControls
@@ -161,7 +168,11 @@ function HistoryControls({
   onProvider: (provider: ProviderFilter) => void;
   onQuery: (query: string) => void;
 }) {
-  // A radio group is one Tab stop; the arrows choose the neighbouring provider.
+  // ToggleGroup's own roving focus only moves the arrows; it never selects on
+  // its own. A one-Tab-stop filter picks the neighbouring provider on the
+  // same keystroke that moves to it (B9), so this still selects explicitly
+  // and focuses the element that plays that choice now, ahead of Radix's own
+  // roving-focus handler for the same keydown.
   const onProviderKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
     if (step === 0) return;
@@ -187,26 +198,29 @@ function HistoryControls({
     }
   };
   return (
-    <div className="flex shrink-0 flex-col gap-sm border-b border-divider p-sm">
-      <div role="radiogroup" aria-label="Provider" className="flex items-center rounded-sm bg-panel p-xxs" data-sessions-provider={provider} onKeyDown={onProviderKey}>
+    <div className="flex shrink-0 flex-col gap-sm border-b border-border p-sm">
+      <ToggleGroup
+        type="single"
+        aria-label="Provider"
+        className="w-full"
+        value={provider}
+        onValueChange={(next) => {
+          // Radix lets the active item toggle itself off (value becomes "");
+          // a provider filter has no "none chosen" state, so that click is a
+          // no-op and the current provider stays selected (matches a native
+          // radiogroup, which cannot be deselected by re-choosing it).
+          if (next) onProvider(next as ProviderFilter);
+        }}
+        data-sessions-provider={provider}
+        onKeyDown={onProviderKey}
+      >
         {PROVIDER_FILTERS.map((choice) => (
-          <button
-            key={choice.id}
-            type="button"
-            role="radio"
-            aria-checked={choice.id === provider}
-            tabIndex={choice.id === provider ? 0 : -1}
-            data-provider-choice={choice.id}
-            className={`flex h-[var(--size-control-compact)] min-w-0 flex-1 items-center justify-center truncate rounded-xs px-xs text-body outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-              choice.id === provider ? "bg-elevated text-primary" : "text-muted hover:text-secondary"
-            }`}
-            onClick={() => onProvider(choice.id)}
-          >
+          <ToggleGroupItem key={choice.id} value={choice.id} data-provider-choice={choice.id} className="min-w-0 flex-1 truncate">
             {choice.label}
-          </button>
+          </ToggleGroupItem>
         ))}
-      </div>
-      <Field
+      </ToggleGroup>
+      <Input
         type="search"
         mono={false}
         value={query}
@@ -218,7 +232,7 @@ function HistoryControls({
         onKeyDown={onSearchKey}
       />
       {total > 0 ? (
-        <p className="flex items-center gap-xs text-micro text-muted" data-sessions-count={filtering ? `${shown}/${total}` : String(total)}>
+        <p className="flex items-center gap-xs text-micro text-muted-foreground" data-sessions-count={filtering ? `${shown}/${total}` : String(total)}>
           <span>{filtering ? `${shown} of ${total} sessions` : `${total} ${total === 1 ? "session" : "sessions"}`}</span>
           {reading ? <span role="status">Reading…</span> : null}
         </p>
@@ -288,7 +302,7 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
         <>
           <Status tone="muted">No matching sessions</Status>
           <div>
-            <Button onClick={onClearFilters} data-sessions-clear="true">
+            <Button variant="secondary" onClick={onClearFilters} data-sessions-clear="true">
               Clear filters
             </Button>
           </div>
@@ -298,9 +312,9 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
       return (
         <div role="alert" className="flex flex-col gap-sm">
           <Status tone="error">Sessions could not be read</Status>
-          <p className="break-words text-caption text-secondary">{state.reason}</p>
+          <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
           <div>
-            <Button onClick={onRetry} data-sessions-retry="list">
+            <Button variant="secondary" onClick={onRetry} data-sessions-retry="list">
               Retry
             </Button>
           </div>
@@ -310,7 +324,7 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
       return (
         <div role="status" className="flex flex-col gap-sm" data-sessions-unavailable="true">
           <Status tone="warn">Sessions unavailable</Status>
-          <p className="break-words text-caption text-secondary">{state.reason}</p>
+          <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
         </div>
       );
     case "replaced":
@@ -318,7 +332,7 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
         <div role="status" className="flex flex-col gap-sm">
           <Status tone="muted">Another window is showing another project's sessions.</Status>
           <div>
-            <Button onClick={onShowHere} data-sessions-show-here="true">
+            <Button variant="secondary" onClick={onShowHere} data-sessions-show-here="true">
               Show this project's sessions
             </Button>
           </div>
@@ -349,34 +363,35 @@ function SessionRowItem({
   const time = sessionTime(row.updated_at_unix_ms);
   const unavailable = row.unavailable_reason;
   return (
-    <li className={`rounded-sm ${selected ? "bg-elevated" : ""}`} data-session={row.id} data-session-available={unavailable ? "false" : "true"}>
+    <li className={`rounded-sm ${selected ? "bg-secondary" : ""}`} data-session={row.id} data-session-available={unavailable ? "false" : "true"}>
+      <Hint label={`${title ?? "Untitled session"} · ${checkout.path}`} reveals>
       <button
         type="button"
         tabIndex={focusable ? 0 : -1}
         aria-current={selected ? "true" : undefined}
         aria-label={sessionAccessibleName(row, checkout.label, time)}
-        title={`${title ?? "Untitled session"}\n${checkout.path}`}
         data-session-row={row.id}
-        className="flex w-full flex-col gap-xxs rounded-sm px-sm py-xs text-left outline-none hover:bg-elevated focus-visible:ring-1 focus-visible:ring-accent"
+        className="flex w-full flex-col gap-xxs rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
         onClick={() => onOpen(row)}
         onKeyDown={onKeyDown}
       >
         <span className="flex items-center gap-xs text-micro">
           <AgentMark kind={row.provider} />
-          <span className={unavailable ? "text-muted" : "text-secondary"}>{row.provider_label}</span>
-          {time ? <span className="text-muted">{time}</span> : null}
+          <span className={unavailable ? "text-muted-foreground" : "text-subtle-foreground"}>{row.provider_label}</span>
+          {time ? <span className="text-muted-foreground">{time}</span> : null}
           {unavailable ? <span className="ml-auto shrink-0 text-warning">! unavailable</span> : null}
         </span>
-        <span className={`line-clamp-2 break-words break-keep text-body ${unavailable ? "text-muted" : title ? "text-primary" : "italic text-muted"}`}>{title ?? "Untitled session"}</span>
-        <span className={`truncate text-micro ${unavailable ? "text-muted" : "text-secondary"}`}>{checkout.label}</span>
+        <span className={`line-clamp-2 break-words break-keep text-body ${unavailable ? "text-muted-foreground" : title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? "Untitled session"}</span>
+        <span className={`truncate text-micro ${unavailable ? "text-muted-foreground" : "text-subtle-foreground"}`}>{checkout.label}</span>
       </button>
+      </Hint>
       {unavailable ? (
         <div className="flex flex-col gap-xs px-sm pb-xs">
           <p className="break-words text-caption text-warning" data-session-reason={row.id}>
             {unavailable}
           </p>
           <div className="flex flex-wrap items-center gap-xs">
-            <Button appearance="quiet" onClick={onRetry} data-session-retry={row.id}>
+            <Button variant="ghost" onClick={onRetry} data-session-retry={row.id}>
               Retry
             </Button>
             <CopySource locator={row.locator} id={row.id} />
@@ -408,9 +423,11 @@ function CopySource({ locator, id }: { locator: string; id: string }) {
   };
   return (
     <>
-      <Button appearance="quiet" title={locator} onClick={copy} data-session-copy={id}>
-        Copy source location
-      </Button>
+      <Hint label={locator}>
+        <Button variant="ghost" onClick={copy} data-session-copy={id}>
+          Copy source location
+        </Button>
+      </Hint>
       {copied ? (
         <span role="status" className={`text-caption ${copied === "copied" ? "text-success" : "text-warning"}`}>
           {copied === "copied" ? "Copied" : "Could not copy"}
@@ -435,7 +452,7 @@ function SessionDetail({
   onRetry: () => void;
 }) {
   if (state.kind === "none") {
-    return choosable ? <p className="m-auto p-lg text-caption text-muted">Choose a session to read it here.</p> : null;
+    return choosable ? <p className="m-auto p-lg text-caption text-muted-foreground">Choose a session to read it here.</p> : null;
   }
   const row = rows.find((candidate) => candidate.id === state.detail.session_id) ?? null;
   if (state.kind === "loading") {
@@ -454,9 +471,9 @@ function SessionDetail({
         {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} /> : null}
         <div role="alert" className="flex flex-col gap-sm p-lg" data-session-failure={state.detail.session_id}>
           <Status tone="warn">This session cannot be opened</Status>
-          <p className="break-words text-caption text-secondary">{state.reason}</p>
+          <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
           <div>
-            <Button onClick={onRetry} data-session-detail-retry="true">
+            <Button variant="secondary" onClick={onRetry} data-session-detail-retry="true">
               Retry
             </Button>
           </div>
@@ -469,11 +486,11 @@ function SessionDetail({
     <>
       {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} reading={state.detail.loading} /> : null}
       {turns.length === 0 ? (
-        <p className="p-lg text-caption text-muted">This session has no readable request or answer.</p>
+        <p className="p-lg text-caption text-muted-foreground">This session has no readable request or answer.</p>
       ) : (
         <ol
           tabIndex={0}
-          className="flex min-h-0 flex-1 flex-col gap-md overflow-auto p-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+          className="flex min-h-0 flex-1 flex-col gap-md overflow-auto p-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
           aria-label="Conversation"
           data-session-turns={turns.length}
         >
@@ -492,23 +509,25 @@ function DetailHeader({ detail, row, workspace, reading = false }: { detail: Pro
   const checkout = sessionCheckout(row, workspace);
   const time = sessionTime(row.updated_at_unix_ms);
   return (
-    <header className="flex shrink-0 flex-col gap-xxs border-b border-divider bg-panel px-md py-sm" data-session-header={detail.session_id}>
-      <div className="flex items-center gap-xs text-micro text-secondary">
+    <header className="flex shrink-0 flex-col gap-xxs border-b border-border bg-card px-md py-sm" data-session-header={detail.session_id}>
+      <div className="flex items-center gap-xs text-micro text-subtle-foreground">
         <AgentMark kind={row.provider} />
         <span>{row.provider_label}</span>
-        <span className="truncate text-muted" title={checkout.path}>
+        <Hint label={checkout.path}>
+        <span className="truncate text-muted-foreground">
           {checkout.label}
         </span>
-        {time ? <span className="shrink-0 text-muted">{time}</span> : null}
+        </Hint>
+        {time ? <span className="shrink-0 text-muted-foreground">{time}</span> : null}
         {reading ? (
-          <span role="status" className="shrink-0 text-muted">
+          <span role="status" className="shrink-0 text-muted-foreground">
             Reading…
           </span>
         ) : null}
         <span className="flex-1" />
         <CopySource key={detail.session_id} locator={detail.locator || row.locator} id="detail" />
       </div>
-      <h2 className={`break-words break-keep text-subhead font-semibold ${title ? "text-primary" : "italic text-muted"}`}>{title ?? "Untitled session"}</h2>
+      <h2 className={`break-words break-keep text-subhead font-semibold ${title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? "Untitled session"}</h2>
     </header>
   );
 }
@@ -518,12 +537,12 @@ function Turn({ turn, provider }: { turn: ArchiveEvent; provider: string }) {
   const interrupted = turn.kind === "interrupted";
   const time = sessionTime(turn.at_unix_ms);
   return (
-    <li className={`flex flex-col gap-xxs ${person ? "rounded-sm bg-panel px-sm py-xs" : "px-sm"}`} data-turn={turn.role}>
-      <span className="flex items-baseline gap-xs text-micro text-muted">
-        <span className="text-secondary">{person ? "Request" : provider}</span>
+    <li className={`flex flex-col gap-xxs ${person ? "rounded-sm bg-card px-sm py-xs" : "px-sm"}`} data-turn={turn.role}>
+      <span className="flex items-baseline gap-xs text-micro text-muted-foreground">
+        <span className="text-subtle-foreground">{person ? "Request" : provider}</span>
         {time ? <span>{time}</span> : null}
       </span>
-      <p className={`whitespace-pre-wrap break-words break-keep text-body ${interrupted ? "italic text-muted" : "text-primary"}`}>{turn.text}</p>
+      <p className={`whitespace-pre-wrap break-words break-keep text-body ${interrupted ? "italic text-muted-foreground" : "text-foreground"}`}>{turn.text}</p>
     </li>
   );
 }

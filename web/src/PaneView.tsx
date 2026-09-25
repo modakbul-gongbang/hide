@@ -1,6 +1,9 @@
+import { EllipsisIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useRef } from "react";
 import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
+import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
 import { ChildChipRow, ReturnToParent, usePaneMenu } from "./PaneRelations";
 import type { PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
@@ -149,71 +152,70 @@ export const PaneView = memo(function PaneView({
     >
       <header
         className={`relative flex h-[var(--size-pane-header)] shrink-0 items-center gap-sm px-sm text-caption ${
-          focused ? "bg-elevated text-primary" : "bg-panel text-secondary"
+          focused ? "bg-secondary text-foreground" : "bg-card text-subtle-foreground"
         }`}
         onContextMenu={(event) => {
           event.preventDefault();
-          const box = event.currentTarget.getBoundingClientRect();
-          paneMenu.openAt(event.clientX - box.left, event.clientY - box.top);
+          paneMenu.openAt(event.clientX, event.clientY);
         }}
       >
         <ReturnToParent pane={pane} actions={actions} />
-        <span className="min-w-0 flex-1 truncate" title={title}>
+        <Hint label={title} reveals>
+        <span className="min-w-0 flex-1 truncate">
           {title}
         </span>
+        </Hint>
         {caption ? (
-          <span className="truncate text-muted">{caption.text}</span>
+          <span className="truncate text-muted-foreground">{caption.text}</span>
         ) : (
-          <span className="truncate text-muted">{pane.status_label}</span>
+          <span className="truncate text-muted-foreground">{pane.status_label}</span>
         )}
-        <button
-          type="button"
-          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-secondary outline-none hover:bg-balloon hover:text-primary focus-visible:ring-1 focus-visible:ring-accent"
-          aria-label={`Pane actions for ${title}`}
-          title="Pane actions"
-          aria-haspopup="menu"
-          data-pane-menu={paneId}
-          onClick={(event) => {
-            const box = event.currentTarget.parentElement?.getBoundingClientRect();
-            const button = event.currentTarget.getBoundingClientRect();
-            paneMenu.openAt(button.left - (box?.left ?? 0), button.bottom - (box?.top ?? 0));
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
-              event.preventDefault();
-              event.currentTarget.click();
-            }
-          }}
-        >
-          ⋯
-        </button>
-        <button
-          type="button"
-          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-secondary outline-none hover:bg-balloon hover:text-primary focus-visible:ring-1 focus-visible:ring-accent"
-          aria-label={`Close pane ${title}`}
-          title="Close pane"
-          onClick={() => actions.closePane(paneId)}
-        >
-          ×
-        </button>
+        <Hint label={`Pane actions for ${title}`}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-subtle-foreground hover:bg-popover hover:text-foreground"
+            aria-haspopup="menu"
+            data-pane-menu={paneId}
+            onClick={(event) => {
+              const button = event.currentTarget.getBoundingClientRect();
+              paneMenu.openAt(button.left, button.bottom);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+                event.preventDefault();
+                event.currentTarget.click();
+              }
+            }}
+          >
+            <EllipsisIcon />
+          </Button>
+        </Hint>
+        <Hint label={`Close pane ${title}`}>
+          <Button variant="ghost" size="icon-sm" className="text-subtle-foreground hover:bg-popover hover:text-foreground" onClick={() => actions.closePane(paneId)}>
+            <XIcon />
+          </Button>
+        </Hint>
         {paneMenu.menu}
       </header>
       <ChildChipRow pane={pane} actions={actions} />
-      <div className="h-[var(--size-hairline)] shrink-0 bg-divider" />
+      <div className="h-[var(--size-hairline)] shrink-0 bg-border" />
       <div className="relative min-h-0 flex-1">
         <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} />
         {refusal?.pane_id === paneId ? (
-          <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-panel px-sm py-xxs text-caption text-danger" data-pane-attachment-refusal="true">
+          <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-card px-sm py-xxs text-caption text-destructive" data-pane-attachment-refusal="true">
             <span className="min-w-0 flex-1 truncate">{refusalText(refusal.reason)}</span>
-            <button type="button" className="text-muted" aria-label="Dismiss" onClick={() => setRefusal(null)}>
-              ×
-            </button>
+            <Hint label="Dismiss">
+              <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={() => setRefusal(null)}>
+                <XIcon />
+              </Button>
+            </Hint>
           </div>
         ) : null}
         {caption?.reconnects ? (
           <button
             type="button"
-            className="absolute inset-0 flex items-center justify-center bg-panel text-caption text-secondary"
+            className="absolute inset-0 flex items-center justify-center bg-card text-caption text-subtle-foreground"
             onClick={() =>
               dispatch({ schema_version: 2, kind: "reconnect_pane", payload: { pane_id: paneId } })
             }

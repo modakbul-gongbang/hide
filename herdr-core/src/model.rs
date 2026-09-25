@@ -1493,6 +1493,37 @@ pub struct MemoryRevisionSnapshot {
     pub created_at_unix_ms: u64,
 }
 
+/// The web shell's color theme (Settings > Appearance). `System` follows the
+/// operator's OS appearance live; Dark is the default so an update never
+/// brightens the screen on its own (web-design-system-reset D-14).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemePreference {
+    System,
+    Light,
+    #[default]
+    Dark,
+}
+
+impl ThemePreference {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "system" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionsMode {
@@ -1753,6 +1784,9 @@ pub struct UiStateSnapshot {
     pub device_registrations: Vec<DeviceRegistration>,
     #[serde(default = "default_accent_hex")]
     pub accent_hex: String,
+    /// The web shell's color theme; the Swift shell does not read it.
+    #[serde(default)]
+    pub theme: ThemePreference,
     /// The interface font size, in points, that the Appearance slider sets.
     /// It scales the shell's own chrome - every `hideFont` call site - and
     /// nothing else. A pane's terminal bytes are sized by `pane_text_scales`
@@ -1878,6 +1912,7 @@ impl Default for UiStateSnapshot {
             workspace_registrations: Vec::new(),
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
+            theme: ThemePreference::Dark,
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,

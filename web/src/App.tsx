@@ -19,7 +19,10 @@ import { focusedCheckout, focusedRemoteDevice, frontCheckout } from "./snapshot"
 import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
-import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
+import { applyEditorTheme } from "./editor/theme";
+import { applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
+import { primaryValue, readTheme, resolveTheme } from "./theme";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { useUiStore } from "./ui";
 import { viewRefusal } from "./viewLayout";
 import { SessionsScreen } from "./SessionsScreen";
@@ -96,7 +99,7 @@ export function App() {
     };
   }, [actions]);
 
-  // Appearance is the core's: the stored accent replaces the accent token and
+  // Appearance is the core's: the stored accent drives the primary token and
   // the stored interface size scales the interface text tokens, so a reload
   // restores both from the snapshot (B4). A value outside what the sheet
   // offers leaves the token default rather than drawing a guess.
@@ -104,11 +107,33 @@ export function App() {
   const fontSize = useShellStore((s) => usableFontSize(s.rest?.ui_state?.font_size));
   useEffect(() => {
     const root = document.documentElement.style;
-    if (accentHex) root.setProperty("--color-accent", accentHex);
-    else root.removeProperty("--color-accent");
+    const primary = primaryValue(accentHex);
+    if (primary) root.setProperty("--primary", primary);
+    else root.removeProperty("--primary");
     if (fontSize) root.setProperty("--interface-scale", String(fontSize / FONT_SIZE_BASE));
     else root.removeProperty("--interface-scale");
   }, [accentHex, fontSize]);
+
+  // The theme is the core's too (D-14, D-15): System follows the OS
+  // appearance while it changes, and the terminals are re-colored in place.
+  const storedTheme = useShellStore((s) => s.rest?.ui_state?.theme);
+  useEffect(() => {
+    const { choice, unknown } = readTheme(storedTheme);
+    if (unknown) useShellStore.getState().noteDiagnostic("ui_state.theme is not one this page knows; Dark is shown");
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const theme = resolveTheme(choice, query.matches);
+      const root = document.documentElement.classList;
+      root.toggle("dark", theme === "dark");
+      root.toggle("light", theme === "light");
+      applyTerminalTheme();
+      applyEditorTheme();
+    };
+    apply();
+    if (choice !== "system") return;
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, [storedTheme]);
 
   // A reconnect cancels an in-flight drag or cycle; the registration text
   // stays because its component is not remounted (PRD S2 B14).
@@ -165,25 +190,27 @@ export function App() {
   }, [connection, openDocuments, host]);
 
   return (
-    <div className="relative flex h-full flex-col bg-background text-primary">
-      <ConnectionBadge />
-      <NoticeBar actions={actions} />
-      <DraftRecoveryLine actions={actions} />
-      <WorkspaceNotices actions={actions} />
-      <div className="flex min-h-0 flex-1">
-        <Sidebar actions={actions} />
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <CenterScreen actions={actions} />
-        </main>
+    <TooltipProvider>
+      <div className="relative flex h-full flex-col bg-background text-foreground">
+        <ConnectionBadge />
+        <NoticeBar actions={actions} />
+        <DraftRecoveryLine actions={actions} />
+        <WorkspaceNotices actions={actions} />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar actions={actions} />
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <CenterScreen actions={actions} />
+          </main>
+        </div>
+        <CycleOverlay />
+        <ConfirmClose actions={actions} />
+        <ConfirmTrash actions={actions} />
+        <Palette actions={actions} />
+        <ShortcutSheetGate actions={actions} />
+        <SettingsGate actions={actions} />
+        <WorkspaceDialogs actions={actions} />
       </div>
-      <CycleOverlay />
-      <ConfirmClose actions={actions} />
-      <ConfirmTrash actions={actions} />
-      <Palette actions={actions} />
-      <ShortcutSheetGate actions={actions} />
-      <SettingsGate actions={actions} />
-      <WorkspaceDialogs actions={actions} />
-    </div>
+    </TooltipProvider>
   );
 }
 
@@ -250,7 +277,7 @@ function CenterScreen({ actions }: { actions: Actions }) {
   }, [screen, loaded, first, remoteFront]);
   if (screen === null) {
     return (
-      <div className="flex flex-1 items-center justify-center text-caption text-muted" data-center-screen="starting">
+      <div className="flex flex-1 items-center justify-center text-caption text-muted-foreground" data-center-screen="starting">
         Opening your last Workspace…
       </div>
     );

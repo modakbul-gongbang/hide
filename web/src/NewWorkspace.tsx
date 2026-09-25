@@ -1,5 +1,9 @@
+import { XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Hint } from "./components/ui/tooltip";
 import { listingRootFor, localRefusal, normalizePath, readRecent, refusalText, rememberRecent, suggestions } from "./registration";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -49,19 +53,21 @@ function DeviceNewWorkspace({ actions, device }: { actions: Actions; device: str
     actions.createWorkspace(path, path.slice(path.lastIndexOf("/") + 1), device);
   };
   return (
-    <div data-new-workspace={device} className="border-t border-divider bg-panel p-sm text-caption">
-      <div className="mb-xs flex items-center justify-between text-secondary">
+    <div data-new-workspace={device} className="border-t border-border bg-card p-sm text-caption">
+      <div className="mb-xs flex items-center justify-between text-subtle-foreground">
         <span className="min-w-0 break-words">새 워크스페이스 · {label}</span>
-        <button type="button" className="text-muted" aria-label="Close new workspace" onClick={() => closeOverlay("new_workspace")}>
-          ×
-        </button>
+        <Hint label="Close new workspace">
+          <Button variant="ghost" size="icon-sm" aria-label="Close new workspace" onClick={() => closeOverlay("new_workspace")}>
+            <XIcon />
+          </Button>
+        </Hint>
       </div>
-      <input
+      <Input
         ref={inputRef}
+        mono
         value={text}
         placeholder="~/…"
         aria-label={`Workspace path on ${label}`}
-        className="w-full rounded-xs bg-elevated px-xs py-xxs font-mono text-body text-primary outline-none"
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
@@ -71,13 +77,13 @@ function DeviceNewWorkspace({ actions, device }: { actions: Actions; device: str
           }
         }}
       />
-      <p className="mt-xs text-muted">A folder inside {label}&apos;s home; that device checks it.</p>
+      <p className="mt-xs text-muted-foreground">A folder inside {label}&apos;s home; that device checks it.</p>
       {refused ? (
-        <div role="alert" data-registration-reason="device" className="mt-xs text-danger">
+        <div role="alert" data-registration-reason="device" className="mt-xs text-destructive">
           {refused}
         </div>
       ) : sent ? (
-        <div className="mt-xs text-muted" data-registration-pending="true">
+        <div className="mt-xs text-muted-foreground" data-registration-pending="true">
           Asking {label}…
         </div>
       ) : null}
@@ -167,20 +173,22 @@ function LocalNewWorkspace({ actions }: { actions: Actions }) {
   };
 
   return (
-    <div data-new-workspace="true" className="border-t border-divider bg-panel p-sm text-caption">
-      <div className="mb-xs flex items-center justify-between text-secondary">
+    <div data-new-workspace="true" className="border-t border-border bg-card p-sm text-caption">
+      <div className="mb-xs flex items-center justify-between text-subtle-foreground">
         <span>새 워크스페이스</span>
-        <button type="button" className="text-muted" aria-label="Close new workspace" onClick={() => closeOverlay("new_workspace")}>
-          ×
-        </button>
+        <Hint label="Close new workspace">
+          <Button variant="ghost" size="icon-sm" aria-label="Close new workspace" onClick={() => closeOverlay("new_workspace")}>
+            <XIcon />
+          </Button>
+        </Hint>
       </div>
-      <input
+      <Input
         ref={inputRef}
+        mono
         value={text}
         list="hide-workspace-paths"
         placeholder={home ? `${home}/…` : "~/…"}
         aria-label="Workspace path"
-        className="w-full rounded-xs bg-elevated px-xs py-xxs font-mono text-body text-primary outline-none"
         onChange={(event) => {
           setText(event.target.value);
           setLocal(null);
@@ -200,7 +208,7 @@ function LocalNewWorkspace({ actions }: { actions: Actions }) {
         ))}
       </datalist>
       {shown ? (
-        <div role="alert" data-registration-reason={refusal?.kind === "create_workspace" ? refusal.reason : local ?? ""} className="mt-xs text-danger">
+        <div role="alert" data-registration-reason={refusal?.kind === "create_workspace" ? refusal.reason : local ?? ""} className="mt-xs text-destructive">
           {shown}
         </div>
       ) : null}
@@ -210,7 +218,7 @@ function LocalNewWorkspace({ actions }: { actions: Actions }) {
             <li key={path}>
               <button
                 type="button"
-                className="w-full truncate text-left font-mono text-secondary hover:text-primary"
+                className="w-full truncate text-left font-mono text-subtle-foreground hover:text-foreground"
                 data-recent-path={path}
                 onClick={() => {
                   setText(path);
@@ -229,7 +237,7 @@ function LocalNewWorkspace({ actions }: { actions: Actions }) {
             <li key={path}>
               <button
                 type="button"
-                className="w-full truncate text-left font-mono text-muted hover:text-primary"
+                className="w-full truncate text-left font-mono text-muted-foreground hover:text-foreground"
                 data-suggestion={path}
                 onClick={() => setText(`${path}/`)}
               >
