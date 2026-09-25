@@ -85,6 +85,13 @@ test('a node id colliding with an id elsewhere in --into is refused, naming it',
   assert.throws(() => transplant(from, into, ['scr-home']), /shared/);
 });
 
+test('a node id colliding with a node written whole in a descendants entry of --into is refused', () => {
+  const instance = {id: 'inst', type: 'ref', ref: 'row-m', descendants: {act: {id: 'act', type: 'frame'}}};
+  const into = doc([screen('scr-other', 'Screen / Other', {children: [instance]})]);
+  const from = doc([screen('scr-home', 'Screen / Home', {children: [{id: 'act', type: 'text'}]})]);
+  assert.throws(() => transplant(from, into, ['scr-home']), /act .*inst\.descendants\.act/);
+});
+
 test('a node id matching the sheet being replaced is not a collision', () => {
   const into = doc([screen('scr-home', 'Screen / Home', {children: [{id: 'inner', type: 'text'}]})]);
   const from = doc([screen('scr-home', 'Screen / Home', {children: [{id: 'inner', type: 'text', fill: 'red'}]})]);

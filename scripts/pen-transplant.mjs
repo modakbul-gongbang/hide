@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {serialize} from './pen-bands.mjs';
+import {duplicateIds} from './pen-canvas.mjs';
 
 const SCREEN_PREFIX = 'Screen / ';
 const LOCAL_VARIABLE = /^\$(--[A-Za-z0-9_-]+)$/;
@@ -45,13 +46,6 @@ export function parseArgs(argv) {
   if (!args.into) throw new Error('--into is required');
   if (args.sheets.length === 0) throw new Error('at least one --sheet is required');
   return args;
-}
-
-/** Every node id in `node`'s own subtree, via `children` only. */
-function collectIds(node, into = new Set()) {
-  if (node && typeof node === 'object' && typeof node.id === 'string') into.add(node.id);
-  for (const child of node?.children ?? []) collectIds(child, into);
-  return into;
 }
 
 /** Every `$--name` and `$alias:--name` string value anywhere under `node`. */
@@ -107,10 +101,6 @@ export function transplant(fromDoc, intoDoc, ids) {
   const definedVariables = new Set(Object.keys(intoDoc.variables ?? {}));
   const definedAliases = new Set(intoDoc.imports ? Object.keys(intoDoc.imports) : []);
 
-  const perSheetIds = new Map([...sheets].map(([id, node]) => [id, collectIds(node)]));
-  const baseline = new Set();
-  for (const child of intoDoc.children ?? []) if (!sheets.has(child.id)) collectIds(child, baseline);
-
   for (const [id, node] of sheets) {
     const refs = collectVariableRefs(node);
     const undefinedVariables = [...refs.local].filter(name => !definedVariables.has(name));
@@ -119,11 +109,6 @@ export function transplant(fromDoc, intoDoc, ids) {
     const aliases = new Set([...refs.aliases, ...collectRefAliases(node)]);
     const missingAliases = [...aliases].filter(alias => !definedAliases.has(alias));
     if (missingAliases.length) throw new Error(`sheet ${id} references import alias(es) --into lacks: ${missingAliases.join(', ')}`);
-
-    const elsewhere = new Set(baseline);
-    for (const [otherId, otherIds] of perSheetIds) if (otherId !== id) for (const otherIdValue of otherIds) elsewhere.add(otherIdValue);
-    const collisions = [...perSheetIds.get(id)].filter(nodeId => elsewhere.has(nodeId));
-    if (collisions.length) throw new Error(`sheet ${id} has node id(s) colliding with --into: ${collisions.join(', ')}`);
   }
 
   const children = [...(intoDoc.children ?? [])];
@@ -132,6 +117,12 @@ export function transplant(fromDoc, intoDoc, ids) {
     const index = children.findIndex(child => child.id === id);
     if (index === -1) children.push(node);
     else children[index] = node;
+  }
+  // The result has to load in Pen: one id per node, counting a node written
+  // whole inside a ref's `descendants` (the replaced sheets' own ids are gone).
+  const collisions = duplicateIds(children);
+  if (collisions.length) {
+    throw new Error(`the transplanted sheet(s) leave node id(s) colliding with --into: ${collisions.map(([id, paths]) => `${id} (${paths.join(', ')})`).join('; ')}`);
   }
   return {document: {...intoDoc, children}};
 }
