@@ -3,7 +3,7 @@
 Status: reference only, not a product contract or proof that Hide implements the pictured feature.
 These are the user-provided Orca screens recorded on 2026-08-26.
 Use them for density, grouping, layout, and interaction inspiration.
-[DESIGN.md: In-Product Components](../../DESIGN.md#in-product-components) governs Hide's current native UI.
+[UI_BEHAVIOR.md](../UI_BEHAVIOR.md) governs Hide's current UI behavior.
 
 ## Reference images
 

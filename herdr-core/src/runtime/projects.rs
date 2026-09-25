@@ -1006,7 +1006,7 @@ impl Runtime {
             .any(|registration| registration.id == payload.workspace_id)
         {
             // Already gone: the target state is reached, and a repeat of a
-            // completed removal stays quiet (DESIGN.md, registration removal).
+            // completed removal stays quiet (docs/UI_BEHAVIOR.md, registration removal).
             return false;
         }
         if self

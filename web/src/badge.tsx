@@ -9,7 +9,7 @@ export function ConnectionBadge() {
   return (
     <div
       role="status"
-      className="border-b border-divider bg-panel px-md py-xs text-caption text-secondary"
+      className="border-b border-border bg-card px-md py-xs text-caption text-subtle-foreground"
       data-connection={connection}
     >
       {text}

@@ -26,7 +26,7 @@ export function AgentMark({ kind, className = "" }: { kind: string | null | unde
     <span
       aria-hidden="true"
       data-agent-mark="neutral"
-      className={`flex h-[var(--size-agent-badge-compact)] w-[var(--size-agent-badge-compact)] shrink-0 items-center justify-center rounded-xs bg-elevated font-mono text-micro text-secondary ${className}`}
+      className={`flex h-[var(--size-agent-badge-compact)] w-[var(--size-agent-badge-compact)] shrink-0 items-center justify-center rounded-xs bg-secondary font-mono text-micro text-subtle-foreground ${className}`}
     >
       {">_"}
     </span>

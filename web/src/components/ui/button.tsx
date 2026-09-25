@@ -1,0 +1,51 @@
+import { cva, type VariantProps } from "class-variance-authority";
+import { Slot } from "radix-ui";
+import type { ComponentProps } from "react";
+import { cn } from "../../lib/utils";
+
+// shadcn Button on hide tokens: the `System / Button` sheet in
+// design/hide-ui.lib.pen draws each variant and size under the same names.
+const buttonVariants = cva(
+  "inline-flex shrink-0 items-center justify-center gap-xs whitespace-nowrap rounded-sm text-body font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-(--opacity-disabled) aria-invalid:ring-1 aria-invalid:ring-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-(--size-icon)",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        outline: "border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground",
+        secondary: "border border-border bg-secondary text-secondary-foreground hover:bg-accent",
+        ghost: "text-subtle-foreground hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-(--size-control) px-md",
+        sm: "h-(--size-control-sm) px-sm",
+        lg: "h-(--size-control-lg) px-lg",
+        icon: "size-(--size-control)",
+        "icon-sm": "size-(--size-control-sm)",
+      },
+    },
+    defaultVariants: { variant: "default", size: "default" },
+  },
+);
+
+function Button({
+  className,
+  variant,
+  size,
+  asChild = false,
+  type,
+  ...props
+}: ComponentProps<"button"> & VariantProps<typeof buttonVariants> & { asChild?: boolean }) {
+  const Comp = asChild ? Slot.Root : "button";
+  return (
+    <Comp
+      data-slot="button"
+      type={asChild ? type : (type ?? "button")}
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    />
+  );
+}
+
+export { Button, buttonVariants };

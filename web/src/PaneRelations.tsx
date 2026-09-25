@@ -1,8 +1,11 @@
+import { CornerUpLeftIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
+import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
+import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
-import { MenuList, type MenuEntry } from "./Menu";
 import type { PaneRow } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -26,18 +29,20 @@ export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Acti
   if (!parent) return null;
   const label = `Return to parent ${parent.label}`;
   return (
-    <button
-      type="button"
-      className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] shrink-0 items-center justify-center rounded-xs text-secondary outline-none hover:bg-balloon hover:text-primary focus-visible:ring-1 focus-visible:ring-accent disabled:text-muted"
-      aria-label={label}
-      title={label}
-      aria-busy={pending}
-      data-pane-return={parent.pane_id}
-      disabled={pending}
-      onClick={() => actions.followRelation(pane.id, parent.pane_id, parent.label)}
-    >
-      <span aria-hidden="true">{pending ? "…" : "↰"}</span>
-    </button>
+    <Hint label={label}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0 hover:bg-popover hover:text-foreground"
+        aria-label={label}
+        aria-busy={pending}
+        data-pane-return={parent.pane_id}
+        disabled={pending}
+        onClick={() => actions.followRelation(pane.id, parent.pane_id, parent.label)}
+      >
+        {pending ? <span aria-hidden="true">…</span> : <CornerUpLeftIcon />}
+      </Button>
+    </Hint>
   );
 }
 
@@ -54,7 +59,7 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
   const state = relation?.sourcePaneId === pane.id ? relationState(relation, outcome) : null;
   return (
     <div
-      className="flex h-[var(--size-pane-child-row)] shrink-0 items-center gap-xxs overflow-x-auto overflow-y-hidden whitespace-nowrap bg-panel px-sm text-caption"
+      className="flex h-[var(--size-pane-child-row)] shrink-0 items-center gap-xxs overflow-x-auto overflow-y-hidden whitespace-nowrap bg-card px-sm text-caption"
       role="group"
       aria-label={`Children of ${pane.identity_label ?? pane.id}`}
       data-pane-children={pane.id}
@@ -63,14 +68,13 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
         const pending = state?.phase === "pending" && relation?.targetPaneId === chip.pane_id;
         const title = chipTitle(chip);
         return (
+          <Hint key={chip.pane_id} label={title} reveals>
           <button
-            key={chip.pane_id}
             type="button"
-            className={`flex max-w-[var(--size-pane-child-chip-max)] shrink-0 items-center gap-xxs rounded-xs border border-divider px-xxs outline-none hover:bg-elevated focus-visible:ring-1 focus-visible:ring-accent ${
-              chip.delegated ? "text-secondary" : "text-primary"
+            className={`flex max-w-[var(--size-pane-child-chip-max)] shrink-0 items-center gap-xxs rounded-xs border border-border px-xxs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring ${
+              chip.delegated ? "text-subtle-foreground" : "text-foreground"
             }`}
             aria-label={`Open child ${title}`}
-            title={title}
             aria-busy={pending}
             data-child-chip={chip.pane_id}
             data-pending={pending ? "true" : "false"}
@@ -84,6 +88,7 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
             <AgentMark kind={chip.agent_kind} />
             <span className="truncate">{chip.label}</span>
           </button>
+          </Hint>
         );
       })}
     </div>
@@ -105,27 +110,29 @@ export function RelationStatus({ actions }: { actions: Actions }) {
   if (!state) return null;
   if (state.phase === "pending") {
     return (
-      <div className="flex shrink-0 items-center gap-sm bg-panel px-sm py-xxs text-caption text-muted" role="status" data-relation-status="pending">
+      <div className="flex shrink-0 items-center gap-sm bg-card px-sm py-xxs text-caption text-muted-foreground" role="status" data-relation-status="pending">
         <span className="min-w-0 flex-1 truncate">Opening {relation.label}…</span>
-        <button type="button" className="shrink-0 text-muted hover:text-primary" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
+        <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-muted-foreground hover:bg-transparent hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
           Dismiss
-        </button>
+        </Button>
       </div>
     );
   }
   return (
-    <div className="flex shrink-0 items-center gap-sm bg-panel px-sm py-xxs text-caption" role="alert" data-relation-status="failed">
-      <span className="min-w-0 flex-1 truncate text-danger" title={state.message}>
+    <div className="flex shrink-0 items-center gap-sm bg-card px-sm py-xxs text-caption" role="alert" data-relation-status="failed">
+      <Hint label={state.message} reveals>
+      <span className="min-w-0 flex-1 truncate text-destructive">
         {state.message}
       </span>
+      </Hint>
       {state.retryable ? (
-        <button type="button" className="shrink-0 text-secondary hover:text-primary" data-relation-retry="true" onClick={() => actions.retryRelation()}>
+        <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground" data-relation-retry="true" onClick={() => actions.retryRelation()}>
           Retry
-        </button>
+        </Button>
       ) : null}
-      <button type="button" className="shrink-0 text-muted hover:text-primary" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
+      <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-muted-foreground hover:bg-transparent hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
         Dismiss
-      </button>
+      </Button>
     </div>
   );
 }
@@ -160,16 +167,7 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
     const target = relationEntries(pane).find((entry) => `open:${entry.paneId}` === id);
     if (target) actions.followRelation(pane.id, target.paneId, target.label);
   };
-  const menu = open ? (
-    <MenuList
-      label={`Pane ${title}`}
-      items={paneMenuItems(pane, title)}
-      onSelect={select}
-      onClose={() => setOpen(null)}
-      className="absolute"
-      style={{ left: open.x, top: open.y }}
-    />
-  ) : null;
+  const menu = <EntryPointMenu label={`Pane ${title}`} items={paneMenuItems(pane, title)} onSelect={select} at={open} onClose={() => setOpen(null)} />;
   return { menu, openAt: (x: number, y: number) => setOpen({ x, y }) };
 }
 

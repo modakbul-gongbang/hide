@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, draftStorageHold, flushBuffer, identity, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
+import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { PatchView } from "./editor/PatchView";
 import { clearDraft, closingWithSave, latestDraft, noteDraft } from "./editor/draft";
@@ -252,7 +254,7 @@ function DiffBody({ display, scale }: { display: ViewDisplaySnapshot; scale: num
   }
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-diff-path={display.path} data-diff-group={committed ? "committed" : "working"}>
-      {diff.notice ? <div className="border-b border-divider px-md py-xs text-caption text-warning" data-diff-notice="true">{diff.notice}</div> : null}
+      {diff.notice ? <div className="border-b border-border px-md py-xs text-caption text-warning" data-diff-notice="true">{diff.notice}</div> : null}
       {diff.text ? <PatchView text={diff.text} scale={scale} /> : <div className="min-h-0 flex-1" data-diff-empty="true" />}
     </div>
   );
@@ -274,59 +276,56 @@ function EditorHeader({
   const editable = document?.document_kind === "text" || isMarkdown;
   const group = display.committed ? "Committed on branch" : "Uncommitted";
   return (
-    <div className="flex shrink-0 items-center gap-sm border-b border-divider px-md py-xs text-caption text-secondary">
-      <span className="min-w-0 flex-1 truncate" title={file ? display.path : `${group}: ${display.path}`} data-editor-path="true">
+    <div className="flex shrink-0 items-center gap-sm border-b border-border px-md py-xs text-caption text-subtle-foreground">
+      <Hint label={file ? display.path : `${group}: ${display.path}`} reveals>
+      <span className="min-w-0 flex-1 truncate" data-editor-path="true">
         {file ? "" : `${display.committed ? "Branch diff" : "Working diff"} · `}{display.path}
       </span>
+      </Hint>
       {document?.dirty ? (
         <span className="text-warning" data-editor-dirty="true">
           Unsaved
         </span>
       ) : null}
       {isMarkdown && editable ? (
-        <button
-          type="button"
-          className={tab.markdown_live ? "text-primary" : "text-muted hover:text-primary"}
-          data-markdown-mode={tab.markdown_live ? "live" : "source"}
-          title={tab.markdown_live ? "Edit with formatting shown in place" : "Edit Markdown source"}
-          onClick={() => actions.setFileView(tab.id, !tab.markdown_live, tab.wrap)}
-        >
-          {tab.markdown_live ? "Live" : "Source"}
-        </button>
+        <Hint label={tab.markdown_live ? "Edit with formatting shown in place" : "Edit Markdown source"}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={tab.markdown_live ? "text-foreground" : "text-muted-foreground"}
+            data-markdown-mode={tab.markdown_live ? "live" : "source"}
+            onClick={() => actions.setFileView(tab.id, !tab.markdown_live, tab.wrap)}
+          >
+            {tab.markdown_live ? "Live" : "Source"}
+          </Button>
+        </Hint>
       ) : null}
       {file && editable ? (
-        <button
-          type="button"
-          className={tab.wrap ? "text-primary" : "text-muted hover:text-primary"}
-          data-editor-wrap={tab.wrap ? "true" : "false"}
-          title="Wrap lines"
-          onClick={() => actions.setFileView(tab.id, tab.markdown_live, !tab.wrap)}
-        >
-          Wrap
-        </button>
+        <Hint label="Wrap lines">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={tab.wrap ? "text-foreground" : "text-muted-foreground"}
+            data-editor-wrap={tab.wrap ? "true" : "false"}
+            onClick={() => actions.setFileView(tab.id, tab.markdown_live, !tab.wrap)}
+          >
+            Wrap
+          </Button>
+        </Hint>
       ) : null}
       {file ? (
-        <button
-          type="button"
-          className="text-muted hover:text-primary"
-          aria-label="Find in document"
-          title="Find in document (⌘F)"
-          disabled={!editable}
-          onClick={() => actions.requestEditorFind(display.id)}
-        >
-          Find
-        </button>
+        <Hint label="Find in document" shortcut="⌘F">
+          <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={!editable} onClick={() => actions.requestEditorFind(display.id)}>
+            Find
+          </Button>
+        </Hint>
       ) : null}
       {display.preview ? (
-        <button
-          type="button"
-          className="text-muted hover:text-primary"
-          title="Keep open (⌘⇧K)"
-          data-editor-preview="true"
-          onClick={() => actions.keepViewOpen(display.id)}
-        >
-          preview
-        </button>
+        <Hint label="Keep open" shortcut="⌘⇧K">
+          <Button variant="ghost" size="sm" className="text-muted-foreground" data-editor-preview="true" onClick={() => actions.keepViewOpen(display.id)}>
+            preview
+          </Button>
+        </Hint>
       ) : null}
     </div>
   );
@@ -369,17 +368,17 @@ function FileBody({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {document.readonly_reason ? (
-        <div className="border-b border-divider px-md py-xs text-caption text-warning" data-editor-readonly="true">
+        <div className="border-b border-border px-md py-xs text-caption text-warning" data-editor-readonly="true">
           {document.readonly_reason}
         </div>
       ) : null}
       {hold === "held" ? (
-        <div role="status" className="border-b border-divider px-md py-xs text-caption text-warning" data-editor-draft-hold="held">
+        <div role="status" className="border-b border-border px-md py-xs text-caption text-warning" data-editor-draft-hold="held">
           Unsaved drafts cannot be stored right now (their storage is full at 512 MiB or this browser's quota, or unavailable), so this document stays read-only until the unstored draft is saved, exported or discarded. Stored drafts are never removed to make room.
         </div>
       ) : null}
       {hold === "unstored" ? (
-        <div role="status" className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-draft-hold="unstored">
+        <div role="status" className="flex items-center gap-sm border-b border-border px-md py-xs text-caption text-warning" data-editor-draft-hold="unstored">
           <span className="min-w-0 flex-1">This draft is not stored: draft storage is full or unavailable, so it lives in this tab only. Save or export it; the next edit is stored again once there is room.</span>
           <ExportDraftButton tabId={tab.id} path={tab.path} />
         </div>
@@ -409,11 +408,10 @@ function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const source = useFileSource();
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-sm px-md text-center text-caption text-muted" data-editor-preview-only="true">
+    <div className="flex flex-1 flex-col items-center justify-center gap-sm px-md text-center text-caption text-muted-foreground" data-editor-preview-only="true">
       <span>{document.readonly_reason ?? "This file is too large to edit here."}</span>
-      <button
-        type="button"
-        className="rounded-sm bg-elevated px-md py-xs text-primary hover:bg-divider"
+      <Button
+        variant="secondary"
         data-editor-download="true"
         onClick={() => {
           setDownloadError(null);
@@ -425,8 +423,8 @@ function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
         }}
       >
         Download
-      </button>
-      {downloadError ? <span className="text-danger" data-editor-download-failed="true">The download failed: {downloadError}</span> : null}
+      </Button>
+      {downloadError ? <span className="text-destructive" data-editor-download-failed="true">The download failed: {downloadError}</span> : null}
     </div>
   );
 }
@@ -451,9 +449,9 @@ function exportDraft(tabId: string, path: string) {
 
 function ExportDraftButton({ tabId, path }: { tabId: string; path: string }) {
   return (
-    <button type="button" className="text-secondary hover:text-primary" data-export-draft="true" onClick={() => exportDraft(tabId, path)}>
+    <Button variant="ghost" size="sm" data-export-draft="true" onClick={() => exportDraft(tabId, path)}>
       Export draft
-    </button>
+    </Button>
   );
 }
 
@@ -471,7 +469,7 @@ function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: st
   const prefix = save.state === "refused" ? "Not saved: " : save.state === "not_applied" ? "Not saved yet: " : "";
   const settled = prefix !== "";
   return (
-    <div role="status" className="flex flex-wrap items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-save-state={save.state}>
+    <div role="status" className="flex flex-wrap items-center gap-sm border-b border-border px-md py-xs text-caption text-warning" data-editor-save-state={save.state}>
       <span className="min-w-0 flex-1 break-words">
         {prefix}
         {save.message ?? "The last save's result is unknown; reading the file back."}
@@ -479,9 +477,9 @@ function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: st
       </span>
       <ExportDraftButton tabId={tabId} path={path} />
       {settled ? (
-        <button type="button" className="text-secondary hover:text-primary" data-save-retry="true" onClick={() => actions.saveFile(tabId)}>
+        <Button variant="ghost" size="sm" data-save-retry="true" onClick={() => actions.saveFile(tabId)}>
           Retry
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -489,14 +487,14 @@ function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: st
 
 function ConflictBar({ tabId, path, removed, actions }: { tabId: string; path: string; removed: boolean; actions: Actions }) {
   return (
-    <div className="flex items-center gap-sm border-b border-divider px-md py-xs text-caption text-warning" data-editor-conflict="true">
+    <div className="flex items-center gap-sm border-b border-border px-md py-xs text-caption text-warning" data-editor-conflict="true">
       <span className="flex-1">
         {removed ? "This file was removed or could not be read back." : "This file changed on disk."} Your draft is preserved.
       </span>
       <ExportDraftButton tabId={tabId} path={path} />
-      <button
-        type="button"
-        className="text-secondary hover:text-primary"
+      <Button
+        variant="ghost"
+        size="sm"
         data-conflict-action="reload"
         onClick={() => {
           clearDraft(tabId);
@@ -506,22 +504,17 @@ function ConflictBar({ tabId, path, removed, actions }: { tabId: string; path: s
         }}
       >
         Reload disk version
-      </button>
-      <button
-        type="button"
-        className="text-secondary hover:text-primary"
-        data-conflict-action="keep_editing"
-        onClick={() => actions.resolveConflict(tabId, "keep_editing")}
-      >
+      </Button>
+      <Button variant="ghost" size="sm" data-conflict-action="keep_editing" onClick={() => actions.resolveConflict(tabId, "keep_editing")}>
         Keep editing
-      </button>
+      </Button>
     </div>
   );
 }
 
 function Notice({ text, state }: { text: string; state: string }) {
   return (
-    <div className="flex flex-1 items-center justify-center px-md text-center text-caption text-muted" data-editor-state={state}>
+    <div className="flex flex-1 items-center justify-center px-md text-center text-caption text-muted-foreground" data-editor-state={state}>
       {text}
     </div>
   );

@@ -1,10 +1,12 @@
+import { ChevronDownIcon, EllipsisIcon, XIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { Button } from "./components/ui/controls";
+import { EntryContextMenu, EntryDropdown, type MenuEntry } from "./components/entry-menu";
+import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
-import { ContextMenu, MenuList, type MenuEntry } from "./Menu";
 import { editorTabFor, type ViewAreaSnapshot, type ViewDisplaySnapshot, type ViewLayoutSnapshot, type ViewNode, type ViewSplitSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -387,7 +389,7 @@ function ResizeGuide({ control }: { control: React.MutableRefObject<((rect: Rect
     };
   }, [control]);
   if (!rect) return null;
-  return <div className="pointer-events-none absolute z-20 bg-accent" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }} data-view-resize-guide="true" />;
+  return <div className="pointer-events-none absolute z-20 bg-primary" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }} data-view-resize-guide="true" />;
 }
 
 /** Where a divider dragged to `ratio` would sit. */
@@ -436,7 +438,7 @@ function Separator({ split, box }: { split: ViewSplitSnapshot; box: DividerBox }
       aria-valuemax={Math.round(RATIO_MAX * 100)}
       tabIndex={0}
       data-view-divider={split.id}
-      className={`relative z-10 shrink-0 bg-divider outline-none hover:bg-accent focus-visible:bg-accent ${row ? "w-[var(--size-resize-handle)] cursor-col-resize" : "h-[var(--size-resize-handle)] cursor-row-resize"}`}
+      className={`relative z-10 shrink-0 bg-border outline-none hover:bg-primary focus-visible:bg-primary ${row ? "w-[var(--size-resize-handle)] cursor-col-resize" : "h-[var(--size-resize-handle)] cursor-row-resize"}`}
       onPointerDown={(event) => tree.startResize(box, event)}
       onKeyDown={(event) => {
         const back = row ? "ArrowLeft" : "ArrowUp";
@@ -493,10 +495,10 @@ function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
     <AreaEmpty state="view-unavailable" text={`${display.path} is unavailable${display.reason ? `: ${display.reason}` : "."}`}>
       {/* Each button is one action on this view alone, like a tab's ×: its
           press does not also make the area active (one action, one event). */}
-      <Button onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.closeView(display.id)} data-close-unavailable={display.id}>
+      <Button variant="secondary" onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.closeView(display.id)} data-close-unavailable={display.id}>
         Close view
       </Button>
-      <Button appearance="quiet" onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.retryView(display.id)} data-retry-unavailable={display.id}>
+      <Button variant="ghost" onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.retryView(display.id)} data-retry-unavailable={display.id}>
         Retry
       </Button>
     </AreaEmpty>
@@ -526,10 +528,10 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
     return () => observer.disconnect();
   }, [area.active, area.displays.length]);
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch bg-panel" data-view-tab-bar={area.id}>
+    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch bg-card" data-view-tab-bar={area.id}>
       <div ref={strip} role="tablist" aria-label={`View tabs, area ${index + 1} of ${count}`} className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
         {area.displays.map((display) => (
-          <ContextMenu
+          <EntryContextMenu
             key={display.id}
             label={`${display.label} view actions`}
             items={() => tree.menu(display.id)}
@@ -538,19 +540,26 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
             data-tab-menu={display.id}
           >
             <DisplayTab display={display} selected={display.id === area.active} areaActive={active} />
-          </ContextMenu>
+          </EntryContextMenu>
         ))}
       </div>
       {switcher ? <AreaSwitcher current={area.id} /> : null}
       {shown ? (
-        <MenuButton
+        <EntryDropdown
           label={`View actions: ${shown.label}`}
-          items={() => tree.menu(shown.id)}
+          hint={`View actions: ${shown.label}`}
+          items={tree.menu(shown.id)}
           onSelect={(id) => tree.actions.runViewMenu(id, shown.id)}
-          data-view-overflow={shown.id}
-        >
-          ⋯
-        </MenuButton>
+          trigger={
+            <button
+              type="button"
+              data-view-overflow={shown.id}
+              className="flex min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+            >
+              <EllipsisIcon className="size-(--size-icon)" />
+            </button>
+          }
+        />
       ) : null}
     </div>
   );
@@ -565,11 +574,11 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
   const unavailable = display.state === "unavailable";
   const identity = displayIdentity(display);
   return (
+    <Hint label={identity} reveals>
     <div
       role="tab"
       aria-selected={selected}
       aria-label={identity}
-      title={identity}
       tabIndex={0}
       data-tab={display.tab_id ?? ""}
       data-display={display.id}
@@ -579,8 +588,8 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
       data-tab-only={tabOnly ? "true" : "false"}
       data-unavailable={unavailable ? "true" : "false"}
       data-view-state={display.state}
-      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-        selected ? "bg-background text-primary" : "text-secondary hover:bg-elevated"
+      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
+        selected ? "bg-background text-foreground" : "text-subtle-foreground hover:bg-accent"
       } ${tree.draggingId === display.id ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={(event) => tree.press(display.id, event)}
       onClick={() => {
@@ -595,26 +604,29 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
       }}
     >
       {displayMark(display)}
-      <span className={`min-w-0 flex-1 truncate ${display.preview ? "italic" : ""} ${unavailable ? "text-muted line-through" : ""}`}>
+      <span className={`min-w-0 flex-1 truncate ${display.preview ? "italic" : ""} ${unavailable ? "text-muted-foreground line-through" : ""}`}>
         {display.label}
-        {saving ? <span className="text-muted"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
-        {tabOnly ? <span className="text-muted"> kept in this tab only</span> : null}
+        {saving ? <span className="text-muted-foreground"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
+        {tabOnly ? <span className="text-muted-foreground"> kept in this tab only</span> : null}
       </span>
-      <button
-        type="button"
-        className={`rounded-xs px-xxs text-secondary hover:bg-balloon hover:text-primary focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
-        aria-label={`Close view ${display.label}`}
-        title={`Close view ${display.label}`}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation();
-          tree.actions.closeView(display.id);
-        }}
-      >
-        ×
-      </button>
-      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-accent" /> : null}
+      <Hint label={`Close view ${display.label}`}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={`shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
+          aria-label={`Close view ${display.label}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            tree.actions.closeView(display.id);
+          }}
+        >
+          <XIcon />
+        </Button>
+      </Hint>
+      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
     </div>
+    </Hint>
   );
 }
 
@@ -635,59 +647,34 @@ function displayMark(display: ViewDisplaySnapshot) {
   );
 }
 
-/** A small control that opens a menu under itself, drawn fixed so no scrolling strip clips it. */
-function MenuButton<Id extends string>({
-  label,
-  items,
-  onSelect,
-  children,
-  ...data
-}: { label: string; items: () => MenuEntry<Id>[]; onSelect: (id: Id) => void; children: React.ReactNode } & Record<`data-${string}`, string>) {
-  const [at, setAt] = useState<{ right: number; top: number } | null>(null);
-  return (
-    <div className="flex shrink-0">
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={at !== null}
-        aria-label={label}
-        title={label}
-        className="flex min-w-[var(--size-tab-overflow-control)] items-center justify-center px-xxs text-caption text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
-        {...data}
-        onClick={(event) => {
-          if (at) return setAt(null);
-          const box = event.currentTarget.getBoundingClientRect();
-          setAt({ right: window.innerWidth - box.right, top: box.bottom });
-        }}
-      >
-        {children}
-      </button>
-      {at ? <MenuList label={label} items={items()} onSelect={onSelect} onClose={() => setAt(null)} className="fixed" style={{ right: at.right, top: at.top }} /> : null}
-    </div>
-  );
-}
-
 /** A narrow window shows one area; this names it and switches to another (B13). */
 function AreaSwitcher({ current }: { current: string }) {
   const tree = useTree();
   const areas = areasOf(tree.layout.root);
   const index = areas.findIndex((area) => area.id === current);
-  const items = (): MenuEntry<string>[] =>
-    areas.map((area, at) => {
-      const shown = area.displays.find((row) => row.id === area.active);
-      return { id: area.id, label: `${area.id === current ? "✓ " : ""}Area ${at + 1}${shown ? ` · ${shown.label}` : ""}`, unavailable: null };
-    });
+  const items: MenuEntry<string>[] = areas.map((area, at) => {
+    const shown = area.displays.find((row) => row.id === area.active);
+    return { id: area.id, label: `${area.id === current ? "✓ " : ""}Area ${at + 1}${shown ? ` · ${shown.label}` : ""}`, unavailable: null };
+  });
   return (
-    <MenuButton
+    <EntryDropdown
       label={`View area ${index + 1} of ${areas.length}; the window shows one at a time. Switch view area`}
       items={items}
       onSelect={(id) => {
         if (id !== current) tree.actions.focusViewArea(id);
       }}
-      data-view-area-switch={current}
-    >
-      {index + 1}/{areas.length} ▾
-    </MenuButton>
+      trigger={
+        <Button
+          variant="ghost"
+          className="min-w-[var(--size-tab-overflow-control)] shrink-0 rounded-none text-subtle-foreground hover:text-foreground focus-visible:bg-accent"
+          aria-label={`View area ${index + 1} of ${areas.length}; the window shows one at a time. Switch view area`}
+          data-view-area-switch={current}
+        >
+          {index + 1}/{areas.length}
+          <ChevronDownIcon />
+        </Button>
+      }
+    />
   );
 }
 
@@ -700,7 +687,7 @@ function DragPreview({ session }: { session: Extract<DragSession, { phase: "drag
     <>
       {target.kind === "bar" ? (
         <div
-          className="pointer-events-none absolute z-30 w-[var(--size-tab-indicator)] -translate-x-1/2 bg-accent"
+          className="pointer-events-none absolute z-30 w-[var(--size-tab-indicator)] -translate-x-1/2 bg-primary"
           style={{ left: target.line.x, top: target.line.y, height: target.line.height }}
           data-view-drop="bar"
         />
@@ -711,10 +698,10 @@ function DragPreview({ session }: { session: Extract<DragSession, { phase: "drag
           style={{ left: target.preview.x, top: target.preview.y, width: target.preview.width, height: target.preview.height }}
           data-view-drop={target.edge}
         >
-          <div className="absolute inset-0 bg-accent opacity-[var(--opacity-selected-fill)]" />
-          <div className="absolute inset-0 border border-accent" />
+          <div className="absolute inset-0 bg-primary opacity-[var(--opacity-selected-fill)]" />
+          <div className="absolute inset-0 border border-primary" />
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="rounded-sm bg-balloon px-sm py-xxs text-caption text-primary shadow-lg">{target.label}</span>
+            <span className="rounded-sm bg-popover px-sm py-xxs text-caption text-foreground shadow-lg">{target.label}</span>
           </div>
         </div>
       ) : null}
@@ -733,7 +720,7 @@ function FloatingTab({ display, start, reason }: { display: ViewDisplaySnapshot;
   }, []);
   return (
     <div
-      className="pointer-events-none fixed z-50 flex max-w-[var(--size-tab-preferred)] translate-x-sm translate-y-sm flex-col gap-xxs rounded-sm border border-divider bg-elevated px-sm py-xxs text-caption text-primary shadow-lg"
+      className="pointer-events-none fixed z-50 flex max-w-[var(--size-tab-preferred)] translate-x-sm translate-y-sm flex-col gap-xxs rounded-sm border border-border bg-secondary px-sm py-xxs text-caption text-foreground shadow-lg"
       style={{ left: point.x, top: point.y }}
       data-view-drag-tab={display.id}
     >
@@ -741,7 +728,7 @@ function FloatingTab({ display, start, reason }: { display: ViewDisplaySnapshot;
         {displayMark(display)}
         <span className={`truncate ${display.preview ? "italic" : ""}`}>{display.label}</span>
       </span>
-      {reason ? <span className="text-muted">{reason}</span> : null}
+      {reason ? <span className="text-muted-foreground">{reason}</span> : null}
     </div>
   );
 }

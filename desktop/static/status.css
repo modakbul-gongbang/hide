@@ -1,13 +1,17 @@
 /* The host's own screen while no web shell is loaded (B1, B3). Every value is
-   a token from the generated tokens.css copied beside this file. */
+   a generated token (tokens.css, copied and unwrapped beside this file) under
+   the name the web shell's classes use; the page takes the web shell's
+   default dark theme, since the operator's choice lives in the daemon it
+   cannot reach. The font stack is the web shell's (web/src/index.css), which
+   is not a numeric token. */
 html,
 body {
   height: 100%;
   margin: 0;
   background: var(--color-background);
-  color: var(--color-primary);
+  color: var(--color-foreground);
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: var(--text-title);
+  font-size: var(--text-body);
   -webkit-user-select: none;
   user-select: none;
 }
@@ -21,30 +25,30 @@ main {
 }
 
 #connecting {
-  color: var(--color-muted);
+  color: var(--color-muted-foreground);
 }
 
 h1 {
   margin: 0 0 var(--spacing-xs);
-  font-size: var(--text-headline);
+  font-size: var(--text-title);
   font-weight: 600;
 }
 
 #reason {
   margin: 0 0 var(--spacing-lg);
-  color: var(--color-secondary);
+  color: var(--color-muted-foreground);
 }
 
 button {
-  height: var(--size-control-compact);
+  height: var(--size-control);
   padding: 0 var(--spacing-md);
-  border: var(--size-hairline) solid var(--color-divider);
+  border: var(--size-hairline) solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-elevated);
-  color: var(--color-primary);
+  background: var(--color-secondary);
+  color: var(--color-secondary-foreground);
   font: inherit;
 }
 
 button:hover {
-  background: var(--color-balloon);
+  background: var(--color-accent);
 }

@@ -21,7 +21,7 @@
 
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { mapModifiedKey } from "./keys";
 import { noteWriteComplete, probeEnabled } from "./probe";
@@ -70,6 +70,33 @@ function parkingLot(): HTMLDivElement {
 
 function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+const ANSI = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"] as const;
+
+/** The terminal's colors from the current theme's tokens, ANSI 16 included. */
+function terminalTheme(): ITheme {
+  const theme: Record<string, string> = {
+    background: token("--background"),
+    foreground: token("--foreground"),
+    cursor: token("--foreground"),
+    cursorAccent: token("--background"),
+    selectionBackground: token("--terminal-selection"),
+  };
+  for (const name of ANSI) {
+    theme[name] = token(`--terminal-${name}`);
+    theme[`bright${name[0]?.toUpperCase()}${name.slice(1)}`] = token(`--terminal-bright-${name}`);
+  }
+  return theme;
+}
+
+/**
+ * Re-color every terminal after a theme change. The instances are kept, so a
+ * pane's content, scroll position and a half-typed line stay (B13).
+ */
+export function applyTerminalTheme() {
+  const theme = terminalTheme();
+  for (const instance of instances.values()) instance.term.options.theme = theme;
 }
 
 function tokenPx(name: string): number {
@@ -363,10 +390,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, scale: number): In
   const term = new Terminal({
     fontFamily: token("--font-mono"),
     fontSize: Math.round(tokenPx("--text-terminal-base") * scale),
-    theme: {
-      background: token("--color-background"),
-      foreground: token("--color-primary"),
-    },
+    theme: terminalTheme(),
     // Herdr owns the history; the pane shows the viewport the core sends.
     scrollback: 0,
     allowProposedApi: true,

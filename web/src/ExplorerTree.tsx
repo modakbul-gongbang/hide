@@ -1,6 +1,11 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { Hint } from "./components/ui/tooltip";
 import {
   disclosureMark,
   explorerRows,
@@ -305,7 +310,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   if (!checkout || !rootPath) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-md text-center text-caption text-muted" data-explorer-state="no-checkout">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-md text-center text-caption text-muted-foreground" data-explorer-state="no-checkout">
         No checkout
       </div>
     );
@@ -326,61 +331,71 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-explorer={rootPath}>
-      <div className="flex shrink-0 items-center gap-xs border-b border-divider px-md py-xs text-caption text-secondary">
-        <span className="min-w-0 flex-1 truncate" title={rootPath} data-explorer-root="true">
+      <div className="flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground">
+        <Hint label={rootPath} reveals>
+        <span className="min-w-0 flex-1 truncate" data-explorer-root="true">
           {baseName(rootPath)}
         </span>
-        <button
-          type="button"
-          className="text-muted hover:text-primary"
-          aria-label="Refresh the file tree"
-          title="Refresh"
-          onClick={() => {
-            // A cached listing is dropped too, so the button re-reads what it
-            // is showing rather than only the folders it never listed.
-            pending.current.clear();
-            invalidateListings(watchedFolders(rootPath, expandedPaths));
-            setRefreshTick((tick) => tick + 1);
-          }}
-        >
-          ↻
-        </button>
+        </Hint>
+        <Hint label="Refresh">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:bg-transparent hover:text-foreground"
+            aria-label="Refresh the file tree"
+            onClick={() => {
+              // A cached listing is dropped too, so the button re-reads what it
+              // is showing rather than only the folders it never listed.
+              pending.current.clear();
+              invalidateListings(watchedFolders(rootPath, expandedPaths));
+              setRefreshTick((tick) => tick + 1);
+            }}
+          >
+            <RefreshCwIcon />
+          </Button>
+        </Hint>
       </div>
       {gitLine ? (
-        <div className={`break-words border-b border-divider px-md py-xs text-caption ${gitLine.state === "loading" ? "text-muted" : "text-warning"}`} data-explorer-git={gitLine.state}>
+        <div className={`break-words border-b border-border px-md py-xs text-caption ${gitLine.state === "loading" ? "text-muted-foreground" : "text-warning"}`} data-explorer-git={gitLine.state}>
           {gitLine.text}
         </div>
       ) : null}
       {refused ? (
-        <div className="border-b border-divider px-md py-sm text-caption text-danger" data-explorer-refusal={refused}>
+        <div className="border-b border-border px-md py-sm text-caption text-destructive" data-explorer-refusal={refused}>
           {refused}
         </div>
       ) : null}
       {unavailable ? (
-        <div className="flex items-center gap-sm border-b border-divider px-md py-sm text-caption text-warning" data-explorer-unavailable={unavailable.code}>
+        <div className="flex items-center gap-sm border-b border-border px-md py-sm text-caption text-warning" data-explorer-unavailable={unavailable.code}>
           <span className="min-w-0 flex-1 break-words">
             {unavailable.root_path === rootPath ? "This checkout" : baseName(unavailable.root_path)} could not be listed: {unavailable.message}
           </span>
           {needsSettings ? (
-            <button type="button" className="text-secondary hover:text-primary" onClick={() => actions.openSettings("devices")}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground"
+              onClick={() => actions.openSettings("devices")}
+            >
               Open Settings
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
-              className="text-secondary hover:text-primary"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground"
               onClick={() => {
                 pending.current.clear();
                 setRefreshTick((tick) => tick + 1);
               }}
             >
               Retry
-            </button>
+            </Button>
           )}
         </div>
       ) : null}
       {!rootListing && !refused && !rootUnavailable ? (
-        <div className="px-md py-sm text-caption text-muted" data-explorer-state="loading">
+        <div className="px-md py-sm text-caption text-muted-foreground" data-explorer-state="loading">
           Loading…
         </div>
       ) : (
@@ -451,7 +466,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
             })}
             {failure && failureTop !== null ? (
               <div
-                className="absolute inset-x-0 flex items-center gap-xs pr-md text-caption text-danger"
+                className="absolute inset-x-0 flex items-center gap-xs pr-md text-caption text-destructive"
                 data-explorer-failure={failure.path}
                 style={{ top: failureTop + rowHeight(), height: "var(--size-pane-child-row)" }}
               >
@@ -462,9 +477,10 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
         </div>
       )}
       {menu ? (
-        <ContextMenu
+        <ExplorerContextMenu
           menu={menu}
-          onDismiss={() => setMenu(null)}
+          row={rowForPath(rows, menu.path)}
+          onClose={() => setMenu(null)}
           onOpenBeside={(path) => {
             setMenu(null);
             setSelection(path);
@@ -473,7 +489,6 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           onNewFile={beginCreate}
           onRename={beginRename}
           onTrash={requestTrash}
-          rowFor={(path) => rowForPath(rows, path)}
         />
       ) : null}
     </div>
@@ -513,11 +528,11 @@ function DraftRowView({
       data-explorer-draft={rename ? "rename" : "create"}
       style={{ top: 0, height: "var(--size-pane-child-row)", paddingLeft: `calc(var(--size-lineage-indent) * ${depth})`, transform: `translateY(${top}px)` }}
     >
-      <input
+      <Input
         autoFocus
         value={value}
         aria-label={rename ? "New name" : "New entry name"}
-        className="min-w-0 flex-1 rounded-xs border border-accent bg-background px-xxs text-body text-primary outline-none"
+        className="h-auto min-w-0 flex-1 rounded-xs border-primary px-xxs py-none"
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
@@ -535,79 +550,52 @@ function DraftRowView({
   );
 }
 
-function ContextMenu({
+type ExplorerMenuId = "new-file" | "new-folder" | "open-beside" | "rename" | "trash";
+
+function ExplorerContextMenu({
   menu,
-  onDismiss,
+  row,
+  onClose,
   onOpenBeside,
   onNewFile,
   onRename,
   onTrash,
-  rowFor,
 }: {
   menu: { path: string; isDirectory: boolean; x: number; y: number };
-  onDismiss: () => void;
+  row: ExplorerRow | null;
+  onClose: () => void;
   /** A second, pinned display of the file beside the active View area (S7 B4). */
   onOpenBeside: (path: string) => void;
   onNewFile: (parent: string, kind: "file" | "folder") => void;
   onRename: (row: ExplorerRow) => void;
   onTrash: (row: ExplorerRow) => void;
-  rowFor: (path: string) => ExplorerRow | null;
 }) {
-  useEffect(() => {
-    const close = () => onDismiss();
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("blur", close);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("blur", close);
-    };
-  }, [onDismiss]);
-  const row = rowFor(menu.path);
   // Read as the menu opens: the room beside the only View area (S7 B9, D-06).
   const besideReason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());
+  const items: MenuEntry<ExplorerMenuId>[] = [];
+  if (menu.isDirectory) {
+    items.push({ id: "new-file", label: "New File", unavailable: null });
+    items.push({ id: "new-folder", label: "New Folder", unavailable: null });
+  } else if (row) {
+    items.push({ id: "open-beside", label: "Open to the side", unavailable: besideReason });
+  }
+  if (row) items.push({ id: "rename", label: "Rename", unavailable: null });
+  if (row) items.push({ id: "trash", label: "Move to Trash", unavailable: null, separated: true, destructive: true });
   return (
-    <div
-      role="menu"
+    <EntryPointMenu
+      label={row ? `${row.name} actions` : "Folder actions"}
+      items={items}
+      at={{ x: menu.x, y: menu.y }}
+      onClose={onClose}
       data-explorer-menu={menu.path}
-      className="fixed z-30 min-w-[var(--size-panel-min)] rounded-sm border border-divider bg-balloon py-xxs text-caption text-primary shadow-none"
-      style={{ left: menu.x, top: menu.y }}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      {menu.isDirectory ? (
-        <>
-          <MenuItem label="New File" testId="new-file" onClick={() => onNewFile(menu.path, "file")} />
-          <MenuItem label="New Folder" testId="new-folder" onClick={() => onNewFile(menu.path, "folder")} />
-        </>
-      ) : row ? (
-        <MenuItem label="Open to the side" testId="open-beside" unavailable={besideReason} onClick={() => onOpenBeside(row.path)} />
-      ) : null}
-      {row ? <MenuItem label="Rename" testId="rename" onClick={() => onRename(row)} /> : null}
-      {row ? <MenuItem label="Move to Trash" testId="trash" danger onClick={() => onTrash(row)} /> : null}
-    </div>
-  );
-}
-
-function MenuItem({ label, testId, danger, unavailable = null, onClick }: {
-  label: string;
-  testId: string;
-  danger?: boolean;
-  /** Why the item cannot run now; drawn disabled with the reason under it, as every web menu does. */
-  unavailable?: string | null;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      data-menu-item={testId}
-      disabled={unavailable !== null}
-      title={unavailable ?? undefined}
-      className={`flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated disabled:text-muted disabled:hover:bg-transparent ${danger ? "text-danger" : "text-primary"}`}
-      onClick={onClick}
-    >
-      <span>{label}</span>
-      {unavailable ? <span className="text-caption text-muted">{unavailable}</span> : null}
-    </button>
+      onSelect={(id) => {
+        if (id === "new-file") onNewFile(menu.path, "file");
+        else if (id === "new-folder") onNewFile(menu.path, "folder");
+        else if (row && id === "open-beside") onOpenBeside(row.path);
+        else if (row && id === "rename") onRename(row);
+        else if (row && id === "trash") onTrash(row);
+      }}
+    />
   );
 }
 
@@ -636,21 +624,21 @@ function ExplorerRowView({
 }) {
   const [over, setOver] = useState(false);
   return (
+    <Hint label={rowTitle(row, rootPath)} reveals>
     <div
       role="treeitem"
       aria-selected={selected}
       aria-level={row.depth + 1}
       aria-expanded={row.isDirectory ? row.expanded : undefined}
       aria-label={rowAccessibilityLabel(row)}
-      title={rowTitle(row, rootPath)}
       draggable
       data-explorer-row={row.path}
       data-selected={selected ? "true" : "false"}
       data-decoration={row.decoration?.status ?? ""}
       data-drop={over ? "true" : "false"}
       className={`absolute inset-x-0 flex cursor-default items-center gap-xs pr-md text-body ${
-        selected ? "bg-elevated text-primary" : "text-secondary hover:bg-elevated"
-      } ${over ? "bg-elevated" : ""}`}
+        selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"
+      } ${over ? "bg-secondary" : ""}`}
       style={{
         top: 0,
         height: "var(--size-pane-child-row)",
@@ -689,7 +677,7 @@ function ExplorerRowView({
         setOver(false);
       }}
     >
-      <span className="w-[var(--size-lineage-chevron)] shrink-0 text-center text-caption text-muted" aria-hidden="true">
+      <span className="w-[var(--size-lineage-chevron)] shrink-0 text-center text-caption text-muted-foreground" aria-hidden="true">
         {disclosureMark(row)}
       </span>
       <span className={`shrink-0 ${row.icon.color}`} style={{ fontFamily: "seti" }} aria-hidden="true">
@@ -697,26 +685,31 @@ function ExplorerRowView({
       </span>
       <span className="min-w-0 flex-1 truncate">{row.name}</span>
       {needsRefresh ? (
-        <button
-          type="button"
-          className="shrink-0 rounded-xs px-xxs text-caption text-warning hover:text-primary"
-          data-explorer-refresh={row.path}
-          aria-label={`Refresh ${row.name}`}
-          title="This folder is no longer watched; refresh to read it"
-          onClick={(event) => {
-            event.stopPropagation();
-            onRefresh();
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          ↻
-        </button>
+        <Hint label="This folder is no longer watched; refresh to read it">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 text-warning hover:bg-transparent hover:text-foreground"
+            data-explorer-refresh={row.path}
+            aria-label={`Refresh ${row.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRefresh();
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <RefreshCwIcon />
+          </Button>
+        </Hint>
       ) : null}
       {row.decoration ? (
-        <span className={`shrink-0 text-caption ${gitBadgeColor(row.decoration.status)}`} title={row.decoration.title}>
-          {row.decoration.badge}
-        </span>
+        <Hint label={row.decoration.title}>
+          <span className={`shrink-0 text-caption ${gitBadgeColor(row.decoration.status)}`}>
+            {row.decoration.badge}
+          </span>
+        </Hint>
       ) : null}
     </div>
+    </Hint>
   );
 }

@@ -448,15 +448,18 @@ test("Open to the side from the only area is refused with its reason until that 
     const besideDiff = page.locator('[data-history-menu="a.txt"] [data-menu-item="open_beside"]');
     await expect(besideDiff).toBeDisabled();
     await expect(besideDiff).toContainText(BESIDE_TOO_NARROW);
-    const menuBox = await boxOf(page.locator('[data-history-menu="a.txt"] [role="menu"]'));
+    const menuBox = await boxOf(page.locator('[role="menu"][data-history-menu="a.txt"]'));
     expect(Math.abs(menuBox.x - pointer.x)).toBeLessThanOrEqual(2);
     expect(Math.abs(menuBox.y - pointer.y)).toBeLessThanOrEqual(2);
     const itemBox = await boxOf(besideDiff);
-    const drawn = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-menu-item]")?.getAttribute("data-menu-item") ?? null, {
+    // A disabled item takes no pointer, so the point hits the menu drawn under it.
+    const drawn = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="menu"]')?.getAttribute("data-history-menu") ?? null, {
       x: itemBox.x + itemBox.width / 2,
       y: itemBox.y + itemBox.height / 2,
     });
-    expect(drawn).toBe("open_beside");
+    expect(drawn).toBe("a.txt");
+    expect(itemBox.x).toBeGreaterThanOrEqual(menuBox.x);
+    expect(itemBox.y + itemBox.height).toBeLessThanOrEqual(menuBox.y + menuBox.height);
     await page.keyboard.press("Escape");
     expect(stack.events.filter((event) => event.kind === "file_open" && event.payload.beside === true)).toHaveLength(0);
     expect(stack.events.filter((event) => event.kind === "changes_select" && event.payload.beside === true)).toHaveLength(0);
@@ -711,7 +714,13 @@ async function menuByKeyboard(page: Page, item: string): Promise<void> {
   await page.keyboard.press("Shift+F10");
   const target = page.locator(`[role="menu"] [data-menu-item="${item}"]`);
   await expect(target).toBeEnabled();
-  for (let step = 0; step < 20 && !(await target.evaluate((node) => node === document.activeElement)); step += 1) await page.keyboard.press("ArrowDown");
+  const focusedItem = () => page.evaluate(() => document.activeElement?.getAttribute("data-menu-item") ?? "");
+  for (let step = 0; step < 20 && !(await target.evaluate((node) => node === document.activeElement)); step += 1) {
+    const before = await focusedItem();
+    await page.keyboard.press("ArrowDown");
+    // The menu moves its focus on the next task, not inside the keydown.
+    await expect.poll(focusedItem).not.toBe(before);
+  }
   await expect(target).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
@@ -848,10 +857,10 @@ type MenuRow = { id: string; label: string; reason: string | null; disabled: boo
 
 /** The open menu's items as drawn: id, label, the reason under a disabled one. */
 async function menuRows(page: Page): Promise<MenuRow[]> {
-  return page.locator('[role="menu"] [data-menu-item]').evaluateAll((buttons) =>
-    buttons.map((button) => {
+  return page.locator('[role="menu"] [data-menu-item]').evaluateAll((items) =>
+    items.map((button) => {
       const lines = [...button.querySelectorAll("span")].map((span) => span.textContent ?? "");
-      return { id: button.getAttribute("data-menu-item") ?? "", label: lines[0] ?? "", reason: lines[1] ?? null, disabled: (button as HTMLButtonElement).disabled };
+      return { id: button.getAttribute("data-menu-item") ?? "", label: lines[0] ?? "", reason: lines[1] ?? null, disabled: button.getAttribute("aria-disabled") === "true" };
     }),
   );
 }
@@ -1070,7 +1079,7 @@ test("a narrow window floats the tools, shows one region and one area with a way
     await expect(page.locator("[data-view-area-id]")).toHaveCount(1);
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
     const switcher = page.locator("[data-view-area-switch]");
-    await expect(switcher).toHaveText("2/2 ▾");
+    await expect(switcher).toHaveText("2/2");
     await screenshot(page, "s7-narrow-single-area");
 
     // The overlay opens on request, takes the keyboard, and Escape closes it
@@ -1095,7 +1104,7 @@ test("a narrow window floats the tools, shows one region and one area with a way
     await switcher.click();
     await page.locator('[role="menu"] [data-menu-item]').first().click();
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
-    await expect(switcher).toHaveText("1/2 ▾");
+    await expect(switcher).toHaveText("1/2");
     await switcher.click();
     await page.locator('[role="menu"] [data-menu-item]').nth(1).click();
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
@@ -1150,7 +1159,7 @@ test("a narrow window floats the tools, shows one region and one area with a way
   }
 });
 
-// PRD B12 and DESIGN.md "Narrow windows": a click outside the narrow tools
+// PRD B12 and docs/UI_BEHAVIOR.md "Narrow windows": a click outside the narrow tools
 // overlay closes it and returns the keyboard to the toggle that opened it,
 // as Escape does, when the click lands on something that takes no focus.
 test("an outside click that closes the narrow tools overlay gives the keyboard back to its toggle", async ({ page }) => {

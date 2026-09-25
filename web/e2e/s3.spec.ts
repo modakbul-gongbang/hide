@@ -751,6 +751,12 @@ test("the Explorer creates, renames, moves and trashes entries", async ({ page }
     await page.locator(`[data-explorer-row="${repo}/src/added.ts"]`).click({ button: "right" });
     await page.locator('[data-menu-item="rename"]').click();
     const rename = page.locator('[data-explorer-draft="rename"] input');
+    // The closing menu hands focus back a tick later; the field it opened
+    // keeps the keyboard and nothing is sent until the operator commits.
+    await expect(rename).toBeFocused();
+    await page.waitForTimeout(250);
+    await expect(rename).toBeFocused();
+    expect(sent.get("path_rename") ?? 0).toBe(0);
     await rename.fill("renamed.ts");
     await rename.press("Enter");
     await expect.poll(() => sent.get("path_rename")).toBe(1);

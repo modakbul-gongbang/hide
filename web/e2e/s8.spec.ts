@@ -261,8 +261,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(other.locator("[data-workspace-screen]")).toBeVisible();
     await expect(other.locator(`[data-pane-view="${second}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     // This window has seen the focus move, and its Project and list stayed.
-    // `bg-elevated` alone marks the selected row; `focus-visible:bg-elevated` is on every row.
-    await expect(page.locator(`[data-agent-list] [data-pane="${second}"]`)).toHaveClass(/(^|\s)bg-elevated(\s|$)/, { timeout: 15_000 });
+    // `bg-secondary` alone marks the selected row; `focus-visible:bg-accent` is on every row.
+    await expect(page.locator(`[data-agent-list] [data-pane="${second}"]`)).toHaveClass(/(^|\s)bg-secondary(\s|$)/, { timeout: 15_000 });
     await expect(page.locator("[data-sessions-screen]")).toHaveAttribute("data-sessions-screen", request?.workspace_id as string);
     await expect(rows).toHaveCount(4);
     await expect(page.locator("[data-session-detail]")).toHaveAttribute("data-session-detail", "failed");

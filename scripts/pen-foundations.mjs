@@ -2,22 +2,25 @@
 //
 // The sheet is generator-owned: gen-pen.mjs rebuilds it on every run from the
 // document's variables, which the same run's token pass has already made agree
-// with HideTheme.swift. Every fill and font size on it is a `$--`
-// reference, so the swatches resolve through the same variables the boards
-// use; the only literals are the hex and pixel labels, which are read off the
-// variable values so they cannot disagree with the swatch beside them.
+// with design/tokens.json. Every fill and font size on it is a `$--` reference, so
+// the swatches resolve through the same variables the System parts use; the only
+// literals are the hex and pixel labels, which are read off the variable values so
+// they cannot disagree with the swatch beside them. The color ladder is the one
+// section that varies by theme, drawn once inside a `Light` frame and once inside a
+// `Dark` frame (`theme: {Mode: ...}`); the scale, spacing, radius and control/icon
+// sizes below it do not change by theme, so they are drawn once.
 
 const WIDTH = 1180;
 
 const id = (...parts) => ['fnd', ...parts].join('-').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
 
-const text = (key, content, {size = '$--text-body', fill = '$--color-primary', weight = 'normal', mono = false, width} = {}) => ({
+const text = (key, content, {size = '$--text-body', fill = '$--foreground', weight = 'normal', mono = false, width} = {}) => ({
   type: 'text', id: id(key), name: content.length > 24 ? content.slice(0, 24) : content,
   fill, content, fontFamily: mono ? '$--font-mono' : '$--font-ui', fontSize: size, fontWeight: weight,
   ...(width ? {textGrowth: 'fixed-width', width} : {}),
 });
 
-const value = (key, content) => text(key, content, {size: '$--text-micro', fill: '$--color-muted', mono: true});
+const value = (key, content) => text(key, content, {size: '$--text-micro', fill: '$--muted-foreground', mono: true});
 
 const column = (key, name, children, extra = {}) => ({
   type: 'frame', id: id(key), name, layout: 'vertical', gap: '$--spacing-sm', width: 'fill_container', ...extra, children,
@@ -29,8 +32,8 @@ const row = (key, name, children, extra = {}) => ({
 function section(key, title, note, body) {
   return column(key, title, [
     column(`${key}-head`, 'Heading', [
-      text(`${key}-title`, title.toUpperCase(), {size: '$--text-caption', fill: '$--color-muted', weight: '600'}),
-      ...(note ? [text(`${key}-note`, note, {size: '$--text-subhead', fill: '$--color-secondary', width: 'fill_container'})] : []),
+      text(`${key}-title`, title.toUpperCase(), {size: '$--text-caption', fill: '$--muted-foreground', weight: '600'}),
+      ...(note ? [text(`${key}-note`, note, {size: '$--text-subhead', fill: '$--subtle-foreground', width: 'fill_container'})] : []),
     ], {gap: '$--spacing-xs'}),
     body,
   ], {gap: '$--spacing-lg'});
@@ -42,47 +45,84 @@ const variable = (variables, name) => {
   return entry.value;
 };
 
+// A color variable's own value is the Mode-themed array gen-pen.mjs writes
+// ([{value}, {value, theme:{Mode:"Dark"}}]), not a plain hex string; a caption
+// that prints "the hex under this swatch" has to pick the one entry that matches
+// the palette block it is drawn inside, at generation time, the same theme the
+// swatch's own `$--` fill will resolve to when Pen renders that block.
+const hexFor = (variables, name, mode) => {
+  const entry = variables[`--${name}`];
+  if (!entry) throw new Error(`Foundations sheet needs --${name}, which the canvas does not carry`);
+  const list = Array.isArray(entry.value) ? entry.value : [{value: entry.value}];
+  const found = list.find(v => (mode === 'Dark' ? v.theme?.Mode === 'Dark' : !v.theme));
+  if (!found) throw new Error(`--${name} has no ${mode} value`);
+  return found.value;
+};
+
 function swatchLadder(variables, key, steps) {
   return row(key, 'Ladder', steps.map(([token, label], index) => ({
     type: 'frame', id: id(key, token), name: label, layout: 'vertical', justifyContent: 'end', gap: '$--spacing-xxs',
-    width: 'fill_container', height: 140, padding: '$--spacing-lg', fill: `$--${token}`,
-    stroke: '$--color-divider', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
+    width: 'fill_container', height: 120, padding: '$--spacing-lg', fill: `$--${token}`,
+    stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
     cornerRadius: index === 0 ? ['$--radius-lg', 0, 0, '$--radius-lg'] : index === steps.length - 1 ? [0, '$--radius-lg', '$--radius-lg', 0] : 0,
-    children: [
-      text(`${key}-${token}-label`, label, {size: '$--text-body'}),
-      value(`${key}-${token}-value`, String(variable(variables, `--${token}`))),
-    ],
+    children: [text(`${key}-${token}-label`, label, {size: '$--text-caption'})],
   })), {gap: 0, alignItems: 'start'});
 }
 
-function textInks(variables, key, inks) {
-  return row(key, 'Inks', inks.map(([token, label]) => column(`${key}-${token}`, label, [
-    text(`${key}-${token}-word`, label, {size: '$--text-display', fill: `$--${token}`, weight: '500'}),
-    value(`${key}-${token}-value`, String(variable(variables, `--${token}`))),
-  ], {width: 'fit_content', gap: '$--spacing-xs'})), {gap: '$--spacing-xxxl', alignItems: 'start'});
-}
-
-function chips(variables, key, entries) {
+function chips(variables, key, entries, mode) {
   return row(key, 'Chips', entries.map(([token, label]) => ({
     type: 'frame', id: id(key, token), name: label, layout: 'vertical', gap: '$--spacing-md', width: 'fill_container',
-    padding: '$--spacing-lg', fill: '$--color-panel', stroke: '$--color-divider', strokeWidth: '$--size-hairline',
+    padding: '$--spacing-lg', fill: '$--card', stroke: '$--border', strokeWidth: '$--size-hairline',
     strokeAlignment: 'inner', cornerRadius: '$--radius-lg',
     children: [
       {type: 'rectangle', id: id(key, token, 'dot'), name: 'Colour', width: 24, height: 24, fill: `$--${token}`, cornerRadius: '$--radius-sm'},
       column(`${key}-${token}-text`, 'Text', [
         text(`${key}-${token}-label`, label, {size: '$--text-body'}),
-        value(`${key}-${token}-value`, String(variable(variables, `--${token}`))),
+        value(`${key}-${token}-value`, hexFor(variables, token, mode)),
       ], {gap: '$--spacing-xxs'}),
     ],
   })), {gap: '$--spacing-md', alignItems: 'start'});
 }
 
+function textInks(variables, key, inks, mode) {
+  // --text-display reads well across a full 1180 sheet with short names (the old
+  // single-ladder Foundations); inside a PALETTE_WIDTH column carrying hide's
+  // longer shadcn ink names (subtle-foreground, muted-foreground) it overflows,
+  // so this row uses --text-title instead.
+  return row(key, 'Inks', inks.map(([token, label]) => column(`${key}-${token}`, label, [
+    text(`${key}-${token}-word`, label, {size: '$--text-title', fill: `$--${token}`, weight: '600'}),
+    value(`${key}-${token}-value`, hexFor(variables, token, mode)),
+  ], {width: 'fit_content', gap: '$--spacing-xs'})), {gap: '$--spacing-lg', alignItems: 'start'});
+}
+
+// The palette varies by theme, so it is the one section drawn twice: once inside a
+// `Light`-tagged frame and once inside a `Dark`-tagged frame. Every swatch fill is
+// a `$--` reference, resolving to that theme's own value; a caption's literal hex
+// text is picked for the matching theme at generation time (see `hexFor`). A
+// literal pixel width, not `fit_content`, is required here: everything nested
+// inside uses `fill_container` to stretch to its row, and `fill_container` has no
+// size to resolve against under a `fit_content` ancestor.
+const PALETTE_WIDTH = 540;
+
+function palette(variables, mode) {
+  return column(`palette-${mode.toLowerCase()}`, mode, [
+    column(`palette-${mode}-base`, 'Base', [
+      swatchLadder(variables, `pal-${mode}-surface`, [['background', 'background'], ['sidebar', 'sidebar'], ['card', 'card'], ['popover', 'popover'], ['secondary', 'secondary']]),
+      textInks(variables, `pal-${mode}-ink`, [['foreground', 'foreground'], ['subtle-foreground', 'subtle-foreground'], ['muted-foreground', 'muted-foreground'], ['primary', 'primary']], mode),
+    ], {gap: '$--spacing-md'}),
+    chips(variables, `pal-${mode}-accent`, [['accent-choice-lime', 'lime'], ['accent-choice-sky', 'sky'], ['accent-choice-violet', 'violet'], ['accent-choice-amber', 'amber']], mode),
+    chips(variables, `pal-${mode}-semantic`, [['agent-working', 'agent working'], ['success', 'success'], ['warning', 'warning'], ['destructive', 'destructive']], mode),
+    chips(variables, `pal-${mode}-pr`, [['pr-open', 'PR open'], ['pr-merged', 'PR merged'], ['pr-closed', 'PR closed'], ['pr-draft', 'PR draft']], mode),
+    chips(variables, `pal-${mode}-diff`, [['diff-added', 'diff added'], ['diff-removed', 'diff removed'], ['border', 'border'], ['ring', 'ring']], mode),
+  ], {gap: '$--spacing-lg', width: PALETTE_WIDTH, clip: true, padding: '$--spacing-xl', fill: '$--background', cornerRadius: '$--radius-lg', theme: {Mode: mode}});
+}
+
 function typeScale(variables, key, steps) {
   return column(key, 'Scale', steps.map(([token, sample, mono]) => ({
     type: 'frame', id: id(key, token), name: token, layout: 'horizontal', alignItems: 'center', gap: '$--spacing-xl',
-    width: 'fill_container', padding: ['$--spacing-md', 0], stroke: '$--color-divider', strokeWidth: {bottom: '$--size-hairline'}, strokeAlignment: 'inner',
+    width: 'fill_container', padding: ['$--spacing-md', 0], stroke: '$--border', strokeWidth: {bottom: '$--size-hairline'}, strokeAlignment: 'inner',
     children: [
-      {...value(`${key}-${token}-name`, token.replace('text-', '')), textGrowth: 'fixed-width', width: 120},
+      {...value(`${key}-${token}-name`, token.replace('text-', '')), textGrowth: 'fixed-width', width: 130},
       {...value(`${key}-${token}-px`, `${variable(variables, `--${token}`)}px`), textGrowth: 'fixed-width', width: 60},
       text(`${key}-${token}-sample`, sample, {size: `$--${token}`, mono, weight: variable(variables, `--${token}`) >= 17 ? '600' : 'normal'}),
     ],
@@ -92,54 +132,39 @@ function typeScale(variables, key, steps) {
 function bars(variables, key, steps, {axis}) {
   return row(key, 'Steps', steps.map(([token, label]) => column(`${key}-${token}`, label, [
     axis === 'height'
-      ? {type: 'rectangle', id: id(key, token, 'bar'), name: 'Bar', width: variable(variables, `--${token}`), height: 40, fill: '$--color-accent'}
-      : {type: 'rectangle', id: id(key, token, 'box'), name: 'Box', width: 72, height: 72, fill: '$--color-panel', stroke: '$--color-divider', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', cornerRadius: `$--${token}`},
+      ? {type: 'rectangle', id: id(key, token, 'bar'), name: 'Bar', width: variable(variables, `--${token}`), height: 40, fill: '$--primary'}
+      : {type: 'rectangle', id: id(key, token, 'box'), name: 'Box', width: 72, height: 72, fill: '$--card', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', cornerRadius: `$--${token}`},
     value(`${key}-${token}-value`, `${label} ${variable(variables, `--${token}`)}`),
   ], {width: 'fit_content', alignItems: 'start', gap: '$--spacing-sm'})), {gap: '$--spacing-xl', alignItems: 'end'});
 }
 
-function sizes(variables, mapped, key, entries) {
+function sizes(variables, key, entries) {
   return column(key, 'Sizes', entries.map(([token, label]) => ({
     type: 'frame', id: id(key, token), name: label, layout: 'horizontal', alignItems: 'center', gap: '$--spacing-xl',
-    width: 'fill_container', padding: ['$--spacing-sm', 0], stroke: '$--color-divider', strokeWidth: {bottom: '$--size-hairline'}, strokeAlignment: 'inner',
+    width: 'fill_container', padding: ['$--spacing-sm', 0], stroke: '$--border', strokeWidth: {bottom: '$--size-hairline'}, strokeAlignment: 'inner',
     children: [
       {...text(`${key}-${token}-label`, label, {size: '$--text-body'}), textGrowth: 'fixed-width', width: 200},
       {...value(`${key}-${token}-value`, `${variable(variables, `--${token}`)}`), textGrowth: 'fixed-width', width: 60},
-      value(`${key}-${token}-swift`, `HideTheme.${mapped[`--${token}`]}`),
+      value(`${key}-${token}-token`, `--${token}`),
     ],
   })), {gap: 0});
 }
 
-export function foundations(variables, mapped) {
+export function foundations(variables) {
   const v = variables;
   return {
     type: 'frame', id: id('sheet'), name: 'System / Foundations', clip: true, width: WIDTH,
-    fill: '$--color-background', layout: 'vertical', gap: '$--spacing-xxxl', padding: '$--spacing-xxl',
+    fill: '$--background', layout: 'vertical', gap: '$--spacing-xxxl', padding: '$--spacing-xxl',
     children: [
       column('title', 'Title block', [
         text('title-name', 'Hide', {size: '$--text-display', weight: '600'}),
-        text('title-sub', 'Single dark mode. Four-step surface ladder, 1px hairlines, no drop shadows. Every value on this sheet is read from the canvas variables that gen-pen.mjs writes from HideTheme.swift, and the sheet itself is redrawn by the same run.', {size: '$--text-subhead', fill: '$--color-secondary', width: 'fill_container'}),
+        text('title-sub', 'Medium density, light and dark. Four-step surface ladder, 1px hairlines, no drop shadows. Every value on this sheet is read from the canvas variables that gen-pen.mjs writes from design/tokens.json, and the sheet itself is redrawn by the same run.', {size: '$--text-subhead', fill: '$--subtle-foreground', width: 'fill_container'}),
       ], {gap: '$--spacing-sm'}),
 
-      section('surface', 'Surface ladder', null, swatchLadder(v, 'surface-ladder', [
-        ['color-background', 'background'], ['color-sidebar', 'sidebar'], ['color-panel', 'panel'], ['color-elevated', 'elevated'], ['color-balloon', 'balloon'],
-      ])),
-
-      section('ink', 'Text', null, textInks(v, 'ink-set', [
-        ['color-primary', 'primary'], ['color-secondary', 'secondary'], ['color-muted', 'muted'], ['color-accent', 'accent'],
-      ])),
-
-      section('semantic', 'Semantic', 'The only saturated colour in the chrome. Everything else stays on the neutral ladder.', chips(v, 'semantic-set', [
-        ['color-agent-working', 'agent working'], ['color-success', 'success'], ['color-warning', 'warning'], ['color-danger', 'danger'],
-      ])),
-
-      section('pr', 'Pull request and diff', 'Status colours a row shows for a pull request, and the tints a diff draws.', column('pr-body', 'Rows', [
-        chips(v, 'pr-set', [['color-pr-open', 'open'], ['color-pr-merged', 'merged'], ['color-pr-closed', 'closed'], ['color-pr-draft', 'draft']]),
-        chips(v, 'diff-set', [['color-diff-added', 'diff added'], ['color-diff-removed', 'diff removed'], ['color-divider', 'divider'], ['color-hover-wash', 'hover wash']]),
-      ], {gap: '$--spacing-md'})),
+      section('palette', 'Palette', 'The Mode theme axis: the same variables, each with a Light value and a Dark value.', row('palette-frames', 'Themes', [palette(v, 'Light'), palette(v, 'Dark')], {gap: '$--spacing-xl', alignItems: 'start'})),
 
       section('type', 'Type scale', 'Inter with ss03 in the app. pen renders plain Inter, so glyph shapes here are approximate; sizes are exact. Terminal and editor sizes render in JetBrains Mono, standing in for SF Mono.', typeScale(v, 'type-scale', [
-        ['text-micro', '12 unread agent updates'], ['text-caption', 'Keycap and metadata text'], ['text-body', 'Sidebar rows and tab titles use this size'],
+        ['text-micro', '12 unread agent updates'], ['text-caption', 'Badge and metadata text'], ['text-body', 'Sidebar rows and control labels use this size'],
         ['text-subhead', 'Pane header and section header'], ['text-title', 'Dialog title'], ['text-terminal-base', 'cargo test --workspace', true],
         ['text-editor-document', 'Markdown document body', true], ['text-headline', 'Sheet headline'], ['text-display', 'No pane selected'],
       ])),
@@ -152,21 +177,29 @@ export function foundations(variables, mapped) {
         ['radius-xs', 'xs'], ['radius-sm', 'sm'], ['radius-md', 'md'], ['radius-lg', 'lg'], ['radius-xl', 'xl'],
       ], {axis: 'radius'})),
 
-      section('size', 'Sizes the layout is built on', 'The heights and widths a board reaches for before writing a number, and the HideTheme constant each one is.', sizes(v, mapped, 'size-set', [
+      section('control', 'Control and icon sizes', 'The medium-density scale every System part is built on (D-07): a body control is --size-control tall, its icon --size-icon.', sizes(v, 'control-set', [
+        ['size-control-sm', 'control, small'],
+        ['size-control', 'control, default'],
+        ['size-control-lg', 'control, large'],
+        ['size-icon-sm', 'icon, small'],
+        ['size-icon', 'icon, default'],
+        ['size-checkbox', 'checkbox / radio / switch track'],
+        ['size-badge-height', 'badge'],
+        ['size-keycap-height', 'kbd'],
+      ])),
+
+      section('size', 'Sizes the layout is built on', 'The heights and widths a board reaches for before writing a number.', sizes(v, 'size-set', [
         ['size-hairline', 'hairline'],
         ['size-pane-header', 'pane header'],
         ['size-tab-strip', 'tab strip'],
-        ['size-control-compact', 'control, compact'],
-        ['size-control-regular', 'control, regular'],
-        ['size-icon-button-standard', 'icon button, standard'],
-        ['size-keycap-height', 'keycap'],
-        ['size-badge-height', 'badge'],
         ['size-checkout-row', 'checkout row'],
         ['size-sidebar-ideal', 'sidebar, ideal'],
         ['size-panel-ideal', 'panel, ideal'],
+        ['size-settings-control-w', 'settings control width'],
+        ['size-worktree-dialog', 'dialog width'],
       ])),
 
-      section('opacity', 'Opacity', 'Applied to a whole view, never baked into a colour; a wash colour carries its own alpha instead.', sizes(v, mapped, 'opacity-set', [
+      section('opacity', 'Opacity', 'Applied to a whole view, never baked into a colour; a wash colour carries its own alpha instead.', sizes(v, 'opacity-set', [
         ['opacity-secondary', 'secondary'],
         ['opacity-read-status', 'read status'],
         ['opacity-dimmed', 'dimmed'],
@@ -182,6 +215,6 @@ export function foundations(variables, mapped) {
 export function requiredVariables() {
   const seen = new Set();
   const stub = new Proxy({}, {get: (_, name) => { seen.add(name); return {type: 'number', value: 0}; }});
-  foundations(stub, new Proxy({}, {get: () => 'stub'}));
+  foundations(stub);
   return [...seen];
 }

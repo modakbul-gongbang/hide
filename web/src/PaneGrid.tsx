@@ -40,7 +40,7 @@ export function PaneCanvas({ actions }: { actions: Actions }) {
   const scales = useShellStore((s) => s.rest?.ui_state?.pane_text_scales);
   if (!checkout || !tab || !layout) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center text-caption text-muted" data-canvas="empty">
+      <div className="flex min-h-0 flex-1 items-center justify-center text-caption text-muted-foreground" data-canvas="empty">
         {checkout ? "no tab" : "no checkout"}
       </div>
     );
@@ -81,7 +81,7 @@ export function RemotePaneCanvas({
   const { tab, layout } = view;
   if (!tab || !layout) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center text-caption text-muted" data-canvas="empty">
+      <div className="flex min-h-0 flex-1 items-center justify-center text-caption text-muted-foreground" data-canvas="empty">
         {tab ? "The remote tab's layout has not arrived yet" : "no tab"}
       </div>
     );
@@ -263,7 +263,7 @@ function Divider({ node, dispatch }: { node: Extract<LayoutNode, { type: "split"
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
       />
-      {guide ? <div className="pointer-events-none absolute z-20 bg-accent" style={guide} data-resize-guide="true" /> : null}
+      {guide ? <div className="pointer-events-none absolute z-20 bg-primary" style={guide} data-resize-guide="true" /> : null}
     </>
   );
 }

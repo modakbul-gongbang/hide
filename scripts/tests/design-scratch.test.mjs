@@ -42,7 +42,7 @@ function fixture(t) {
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.mkdirSync(path.join(root, 'design'));
   fs.mkdirSync(path.join(directory, 'bin'));
-  for (const name of ['design-scratch.mjs', 'pen-tokens.mjs']) fs.copyFileSync(path.join(repository, 'scripts', name), path.join(root, 'scripts', name));
+  for (const name of ['design-scratch.mjs', 'pen-tokens.mjs', 'gen-tokens.mjs']) fs.copyFileSync(path.join(repository, 'scripts', name), path.join(root, 'scripts', name));
   fs.writeFileSync(path.join(root, '.gitignore'), '/agents/\n.pen-*\n');
   fs.writeFileSync(path.join(root, 'design/hide-ui.lib.pen'), 'fixture library A');
   fs.writeFileSync(path.join(directory, 'bin/pen'), fakePen, {mode: 0o755});

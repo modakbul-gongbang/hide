@@ -8,7 +8,9 @@
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { allBuffers, deleteBufferId, flushBuffer, identity, recoveryBuffers, tabBufferKey, type StoredBuffer } from "./buffers";
-import { Button, Dialog } from "./components/ui/controls";
+import { Button } from "./components/ui/button";
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
+import { Hint } from "./components/ui/tooltip";
 import { catalogWorkspaces, frontCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 
@@ -80,14 +82,13 @@ export function DraftRecoveryLine({ actions }: { actions: Actions }) {
   if (count === 0) return null;
   return (
     <>
-      <div role="status" data-draft-recovery={count} className="flex items-center gap-md border-b border-divider bg-panel px-md py-xs text-caption text-warning">
-        <span
-          className="min-w-0 flex-1 truncate"
-          title={`${count === 1 ? "1 unsaved draft is" : `${count} unsaved drafts are`} not open in any tab. Nothing is discarded until you choose.`}
-        >
-          {count === 1 ? "1 unsaved draft is" : `${count} unsaved drafts are`} not open in any tab. Nothing is discarded until you choose.
-        </span>
-        <button type="button" className="text-primary underline" data-draft-recovery-review="true" onClick={() => setOpen(true)}>
+      <div role="status" data-draft-recovery={count} className="flex items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-warning">
+        <Hint label={`${count === 1 ? "1 unsaved draft is" : `${count} unsaved drafts are`} not open in any tab. Nothing is discarded until you choose.`}>
+          <span className="min-w-0 flex-1 truncate">
+            {count === 1 ? "1 unsaved draft is" : `${count} unsaved drafts are`} not open in any tab. Nothing is discarded until you choose.
+          </span>
+        </Hint>
+        <button type="button" className="text-foreground underline" data-draft-recovery-review="true" onClick={() => setOpen(true)}>
           Review
         </button>
       </div>
@@ -102,52 +103,59 @@ function DraftRecoverySheet({ actions, onClose }: { actions: Actions; onClose: (
   const rest = useShellStore((s) => s.rest);
   const [confirming, setConfirming] = useState<string | null>(null);
   return (
-    <Dialog label="Unsaved drafts" onClose={onClose} data-draft-recovery-sheet="true">
-      <div className="flex max-h-[var(--size-settings-sheet-h-max)] flex-col gap-sm overflow-auto p-md text-body">
-        <h2 className="text-title font-semibold text-primary">Unsaved drafts</h2>
-        {drafts.length === 0 ? <p className="text-caption text-muted">No draft is waiting.</p> : null}
-        <ul className="flex flex-col gap-sm">
-          {drafts.map((draft) => {
-            const place = draftPlace(draft, host, rest);
-            // The id joins its parts with NUL, which a DOM attribute selector
-            // cannot match; the attributes carry it URI-encoded.
-            const tag = encodeURIComponent(draft.id);
-            return (
-              <li key={draft.id} className="flex flex-col gap-xxs border-b border-divider pb-sm" data-draft={tag}>
-                <span className="truncate font-mono text-caption text-primary" title={draft.path}>{draft.path}</span>
-                <span className="text-caption text-muted">
-                  {origin(draft, host, rest)} · {new Date(draft.updated_at).toLocaleString()}
-                  {place.kind === "none" ? ` · cannot open here: ${place.reason}` : ""}
-                </span>
-                <span className="flex flex-wrap gap-sm">
-                  {place.kind === "front" ? (
-                    <Button data-draft-open={tag} onClick={() => { actions.openFile(draft.path, false); onClose(); }}>Open</Button>
-                  ) : place.kind === "device" ? (
-                    <Button data-draft-show-device={tag} onClick={() => actions.focusDevice(place.device)}>Show {place.label}</Button>
-                  ) : place.kind === "checkout" ? (
-                    <Button data-draft-show-checkout={tag} onClick={() => actions.focusCheckout(place.workspaceId, place.checkoutId)}>Show {place.label}</Button>
-                  ) : null}
-                  <Button appearance="quiet" data-draft-export={tag} onClick={() => exportContents(draft)}>Export</Button>
-                  {confirming === draft.id ? (
-                    <Button
-                      appearance="quiet"
-                      data-draft-discard-confirm={tag}
-                      onClick={() => {
-                        setConfirming(null);
-                        void deleteBufferId(draft.id).then(refreshRecoveryDrafts);
-                      }}
-                    >
-                      Discard permanently
-                    </Button>
-                  ) : (
-                    <Button appearance="quiet" data-draft-discard={tag} onClick={() => setConfirming(draft.id)}>Discard…</Button>
-                  )}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent data-draft-recovery-sheet="true" className="max-h-(--size-settings-sheet-h-max)">
+        <DialogHeader>
+          <DialogTitle>Unsaved drafts</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          {drafts.length === 0 ? <p className="text-caption text-muted-foreground">No draft is waiting.</p> : null}
+          <ul className="flex flex-col gap-sm">
+            {drafts.map((draft) => {
+              const place = draftPlace(draft, host, rest);
+              // The id joins its parts with NUL, which a DOM attribute selector
+              // cannot match; the attributes carry it URI-encoded.
+              const tag = encodeURIComponent(draft.id);
+              return (
+                <li key={draft.id} className="flex flex-col gap-xxs border-b border-border pb-sm" data-draft={tag}>
+                  <Hint label={draft.path}>
+                    <span className="truncate font-mono text-caption text-foreground">{draft.path}</span>
+                  </Hint>
+                  <span className="text-caption text-muted-foreground">
+                    {origin(draft, host, rest)} · {new Date(draft.updated_at).toLocaleString()}
+                    {place.kind === "none" ? ` · cannot open here: ${place.reason}` : ""}
+                  </span>
+                  <span className="flex flex-wrap gap-sm">
+                    {place.kind === "front" ? (
+                      <Button size="sm" data-draft-open={tag} onClick={() => { actions.openFile(draft.path, false); onClose(); }}>Open</Button>
+                    ) : place.kind === "device" ? (
+                      <Button size="sm" data-draft-show-device={tag} onClick={() => actions.focusDevice(place.device)}>Show {place.label}</Button>
+                    ) : place.kind === "checkout" ? (
+                      <Button size="sm" data-draft-show-checkout={tag} onClick={() => actions.focusCheckout(place.workspaceId, place.checkoutId)}>Show {place.label}</Button>
+                    ) : null}
+                    <Button variant="ghost" size="sm" data-draft-export={tag} onClick={() => exportContents(draft)}>Export</Button>
+                    {confirming === draft.id ? (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        data-draft-discard-confirm={tag}
+                        onClick={() => {
+                          setConfirming(null);
+                          void deleteBufferId(draft.id).then(refreshRecoveryDrafts);
+                        }}
+                      >
+                        Discard permanently
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" size="sm" data-draft-discard={tag} onClick={() => setConfirming(draft.id)}>Discard…</Button>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </DialogBody>
+      </DialogContent>
     </Dialog>
   );
 }

@@ -110,7 +110,7 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0, { timeout: 20_000 });
     const chip = page.locator(`[data-pane-children="${parent}"] [data-child-chip="${child}"]`);
     await expect(chip).toBeVisible({ timeout: 20_000 });
-    await expect(chip).toHaveAttribute("title", /Agent two/);
+    await expect(chip).toHaveAttribute("aria-label", /Agent two/);
     await screenshot(page, "s6-child-chip");
     await chip.click();
     await expect.poll(() => last.get("focus_pane")?.pane_id).toBe(child);
@@ -132,9 +132,14 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await menuButton.click();
     const openChild = page.locator(`[data-menu-item="open:${child}"]`);
     await expect(openChild).toBeVisible();
+    await page.mouse.move(0, 0);
     await page.keyboard.press("Escape");
     await expect(openChild).toHaveCount(0);
     expect(sent.get("focus_pane") ?? 0).toBe(focusCount);
+    // The focus the closed menu hands back to its button does not bring the
+    // button's hint up after it; the hint waits for the pointer to come back.
+    await page.waitForTimeout(800);
+    await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0);
 
     // A restart brings the Workspace back with its layout and View tabs; the
     // file that went away stays as an unavailable tab (B19, B20).
