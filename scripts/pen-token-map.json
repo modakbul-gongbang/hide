@@ -118,6 +118,7 @@
     "--size-panel-ideal": "Layout.rightPanelIdealWidth",
     "--size-panel-max": "Layout.rightPanelMaxWidth",
     "--size-workspace-area-min": "Layout.workspaceAreaMinWidth",
+    "--size-view-area-min-height": "Layout.viewAreaMinHeight",
     "--size-hairline": "Layout.hairlineWidth",
     "--size-agent-mark": "agentMarkWidth",
     "--size-badge-height": "badgeHeight",

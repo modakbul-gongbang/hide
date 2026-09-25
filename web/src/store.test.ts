@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { EditorDocumentSnapshot } from "./snapshot";
 import { DIAGNOSTIC_CAP, LISTING_CAP, useShellStore } from "./store";
 
 describe("snapshot merge", () => {
@@ -261,5 +262,58 @@ describe("snapshot merge", () => {
     expect(state.directoryList).toBeNull();
     expect(state.listings).toEqual({});
     expect(state.diagnostics.at(-1)).toContain("directory_list without a known kind=none");
+  });
+});
+
+describe("the documents section", () => {
+  const doc = (path: string, contents: string): EditorDocumentSnapshot => ({
+    path,
+    language: null,
+    document_kind: "text",
+    contents_utf8: contents,
+    revision: null,
+    dirty: false,
+    readonly_reason: null,
+    conflict: null,
+    save: null,
+  });
+
+  beforeEach(() => {
+    useShellStore.setState({ documents: {}, editor: null, changes: null });
+  });
+
+  it("replaces the map with a snapshot's section, and empties it when a snapshot has none", () => {
+    const store = useShellStore.getState();
+    store.applyFrame({ type: "snapshot", payload: { rest: {}, documents: { visible: ["a", "b"], changed: [{ tab_id: "a", document: doc("/a", "1") }, { tab_id: "b", document: doc("/b", "1") }] } } });
+    store.applyFrame({ type: "snapshot", payload: { rest: {}, documents: { visible: ["c"], changed: [{ tab_id: "c", document: doc("/c", "1") }] } } });
+    expect(Object.keys(useShellStore.getState().documents)).toEqual(["c"]);
+    store.applyFrame({ type: "snapshot", payload: { rest: {} } });
+    expect(useShellStore.getState().documents).toEqual({});
+  });
+
+  it("keeps a still-visible document, overwrites a changed one and drops one no longer visible", () => {
+    const store = useShellStore.getState();
+    const a = doc("/a", "1");
+    store.applyFrame({ type: "snapshot", payload: { rest: {}, documents: { visible: ["a", "b"], changed: [{ tab_id: "a", document: a }, { tab_id: "b", document: doc("/b", "1") }] } } });
+    const c = doc("/c", "2");
+    store.applyFrame({ type: "delta", payload: { documents: { visible: ["a", "c"], changed: [{ tab_id: "c", document: c }] } } });
+    const documents = useShellStore.getState().documents;
+    expect(Object.keys(documents).sort()).toEqual(["a", "c"]);
+    expect(documents.a).toBe(a);
+    expect(documents.c).toBe(c);
+    const edited = doc("/a", "typed");
+    store.applyFrame({ type: "delta", payload: { documents: { visible: ["a", "c"], changed: [{ tab_id: "a", document: edited }] } } });
+    expect(useShellStore.getState().documents.a).toBe(edited);
+    expect(useShellStore.getState().documents.c).toBe(c);
+  });
+
+  it("keeps the map, object for object, through a delta without the section or one that changes nothing", () => {
+    const store = useShellStore.getState();
+    store.applyFrame({ type: "snapshot", payload: { rest: {}, documents: { visible: ["a"], changed: [{ tab_id: "a", document: doc("/a", "1") }] } } });
+    const before = useShellStore.getState().documents;
+    store.applyFrame({ type: "delta", payload: { revision: 2, changes: null, rest: { focused: { pane_id: "p2" } } } });
+    expect(useShellStore.getState().documents).toBe(before);
+    store.applyFrame({ type: "delta", payload: { documents: { visible: ["a"], changed: [] } } });
+    expect(useShellStore.getState().documents).toBe(before);
   });
 });

@@ -6,6 +6,8 @@ import { share } from "./share";
 import {
   type AgentRow,
   type ChangesSnapshot,
+  type DocumentsSection,
+  type EditorDocumentSnapshot,
   type EditorSnapshot,
   type PaneFind,
   type SnapshotRest,
@@ -61,6 +63,7 @@ export type Frame = {
     rest?: SnapshotRest;
     editor?: EditorSnapshot | null;
     changes?: ChangesSnapshot | null;
+    documents?: DocumentsSection | null;
     find?: PaneFind;
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
@@ -104,6 +107,13 @@ type Store = {
   editor: EditorSnapshot | null;
   /** The core's changes section, read the same way and for the same reason. */
   changes: ChangesSnapshot | null;
+  /**
+   * The documents the front Workspace's visible displays show, by editor tab
+   * id (S7 contract 3.1). A snapshot replaces the map; a delta that carries
+   * the section keeps the documents still visible, overwrites the ones that
+   * changed and drops the rest; a delta without it keeps the map as it is.
+   */
+  documents: Documents;
   agents: AgentRow[];
   /**
    * The keyboard-focus pane of the context on screen: the core's
@@ -155,6 +165,27 @@ type Store = {
   applyFrame: (frame: Frame) => TerminalChunk[];
 };
 
+export type Documents = Readonly<Record<string, EditorDocumentSnapshot>>;
+
+const NO_DOCUMENTS: Documents = {};
+
+/**
+ * One `documents` section applied to the map the store holds. An unchanged
+ * document keeps its object, and a section that changes nothing returns the
+ * same map, so a view of another document does not redraw for this one.
+ */
+function mergeDocuments(previous: Documents, section: DocumentsSection): Documents {
+  const next: Record<string, EditorDocumentSnapshot> = {};
+  for (const id of section.visible) {
+    const kept = previous[id];
+    if (kept) next[id] = kept;
+  }
+  for (const change of section.changed) next[change.tab_id] = change.document;
+  const ids = Object.keys(next);
+  const same = ids.length === Object.keys(previous).length && ids.every((id) => previous[id] === next[id]);
+  return same ? previous : next;
+}
+
 const KNOWN_GROUPS = new Set(["needs_you", "done", "working", "seen"]);
 export const DIAGNOSTIC_CAP = 200;
 
@@ -194,6 +225,7 @@ export const useShellStore = create<Store>((set, get) => ({
   rest: null,
   editor: null,
   changes: null,
+  documents: NO_DOCUMENTS,
   agents: [],
   focusedPaneId: null,
   herdrState: null,
@@ -258,16 +290,21 @@ export const useShellStore = create<Store>((set, get) => ({
   },
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};
-    // The core revisions `editor` and `changes` on their own, beside `rest`:
-    // a snapshot carries every section, a delta only the ones that changed
-    // since the client's revision. Both land before the routing below, which
-    // answers a listing or a refusal with an early return.
+    // The core revisions `editor`, `changes` and `documents` on their own,
+    // beside `rest`: a snapshot carries every section, a delta only the ones
+    // that changed since the client's revision. They land before the routing
+    // below, which answers a listing or a refusal with an early return.
     if (frame.type === "snapshot") {
-      set({ editor: payload.editor ?? null, changes: payload.changes ?? null });
-    } else if (payload.editor !== undefined || payload.changes !== undefined) {
+      set({
+        editor: payload.editor ?? null,
+        changes: payload.changes ?? null,
+        documents: payload.documents ? mergeDocuments(NO_DOCUMENTS, payload.documents) : NO_DOCUMENTS,
+      });
+    } else if (payload.editor !== undefined || payload.changes !== undefined || payload.documents !== undefined) {
       set({
         editor: payload.editor ?? get().editor,
         changes: payload.changes ?? get().changes,
+        documents: payload.documents ? mergeDocuments(get().documents, payload.documents) : get().documents,
       });
     }
     if (frame.type === "directory_list") {

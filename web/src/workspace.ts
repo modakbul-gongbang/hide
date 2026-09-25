@@ -4,7 +4,7 @@
 // owns every value here (`rest.workspace_view`, the strip, the editor's active
 // tab); these functions only read them, so they are testable without a page.
 
-import type { AgentRow, Checkout, EditorSnapshot, EditorTabSnapshot, SnapshotRest, StripTab, Tab } from "./snapshot";
+import type { AgentRow, Checkout, EditorSnapshot, EditorTabSnapshot, SnapshotRest, StripTab, Tab, ViewLayoutSnapshot } from "./snapshot";
 
 export type ViewMode = "agents" | "together" | "views";
 
@@ -18,6 +18,8 @@ export type WorkspaceView = {
   agent_share: number;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
+  /** The View areas (S7); absent only from a core that predates them. */
+  layout?: ViewLayoutSnapshot;
 };
 
 /** The three layouts, in the order the toolbar and the menu offer them (D-03). */

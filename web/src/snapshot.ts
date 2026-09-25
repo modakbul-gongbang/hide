@@ -310,6 +310,52 @@ export type EditorSnapshot = {
   opening?: EditorOpeningSnapshot[];
 };
 
+/**
+ * The documents the front Workspace's visible displays show (S7 contract
+ * 3.1), a delta section of its own beside `editor`: `visible` names every
+ * document on screen, `changed` carries only those past this reader's cursor.
+ */
+export type DocumentsSection = {
+  visible: string[];
+  changed: { tab_id: string; document: EditorDocumentSnapshot }[];
+};
+
+/** What a display shows now (S7 contract 3): its document, a read in flight, a root not readable yet, or a read that failed. */
+export type ViewDisplayState = "open" | "opening" | "waiting" | "unavailable";
+
+/** One place a file or diff is shown in a View area; several displays may show one document. */
+export type ViewDisplaySnapshot = {
+  id: string;
+  /** The editor tab (document buffer) it shows; null while it is opening or waiting. */
+  tab_id: string | null;
+  path: string;
+  label: string;
+  kind: "file" | "diff";
+  /** Which History group a diff shows; null for a file. */
+  committed: boolean | null;
+  preview: boolean;
+  state: ViewDisplayState;
+  /** Why it is waiting or unavailable. */
+  reason: string | null;
+};
+
+export type ViewAreaSnapshot = { id: string; active: string | null; displays: ViewDisplaySnapshot[] };
+
+/** `row`: first left, second right; `column`: first top, second bottom. `ratio` is the first child's share. */
+export type ViewSplitSnapshot = { id: string; axis: "row" | "column"; ratio: number; first: ViewNode; second: ViewNode };
+
+export type ViewNode = { area: ViewAreaSnapshot } | { split: ViewSplitSnapshot };
+
+/** The front Workspace's View areas as the core owns them (S7 D-11). */
+export type ViewLayoutSnapshot = {
+  root: ViewNode;
+  active_area: string;
+  limits: { areas: number; depth: number; displays: number };
+  display_count: number;
+};
+
+export type DiffSnapshot = { path: string; committed: boolean; text: string; notice: string | null };
+
 /** The six working-tree states the core presents (ChangedFileStatus). */
 export type ChangedFileStatus = "modified" | "added" | "deleted" | "untracked" | "renamed" | "conflict";
 
@@ -336,7 +382,10 @@ export type ChangesSnapshot = {
   base_branch: string | null;
   selected_path: string | null;
   selected_committed: boolean;
+  /** The Swift shell's selected diff; the web shell reads `diffs`. */
   diff: { path: string; text: string; notice: string | null } | null;
+  /** One bounded patch per visible diff display of the front Workspace (S7 contract 3.2); absent when none shows. */
+  diffs?: DiffSnapshot[];
   unavailable_reason: string | null;
   /** Why the latest read failed while these entries, from the last good read, are still shown (S5.5 B22). */
   stale_reason?: string | null;
