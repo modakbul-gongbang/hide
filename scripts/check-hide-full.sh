@@ -46,4 +46,5 @@ node scripts/check-design-contract.mjs
 node --test scripts/tests/pen-gallery.test.mjs
 node --test scripts/tests/pen-transplant.test.mjs
 node --test scripts/tests/design-scratch.test.mjs
+node --test scripts/tests/hide-screens.test.mjs
 node scripts/check-hide-design-enforcement.mjs

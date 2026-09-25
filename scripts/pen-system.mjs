@@ -197,6 +197,18 @@ function menuContent(id, width, children) {
 
 // -- Button (also carries the folded Icon Button master) ---------------------------
 
+// The five variants design/hide-screens.pen also draws (as a ref-site override
+// recipe, not a redrawn control; see pen-screens.mjs). Keyed and shaped exactly
+// as System / Button's own state cells below, so a variant's color is written
+// once and both the gallery and the screens regenerate from it.
+export const BUTTON_VARIANTS = {
+  default: {overrides: {}, fg: '$--primary-foreground'},
+  secondary: {overrides: {fill: '$--secondary', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, fg: '$--subtle-foreground'},
+  outline: {overrides: {fill: '$--background', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, fg: '$--foreground'},
+  ghost: {overrides: {fill: '#00000000'}, fg: '$--subtle-foreground'},
+  destructive: {overrides: {fill: '$--destructive'}, fg: '$--destructive-foreground'},
+};
+
 function buildButton(tokens, legacy) {
   const H = num(tokens, '--size-control'), HS = num(tokens, '--size-control-sm'), HL = num(tokens, '--size-control-lg');
   const DISABLED = num(tokens, '--opacity-disabled');
@@ -207,18 +219,19 @@ function buildButton(tokens, legacy) {
 
   function states(suffix) {
     const variant = (key, name, overrides, fg) => ref(`btn-${key}-${suffix}`, master.id, name, overrides, {'btn-ic': {fill: fg}, 'btn-lb': {fill: fg}});
+    const named = (key, name) => variant(key, name, BUTTON_VARIANTS[key].overrides, BUTTON_VARIANTS[key].fg);
     return [
-      cell('Default', variant('default', 'Default', {}, '$--primary-foreground')),
+      cell('Default', named('default', 'Default')),
       cell('Default Hover', variant('defhover', 'Default Hover', {opacity: 0.9}, '$--primary-foreground')),
       cell('Default Focus', variant('deffocus', 'Default Focus', {stroke: '$--ring', strokeWidth: 1, strokeAlignment: 'outer'}, '$--primary-foreground')),
       cell('Default Disabled', variant('defdis', 'Default Disabled', {opacity: DISABLED}, '$--primary-foreground')),
       cell('Pending', variant('pending', 'Pending', {opacity: 0.72}, '$--primary-foreground')),
-      cell('Secondary', variant('secondary', 'Secondary', {fill: '$--secondary', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, '$--subtle-foreground')),
+      cell('Secondary', named('secondary', 'Secondary')),
       cell('Secondary Hover', variant('sechover', 'Secondary Hover', {fill: '$--accent', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, '$--accent-foreground')),
-      cell('Outline', variant('outline', 'Outline', {fill: '$--background', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, '$--foreground')),
-      cell('Ghost', variant('ghost', 'Ghost', {fill: '#00000000'}, '$--subtle-foreground')),
+      cell('Outline', named('outline', 'Outline')),
+      cell('Ghost', named('ghost', 'Ghost')),
       cell('Ghost Hover', variant('ghosthover', 'Ghost Hover', {fill: '$--accent'}, '$--accent-foreground')),
-      cell('Destructive', variant('destructive', 'Destructive', {fill: '$--destructive'}, '$--destructive-foreground')),
+      cell('Destructive', named('destructive', 'Destructive')),
       cell('Destructive Hover', variant('desthover', 'Destructive Hover', {fill: '$--destructive', opacity: 0.9}, '$--destructive-foreground')),
       cell('Link', variant('link', 'Link', {fill: '#00000000'}, '$--primary')),
       cell('Small', variant('small', 'Small', {height: HS, padding: [0, '$--spacing-sm']}, '$--primary-foreground')),
@@ -415,15 +428,24 @@ function buildTabs(tokens, legacy) {
 
 // -- Badge (reuses the folded Badge master directly) -------------------------------
 
+// The four variants design/hide-screens.pen also draws; see BUTTON_VARIANTS above.
+export const BADGE_VARIANTS = {
+  default: {overrides: {fill: '$--primary', strokeWidth: 0}, fg: '$--primary-foreground'},
+  secondary: {overrides: {fill: '$--secondary', strokeWidth: 0}, fg: '$--subtle-foreground'},
+  destructive: {overrides: {fill: '$--destructive', strokeWidth: 0}, fg: '$--destructive-foreground'},
+  outline: {overrides: {fill: '#00000000', stroke: '$--border'}, fg: '$--subtle-foreground'},
+};
+
 function buildBadge(tokens, legacy) {
   const master = legacy.badge.master, iconId = legacy.badge.iconId, labelId = legacy.badge.labelId;
   function states(suffix) {
     const variant = (key, name, overrides, textFill) => ref(`bdg-${key}-${suffix}`, master.id, name, overrides, {[iconId]: {enabled: false}, [labelId]: {content: name, fill: textFill}});
+    const named = (key, name) => variant(key, name, BADGE_VARIANTS[key].overrides, BADGE_VARIANTS[key].fg);
     return [
-      cell('Default', variant('default', 'Default', {fill: '$--primary', strokeWidth: 0}, '$--primary-foreground')),
-      cell('Secondary', variant('secondary', 'Secondary', {fill: '$--secondary', strokeWidth: 0}, '$--subtle-foreground')),
-      cell('Destructive', variant('destructive', 'Destructive', {fill: '$--destructive', strokeWidth: 0}, '$--destructive-foreground')),
-      cell('Outline', variant('outline', 'Outline', {fill: '#00000000', stroke: '$--border'}, '$--subtle-foreground')),
+      cell('Default', named('default', 'Default')),
+      cell('Secondary', named('secondary', 'Secondary')),
+      cell('Destructive', named('destructive', 'Destructive')),
+      cell('Outline', named('outline', 'Outline')),
     ];
   }
   return buildSheet('sys-badge', 'System / Badge', 'shadcn Badge: --size-badge-height tall, rounded-xs, text-micro. The master is the folded former System / Badge master, unchanged beyond its variable rename.', [masterCard('bdg-master-card', 'Master', master)], states('l'), states('d'));

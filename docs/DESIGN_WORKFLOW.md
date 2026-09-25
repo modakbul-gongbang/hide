@@ -45,6 +45,11 @@ It is excluded from the production build `hided` serves.
    - Width and height use numeric literals; variable references have rendered at zero in this toolchain.
    - Variable-bound node opacity also renders invisible in this toolchain; the state bindings in `pen-token-map.json` materialize their numeric values during generation and checking.
    - The canvas substitutes JetBrains Mono for unavailable SF Mono and plain Inter because `ss03` does not travel on a token; these substitutions are not a pixel-comparison acceptance gate.
+   - A cross-library `ref`'s own internal `$--token` fills and strokes resolve to the imported library's own default (Light) value, regardless of any `theme: {Mode: 'Dark'}` tag anywhere in the importing document.
+     A bare local `$--token` on a node the importing document authors itself, and an explicit property override placed at the ref site using the importing document's own local `$--token`, both resolve correctly per theme.
+     A descendant-override key on a cross-library ref also needs the alias prefix (`hideui:btn-lb`, not `btn-lb`), not only the ref's own target.
+     `design/hide-screens.pen` carries its own local copy of every token, read live through `pen-tokens.mjs`, and `scripts/pen-screens.mjs`'s `themedOverrides()` restates a ref's colors by walking the ref's actual master in `design/hide-ui.lib.pen` and copying every `$--token` name it finds, at any depth, into a local override of the same name; a hand-typed color recipe is only for a real per-variant design decision (Button and Badge import `BUTTON_VARIANTS`/`BADGE_VARIANTS` from `pen-system.mjs` for exactly that reason), never for a master's own default.
+     `scripts/check-hide-screens.mjs` refuses a ref or a descendant-override key whose colorable properties are not restated this way.
 4. **Human approval.** Show alternatives in the task's scratch document, let the user choose and revise them, and get approval before implementing.
    Record the approved behavior and any proposed system addition in the PRD so the decision survives scratch cleanup; a scratch is not a merge deliverable.
 5. **Library or screen file.** Promote only the approved reusable components or tokens into `design/hide-ui.lib.pen`, or the approved screen into `design/hide-screens.pen`, with one writer handling the shared update.
@@ -71,6 +76,44 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 - The script replaces (or adds) exactly those sheets in `--into` by node identity and leaves every other sheet in `--into` untouched, so two branches that touched different `Screen /` areas both land cleanly.
 - Run `node scripts/gen-pen.mjs` and `node scripts/check-design-contract.mjs` against the result before committing; a transplant that leaves stale Foundations or an unrecognized sheet name fails the same checks a normal edit would.
 - Never resolve a `hide-screens.pen` conflict by hand-merging JSON; re-run the transplant with the correct `--sheet` list instead.
+
+## Web screen list
+
+`design/hide-screens.pen` draws every area the web shell shows today, one `Screen / <Area>` sheet per area, imported from `design/hide-ui.lib.pen` the same way a `Component /` sheet is drawn from `System /` masters.
+Each sheet carries a `Light` and a `Dark` frame and uses realistic content, including Korean labels and a long path, to show real wrapping and truncation rather than an abstract state.
+`scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.
+
+Main is `Screen / Main`.
+It draws the agent and project sidebar beside the Projects list, grouped by device.
+Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, and `web/src/MainScreen.tsx`.
+
+Project Overview is `Screen / Project Overview`.
+It draws a project's Workspaces and Agents lists under a breadcrumb, with a Sessions shortcut.
+Its web file is `web/src/MainScreen.tsx` (the expanded `ProjectRow`).
+
+Workspace is `Screen / Workspace`.
+It draws the tab strip, the layout switch, and the split content of a terminal beside the Explorer.
+Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, and `web/src/ExplorerTree.tsx`.
+
+Project Sessions is `Screen / Project Sessions`.
+It draws the provider-filtered session list with search, and the read-only detail pane.
+Its web file is `web/src/SessionsScreen.tsx`.
+
+Settings is `Screen / Settings`.
+It draws the five tabs (General, Appearance, Agents, Devices, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
+Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
+
+Palette is `Screen / Palette`.
+It draws the command palette and the file palette.
+Its web file is `web/src/Palette.tsx`.
+
+Dialogs and Sheets is `Screen / Dialogs and Sheets`.
+It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, New workspace, and Keyboard shortcuts.
+Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/NewWorkspace.tsx`, `web/src/DraftRecovery.tsx`, and `web/src/ShortcutSheet.tsx`.
+
+Menus and Overlays is `Screen / Menus and Overlays`.
+It draws the sidebar row menu, the Explorer context menu, the device picker, and the Explorer git-status notice, each anchored in its real screen context.
+Its web files are `web/src/entry-menu.tsx` and `web/src/DevicePicker.tsx`.
 
 ## How to add a token
 
@@ -106,9 +149,10 @@ A `Component /` sheet is a hide composite assembled from `System /` masters (nev
 - `check-pen.mjs` - refuses a Pen library that is not what the token generator would produce: a stale token value, a stale Foundations sheet, or a top-level sheet whose name carries neither the `System /` nor the `Component /` prefix.
 - `check-pen-gallery.mjs` - refuses a `System /` sheet and `web/src/gallery/manifest.ts` that name different parts, or a state drawn on one side and not listed on the other, for either theme frame.
 - `check-web-tokens.mjs` - refuses a web source file that reaches a color, size, or radius through a literal instead of a token: a hex color, an inline color style, a Tailwind arbitrary `[...]` value, or one of Tailwind's own default spacing/text scale classes.
+- `check-hide-screens.mjs` - refuses a `design/hide-screens.pen` top-level node not named `Screen / `, a `Screen /` sheet missing a `Light` or a `Dark` frame, a local `$--variable` the file does not define, a ref or descendant-override key whose import alias or target id does not resolve against the imported library, a cross-library ref that leaves one of the imported master's own colors un-restated locally, or a local variable block that differs from what `design/tokens.json` generates.
 
 `--staged` reads the exact staged content of the design inputs and checker files into a temporary directory and checks that, without touching the index or working tree; the tracked `.githooks/pre-commit` runs it and is opt-in (`git -c core.hooksPath=.githooks commit`).
-The node test suites `scripts/tests/pen-gallery.test.mjs`, `scripts/tests/pen-transplant.test.mjs`, and `scripts/tests/design-scratch.test.mjs` exercise the gallery comparison, the transplant script, and the scratch creator respectively against fixtures; they do not prove Pen rendering, which stays a local step with the real CLI.
+The node test suites `scripts/tests/pen-gallery.test.mjs`, `scripts/tests/pen-transplant.test.mjs`, `scripts/tests/design-scratch.test.mjs`, and `scripts/tests/hide-screens.test.mjs` exercise the gallery comparison, the transplant script, the scratch creator, and the screen-list checker respectively against fixtures; they do not prove Pen rendering, which stays a local step with the real CLI.
 
 These are static source checks, not a rendering engine or an aesthetic evaluator: they catch drift between the files that are supposed to agree, not whether a composition looks right.
 Visual approval is always a human judgment made from a gallery-or-app capture beside the Pen export, recorded under `agents/runs/<slug>/` and never as a committed image.
