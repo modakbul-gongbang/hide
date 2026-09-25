@@ -415,9 +415,13 @@ impl Runtime {
     /// Brings the snapshot, the editor and the file in line with the front
     /// Workspace. It runs after every event that can move the screen and
     /// before every snapshot read, so a front moved by Herdr or by a device's
-    /// own focus is followed too. With nothing changed it costs a catalog
-    /// lookup of the front key, one comparison of the editor's tabs, and a
-    /// copy of the published scalars and the front Workspace's tree.
+    /// own focus is followed too; terminal input and output and a document's
+    /// keystrokes skip the pass after their event, so a keystroke costs the
+    /// read's pass alone. With nothing changed it costs a catalog lookup of
+    /// the front key, one comparison of the editor's tabs, a copy of the
+    /// published scalars, and the front Workspace's tree built again: one map
+    /// of the editor's tabs and one root check, then a map lookup per display,
+    /// of which there are at most 64.
     pub(super) fn sync_workspace_view(&mut self) {
         let Some(store) = self.workspace_views.as_ref() else {
             return;
@@ -490,7 +494,8 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_ref() else {
             return;
         };
-        // Only the scalars are copied: this runs on every snapshot read.
+        // This runs on every snapshot read: the scalars are copied and the
+        // tree is built again (`view_layout_snapshot`).
         let fresh;
         let view = match front {
             Some((device, path)) => Some(match store.views.get(device, path) {

@@ -1514,15 +1514,18 @@ impl Runtime {
             .separate_view_areas()
             .then(|| AreaIntent::of(&event))
             .flatten();
-        let high_frequency = event.is_terminal_io();
+        // A keystroke in a document is as frequent as terminal input and
+        // moves no area either: its first edit keeps its own displays open,
+        // and the next snapshot read's sync publishes that.
+        let high_frequency = event.is_terminal_io() || matches!(event, Event::FileDraft(_));
         let chooses_workspace = matches!(
             event,
             Event::FocusCheckout(_) | Event::FocusPane(_) | Event::FocusTab(_)
         );
         let changed = self.apply(event) || cleared_error;
         // The areas follow the event that moved the screen, in the same
-        // frame (D-08); terminal input and output never move them, so they
-        // skip the pass.
+        // frame (D-08); terminal input and output and a document's
+        // keystrokes never move them, so they skip the pass.
         if self.separate_view_areas() && !high_frequency {
             if let Some(intent) = intent
                 && self.snapshot.status.last_error.is_none()

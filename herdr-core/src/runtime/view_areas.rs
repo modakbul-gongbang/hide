@@ -117,6 +117,15 @@ impl ViewLayoutAction {
     }
 }
 
+/// What every display of one Workspace's tree reads to say its state.
+struct DisplayFacts<'a> {
+    /// The checkout in front, whose reads a display can be waiting on.
+    front: Option<(&'a str, &'a str)>,
+    tabs: HashMap<&'a str, &'a EditorTabSnapshot>,
+    /// Why the Workspace's root cannot be read yet.
+    wait: Option<String>,
+}
+
 /// Where a document being read shows once it lands: the Workspace and the
 /// area the operator asked in, and how.
 #[derive(Clone, Debug)]
@@ -828,16 +837,25 @@ impl Runtime {
     }
 
     /// Keep Open for a document: every preview display of it stays open, and
-    /// the tab's flag follows (B5).
+    /// the tab's flag follows (B5). A display binds only to a tab of its own
+    /// Workspace, so that Workspace is the only one looked at.
     pub(super) fn promote_view_displays(&mut self, tab_id: &str) -> bool {
         let mut changed = false;
-        if let Some(store) = self.workspace_views.as_mut() {
-            for view in &mut store.views.workspaces {
-                for display in view.layout.displays_mut() {
-                    if display.tab_id.as_deref() == Some(tab_id) && display.preview {
-                        display.preview = false;
-                        changed = true;
-                    }
+        let key = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| self.workspace_key(&tab.workspace_id, &tab.checkout_id));
+        if let Some(store) = self.workspace_views.as_mut()
+            && let Some((device, path)) = key
+            && let Some(view) = store.views.get_mut(&device, &path)
+        {
+            for display in view.layout.displays_mut() {
+                if display.tab_id.as_deref() == Some(tab_id) && display.preview {
+                    display.preview = false;
+                    changed = true;
                 }
             }
             if changed {
@@ -1099,11 +1117,7 @@ impl Runtime {
             return true;
         };
         let front = self.front_checkout_owned();
-        let (state, reason) = self.display_state(
-            key,
-            front.as_ref().map(|(w, c)| (w.as_str(), c.as_str())),
-            &display,
-        );
+        let (state, reason) = self.display_state(&self.display_facts(key), &display);
         match state {
             ViewDisplayState::Waiting => {
                 self.set_error(
@@ -1501,18 +1515,29 @@ impl Runtime {
         (!pinned).then(|| "Waiting for this checkout to open".to_owned())
     }
 
+    /// What a display's state reads that is the same for every display of
+    /// the Workspace `key`, taken once per tree rather than per display.
+    fn display_facts(&self, key: &WorkspaceKey) -> DisplayFacts<'_> {
+        DisplayFacts {
+            front: self.front_checkout(),
+            tabs: self
+                .snapshot
+                .editor
+                .tabs
+                .iter()
+                .map(|tab| (tab.id.as_str(), tab))
+                .collect(),
+            wait: self.view_root_wait(key),
+        }
+    }
+
     /// What one display can show now, and why not when it cannot.
     fn display_state(
         &self,
-        key: &WorkspaceKey,
-        front: Option<(&str, &str)>,
+        facts: &DisplayFacts<'_>,
         display: &Display,
     ) -> (ViewDisplayState, Option<String>) {
-        if let Some(tab) = display
-            .tab_id
-            .as_deref()
-            .and_then(|id| self.snapshot.editor.tabs.iter().find(|tab| tab.id == id))
-        {
+        if let Some(tab) = display.tab_id.as_deref().and_then(|id| facts.tabs.get(id)) {
             return match (tab.kind, &tab.unavailable_reason) {
                 (EditorTabKind::Diff, _) => (ViewDisplayState::Open, None),
                 // Retry reads the file again into the same tab, which keeps
@@ -1530,11 +1555,11 @@ impl Runtime {
                 ),
             };
         }
-        if let Some(reason) = self.view_root_wait(key) {
-            return (ViewDisplayState::Waiting, Some(reason));
+        if let Some(reason) = &facts.wait {
+            return (ViewDisplayState::Waiting, Some(reason.clone()));
         }
         if display.kind == DisplayKind::File
-            && front.is_some_and(|(workspace_id, checkout_id)| {
+            && facts.front.is_some_and(|(workspace_id, checkout_id)| {
                 self.document_opens_path(workspace_id, checkout_id, &display.path)
             })
         {
@@ -1548,15 +1573,17 @@ impl Runtime {
     }
 
     /// The front Workspace's tree as the snapshot carries it. It runs on
-    /// every snapshot read, over at most `MAX_VIEW_DISPLAYS` displays.
+    /// every snapshot read, over at most `MAX_VIEW_DISPLAYS` displays: one
+    /// map of the editor's tabs and one root check, then a map lookup per
+    /// display.
     pub(super) fn view_layout_snapshot(
         &self,
         key: &WorkspaceKey,
         layout: &Layout,
     ) -> ViewLayoutSnapshot {
-        let front = self.front_checkout();
+        let facts = self.display_facts(key);
         ViewLayoutSnapshot {
-            root: self.view_node_snapshot(key, front, &layout.root),
+            root: self.view_node_snapshot(&facts, &layout.root),
             active_area: layout.active_area().id.clone(),
             limits: ViewLimitsSnapshot {
                 areas: MAX_VIEW_AREAS,
@@ -1567,12 +1594,7 @@ impl Runtime {
         }
     }
 
-    fn view_node_snapshot(
-        &self,
-        key: &WorkspaceKey,
-        front: Option<(&str, &str)>,
-        node: &Node,
-    ) -> ViewNodeSnapshot {
+    fn view_node_snapshot(&self, facts: &DisplayFacts<'_>, node: &Node) -> ViewNodeSnapshot {
         match node {
             Node::Area(area) => ViewNodeSnapshot::Area(ViewAreaSnapshot {
                 id: area.id.clone(),
@@ -1581,10 +1603,11 @@ impl Runtime {
                     .displays
                     .iter()
                     .map(|display| {
-                        let (state, reason) = self.display_state(key, front, display);
-                        let tab = display.tab_id.as_deref().and_then(|id| {
-                            self.snapshot.editor.tabs.iter().find(|tab| tab.id == id)
-                        });
+                        let (state, reason) = self.display_state(facts, display);
+                        let tab = display
+                            .tab_id
+                            .as_deref()
+                            .and_then(|id| facts.tabs.get(id).copied());
                         ViewDisplaySnapshot {
                             id: display.id.clone(),
                             tab_id: tab.map(|tab| tab.id.clone()),
@@ -1610,8 +1633,8 @@ impl Runtime {
                 id: split.id.clone(),
                 axis: split.axis,
                 ratio: split.ratio,
-                first: Box::new(self.view_node_snapshot(key, front, &split.first)),
-                second: Box::new(self.view_node_snapshot(key, front, &split.second)),
+                first: Box::new(self.view_node_snapshot(facts, &split.first)),
+                second: Box::new(self.view_node_snapshot(facts, &split.second)),
             }),
         }
     }

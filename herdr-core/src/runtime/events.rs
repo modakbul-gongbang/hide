@@ -2283,14 +2283,16 @@ impl Runtime {
                     );
                     return true;
                 };
+                let was_dirty = document.dirty;
                 match files::update_draft(document, payload.contents_utf8) {
                     Ok(()) => {
-                        let edited = document.dirty;
+                        let first_edit = !was_dirty && document.dirty;
                         self.sync_file_tab_dirty(&tab_id);
                         self.sync_active_editor_document();
                         // The first edit keeps a preview tab (B5); an echo of
-                        // the same contents is not an edit.
-                        if edited {
+                        // the same contents is not an edit, and a document
+                        // that is dirty already was kept by its first edit.
+                        if first_edit {
                             self.promote_editor_tab(&tab_id);
                         }
                     }
