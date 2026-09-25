@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { useShellStore } from "./store";
+import { focusTerminal } from "./terminals";
 import { useUiStore } from "./ui";
 
 /** The held-⌥ list of recent tabs or projects; the row at `index` is what release commits. */
@@ -145,6 +146,7 @@ export function NoticeBar({ actions }: { actions: Actions }) {
 export function FindBar({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overlay === "find");
   const close = useUiStore((s) => s.closeOverlay);
+  const pushEscape = useUiStore((s) => s.pushEscape);
   const find = useShellStore((s) => s.find);
   const paneId = useShellStore((s) => s.focusedPaneId);
   const [term, setTerm] = useState("");
@@ -152,11 +154,21 @@ export function FindBar({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+  // Escape and × end the search and give the keyboard back to the pane it
+  // searched, so typing continues where it was (B5).
+  const dismiss = useRef(() => {});
+  dismiss.current = () => {
+    if (paneId) actions.find(paneId, "", 0);
+    close("find");
+    if (paneId) focusTerminal(paneId);
+  };
+  useEffect(() => (open ? pushEscape(() => dismiss.current()) : undefined), [open, pushEscape]);
   if (!open) return null;
   const submit = (step: -1 | 0 | 1) => {
     if (paneId) actions.find(paneId, term, step);
   };
-  const count = find && find.pane_id === paneId && find.term === term ? `${find.total ? find.index + 1 : 0}/${find.total}${find.truncated ? "+" : ""}` : "";
+  // The core's index is already 1-based, and 0 while nothing matches.
+  const count = find && find.pane_id === paneId && find.term === term ? `${find.index}/${find.total}${find.truncated ? "+" : ""}` : "";
   return (
     <div data-find-bar="true" className="flex items-center gap-sm border-b border-divider bg-panel px-md py-xs text-caption">
       <input
@@ -184,10 +196,7 @@ export function FindBar({ actions }: { actions: Actions }) {
         type="button"
         className="text-muted"
         aria-label="Close find"
-        onClick={() => {
-          if (paneId) actions.find(paneId, "", 0);
-          close("find");
-        }}
+        onClick={() => dismiss.current()}
       >
         ×
       </button>

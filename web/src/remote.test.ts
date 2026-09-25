@@ -257,13 +257,13 @@ describe("commands with an SSH device selected", () => {
     expect(useUiStore.getState().pendingClose).toMatchObject({ kind: "tab", id: "remote:studio:tab:w9:t1", targetId: "studio" });
   });
 
-  it("refuses the local-only commands instead of running them on this machine", () => {
+  it("opens the device pane's find bar, which the core answers through the device's Herdr", () => {
     seed(rest("studio"));
     const { sent, actions } = recorder();
     actions.openFind();
-    actions.openFilePalette();
     expect(sent).toHaveLength(0);
-    expect(useUiStore.getState().notice?.text).toContain("Studio Mac");
+    expect(useUiStore.getState().overlay).toBe("find");
+    expect(useUiStore.getState().notice).toBeNull();
   });
 
   it("reorders the device's own strip, naming its checkout", () => {

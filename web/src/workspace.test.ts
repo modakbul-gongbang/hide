@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRow, Checkout, StripTab, Tab } from "./snapshot";
-import { agentEntries, agentWidth, shareAt, tabAgent, tabIdentity } from "./workspace";
+import { agentEntries, agentWidth, drawnMode, shareAt, tabAgent, tabIdentity, type WorkspaceView } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -45,5 +45,22 @@ describe("the Agent/View boundary", () => {
     expect(agentWidth(0.95, 1000, 320)).toBe(680);
     expect(agentWidth(0.2, 600, 320)).toBe(300);
     expect(shareAt(100, 1000, 320)).toBeCloseTo(0.32);
+  });
+});
+
+describe("the drawn layout", () => {
+  const view = (mode: WorkspaceView["mode"], displays: number): WorkspaceView =>
+    ({ device_id: "local", path: "/r", mode, explorer: true, changes: false, agent_share: 0.5, layout: { display_count: displays } }) as unknown as WorkspaceView;
+
+  it("leaves View areas with nothing open out of Together and Views only, keeping the stored mode's return", () => {
+    expect(drawnMode(view("together", 0), false)).toBe("agents");
+    expect(drawnMode(view("views", 0), false)).toBe("agents");
+    expect(drawnMode(view("together", 1), false)).toBe("together");
+    expect(drawnMode(view("views", 2), false)).toBe("views");
+  });
+
+  it("keeps the View areas while a file is opening, so the opening state has a place", () => {
+    expect(drawnMode(view("together", 0), true)).toBe("together");
+    expect(drawnMode(view("agents", 3), false)).toBe("agents");
   });
 });

@@ -33,6 +33,18 @@ export function layoutLabel(mode: ViewMode): string {
   return LAYOUTS.find((layout) => layout.mode === mode)?.label ?? mode;
 }
 
+/**
+ * The layout the Workspace body draws. It is the stored mode, except that View
+ * areas with no display and no file of this checkout opening take no space:
+ * Together draws the agents alone and Views only draws the agents in their
+ * place (B8, B10). The stored mode is untouched, so the next display brings
+ * the View areas back in it (B9).
+ */
+export function drawnMode(view: WorkspaceView, opening: boolean): ViewMode {
+  if (view.mode === "agents" || opening || !view.layout) return view.mode;
+  return view.layout.display_count > 0 ? view.mode : "agents";
+}
+
 export function workspaceViewOf(rest: SnapshotRest | null): WorkspaceView | null {
   return (rest?.workspace_view as WorkspaceView | undefined) ?? null;
 }
