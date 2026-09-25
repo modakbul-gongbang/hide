@@ -385,9 +385,18 @@ impl Runtime {
         if lines == 0 {
             return false;
         }
+        // A pane whose Herdr cannot be reached says so through its own
+        // transport state (a device's `disconnected`); the wheel is logged,
+        // never read as another client holding the scroll.
         let route = match self.pane_api_route(pane_id) {
             Ok(route) => route,
-            Err(reason) => return self.hold_scroll_elsewhere(pane_id, &reason),
+            Err(reason) => {
+                self.push_diagnostic(
+                    "terminal.scroll_failed",
+                    format!("Pane {pane_id} was not scrolled: {reason}"),
+                );
+                return true;
+            }
         };
         self.viewport_scrolls.insert(pane_id.to_owned(), 0);
         if let Err(message) = live::spawn_viewport_scroll(route, lines) {
@@ -402,7 +411,7 @@ impl Runtime {
     pub fn ingest_viewport_scroll(
         &mut self,
         pane_id: &str,
-        result: Result<Option<live::PaneScroll>, String>,
+        result: Result<Option<live::PaneScroll>, live::ViewportScrollError>,
     ) -> bool {
         let Some(pending) = self.viewport_scrolls.remove(pane_id) else {
             return false;
@@ -417,7 +426,16 @@ impl Runtime {
                 pane_id,
                 "Herdr has no history to move for this pane, and only the client controlling it can scroll the program",
             ),
-            Err(message) => self.hold_scroll_elsewhere(pane_id, &message),
+            Err(live::ViewportScrollError::Refused(message)) => {
+                self.hold_scroll_elsewhere(pane_id, &message)
+            }
+            Err(live::ViewportScrollError::Unreachable(message)) => {
+                self.push_diagnostic(
+                    "terminal.scroll_failed",
+                    format!("Pane {pane_id} was not scrolled: {message}"),
+                );
+                true
+            }
         };
         changed |= self.scroll_pane(
             pane_id,

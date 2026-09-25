@@ -1880,17 +1880,41 @@ pub fn spawn_viewport_scroll(route: PaneApiRoute, lines: i32) -> Result<(), Stri
     )
 }
 
+/// Why an observed pane's viewport did not move.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ViewportScrollError {
+    /// Herdr answered and refused the request (an older device Herdr without
+    /// `pane.scroll`, say): this client cannot scroll the pane.
+    Refused(String),
+    /// Herdr was not reached or answered something unreadable; nothing is
+    /// known about the pane's scrolling.
+    Unreachable(String),
+}
+
+fn scroll_request(
+    connector: &dyn ApiConnector,
+    method: &str,
+    params: Value,
+) -> Result<Option<PaneScroll>, ViewportScrollError> {
+    let answer = request_with_connector(connector, method, params, Duration::from_secs(5))
+        .map_err(|error| match error {
+            ApiError::Remote { code, message } => {
+                ViewportScrollError::Refused(format!("{method} was refused: {code}: {message}"))
+            }
+            ApiError::Transport(message) | ApiError::Malformed(message) => {
+                ViewportScrollError::Unreachable(format!("{method} failed: {message}"))
+            }
+        })?;
+    wire::pane_scroll(answer).map_err(ViewportScrollError::Unreachable)
+}
+
 fn scroll_viewport(
     connector: &dyn ApiConnector,
     pane_id: &str,
     lines: i32,
-) -> Result<Option<PaneScroll>, String> {
-    let current = wire::pane_scroll(control_request(
-        connector,
-        "pane.get",
-        wire::pane_target_params(pane_id)?,
-    )?)?;
-    let Some(current) = current else {
+) -> Result<Option<PaneScroll>, ViewportScrollError> {
+    let target = wire::pane_target_params(pane_id).map_err(ViewportScrollError::Unreachable)?;
+    let Some(current) = scroll_request(connector, "pane.get", target)? else {
         return Ok(None);
     };
     let distance = u64::from(lines.unsigned_abs());
@@ -1902,11 +1926,9 @@ fn scroll_viewport(
     if target == current.offset_from_bottom {
         return Ok(Some(current));
     }
-    wire::pane_scroll(control_request(
-        connector,
-        "pane.scroll",
-        wire::pane_scroll_params(pane_id, target)?,
-    )?)
+    let params =
+        wire::pane_scroll_params(pane_id, target).map_err(ViewportScrollError::Unreachable)?;
+    scroll_request(connector, "pane.scroll", params)
 }
 
 fn run_pane_find(

@@ -740,6 +740,39 @@ fn an_observed_wheel_herdr_cannot_move_shows_the_hold_until_one_moves() {
     );
 }
 
+/// B3's marker says another client holds the pane's scrolling, so only
+/// Herdr's own answer may raise it. A pane with no route to its Herdr, or a
+/// Herdr that cannot be reached, logs the failed wheel and leaves the pane's
+/// transport state to say why; it never claims another client holds it.
+#[test]
+fn an_observed_wheel_that_cannot_reach_herdr_is_logged_not_held() {
+    let pane = "w1:p1";
+    let herdr = scrolling_herdr("observed-unreachable", Arc::new(Mutex::new(300)));
+    let shared = observed_runtime(&herdr, pane);
+    drop(herdr);
+    shared
+        .lock()
+        .unwrap()
+        .dispatch_json(&wheel_event(pane, "up", 3));
+    settle(&shared);
+    {
+        let mut runtime = shared.lock().unwrap();
+        assert!(!runtime.terminal_pane_snapshot(pane).scroll_held_elsewhere);
+        runtime.live = None;
+        runtime.dispatch_json(&wheel_event(pane, "up", 3));
+        assert!(runtime.viewport_scrolls.is_empty());
+        assert!(!runtime.terminal_pane_snapshot(pane).scroll_held_elsewhere);
+        let failed = runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == "terminal.scroll_failed")
+            .count();
+        assert_eq!(failed, 2, "each unreachable wheel is logged");
+    }
+}
+
 /// B6. A device pane is searched through that device's Herdr under the id
 /// that Herdr knows it by; a device that is not connected answers the reason
 /// in the find bar instead of searching this machine.
