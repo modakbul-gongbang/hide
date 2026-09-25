@@ -21,6 +21,8 @@ export type MenuEntry<Id extends string = string> = {
   unavailable: string | null;
   /** A destructive or closing action, drawn after a separator. */
   separated?: boolean;
+  /** An action that removes or discards something, drawn in the destructive color. */
+  destructive?: boolean;
 };
 
 type Parts = { Item: typeof DropdownMenuItem | typeof ContextMenuItem; Separator: typeof DropdownMenuSeparator | typeof ContextMenuSeparator };
@@ -32,7 +34,7 @@ function EntryItems<Id extends string>({ items, onSelect, parts }: { items: Menu
       {items.map((item) => (
         <Fragment key={item.id}>
           {item.separated ? <Separator /> : null}
-          <Item disabled={item.unavailable !== null} data-menu-item={item.id} className="flex-col items-start gap-none" onSelect={() => onSelect(item.id)}>
+          <Item disabled={item.unavailable !== null} variant={item.destructive ? "destructive" : "default"} data-menu-item={item.id} className="flex-col items-start gap-none" onSelect={() => onSelect(item.id)}>
             <span>{item.label}</span>
             {item.unavailable ? <span className="text-caption text-muted-foreground">{item.unavailable}</span> : null}
           </Item>
@@ -76,23 +78,29 @@ export function EntryContextMenu<Id extends string>({
   );
 }
 
-/** A menu a control opens, anchored under it. `trigger` is the control itself. */
+/**
+ * A menu a control opens, anchored under it. `trigger` is the control itself;
+ * `hint` names an icon-only trigger in a tooltip and as its accessible name.
+ */
 export function EntryDropdown<Id extends string>({
   label,
   items,
   onSelect,
   trigger,
+  hint,
   align = "end",
 }: {
   label: string;
   items: MenuEntry<Id>[];
   onSelect: (id: Id) => void;
   trigger: ReactNode;
+  hint?: string;
   align?: "start" | "center" | "end";
 }) {
+  const control = <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      {hint ? <Hint label={hint}>{control}</Hint> : control}
       <DropdownMenuContent aria-label={label} align={align}>
         <EntryItems items={items} onSelect={onSelect} parts={{ Item: DropdownMenuItem, Separator: DropdownMenuSeparator }} />
       </DropdownMenuContent>
@@ -111,13 +119,15 @@ export function EntryPointMenu<Id extends string>({
   onSelect,
   at,
   onClose,
+  ...data
 }: {
   label: string;
   items: MenuEntry<Id>[];
   onSelect: (id: Id) => void;
+  /** The viewport point the menu opens at. */
   at: { x: number; y: number } | null;
   onClose: () => void;
-}) {
+} & Record<`data-${string}`, string>) {
   useEscapeLayer(at !== null, onClose);
   const returnFocus = useReturnFocus(at !== null);
   return (
@@ -126,7 +136,7 @@ export function EntryPointMenu<Id extends string>({
         <span aria-hidden="true" className="pointer-events-none fixed size-(--spacing-none)" style={{ left: at?.x ?? 0, top: at?.y ?? 0 }} />
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>
-        <MenuPrimitive.Content aria-label={label} align="start" sideOffset={0} className={menuContent} onCloseAutoFocus={returnFocus}>
+        <MenuPrimitive.Content aria-label={label} align="start" sideOffset={0} className={menuContent} onCloseAutoFocus={returnFocus} {...data}>
           <EntryItems items={items} onSelect={onSelect} parts={{ Item: DropdownMenuItem, Separator: DropdownMenuSeparator }} />
         </MenuPrimitive.Content>
       </MenuPrimitive.Portal>

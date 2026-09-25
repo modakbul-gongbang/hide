@@ -36,12 +36,26 @@ function TooltipContent({ className, sideOffset = 4, children, ...props }: Compo
 /**
  * The shell's one way to give a control a hint: the trigger keeps its own
  * element (asChild) and gets `label` as its accessible name unless it already
- * has one, and the hint shows `label` and an optional shortcut.
+ * has one, and the hint shows `label` and an optional shortcut. `reveals`
+ * marks a hint that shows the whole of a clipped name or path instead; that
+ * text is already the element's own, so it does not become a second name.
  */
-function Hint({ label, shortcut, side, children }: { label: string; shortcut?: ReactNode; side?: "top" | "right" | "bottom" | "left"; children: ReactNode }) {
+function Hint({
+  label,
+  shortcut,
+  side,
+  reveals = false,
+  children,
+}: {
+  label: string;
+  shortcut?: ReactNode;
+  side?: "top" | "right" | "bottom" | "left";
+  reveals?: boolean;
+  children: ReactNode;
+}) {
   return (
     <Tooltip>
-      <TooltipTrigger asChild aria-label={label}>
+      <TooltipTrigger asChild aria-label={reveals ? undefined : label}>
         {children}
       </TooltipTrigger>
       <TooltipContent side={side}>

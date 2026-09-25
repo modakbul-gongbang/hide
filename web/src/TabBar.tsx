@@ -1,7 +1,10 @@
+import { PlusIcon, XIcon } from "lucide-react";
 import { memo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { ContextMenu, type MenuEntry } from "./Menu";
+import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
+import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
 import type { AgentRow, AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 import { agentEntries, tabAgent, tabIdentity } from "./workspace";
@@ -81,7 +84,7 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
         const agent = tabAgent(tab, agents ?? NO_AGENTS, focusedPaneId);
         const identity = tabIdentity(entry, agent);
         return (
-          <ContextMenu
+          <EntryContextMenu
             key={entry.id}
             label={`${entry.label} tab actions`}
             items={() => agentTabMenu(entry)}
@@ -100,19 +103,20 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
               onClose={() => actions.closeTab(entry.source_id)}
               {...drag(entry)}
             />
-          </ContextMenu>
+          </EntryContextMenu>
         );
       })}
-      <button
-        type="button"
-        className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-        aria-label={`New tab ${checkout.next_tab_label}`}
-        title="New tab (⌥T)"
-        data-new-agent-tab="true"
-        onClick={() => actions.createTab()}
-      >
-        +
-      </button>
+      <Hint label="New tab" shortcut="⌥T">
+        <Button
+          variant="ghost"
+          className="h-full w-(--size-tab-overflow-control) shrink-0 rounded-none px-none hover:text-foreground focus-visible:bg-accent"
+          aria-label={`New tab ${checkout.next_tab_label}`}
+          data-new-agent-tab="true"
+          onClick={() => actions.createTab()}
+        >
+          <PlusIcon />
+        </Button>
+      </Hint>
     </div>
   );
 }
@@ -198,18 +202,20 @@ const TabButton = memo(function TabButton({
         {entry.label}
         {closing ? <span className="text-muted-foreground"> closing…</span> : null}
       </span>
-      <button
-        type="button"
-        className={`rounded-xs px-xxs text-subtle-foreground hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}
-        aria-label={closeLabel}
-        title={closeLabel}
-        onClick={(event) => {
-          event.stopPropagation();
-          onClose();
-        }}
-      >
-        ×
-      </button>
+      <Hint label={closeLabel}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={`shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}
+          aria-label={closeLabel}
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+          }}
+        >
+          <XIcon />
+        </Button>
+      </Hint>
       {active ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
     </div>
   );

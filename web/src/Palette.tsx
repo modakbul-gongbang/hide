@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { Command, CommandDialog, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { fileIcon } from "./fileIcons";
 import { filterEntries, searchEntries, type SearchEntry } from "./search";
 import { explorerContext } from "./snapshot";
@@ -7,11 +9,14 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { drawnViews } from "./viewFocus";
 
-// The two palettes (PRD B12, B13). They share the shell: a query field, a
-// list that ↑↓ walks and Enter commits, and Escape closes. ⌘P lists what
-// hided's index ranked for the typed query; ⌘K filters the snapshot's agents,
-// projects and checkouts in the web itself, because the data is already here.
-// "Open file to the side" is ⌘P's list whose pick opens beside (S7 B4).
+// The two palettes (PRD B12, B13) on the System command palette: a query
+// field, a list cmdk's own arrow keys and Enter walk, and Escape closes
+// through the shell's one layer owner. ⌘P lists what hided's index ranked
+// for the typed query; ⌘K filters the snapshot's agents, projects and
+// checkouts in the web itself, because the data is already here. "Open file
+// to the side" is ⌘P's list whose pick opens beside (S7 B4). The screens
+// already rank and filter their own entries, so `shouldFilter` stays off and
+// cmdk is used only for the list's selection and keyboard behavior.
 
 export function Palette({ actions }: { actions: Actions }) {
   const overlay = useUiStore((s) => s.overlay);
@@ -29,112 +34,60 @@ function PaletteShell({
   onQuery,
   footer,
   children,
-  onKeyDown,
 }: {
   label: string;
   placeholder: string;
   query: string;
   onQuery: (query: string) => void;
   footer: string;
-  children: React.ReactNode;
-  onKeyDown: (event: React.KeyboardEvent) => void;
+  children: ReactNode;
 }) {
   const close = useUiStore((s) => s.closeOverlay);
   return (
-    <div className="absolute inset-0 z-40 flex justify-center pt-[var(--size-settings-sheet-window-inset)]" role="presentation" data-palette={label}>
-      <div className="absolute inset-0 bg-background opacity-[var(--opacity-secondary)]" onClick={() => close()} />
-      <div className="relative w-[var(--size-search-sheet-w)] max-w-full rounded-lg border border-border bg-card text-body text-foreground shadow-lg">
-        <input
-          autoFocus
-          value={query}
-          placeholder={placeholder}
-          aria-label={label}
-          data-palette-input="true"
-          className="w-full rounded-t-lg border-b border-border bg-card px-md py-sm text-body text-foreground outline-none"
-          onChange={(event) => onQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
-            onKeyDown(event);
-          }}
-        />
-        <div className="max-h-[var(--size-search-sheet-h)] overflow-auto" data-palette-list="true">
-          {children}
-        </div>
+    <CommandDialog open title={label} description={placeholder} onOpenChange={(open) => { if (!open) close(); }}>
+      <Command shouldFilter={false} loop label={label} data-palette={label}>
+        <CommandInput value={query} placeholder={placeholder} data-palette-input="true" onValueChange={onQuery} />
+        <CommandList data-palette-list="true">{children}</CommandList>
         {footer ? (
           <div className="border-t border-border px-md py-xxs text-caption text-muted-foreground" data-palette-footer="true">
             {footer}
           </div>
         ) : null}
-      </div>
-    </div>
+      </Command>
+    </CommandDialog>
   );
 }
 
 function PaletteRow({
-  active,
   icon,
   title,
   subtitle,
   unavailable = false,
-  onPick,
-  onHover,
-  testId,
 }: {
-  active: boolean;
-  icon?: React.ReactNode;
+  icon?: ReactNode;
   title: string;
   subtitle?: string;
-  /** A command that cannot run now: drawn muted with its whole reason under the title, and picking it does nothing. */
+  /** A command that cannot run now: drawn muted with its whole reason under the title, and picking it does nothing (B9). */
   unavailable?: boolean;
-  onPick: () => void;
-  onHover: () => void;
-  testId: string;
 }) {
-  return (
-    <button
-      type="button"
-      data-palette-row={testId}
-      aria-selected={active}
-      aria-disabled={unavailable || undefined}
-      className={`flex w-full items-baseline gap-sm px-md py-xs text-left ${active ? "bg-secondary" : ""} ${unavailable ? "text-muted-foreground" : active ? "text-foreground" : "text-subtle-foreground"}`}
-      onPointerEnter={onHover}
-      onClick={onPick}
-    >
-      {icon}
-      {unavailable ? (
-        // The whole reason, under the title, as every web menu draws an item it cannot run (B9).
+  if (unavailable) {
+    return (
+      <>
+        {icon}
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate">{title}</span>
           {subtitle ? <span className="text-caption text-muted-foreground">{subtitle}</span> : null}
         </span>
-      ) : (
-        <>
-          <span className="min-w-0 flex-1 truncate">{title}</span>
-          {subtitle ? <span className="max-w-[var(--size-recent-location-max)] shrink-0 truncate text-caption text-muted-foreground">{subtitle}</span> : null}
-        </>
-      )}
-    </button>
+      </>
+    );
+  }
+  return (
+    <>
+      {icon}
+      <span className="min-w-0 flex-1 truncate">{title}</span>
+      {subtitle ? <span className="max-w-[var(--size-recent-location-max)] shrink-0 truncate text-caption text-muted-foreground">{subtitle}</span> : null}
+    </>
   );
-}
-
-function usePaletteNavigation(count: number, onCommit: (index: number) => void) {
-  const [index, setIndex] = useState(0);
-  useEffect(() => {
-    setIndex((current) => (count === 0 ? 0 : Math.min(current, count - 1)));
-  }, [count]);
-  const onKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setIndex((current) => (count === 0 ? 0 : (current + 1) % count));
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setIndex((current) => (count === 0 ? 0 : (current - 1 + count) % count));
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      if (count > 0) onCommit(index);
-    }
-  };
-  return { index, setIndex, onKeyDown };
 }
 
 function FilePalette({ beside, actions }: { beside: boolean; actions: Actions }) {
@@ -167,10 +120,6 @@ function FilePalette({ beside, actions }: { beside: boolean; actions: Actions })
 
   const entries = fileIndex?.files ?? [];
   const open = (path: string) => (beside ? actions.openIndexEntryBeside(path) : actions.openIndexEntry(path));
-  const navigation = usePaletteNavigation(entries.length, (index) => {
-    const entry = entries[index];
-    if (entry) open(entry.path);
-  });
 
   return (
     <PaletteShell
@@ -178,7 +127,6 @@ function FilePalette({ beside, actions }: { beside: boolean; actions: Actions })
       placeholder={beside ? "Search files to open beside the active view" : "Search files by name"}
       query={query}
       onQuery={setQuery}
-      onKeyDown={navigation.onKeyDown}
       footer={fileIndex?.truncated ? "The index is truncated at 50,000 files" : ""}
     >
       {fileIndex?.unavailable ? (
@@ -194,20 +142,19 @@ function FilePalette({ beside, actions }: { beside: boolean; actions: Actions })
           {query ? "No matching files" : "Type to search this checkout"}
         </div>
       ) : (
-        entries.map((entry, index) => (
-          <PaletteRow
-            key={entry.path}
-            testId={entry.path}
-            active={index === navigation.index}
-            icon={
-              <span className={`shrink-0 ${fileIcon(entry.relative_path).color}`} style={{ fontFamily: "seti" }} aria-hidden="true">
-                {fileIcon(entry.relative_path).glyph}
-              </span>
-            }
-            title={entry.relative_path}
-            onHover={() => navigation.setIndex(index)}
-            onPick={() => open(entry.path)}
-          />
+        entries.map((entry) => (
+          <CommandItem key={entry.path} asChild value={entry.path} onSelect={() => open(entry.path)}>
+            <button type="button" data-palette-row={entry.path} className="w-full text-left">
+              <PaletteRow
+                icon={
+                  <span className={`shrink-0 ${fileIcon(entry.relative_path).color}`} style={{ fontFamily: "seti" }} aria-hidden="true">
+                    {fileIcon(entry.relative_path).glyph}
+                  </span>
+                }
+                title={entry.relative_path}
+              />
+            </button>
+          </CommandItem>
         ))
       )}
     </PaletteShell>
@@ -220,7 +167,6 @@ function SearchPalette({ actions }: { actions: Actions }) {
   const workspaceOnScreen = useUiStore((s) => s.screen?.kind === "workspace");
   const placement = useUiStore((s) => s.toolsPlacement);
   const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement } : null), query);
-  const navigation = usePaletteNavigation(entries.length, (index) => activate(entries[index]));
 
   const activate = (entry: SearchEntry | undefined) => {
     // A command that cannot run now stays in the list with its reason.
@@ -242,30 +188,18 @@ function SearchPalette({ actions }: { actions: Actions }) {
   };
 
   return (
-    <PaletteShell
-      label="Search"
-      placeholder="Search agents, workspaces and commands"
-      query={query}
-      onQuery={setQuery}
-      onKeyDown={navigation.onKeyDown}
-      footer=""
-    >
+    <PaletteShell label="Search" placeholder="Search agents, workspaces and commands" query={query} onQuery={setQuery} footer="">
       {entries.length === 0 ? (
         <div className="px-md py-sm text-caption text-muted-foreground" data-palette-state="empty">
           No matching agents or workspaces
         </div>
       ) : (
-        entries.map((entry, index) => (
-          <PaletteRow
-            key={entry.id}
-            testId={entry.id}
-            active={index === navigation.index}
-            title={entry.title}
-            subtitle={entry.unavailable ?? entry.kind}
-            unavailable={Boolean(entry.unavailable)}
-            onHover={() => navigation.setIndex(index)}
-            onPick={() => activate(entry)}
-          />
+        entries.map((entry) => (
+          <CommandItem key={entry.id} asChild value={entry.id} disabled={Boolean(entry.unavailable)} onSelect={() => activate(entry)}>
+            <button type="button" data-palette-row={entry.id} className="w-full text-left">
+              <PaletteRow title={entry.title} subtitle={entry.unavailable ?? entry.kind} unavailable={Boolean(entry.unavailable)} />
+            </button>
+          </CommandItem>
         ))
       )}
     </PaletteShell>

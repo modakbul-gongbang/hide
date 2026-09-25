@@ -1,10 +1,12 @@
+import { ChevronDownIcon, EllipsisIcon, XIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { Button } from "./components/ui/controls";
+import { EntryContextMenu, EntryDropdown, type MenuEntry } from "./components/entry-menu";
+import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
-import { ContextMenu, MenuList, type MenuEntry } from "./Menu";
 import { editorTabFor, type Checkout, type ViewAreaSnapshot, type ViewDisplaySnapshot, type ViewLayoutSnapshot, type ViewNode, type ViewSplitSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -117,11 +119,11 @@ function ViewsEmpty({ opening, explorerShown, actions }: { opening: boolean; exp
   return (
     <AreaEmpty state="no-view" text="No file or diff is open in this Workspace.">
       {explorerShown ? null : (
-        <Button onClick={() => actions.setTool("explorer", true)} data-empty-open-explorer="true">
+        <Button variant="secondary" onClick={() => actions.setTool("explorer", true)} data-empty-open-explorer="true">
           Show Explorer
         </Button>
       )}
-      <Button appearance="quiet" onClick={() => useUiStore.getState().openOverlay("file_palette")} data-empty-open-file="true">
+      <Button variant="ghost" onClick={() => useUiStore.getState().openOverlay("file_palette")} data-empty-open-file="true">
         Open file <span className="text-muted-foreground">⌘P</span>
       </Button>
     </AreaEmpty>
@@ -511,10 +513,10 @@ function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
     <AreaEmpty state="view-unavailable" text={`${display.path} is unavailable${display.reason ? `: ${display.reason}` : "."}`}>
       {/* Each button is one action on this view alone, like a tab's ×: its
           press does not also make the area active (one action, one event). */}
-      <Button onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.closeView(display.id)} data-close-unavailable={display.id}>
+      <Button variant="secondary" onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.closeView(display.id)} data-close-unavailable={display.id}>
         Close view
       </Button>
-      <Button appearance="quiet" onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.retryView(display.id)} data-retry-unavailable={display.id}>
+      <Button variant="ghost" onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.retryView(display.id)} data-retry-unavailable={display.id}>
         Retry
       </Button>
     </AreaEmpty>
@@ -547,7 +549,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch bg-card" data-view-tab-bar={area.id}>
       <div ref={strip} role="tablist" aria-label={`View tabs, area ${index + 1} of ${count}`} className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
         {area.displays.map((display) => (
-          <ContextMenu
+          <EntryContextMenu
             key={display.id}
             label={`${display.label} view actions`}
             items={() => tree.menu(display.id)}
@@ -556,19 +558,26 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
             data-tab-menu={display.id}
           >
             <DisplayTab display={display} selected={display.id === area.active} areaActive={active} />
-          </ContextMenu>
+          </EntryContextMenu>
         ))}
       </div>
       {switcher ? <AreaSwitcher current={area.id} /> : null}
       {shown ? (
-        <MenuButton
+        <EntryDropdown
           label={`View actions: ${shown.label}`}
-          items={() => tree.menu(shown.id)}
+          hint={`View actions: ${shown.label}`}
+          items={tree.menu(shown.id)}
           onSelect={(id) => tree.actions.runViewMenu(id, shown.id)}
-          data-view-overflow={shown.id}
-        >
-          ⋯
-        </MenuButton>
+          trigger={
+            <button
+              type="button"
+              data-view-overflow={shown.id}
+              className="flex min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+            >
+              <EllipsisIcon className="size-(--size-icon)" />
+            </button>
+          }
+        />
       ) : null}
     </div>
   );
@@ -618,19 +627,21 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
         {saving ? <span className="text-muted-foreground"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
         {tabOnly ? <span className="text-muted-foreground"> kept in this tab only</span> : null}
       </span>
-      <button
-        type="button"
-        className={`rounded-xs px-xxs text-subtle-foreground hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
-        aria-label={`Close view ${display.label}`}
-        title={`Close view ${display.label}`}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation();
-          tree.actions.closeView(display.id);
-        }}
-      >
-        ×
-      </button>
+      <Hint label={`Close view ${display.label}`}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={`shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
+          aria-label={`Close view ${display.label}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            tree.actions.closeView(display.id);
+          }}
+        >
+          <XIcon />
+        </Button>
+      </Hint>
       {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
     </div>
   );
@@ -653,59 +664,34 @@ function displayMark(display: ViewDisplaySnapshot) {
   );
 }
 
-/** A small control that opens a menu under itself, drawn fixed so no scrolling strip clips it. */
-function MenuButton<Id extends string>({
-  label,
-  items,
-  onSelect,
-  children,
-  ...data
-}: { label: string; items: () => MenuEntry<Id>[]; onSelect: (id: Id) => void; children: React.ReactNode } & Record<`data-${string}`, string>) {
-  const [at, setAt] = useState<{ right: number; top: number } | null>(null);
-  return (
-    <div className="flex shrink-0">
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={at !== null}
-        aria-label={label}
-        title={label}
-        className="flex min-w-[var(--size-tab-overflow-control)] items-center justify-center px-xxs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-        {...data}
-        onClick={(event) => {
-          if (at) return setAt(null);
-          const box = event.currentTarget.getBoundingClientRect();
-          setAt({ right: window.innerWidth - box.right, top: box.bottom });
-        }}
-      >
-        {children}
-      </button>
-      {at ? <MenuList label={label} items={items()} onSelect={onSelect} onClose={() => setAt(null)} className="fixed" style={{ right: at.right, top: at.top }} /> : null}
-    </div>
-  );
-}
-
 /** A narrow window shows one area; this names it and switches to another (B13). */
 function AreaSwitcher({ current }: { current: string }) {
   const tree = useTree();
   const areas = areasOf(tree.layout.root);
   const index = areas.findIndex((area) => area.id === current);
-  const items = (): MenuEntry<string>[] =>
-    areas.map((area, at) => {
-      const shown = area.displays.find((row) => row.id === area.active);
-      return { id: area.id, label: `${area.id === current ? "✓ " : ""}Area ${at + 1}${shown ? ` · ${shown.label}` : ""}`, unavailable: null };
-    });
+  const items: MenuEntry<string>[] = areas.map((area, at) => {
+    const shown = area.displays.find((row) => row.id === area.active);
+    return { id: area.id, label: `${area.id === current ? "✓ " : ""}Area ${at + 1}${shown ? ` · ${shown.label}` : ""}`, unavailable: null };
+  });
   return (
-    <MenuButton
+    <EntryDropdown
       label={`View area ${index + 1} of ${areas.length}; the window shows one at a time. Switch view area`}
       items={items}
       onSelect={(id) => {
         if (id !== current) tree.actions.focusViewArea(id);
       }}
-      data-view-area-switch={current}
-    >
-      {index + 1}/{areas.length} ▾
-    </MenuButton>
+      trigger={
+        <Button
+          variant="ghost"
+          className="min-w-[var(--size-tab-overflow-control)] shrink-0 rounded-none text-subtle-foreground hover:text-foreground focus-visible:bg-accent"
+          aria-label={`View area ${index + 1} of ${areas.length}; the window shows one at a time. Switch view area`}
+          data-view-area-switch={current}
+        >
+          {index + 1}/{areas.length}
+          <ChevronDownIcon />
+        </Button>
+      }
+    />
   );
 }
 

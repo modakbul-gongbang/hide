@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
-import { ContextMenu, type MenuEntry } from "./Menu";
+import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
 import { changesFor, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
 import { useShellStore } from "./store";
 import { drawnViews } from "./viewFocus";
@@ -43,7 +43,7 @@ function ChangeRow({ entry, committed, selected, actions }: {
     { id: "open_beside", label: "Open to the side", unavailable: besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews()) },
   ];
   return (
-    <ContextMenu
+    <EntryContextMenu
       label={`${name} actions`}
       items={menu}
       onSelect={() => actions.openChangeBeside(entry.path, committed)}
@@ -70,7 +70,7 @@ function ChangeRow({ entry, committed, selected, actions }: {
         {entry.removed_lines !== null ? <span className="shrink-0 text-destructive" aria-label={`${entry.removed_lines} lines removed`}>-{entry.removed_lines}</span> : null}
         <span className={`shrink-0 ${status.color}`} aria-hidden="true">{status.mark}</span>
       </button>
-    </ContextMenu>
+    </EntryContextMenu>
   );
 }
 

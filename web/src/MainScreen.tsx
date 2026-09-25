@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { Button } from "./components/ui/controls";
+import { Button } from "./components/ui/button";
 import { AGENT_GROUPS, agentSections, checkoutAgents, groupCounts, mainSections, overviewProject, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { pullRequestBadge } from "./projects";
 import type { AgentRow, Checkout, Device, Workspace } from "./snapshot";
@@ -23,7 +23,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-background" aria-label="Main" data-main-screen="true">
       <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar px-md">
         <h1 className="flex-1 text-subhead font-semibold text-foreground">Projects</h1>
-        <Button appearance="quiet" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
+        <Button variant="ghost" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
           Add project <span className="text-muted-foreground">⌥⇧N</span>
         </Button>
       </header>
@@ -31,7 +31,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
       {total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>No project is registered yet.</p>
-          <Button onClick={() => actions.openNewWorkspace()} data-main-empty-add="true">
+          <Button variant="secondary" onClick={() => actions.openNewWorkspace()} data-main-empty-add="true">
             Add project
           </Button>
         </div>
@@ -90,7 +90,7 @@ function OpeningStatus({ actions }: { actions: Actions }) {
   return (
     <div role="alert" className="mx-md mt-sm flex shrink-0 items-center gap-sm rounded-sm bg-card px-sm py-xs text-caption text-warning" data-opening="failed">
       <span className="min-w-0 flex-1 break-words">Not opened: {opening.failure}</span>
-      <Button onClick={() => actions.dismissOpening()} data-opening-dismiss="true">
+      <Button variant="secondary" onClick={() => actions.dismissOpening()} data-opening-dismiss="true">
         Dismiss
       </Button>
     </div>
@@ -105,7 +105,7 @@ function UnavailableNotice({ device, availability, actions }: { device: Device; 
     <div role="status" className="mb-xs flex items-center gap-sm rounded-sm bg-card px-sm py-xs text-caption text-warning" data-device-unavailable={device.id}>
       <span className="min-w-0 flex-1 break-words">{availability.text}</span>
       {retry ? (
-        <Button onClick={() => (retry === "helper" ? actions.retryDeviceHost(device.id) : actions.retryDevice(device.id))} data-device-retry={device.id}>
+        <Button variant="secondary" onClick={() => (retry === "helper" ? actions.retryDeviceHost(device.id) : actions.retryDevice(device.id))} data-device-retry={device.id}>
           Retry
         </Button>
       ) : null}
@@ -167,7 +167,7 @@ export function OverviewScreen({ projectId, actions }: { projectId: string; acti
     return (
       <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-overview-missing={projectId}>
         <p>This project is no longer in the catalog.</p>
-        <Button onClick={() => setScreen({ kind: "main" })}>Back to Main</Button>
+        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>Back to Main</Button>
       </section>
     );
   }
@@ -184,11 +184,11 @@ export function OverviewScreen({ projectId, actions }: { projectId: string; acti
         </h1>
         {device ? <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro text-subtle-foreground">{device.label}</span> : null}
         <span className="flex-1" />
-        <Button appearance="quiet" onClick={() => setScreen({ kind: "sessions", projectId: workspace.id })} data-overview-sessions="true">
+        <Button variant="ghost" onClick={() => setScreen({ kind: "sessions", projectId: workspace.id })} data-overview-sessions="true">
           Sessions
         </Button>
         {workspace.is_git ? (
-          <Button appearance="quiet" onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id })} data-overview-new-worktree="true">
+          <Button variant="ghost" onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id })} data-overview-new-worktree="true">
             New worktree
           </Button>
         ) : null}
@@ -216,7 +216,7 @@ function WorkspaceList({ workspace, agents, actions }: { workspace: Workspace; a
         <div className="flex items-center gap-sm px-sm py-xs text-caption text-muted-foreground" data-overview-no-workspaces="true">
           <span>No Workspace in this project yet.</span>
           {workspace.is_git ? (
-            <Button onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id })}>New worktree</Button>
+            <Button variant="secondary" onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id })}>New worktree</Button>
           ) : null}
         </div>
       ) : (

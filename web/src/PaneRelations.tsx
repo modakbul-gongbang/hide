@@ -1,8 +1,11 @@
+import { CornerUpLeftIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
+import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
+import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
-import { MenuList, type MenuEntry } from "./Menu";
 import type { PaneRow } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -26,18 +29,20 @@ export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Acti
   if (!parent) return null;
   const label = `Return to parent ${parent.label}`;
   return (
-    <button
-      type="button"
-      className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] shrink-0 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-popover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:text-muted-foreground"
-      aria-label={label}
-      title={label}
-      aria-busy={pending}
-      data-pane-return={parent.pane_id}
-      disabled={pending}
-      onClick={() => actions.followRelation(pane.id, parent.pane_id, parent.label)}
-    >
-      <span aria-hidden="true">{pending ? "…" : "↰"}</span>
-    </button>
+    <Hint label={label}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0 hover:bg-popover hover:text-foreground"
+        aria-label={label}
+        aria-busy={pending}
+        data-pane-return={parent.pane_id}
+        disabled={pending}
+        onClick={() => actions.followRelation(pane.id, parent.pane_id, parent.label)}
+      >
+        {pending ? <span aria-hidden="true">…</span> : <CornerUpLeftIcon />}
+      </Button>
+    </Hint>
   );
 }
 
@@ -107,9 +112,9 @@ export function RelationStatus({ actions }: { actions: Actions }) {
     return (
       <div className="flex shrink-0 items-center gap-sm bg-card px-sm py-xxs text-caption text-muted-foreground" role="status" data-relation-status="pending">
         <span className="min-w-0 flex-1 truncate">Opening {relation.label}…</span>
-        <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
+        <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-muted-foreground hover:bg-transparent hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
           Dismiss
-        </button>
+        </Button>
       </div>
     );
   }
@@ -119,13 +124,13 @@ export function RelationStatus({ actions }: { actions: Actions }) {
         {state.message}
       </span>
       {state.retryable ? (
-        <button type="button" className="shrink-0 text-subtle-foreground hover:text-foreground" data-relation-retry="true" onClick={() => actions.retryRelation()}>
+        <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground" data-relation-retry="true" onClick={() => actions.retryRelation()}>
           Retry
-        </button>
+        </Button>
       ) : null}
-      <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
+      <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-muted-foreground hover:bg-transparent hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
         Dismiss
-      </button>
+      </Button>
     </div>
   );
 }
@@ -160,16 +165,7 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
     const target = relationEntries(pane).find((entry) => `open:${entry.paneId}` === id);
     if (target) actions.followRelation(pane.id, target.paneId, target.label);
   };
-  const menu = open ? (
-    <MenuList
-      label={`Pane ${title}`}
-      items={paneMenuItems(pane, title)}
-      onSelect={select}
-      onClose={() => setOpen(null)}
-      className="absolute"
-      style={{ left: open.x, top: open.y }}
-    />
-  ) : null;
+  const menu = <EntryPointMenu label={`Pane ${title}`} items={paneMenuItems(pane, title)} onSelect={select} at={open} onClose={() => setOpen(null)} />;
   return { menu, openAt: (x: number, y: number) => setOpen({ x, y }) };
 }
 

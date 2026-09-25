@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { Button, Field, Status } from "./components/ui/controls";
+import { Status } from "./components/settings-rows";
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+import { Hint } from "./components/ui/tooltip";
 import { overviewProject } from "./navigation";
 import {
   PROVIDER_FILTERS,
@@ -36,7 +40,9 @@ export function SessionsScreen({ projectId, actions }: { projectId: string; acti
     return (
       <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-sessions-missing={projectId}>
         <p>This project is no longer in the catalog.</p>
-        <Button onClick={() => setScreen({ kind: "main" })}>Back to Main</Button>
+        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>
+          Back to Main
+        </Button>
       </section>
     );
   }
@@ -161,7 +167,11 @@ function HistoryControls({
   onProvider: (provider: ProviderFilter) => void;
   onQuery: (query: string) => void;
 }) {
-  // A radio group is one Tab stop; the arrows choose the neighbouring provider.
+  // ToggleGroup's own roving focus only moves the arrows; it never selects on
+  // its own. A one-Tab-stop filter picks the neighbouring provider on the
+  // same keystroke that moves to it (B9), so this still selects explicitly
+  // and focuses the element that plays that choice now, ahead of Radix's own
+  // roving-focus handler for the same keydown.
   const onProviderKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
     if (step === 0) return;
@@ -188,25 +198,28 @@ function HistoryControls({
   };
   return (
     <div className="flex shrink-0 flex-col gap-sm border-b border-border p-sm">
-      <div role="radiogroup" aria-label="Provider" className="flex items-center rounded-sm bg-card p-xxs" data-sessions-provider={provider} onKeyDown={onProviderKey}>
+      <ToggleGroup
+        type="single"
+        aria-label="Provider"
+        className="w-full"
+        value={provider}
+        onValueChange={(next) => {
+          // Radix lets the active item toggle itself off (value becomes "");
+          // a provider filter has no "none chosen" state, so that click is a
+          // no-op and the current provider stays selected (matches a native
+          // radiogroup, which cannot be deselected by re-choosing it).
+          if (next) onProvider(next as ProviderFilter);
+        }}
+        data-sessions-provider={provider}
+        onKeyDown={onProviderKey}
+      >
         {PROVIDER_FILTERS.map((choice) => (
-          <button
-            key={choice.id}
-            type="button"
-            role="radio"
-            aria-checked={choice.id === provider}
-            tabIndex={choice.id === provider ? 0 : -1}
-            data-provider-choice={choice.id}
-            className={`flex h-[var(--size-control-compact)] min-w-0 flex-1 items-center justify-center truncate rounded-xs px-xs text-body outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-              choice.id === provider ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-subtle-foreground"
-            }`}
-            onClick={() => onProvider(choice.id)}
-          >
+          <ToggleGroupItem key={choice.id} value={choice.id} data-provider-choice={choice.id} className="min-w-0 flex-1 truncate">
             {choice.label}
-          </button>
+          </ToggleGroupItem>
         ))}
-      </div>
-      <Field
+      </ToggleGroup>
+      <Input
         type="search"
         mono={false}
         value={query}
@@ -288,7 +301,7 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
         <>
           <Status tone="muted">No matching sessions</Status>
           <div>
-            <Button onClick={onClearFilters} data-sessions-clear="true">
+            <Button variant="secondary" onClick={onClearFilters} data-sessions-clear="true">
               Clear filters
             </Button>
           </div>
@@ -300,7 +313,7 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
           <Status tone="error">Sessions could not be read</Status>
           <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
           <div>
-            <Button onClick={onRetry} data-sessions-retry="list">
+            <Button variant="secondary" onClick={onRetry} data-sessions-retry="list">
               Retry
             </Button>
           </div>
@@ -318,7 +331,7 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
         <div role="status" className="flex flex-col gap-sm">
           <Status tone="muted">Another window is showing another project's sessions.</Status>
           <div>
-            <Button onClick={onShowHere} data-sessions-show-here="true">
+            <Button variant="secondary" onClick={onShowHere} data-sessions-show-here="true">
               Show this project's sessions
             </Button>
           </div>
@@ -376,7 +389,7 @@ function SessionRowItem({
             {unavailable}
           </p>
           <div className="flex flex-wrap items-center gap-xs">
-            <Button appearance="quiet" onClick={onRetry} data-session-retry={row.id}>
+            <Button variant="ghost" onClick={onRetry} data-session-retry={row.id}>
               Retry
             </Button>
             <CopySource locator={row.locator} id={row.id} />
@@ -408,9 +421,11 @@ function CopySource({ locator, id }: { locator: string; id: string }) {
   };
   return (
     <>
-      <Button appearance="quiet" title={locator} onClick={copy} data-session-copy={id}>
-        Copy source location
-      </Button>
+      <Hint label={locator}>
+        <Button variant="ghost" onClick={copy} data-session-copy={id}>
+          Copy source location
+        </Button>
+      </Hint>
       {copied ? (
         <span role="status" className={`text-caption ${copied === "copied" ? "text-success" : "text-warning"}`}>
           {copied === "copied" ? "Copied" : "Could not copy"}
@@ -456,7 +471,7 @@ function SessionDetail({
           <Status tone="warn">This session cannot be opened</Status>
           <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
           <div>
-            <Button onClick={onRetry} data-session-detail-retry="true">
+            <Button variant="secondary" onClick={onRetry} data-session-detail-retry="true">
               Retry
             </Button>
           </div>

@@ -1070,7 +1070,7 @@ test("a narrow window floats the tools, shows one region and one area with a way
     await expect(page.locator("[data-view-area-id]")).toHaveCount(1);
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
     const switcher = page.locator("[data-view-area-switch]");
-    await expect(switcher).toHaveText("2/2 ▾");
+    await expect(switcher).toHaveText("2/2");
     await screenshot(page, "s7-narrow-single-area");
 
     // The overlay opens on request, takes the keyboard, and Escape closes it
@@ -1150,7 +1150,7 @@ test("a narrow window floats the tools, shows one region and one area with a way
   }
 });
 
-// PRD B12 and DESIGN.md "Narrow windows": a click outside the narrow tools
+// PRD B12 and docs/UI_BEHAVIOR.md "Narrow windows": a click outside the narrow tools
 // overlay closes it and returns the keyboard to the toggle that opened it,
 // as Escape does, when the click lands on something that takes no focus.
 test("an outside click that closes the narrow tools overlay gives the keyboard back to its toggle", async ({ page }) => {

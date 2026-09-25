@@ -6,7 +6,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { Button, Dialog, Field, Note, Select, Status } from "./components/ui/controls";
+import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
+import { Button } from "./components/ui/button";
+import { Checkbox } from "./components/ui/checkbox";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
+import { Input } from "./components/ui/input";
+import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
+import { Note, Status } from "./components/settings-rows";
 import type { Checkout, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -64,13 +71,15 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
   const target = found && (found.checkout || !("checkoutId" in dialog)) ? found : keepsLastSeen && lastSeen.current?.key === key ? lastSeen.current.target : found;
   if (!target || ("checkoutId" in dialog && !target.checkout)) {
     return (
-      <Dialog label="Unavailable" onClose={close}>
-        <div className="p-lg">
-          <Note tone="warn">That project or checkout is no longer listed. Nothing was changed.</Note>
-          <div className="mt-md flex justify-end">
+      <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
+        <DialogContent aria-label="Unavailable">
+          <DialogBody>
+            <Note tone="warn">That project or checkout is no longer listed. Nothing was changed.</Note>
+          </DialogBody>
+          <DialogFooter>
             <Button onClick={close}>Close</Button>
-          </div>
-        </div>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
     );
   }
@@ -94,9 +103,12 @@ function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions
   const working = at !== null && !removed && refused === null;
   const panes = workspace.removal?.pane_count ?? 0;
   return (
-    <Dialog label={`Remove project ${workspace.label}`} role="alertdialog" initialFocus="container" onClose={onClose} data-remove-project={workspace.id}>
-      <div className="space-y-sm p-lg">
-        <DialogHeader title={`Remove project ${workspace.label}?`} detail={workspace.path} />
+    <AlertDialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <AlertDialogContent data-remove-project={workspace.id}>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="break-words">Remove project {workspace.label}?</AlertDialogTitle>
+          <AlertDialogDescription className="break-all font-mono text-caption text-muted-foreground">{workspace.path}</AlertDialogDescription>
+        </AlertDialogHeader>
         {at === null ? (
           <ul className="list-disc space-y-xxs pl-lg text-body text-subtle-foreground" data-remove-consequences="true">
             {projectRemovalConsequences(workspace).map((line) => (
@@ -121,14 +133,16 @@ function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions
             Project removed. Its folder is untouched.
           </Note>
         ) : null}
-        <div className="flex flex-wrap justify-end gap-sm pt-sm">
+        <AlertDialogFooter>
           <Button onClick={onClose} data-remove-cancel="true">
             {removed || refused ? "Close" : working ? "Hide" : "Keep project"}
           </Button>
-          {/* A refusal is retried from the same button (S5.5 B45). */}
+          {/* A refusal is retried from the same button (S5.5 B45). Plain
+              Button, not AlertDialogAction: Radix closes on an Action's
+              click, but this one has to stay open through the async removal. */}
           {at === null || (refused !== null && registered) ? (
             <Button
-              appearance="danger"
+              variant="destructive"
               onClick={() => {
                 setAt(Date.now());
                 actions.removeWorkspace(workspace.id);
@@ -138,18 +152,19 @@ function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions
               {refused !== null ? "Try again" : panes === 1 ? "Close 1 pane and remove" : panes > 1 ? `Close ${panes} panes and remove` : "Remove project"}
             </Button>
           ) : null}
-        </div>
-      </div>
-    </Dialog>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
-function DialogHeader({ title, detail }: { title: string; detail?: string }) {
+/** A Dialog's title plus an optional monospace path beneath it. */
+function DialogIntro({ title, detail }: { title: string; detail?: string }) {
   return (
-    <div className="mb-md">
-      <h2 className="break-words text-title font-semibold text-foreground">{title}</h2>
-      {detail ? <p className="break-all font-mono text-caption text-muted-foreground">{detail}</p> : null}
-    </div>
+    <DialogHeader>
+      <DialogTitle className="break-words">{title}</DialogTitle>
+      {detail ? <DialogDescription className="break-all font-mono text-caption text-muted-foreground">{detail}</DialogDescription> : null}
+    </DialogHeader>
   );
 }
 
@@ -196,58 +211,66 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
   };
   const failure = task?.phase === "failed" ? (task.message ?? "The worktree was not created.") : refused;
   return (
-    <Dialog label={`New worktree in ${workspace.label}`} onClose={onClose} data-new-worktree={workspace.id}>
-      <form
-        className="space-y-sm p-lg"
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
-      >
-        <DialogHeader title={`New worktree in ${workspace.label}`} detail={workspace.path} />
-        <label className="block text-body text-subtle-foreground">
-          Branch
-          <Field value={branch} disabled={working} autoComplete="off" spellCheck={false} placeholder="feature/name" className="mt-xxs w-full" onChange={(event) => setBranch(event.target.value)} data-worktree-branch="true" />
-        </label>
-        {problem ? <Note tone="warn">{problem}</Note> : null}
-        <label className="block text-body text-subtle-foreground">
-          Base
-          <Select value={base} disabled={working || branches.length === 0} className="mt-xxs w-full" onChange={(event) => setBase(event.target.value)} data-worktree-base="true">
-            {branches.length === 0 ? <option value="">No branches read yet</option> : null}
-            {branches.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <fieldset className="text-body text-subtle-foreground" disabled={working}>
-          <legend>Start in the new pane</legend>
-          <div className="mt-xxs flex flex-wrap gap-md">
-            {AGENTS.map((row) => (
-              <label key={row.id} className="inline-flex items-center gap-xs text-foreground">
-                <input type="radio" name="worktree-agent" value={row.id} checked={agent === row.id} onChange={() => setAgent(row.id)} data-worktree-agent={row.id} />
-                {row.label}
-              </label>
-            ))}
-          </div>
-        </fieldset>
-        <label className="block text-body text-subtle-foreground">
-          Purpose (optional)
-          <Field value={purpose} mono={false} disabled={working} maxLength={PURPOSE_HARD_LIMIT * 2} className="mt-xxs w-full" onChange={(event) => setPurpose(normalizePurpose(event.target.value))} data-worktree-purpose="true" />
-        </label>
-        {purpose ? (
-          <p className={`text-caption ${purposeIsLong(purpose) ? "text-warning" : "text-muted-foreground"}`}>{purposeCountLabel(purpose)}{purposeIsLong(purpose) ? " · longer than a sidebar row shows" : ""}</p>
-        ) : null}
-        {failure ? <Note tone="error" data-worktree-error="true">{failure}</Note> : null}
-        {working ? <Status tone="pending">Creating the worktree…</Status> : null}
-        <div className="flex flex-wrap justify-end gap-sm pt-sm">
-          <Button onClick={onClose}>{working ? "Hide" : "Cancel"}</Button>
-          <Button appearance="prominent" type="submit" disabled={working || !branch.trim() || problem !== null} data-worktree-create="true">
-            {working ? "Creating…" : "Create worktree"}
-          </Button>
-        </div>
-      </form>
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent data-new-worktree={workspace.id}>
+        <form
+          className="flex min-h-0 flex-1 flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <DialogIntro title={`New worktree in ${workspace.label}`} detail={workspace.path} />
+          <DialogBody className="space-y-sm">
+            <label className="block text-body text-subtle-foreground">
+              Branch
+              <Input value={branch} disabled={working} autoComplete="off" spellCheck={false} placeholder="feature/name" className="mt-xxs" mono onChange={(event) => setBranch(event.target.value)} data-worktree-branch="true" />
+            </label>
+            {problem ? <Note tone="warn">{problem}</Note> : null}
+            <label className="block text-body text-subtle-foreground">
+              Base
+              <Select value={base || undefined} disabled={working || branches.length === 0} onValueChange={(value) => setBase(value)}>
+                <SelectTrigger data-worktree-base="true" aria-label="Base branch" className="mt-xxs w-full">
+                  <SelectValue placeholder="No branches read yet" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <fieldset className="text-body text-subtle-foreground" disabled={working}>
+              <legend>Start in the new pane</legend>
+              <RadioGroup className="mt-xxs grid-flow-col justify-start gap-md" value={agent} onValueChange={(value) => setAgent(value as (typeof AGENTS)[number]["id"])}>
+                {AGENTS.map((row) => (
+                  <label key={row.id} className="inline-flex items-center gap-xs text-foreground">
+                    <RadioGroupItem value={row.id} data-worktree-agent={row.id} />
+                    {row.label}
+                  </label>
+                ))}
+              </RadioGroup>
+            </fieldset>
+            <label className="block text-body text-subtle-foreground">
+              Purpose (optional)
+              <Input value={purpose} disabled={working} maxLength={PURPOSE_HARD_LIMIT * 2} className="mt-xxs" onChange={(event) => setPurpose(normalizePurpose(event.target.value))} data-worktree-purpose="true" />
+            </label>
+            {purpose ? (
+              <p className={`text-caption ${purposeIsLong(purpose) ? "text-warning" : "text-muted-foreground"}`}>{purposeCountLabel(purpose)}{purposeIsLong(purpose) ? " · longer than a sidebar row shows" : ""}</p>
+            ) : null}
+            {failure ? <Note tone="error" data-worktree-error="true">{failure}</Note> : null}
+            {working ? <Status tone="pending">Creating the worktree…</Status> : null}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="secondary" onClick={onClose}>{working ? "Hide" : "Cancel"}</Button>
+            <Button type="submit" disabled={working || !branch.trim() || problem !== null} data-worktree-create="true">
+              {working ? "Creating…" : "Create worktree"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   );
 }
@@ -274,56 +297,58 @@ function PurposeDialog({ actions, checkout, deviceLabel, onClose }: { actions: A
   const failure = task?.phase === "failed" ? (task.message ?? "The purpose was not saved.") : refused;
   const label = checkout.branch ?? checkout.label;
   return (
-    <Dialog label={`Purpose of ${label}`} onClose={onClose} data-purpose-dialog={checkout.id}>
-      <form
-        className="space-y-sm p-lg"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!working) send(normalizePurpose(text).trim());
-        }}
-      >
-        <DialogHeader title={`Purpose of ${label}`} detail={checkout.path} />
-        <Field
-          value={text}
-          mono={false}
-          disabled={working}
-          aria-label="Purpose"
-          placeholder={checkout.purpose && !written ? checkout.purpose.text : "What this workspace is for"}
-          className="w-full"
-          onChange={(event) => {
-            setSaved(null);
-            setText(normalizePurpose(event.target.value));
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent data-purpose-dialog={checkout.id}>
+        <form
+          className="flex min-h-0 flex-1 flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!working) send(normalizePurpose(text).trim());
           }}
-          data-purpose-field="true"
-        />
-        <p className={`text-caption ${purposeIsLong(text) ? "text-warning" : "text-muted-foreground"}`} data-purpose-count="true">
-          {purposeCountLabel(text)}
-          {purposeIsLong(text) ? " · longer than a sidebar row shows" : ""}
-        </p>
-        <p className="text-caption text-muted-foreground" data-purpose-scope="true">
-          {purposeScope(deviceLabel, checkout.branch ?? null)}
-        </p>
-        {failure ? (
-          <Note tone="error" data-purpose-error="true">
-            {failure} Your text is kept; Save tries again.
-          </Note>
-        ) : null}
-        {saved !== null ? (
-          <Status tone="ok" data-purpose-saved="true">
-            {saved ? "Saved" : "Cleared"}
-          </Status>
-        ) : null}
-        {working ? <Status tone="pending">Saving…</Status> : null}
-        <div className="flex flex-wrap justify-end gap-sm pt-sm">
-          <Button onClick={onClose}>{saved !== null ? "Done" : "Cancel"}</Button>
-          <Button disabled={working || (!written && !text)} onClick={() => send("")} data-purpose-clear="true">
-            Clear
-          </Button>
-          <Button appearance="prominent" type="submit" disabled={working} data-purpose-save="true">
-            {working ? "Saving…" : "Save"}
-          </Button>
-        </div>
-      </form>
+        >
+          <DialogIntro title={`Purpose of ${label}`} detail={checkout.path} />
+          <DialogBody className="space-y-sm">
+            <Input
+              value={text}
+              disabled={working}
+              aria-label="Purpose"
+              placeholder={checkout.purpose && !written ? checkout.purpose.text : "What this workspace is for"}
+              onChange={(event) => {
+                setSaved(null);
+                setText(normalizePurpose(event.target.value));
+              }}
+              data-purpose-field="true"
+            />
+            <p className={`text-caption ${purposeIsLong(text) ? "text-warning" : "text-muted-foreground"}`} data-purpose-count="true">
+              {purposeCountLabel(text)}
+              {purposeIsLong(text) ? " · longer than a sidebar row shows" : ""}
+            </p>
+            <p className="text-caption text-muted-foreground" data-purpose-scope="true">
+              {purposeScope(deviceLabel, checkout.branch ?? null)}
+            </p>
+            {failure ? (
+              <Note tone="error" data-purpose-error="true">
+                {failure} Your text is kept; Save tries again.
+              </Note>
+            ) : null}
+            {saved !== null ? (
+              <Status tone="ok" data-purpose-saved="true">
+                {saved ? "Saved" : "Cleared"}
+              </Status>
+            ) : null}
+            {working ? <Status tone="pending">Saving…</Status> : null}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="secondary" onClick={onClose}>{saved !== null ? "Done" : "Cancel"}</Button>
+            <Button variant="secondary" disabled={working || (!written && !text)} onClick={() => send("")} data-purpose-clear="true">
+              Clear
+            </Button>
+            <Button type="submit" disabled={working} data-purpose-save="true">
+              {working ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
     </Dialog>
   );
 }
@@ -353,9 +378,12 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
     onClose();
   };
   return (
-    <Dialog label={`Delete worktree ${branch ?? checkout.label}`} role="alertdialog" initialFocus="container" onClose={hide} data-delete-worktree={checkout.id}>
-      <div className="space-y-sm p-lg">
-        <DialogHeader title={`Delete worktree ${branch ?? checkout.label}?`} detail={checkout.path} />
+    <AlertDialog open onOpenChange={(next) => { if (!next) hide(); }}>
+      <AlertDialogContent data-delete-worktree={checkout.id}>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="break-words">Delete worktree {branch ?? checkout.label}?</AlertDialogTitle>
+          <AlertDialogDescription className="break-all font-mono text-caption text-muted-foreground">{checkout.path}</AlertDialogDescription>
+        </AlertDialogHeader>
         {!row || !gate ? <Note tone="warn">The worktree row has not been read yet, so nothing can be deleted.</Note> : null}
         {gate?.blocked_reason ? (
           <Note tone="warn" data-delete-blocked="true">
@@ -373,7 +401,7 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
             </ul>
             {branch ? (
               <label className={`flex items-start gap-xs text-body ${gate.can_delete_branch ? "text-foreground" : "text-muted-foreground"}`}>
-                <input type="checkbox" checked={deleteBranch} disabled={!gate.can_delete_branch} onChange={(event) => setDeleteBranch(event.target.checked)} data-delete-branch="true" />
+                <Checkbox checked={deleteBranch} disabled={!gate.can_delete_branch} onCheckedChange={(checked) => setDeleteBranch(checked === true)} data-delete-branch="true" className="mt-xxs" />
                 <span>
                   Also delete the local branch {branch}
                   {gate.can_delete_branch ? " (only if Git agrees it is merged)" : " (not offered: the branch is not safely merged or not named)"}
@@ -393,18 +421,20 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
             {settled.message ?? (settled.phase === "finished" ? "Worktree removed." : "Worktree removal failed.")}
           </Note>
         ) : null}
-        <div className="flex flex-wrap justify-end gap-sm pt-sm">
+        <AlertDialogFooter>
           <Button onClick={hide} data-delete-cancel="true">
             {settled || refused ? "Close" : inFlight ? "Hide" : "Keep worktree"}
           </Button>
+          {/* Plain Button, not AlertDialogAction: it has to stay open through
+              the async removal instead of closing on the first click. */}
           {row && gate && !gate.blocked_reason && !request ? (
-            <Button appearance="danger" onClick={confirm} data-delete-confirm="true">
+            <Button variant="destructive" onClick={confirm} data-delete-confirm="true">
               {gate.button_label || "Delete worktree"}
             </Button>
           ) : null}
-        </div>
-      </div>
-    </Dialog>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

@@ -1,5 +1,8 @@
+import { XIcon } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import type { Actions } from "./actions";
+import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
 import { ExplorerTree } from "./ExplorerTree";
 import { HistoryList } from "./HistoryList";
 import { useUiStore } from "./ui";
@@ -8,7 +11,7 @@ import { useUiStore } from "./ui";
 // and closed on its own, beside whichever areas the layout shows. Both are the
 // front Workspace's, so closing one here leaves every other Workspace's alone.
 // With both open they share the column, Explorer above History. The names are
-// DESIGN.md's current ones.
+// docs/UI_BEHAVIOR.md's current ones.
 //
 // When the window cannot give the work area its minimum beside the column,
 // the same tools float over the work area instead, and only once the
@@ -99,16 +102,11 @@ function ToolSection({ title, tool, divided = false, onClose, children }: { titl
     <section className={`flex min-h-0 flex-1 flex-col ${divided ? "border-t border-border" : ""}`} aria-label={title} data-tool={tool} data-right-panel={tool === "explorer" ? "explorer" : "changes"}>
       <header className="flex h-[var(--size-pane-header)] shrink-0 items-center gap-xs px-md text-caption text-subtle-foreground">
         <h2 className="min-w-0 flex-1 truncate font-semibold uppercase text-muted-foreground">{title}</h2>
-        <button
-          type="button"
-          aria-label={`Hide ${title}`}
-          title={`Hide ${title}`}
-          data-tool-close={tool}
-          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-          onClick={onClose}
-        >
-          ×
-        </button>
+        <Hint label={`Hide ${title}`}>
+          <Button variant="ghost" size="icon-sm" data-tool-close={tool} onClick={onClose}>
+            <XIcon />
+          </Button>
+        </Hint>
       </header>
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </section>

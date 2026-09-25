@@ -1,9 +1,12 @@
+import { Columns2Icon, FileTextIcon, FolderIcon, GitBranchIcon, TerminalIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { Button } from "./components/ui/controls";
-import { LayoutIcon, ToolIcon } from "./icons";
-import { ContextMenu, MenuList, type MenuEntry } from "./Menu";
+import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
+import { Button } from "./components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+import { Hint } from "./components/ui/tooltip";
 import { FindBar } from "./Overlays";
 import { PaneCanvas, RemotePaneCanvas } from "./PaneGrid";
 import { RelationStatus } from "./PaneRelations";
@@ -112,7 +115,7 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
     if (id === "overview" && project) setScreen({ kind: "overview", projectId: project.id });
   };
   return (
-    <ContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
+    <EntryContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar px-sm text-caption" data-workspace-toolbar="true">
         <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
           <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
@@ -147,56 +150,50 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
           <ToolToggle tool="changes" label="History" on={changes} actions={actions} />
         </div>
       </div>
-    </ContextMenu>
+    </EntryContextMenu>
   );
 }
 
 type ToolbarMenuId = `layout:${ViewMode}` | "explorer" | "changes" | "copy_path" | "overview";
 
+/** The layout mode's own mark, standing in for the hand-drawn `LayoutIcon` (D-09). */
+function layoutMark(mode: ViewMode) {
+  if (mode === "agents") return <TerminalIcon />;
+  if (mode === "together") return <Columns2Icon />;
+  return <FileTextIcon />;
+}
+
 /** Three icons with the choice marked, and the same choices by name in a menu (D-03). */
 function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
-  const [menu, setMenu] = useState(false);
-  const items: MenuEntry<ViewMode>[] = LAYOUTS.map((layout) => ({
-    id: layout.mode,
-    label: `${layout.mode === mode ? "✓ " : ""}${layout.label}`,
-    unavailable: null,
-  }));
   return (
     <div className="relative flex items-center gap-xxs">
-      <div role="radiogroup" aria-label="Layout" className="flex items-center rounded-sm bg-card p-xxs">
+      <ToggleGroup type="single" value={mode} onValueChange={(next) => next && actions.setLayout(next as ViewMode)} aria-label="Layout">
         {LAYOUTS.map((layout) => (
-          <button
-            key={layout.mode}
-            type="button"
-            role="radio"
-            aria-checked={layout.mode === mode}
-            aria-label={layout.label}
-            title={layout.label}
-            data-layout-choice={layout.mode}
-            className={`flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-              layout.mode === mode ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-subtle-foreground"
-            }`}
-            onClick={() => actions.setLayout(layout.mode)}
-          >
-            <LayoutIcon mode={layout.mode} />
-          </button>
+          <Hint key={layout.mode} label={layout.label}>
+            <ToggleGroupItem value={layout.mode} aria-label={layout.label} data-layout-choice={layout.mode}>
+              {layoutMark(layout.mode)}
+            </ToggleGroupItem>
+          </Hint>
         ))}
-      </div>
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={menu}
-        aria-label={`Layout menu: ${layoutLabel(mode)}`}
-        title={`Layout menu: ${layoutLabel(mode)}`}
-        data-layout-menu="true"
-        className="rounded-xs px-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-        onClick={() => setMenu(!menu)}
-      >
-        ▾
-      </button>
-      {menu ? (
-        <MenuList label="Layout" items={items} onSelect={(id) => actions.setLayout(id)} onClose={() => setMenu(false)} className="absolute right-0 top-full" />
-      ) : null}
+      </ToggleGroup>
+      <DropdownMenu>
+        <Hint label={`Layout menu: ${layoutLabel(mode)}`}>
+          <DropdownMenuTrigger
+            data-layout-menu="true"
+            className="rounded-xs px-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+          >
+            ▾
+          </DropdownMenuTrigger>
+        </Hint>
+        <DropdownMenuContent align="end">
+          {LAYOUTS.map((layout) => (
+            <DropdownMenuItem key={layout.mode} onSelect={() => actions.setLayout(layout.mode)}>
+              {layout.mode === mode ? "✓ " : ""}
+              {layout.label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -214,42 +211,38 @@ const REGIONS: readonly { region: WorkingRegion; label: string }[] = [
 function RegionSwitch() {
   const region = useUiStore((s) => s.workingRegion);
   return (
-    <div role="radiogroup" aria-label="Working region, one at a time in this narrow window" className="flex items-center rounded-sm bg-card p-xxs" data-region-switch={region}>
+    <ToggleGroup
+      type="single"
+      value={region}
+      onValueChange={(next) => next && useUiStore.getState().setWorkingRegion(next as WorkingRegion)}
+      aria-label="Working region, one at a time in this narrow window"
+      data-region-switch={region}
+    >
       {REGIONS.map((choice) => (
-        <button
-          key={choice.region}
-          type="button"
-          role="radio"
-          aria-checked={choice.region === region}
-          title={`Show ${choice.label}`}
-          data-region-choice={choice.region}
-          className={`rounded-xs px-xs text-caption outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-            choice.region === region ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-subtle-foreground"
-          }`}
-          onClick={() => useUiStore.getState().setWorkingRegion(choice.region)}
-        >
+        <ToggleGroupItem key={choice.region} value={choice.region} data-region-choice={choice.region}>
           {choice.label}
-        </button>
+        </ToggleGroupItem>
       ))}
-    </div>
+    </ToggleGroup>
   );
 }
 
+// Explorer and History toggle on and off independently - both may show at
+// once - so this is not a single-choice ToggleGroup; each stays its own
+// icon button, and the pair keeps its `role="group"` wrapper (below).
 function ToolToggle({ tool, label, on, actions }: { tool: "explorer" | "changes"; label: string; on: boolean; actions: Actions }) {
   return (
-    <button
-      type="button"
-      aria-pressed={on}
-      aria-label={`${on ? "Hide" : "Show"} ${label}`}
-      title={`${on ? "Hide" : "Show"} ${label}`}
-      data-tool-toggle={tool}
-      className={`flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-        on ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-subtle-foreground"
-      }`}
-      onClick={() => actions.setTool(tool, !on)}
-    >
-      <ToolIcon tool={tool} />
-    </button>
+    <Hint label={`${on ? "Hide" : "Show"} ${label}`}>
+      <Button
+        variant={on ? "secondary" : "ghost"}
+        size="icon-sm"
+        aria-pressed={on}
+        data-tool-toggle={tool}
+        onClick={() => actions.setTool(tool, !on)}
+      >
+        {tool === "explorer" ? <FolderIcon /> : <GitBranchIcon />}
+      </Button>
+    </Hint>
   );
 }
 
@@ -381,7 +374,7 @@ function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Ac
         <PaneCanvas actions={actions} />
       ) : (
         <AreaEmpty state="no-agent-tab" text="No agent tab is open in this Workspace.">
-          <Button onClick={() => actions.createTab()} data-empty-new-tab="true">
+          <Button variant="secondary" onClick={() => actions.createTab()} data-empty-new-tab="true">
             New tab <span className="text-muted-foreground">⌥T</span>
           </Button>
         </AreaEmpty>
@@ -413,11 +406,11 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
         <p>{connected ? `${device.label} is connected, but no Herdr workspace is open there.` : `${device.label} is ${line.text}${status?.message ? `: ${status.message}` : "."}`}</p>
         <div className="flex gap-sm">
           {canRetryDevice(device, status ?? undefined) ? (
-            <Button onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
+            <Button variant="secondary" onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
               Retry
             </Button>
           ) : null}
-          <Button appearance="quiet" onClick={() => actions.focusDevice("local")} data-use-local-device="true">
+          <Button variant="ghost" onClick={() => actions.focusDevice("local")} data-use-local-device="true">
             Show this machine
           </Button>
         </div>
@@ -434,7 +427,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
             {device.label} is not connected{status?.message ? `: ${status.message}` : ""}. Showing the last state it reported; nothing is sent until it reconnects.
           </span>
           {canRetryDevice(device, status ?? undefined) ? (
-            <Button onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
+            <Button variant="secondary" onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
               Retry
             </Button>
           ) : null}

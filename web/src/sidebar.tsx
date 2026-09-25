@@ -1,11 +1,14 @@
+import { SettingsIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 import type { Actions } from "./actions";
+import { Button } from "./components/ui/button";
+import { RowMenu } from "./components/entry-menu";
+import { Hint } from "./components/ui/tooltip";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
 import { chipTone } from "./lineage";
 import { agentSections, allAgents, liveDescendantCounts } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
-import { RowMenu } from "./RowMenu";
 import { displayBrowser } from "./shortcuts";
 import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { checkoutMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
@@ -48,16 +51,11 @@ export function Sidebar({ actions }: { actions: Actions }) {
         ))}
         <span className="flex-1" />
         <span className="text-muted-foreground">⌘E</span>
-        <button
-          type="button"
-          aria-label={`Settings (${displayBrowser("settings")})`}
-          title={`Settings (${displayBrowser("settings")})`}
-          data-open-settings="true"
-          className="text-muted-foreground hover:text-foreground focus-visible:text-foreground"
-          onClick={() => actions.openSettings()}
-        >
-          ⚙
-        </button>
+        <Hint label={`Settings (${displayBrowser("settings")})`}>
+          <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
+            <SettingsIcon />
+          </Button>
+        </Hint>
       </div>
       {status ? (
         <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
@@ -209,7 +207,7 @@ function catalogLineOf(rest: SnapshotRest | null) {
  * The projects of the context on screen. A selected SSH device lists its
  * Herdr workspaces, one checkout each, with the one its host has focused
  * marked; the inactive folds and pins are this machine's and are not drawn
- * there (DESIGN.md: the remote context carries no pins).
+ * there (docs/UI_BEHAVIOR.md: the remote context carries no pins).
  */
 function ProjectList({ actions }: { actions: Actions }) {
   const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);

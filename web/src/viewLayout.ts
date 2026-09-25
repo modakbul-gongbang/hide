@@ -400,7 +400,7 @@ export type ViewMenuId =
 
 export type ViewMenuEntry = { id: ViewMenuId; label: string; unavailable: string | null; separated?: boolean };
 
-/** The menu's items in DESIGN.md's order, with its fixed labels. */
+/** The menu's items in docs/UI_BEHAVIOR.md's order, with its fixed labels. */
 const MENU_ITEMS: readonly { id: ViewMenuId; label: string }[] = [
   { id: "keep_open", label: "Keep open" },
   ...MENU_EDGES.map((edge) => ({ id: `split_${edge}` as const, label: `Split ${EDGE_NAME[edge]}` })),
@@ -609,7 +609,7 @@ export type ViewCommandId = ViewMenuId | "focus_next" | "focus_previous" | "grow
 export type ViewCommand = { id: ViewCommandId; title: string; unavailable: string | null };
 
 /**
- * The View commands the palette offers (B20, D-13, DESIGN.md "The View tab
+ * The View commands the palette offers (B20, D-13, docs/UI_BEHAVIOR.md "The View tab
  * menu"): every item of the active view's menu, a Move toward each
  * direction and Keep open included, then focus to the next or previous area
  * and resizing the active area; each with the reason it cannot run now.
