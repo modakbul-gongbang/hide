@@ -175,27 +175,32 @@ pub fn changes(root: &Root, scope: &Path, query: &ChangesQuery) -> HostResult<Ch
         Some(base) => Some(base),
         None => default_branch(git),
     };
+    // The base is resolved once per read, and every committed diff of it,
+    // the selected one and each View display's, compares against that ref.
     let (base, committed) = match base {
         Some(base) => match read_committed(git, &base)? {
-            Some(committed) => (Some(base), Some(scope_entries(committed, scope))),
+            Some((base_ref, committed)) => (
+                Some(base),
+                Some((base_ref, scope_entries(committed, scope))),
+            ),
             None => (None, None),
         },
         None => (None, None),
     };
 
     let diff_of = |path: &str, in_committed: bool| {
-        let group = if in_committed {
-            committed.as_deref().unwrap_or_default()
+        if in_committed {
+            let (base_ref, group) = committed.as_ref()?;
+            group
+                .iter()
+                .find(|entry| entry.path == path)
+                .map(|entry| committed_diff(git, scope, entry, base_ref))
         } else {
-            &entries
-        };
-        group.iter().find(|entry| entry.path == path).map(|entry| {
-            if in_committed {
-                committed_diff(git, scope, entry, base.as_deref())
-            } else {
-                working_diff(git, root, scope, entry)
-            }
-        })
+            entries
+                .iter()
+                .find(|entry| entry.path == path)
+                .map(|entry| working_diff(git, root, scope, entry))
+        }
     };
     let answered: Vec<(&DiffTarget, Option<Diff>)> = query
         .diffs
@@ -226,7 +231,7 @@ pub fn changes(root: &Root, scope: &Path, query: &ChangesQuery) -> HostResult<Ch
         .collect();
     Ok(Changes {
         entries,
-        committed,
+        committed: committed.map(|(_, group)| group),
         base,
         diff,
         diffs,
@@ -383,9 +388,13 @@ fn resolvable_base(git: GitDirectory<'_>, base: &str) -> Option<String> {
         })
 }
 
-/// The files this branch's commits changed since `base`. An unresolved base
-/// omits the group; a failed read is an error.
-fn read_committed(git: GitDirectory<'_>, base: &str) -> HostResult<Option<Vec<ChangedFile>>> {
+/// The files this branch's commits changed since `base`, with the ref the
+/// base resolved to. An unresolved base omits the group; a failed read is an
+/// error.
+fn read_committed(
+    git: GitDirectory<'_>,
+    base: &str,
+) -> HostResult<Option<(String, Vec<ChangedFile>)>> {
     let Some(base_ref) = resolvable_base(git, base) else {
         return Ok(None);
     };
@@ -398,7 +407,7 @@ fn read_committed(git: GitDirectory<'_>, base: &str) -> HostResult<Option<Vec<Ch
     if let Ok(numstat) = git_text(git, &["diff", "--numstat", "-z", &range]) {
         apply_line_counts(&mut entries, &numstat);
     }
-    Ok(Some(entries))
+    Ok(Some((base_ref, entries)))
 }
 
 /// Keeps the entries under `scope`, relative to it. Git's rename source can
@@ -638,23 +647,23 @@ fn name_untracked(text: String, path: &str) -> String {
 
 /// A committed file's diff is against the base, not the index: the group is
 /// "what this branch changed", so its diff must be the same comparison.
+/// `base_ref` is the ref the read resolved the base to.
 fn committed_diff(
     git: GitDirectory<'_>,
     scope: &Path,
     entry: &ChangedFile,
-    base: Option<&str>,
+    base_ref: &str,
 ) -> Diff {
-    let Some(base) = base.and_then(|base| resolvable_base(git, base)) else {
-        return Diff {
-            path: entry.path.clone(),
-            text: String::new(),
-            notice: Some("The base branch could not be resolved in this checkout.".to_owned()),
-        };
-    };
     let (previous, current) = pathspecs(scope, entry);
     let text = git_diff_text(
         git,
-        &["diff", &format!("{base}...HEAD"), "--", &previous, &current],
+        &[
+            "diff",
+            &format!("{base_ref}...HEAD"),
+            "--",
+            &previous,
+            &current,
+        ],
         false,
         None,
     );
