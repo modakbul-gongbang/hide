@@ -46,6 +46,8 @@ pub(super) struct WorkspaceViewStore {
     /// The last split request ids per Workspace, so a split sent twice
     /// splits once. Runtime only.
     pub(super) split_requests: HashMap<WorkspaceKey, VecDeque<String>>,
+    /// Editor tabs the display cap keeps off screen, already reported.
+    pub(super) unshown: HashSet<String>,
     /// The Workspace the operator last chose, in this process or before it
     /// started: the one the app opens on (D-11); none on a first run.
     resumable: Option<WorkspaceKey>,
@@ -187,6 +189,7 @@ impl WorkspaceViewStore {
                 reconciled: None,
                 derived_active: None,
                 split_requests: HashMap::new(),
+                unshown: HashSet::new(),
                 resumable,
                 pending_choice: None,
                 saved_panel,

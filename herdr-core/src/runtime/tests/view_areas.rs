@@ -443,6 +443,199 @@ fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
     assert_eq!(runtime.snapshot.editor.tabs, tabs, "nothing was read");
 }
 
+/// `count` views of files that are not open, in the front Workspace's one
+/// area, as a restored Workspace holds them before they are read.
+fn fill(runtime: &mut Runtime, directory: &Path, count: usize) {
+    use crate::view_layout::{DisplayKind, Layout};
+    let mut layout = Layout::default();
+    for index in 0..count {
+        let path = directory.join(format!("f{index}.md"));
+        let shown = layout.new_display(&path.to_string_lossy(), DisplayKind::File, None, false);
+        layout.insert("a1", shown, 1).unwrap();
+    }
+    runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .views
+        .entry("local", &directory.to_string_lossy())
+        .layout = layout;
+}
+
+/// Review U1, B19: at 64 views nothing adds a 65th. Reopen Closed, a created
+/// file and a revealed file are refused with the reason before anything is
+/// read or made, and the closed file stays reopenable.
+#[test]
+fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
+    use crate::view_layout::MAX_VIEW_DISPLAYS;
+    let (mut runtime, checkout_id, directory) = views_runtime("view-cap-origins");
+    files(&directory, &["closed.md"]);
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("closed.md"),
+        false,
+        false,
+    );
+    let closed = tab_of(&runtime, "closed.md");
+    runtime.dispatch_json(&explorer_event(
+        "file_close",
+        serde_json::json!({"tab_id": closed}),
+    ));
+    assert_eq!(runtime.snapshot.recent_closed.count, 1);
+    fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS);
+    let before = tree(&mut runtime);
+    assert_eq!(before.display_count, MAX_VIEW_DISPLAYS);
+    let tabs = runtime.snapshot.editor.tabs.clone();
+
+    for (kind, payload) in [
+        ("reopen_closed", serde_json::json!({})),
+        (
+            "file_create",
+            serde_json::json!({"root": directory, "parent": directory, "name": "new.md"}),
+        ),
+        (
+            "reveal_path",
+            serde_json::json!({
+                "path": directory.join("notes.md"), "workspace_id": "workspace:order",
+                "checkout_id": checkout_id, "is_directory": false,
+            }),
+        ),
+    ] {
+        runtime.dispatch_json(&explorer_event(kind, payload));
+        let error = runtime
+            .snapshot
+            .status
+            .last_error
+            .clone()
+            .unwrap_or_else(|| panic!("{kind} at the cap is refused"));
+        assert_eq!(error.kind, "view_layout.display_limit", "{kind}");
+    }
+    assert_eq!(tree(&mut runtime), before);
+    assert_eq!(runtime.snapshot.editor.tabs, tabs, "nothing was read");
+    assert!(!directory.join("new.md").exists(), "nothing was made");
+    assert_eq!(
+        runtime.snapshot.recent_closed.count, 1,
+        "the closed file stays reopenable"
+    );
+}
+
+/// Review U1: a file that lands after the tree filled, here a Reopen Closed
+/// admitted at 63 views, is refused with the reason as it lands rather than
+/// making a 65th view; nothing is opened and the file stays reopenable.
+#[test]
+fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() {
+    use crate::view_layout::{DisplayKind, MAX_VIEW_DISPLAYS};
+    let (runtime, checkout_id, directory) = views_runtime("view-cap-landing");
+    let shared = Arc::new(Mutex::new(runtime));
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(Arc::downgrade(&shared), crate::ffi::ChangeNotifier::noop());
+    let wait = |what: &str, ready: &dyn Fn(&Runtime) -> bool| {
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while !ready(&shared.lock().unwrap()) {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    open(
+        &mut shared.lock().unwrap(),
+        &checkout_id,
+        &directory.join("notes.md"),
+        false,
+        false,
+    );
+    wait("the file to be read", &|runtime| {
+        !runtime.editor_documents.is_empty()
+    });
+    {
+        let mut runtime = shared.lock().unwrap();
+        let notes = tab_of(&runtime, "notes.md");
+        runtime.dispatch_json(&explorer_event(
+            "file_close",
+            serde_json::json!({"tab_id": notes}),
+        ));
+        fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS - 1);
+        runtime.dispatch_json(&explorer_event("reopen_closed", serde_json::json!({})));
+        assert_eq!(runtime.snapshot.status.last_error, None);
+        assert!(runtime.snapshot.recent_closed.restoring);
+        // Another view takes the last place while the file is read.
+        let layout = &mut runtime
+            .workspace_views
+            .as_mut()
+            .unwrap()
+            .views
+            .entry("local", &directory.to_string_lossy())
+            .layout;
+        let last = layout.new_display(
+            &directory.join("last.md").to_string_lossy(),
+            DisplayKind::File,
+            None,
+            false,
+        );
+        layout.insert("a1", last, 2).unwrap();
+    }
+    wait("the reopen to land", &|runtime| {
+        !runtime.snapshot.recent_closed.restoring
+    });
+    let mut runtime = shared.lock().unwrap();
+    let refused = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(refused.kind, "view_layout.display_limit");
+    assert_eq!(tree(&mut runtime).display_count, MAX_VIEW_DISPLAYS);
+    assert!(
+        runtime.snapshot.editor.tabs.is_empty(),
+        "nothing was opened"
+    );
+    assert_eq!(runtime.snapshot.recent_closed.count, 1, "still reopenable");
+    assert!(
+        runtime.snapshot.recent_closed.notices[0]
+            .message
+            .contains(&refused.message)
+    );
+}
+
+/// Review U1: the reconcile holds the cap too. A document of the Workspace
+/// that no view shows while it has 64, which no action makes now but a
+/// future path might, waits off screen, is reported once in the diagnostic
+/// log, and shows once a view is closed.
+#[test]
+fn a_document_the_full_views_cannot_hold_shows_once_a_view_is_closed() {
+    use crate::view_layout::MAX_VIEW_DISPLAYS;
+    let (mut runtime, checkout_id, directory) = views_runtime("view-cap-reconcile");
+    fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS);
+    let path = directory.join("notes.md").to_string_lossy().into_owned();
+    runtime.insert_diff_tab("workspace:order", &checkout_id, &path, false, false);
+    let shown = |runtime: &mut Runtime| {
+        labels(runtime)
+            .concat()
+            .contains(&"notes.md (working diff)".to_owned())
+    };
+    let reported = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .filter(|logged| logged.kind == "view_layout.display_limit")
+            .count()
+    };
+
+    let full = tree(&mut runtime);
+    assert_eq!(full.display_count, MAX_VIEW_DISPLAYS);
+    assert!(!shown(&mut runtime));
+    layout(&mut runtime, serde_json::json!({"changes": true}));
+    assert_eq!(reported(&runtime), 1, "reported once, not on every pass");
+
+    let first = areas(&full)[0].2[0].id.clone();
+    assert!(act(
+        &mut runtime,
+        serde_json::json!({"action": "close", "display_id": first}),
+    ));
+    assert!(shown(&mut runtime));
+    assert_eq!(tree(&mut runtime).display_count, MAX_VIEW_DISPLAYS);
+}
+
 /// Engineering principle 11: a split sent twice splits once.
 #[test]
 fn a_repeated_split_request_splits_once() {

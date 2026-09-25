@@ -2153,6 +2153,27 @@ impl Runtime {
             ),
             ClosedItem::File { .. } => (true, true, None),
         };
+        // With View areas the reopened file takes a display, so a Workspace
+        // at its display cap refuses it here and the item stays (review U1).
+        if self.separate_view_areas()
+            && let ClosedItem::File {
+                workspace_id,
+                checkout_id,
+                path,
+                ..
+            } = &item
+            && let Some(workspace) = self.workspace_key(workspace_id, checkout_id)
+            && !self.admit_view_open(
+                &workspace,
+                path,
+                crate::view_layout::DisplayKind::File,
+                None,
+                false,
+                false,
+            )
+        {
+            return true;
+        }
         let key = item.key().to_owned();
         self.reopen_in_flight = Some(key.clone());
         self.set_reopen_notices(vec![live::ReopenNotice {
@@ -2245,6 +2266,25 @@ impl Runtime {
                                 place,
                             };
                             self.show_file_tab(prepared, workspace_id, checkout_id, path, false);
+                            // With View areas the open can still be refused as
+                            // it lands, when the Workspace filled its views
+                            // meanwhile: the item stays and says why (review U1).
+                            if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+                                let reason = self
+                                    .snapshot
+                                    .status
+                                    .last_error
+                                    .as_ref()
+                                    .map_or_else(String::new, |error| error.message.clone());
+                                self.set_reopen_notices(vec![live::ReopenNotice {
+                                    pane_id: None,
+                                    message: format!(
+                                        "The file could not be reopened; retry is available: {reason}"
+                                    ),
+                                }]);
+                                self.sync_recent_closed_snapshot();
+                                return true;
+                            }
                             if let Err(message) = self.focus_editor_tab_context(&tab_id) {
                                 self.set_reopen_notices(vec![live::ReopenNotice {
                                 pane_id: None,

@@ -343,6 +343,7 @@ pub enum LayoutError {
     UnknownSplit(String),
     AreaLimit,
     DepthLimit,
+    DisplayLimit,
     NothingToSplit,
     InvalidRatio,
 }
@@ -355,6 +356,7 @@ impl LayoutError {
             Self::UnknownArea(_) => "view_layout.unknown_area",
             Self::UnknownSplit(_) => "view_layout.unknown_split",
             Self::AreaLimit | Self::DepthLimit => "view_layout.limit",
+            Self::DisplayLimit => "view_layout.display_limit",
             Self::NothingToSplit => "view_layout.nothing_to_split",
             Self::InvalidRatio => "view_layout.invalid_ratio",
         }
@@ -370,6 +372,9 @@ impl LayoutError {
             ),
             Self::DepthLimit => format!(
                 "This view area is already split {MAX_SPLIT_DEPTH} levels deep. Split another area instead."
+            ),
+            Self::DisplayLimit => format!(
+                "This Workspace has {MAX_VIEW_DISPLAYS} views open. Close a view to open another."
             ),
             Self::NothingToSplit => {
                 "This view is the only one in its area, so splitting it there would change nothing"
@@ -515,6 +520,7 @@ impl Layout {
         mut display: Display,
         stamp: u64,
     ) -> Result<(), LayoutError> {
+        self.check_room()?;
         let area = self
             .root
             .area_mut(area_id)
@@ -529,6 +535,7 @@ impl Layout {
     /// Adds `display` to the end of `area_id` without moving the focus: the
     /// area shows it only when it had nothing to show.
     pub fn append(&mut self, area_id: &str, display: Display) -> Result<(), LayoutError> {
+        self.check_room()?;
         let area = self
             .root
             .area_mut(area_id)
@@ -716,6 +723,7 @@ impl Layout {
         if self.area(area_id).is_none() {
             return Err(LayoutError::UnknownArea(area_id.to_owned()));
         }
+        self.check_room()?;
         let mut next = self.clone();
         let fresh = next.put_beside(area_id, edge, display, stamp);
         next.check_caps()?;
@@ -749,6 +757,15 @@ impl Layout {
         debug_assert!(wrapped, "the caller checked the area exists");
         self.active_area = fresh.clone();
         fresh
+    }
+
+    /// Every operation that adds a display refuses the one past the cap, so
+    /// no path can take a Workspace there.
+    fn check_room(&self) -> Result<(), LayoutError> {
+        if self.display_count() >= MAX_VIEW_DISPLAYS {
+            return Err(LayoutError::DisplayLimit);
+        }
+        Ok(())
     }
 
     fn check_caps(&self) -> Result<(), LayoutError> {
@@ -1037,6 +1054,31 @@ mod tests {
         assert_eq!(
             layout.split(&id(&layout, "g"), &shallow, Edge::Right, 2),
             Err(LayoutError::AreaLimit)
+        );
+        assert_eq!(layout, before);
+    }
+
+    /// Review U1: the 64th display fits, and every way of adding one more is
+    /// refused and changes nothing, whichever path asked.
+    #[test]
+    fn every_way_of_adding_a_display_past_the_cap_is_refused() {
+        let names: Vec<String> = (1..MAX_VIEW_DISPLAYS).map(|n| format!("f{n}")).collect();
+        let mut layout = with_files(&names.iter().map(String::as_str).collect::<Vec<_>>());
+        let last = layout.new_display("/repo/last", DisplayKind::File, None, false);
+        layout.insert("a1", last, 1).unwrap();
+        assert_eq!(layout.display_count(), MAX_VIEW_DISPLAYS);
+
+        let before = layout.clone();
+        let mut scratch = layout.clone();
+        let mut extra = || scratch.new_display("/repo/x", DisplayKind::File, None, false);
+        assert_eq!(
+            layout.insert("a1", extra(), 2),
+            Err(LayoutError::DisplayLimit)
+        );
+        assert_eq!(layout.append("a1", extra()), Err(LayoutError::DisplayLimit));
+        assert_eq!(
+            layout.split_new("a1", Edge::Right, extra(), 2),
+            Err(LayoutError::DisplayLimit)
         );
         assert_eq!(layout, before);
     }

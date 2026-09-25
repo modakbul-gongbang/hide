@@ -164,13 +164,11 @@ fn last_focused_showing(
         .map(|display| display.id.clone())
 }
 
+/// The cap with the opens still being read counted, so reads in flight
+/// cannot pass it together.
 fn display_limit(layout: &Layout, pending: usize) -> Option<LayoutRefusal> {
-    (layout.display_count() + pending >= MAX_VIEW_DISPLAYS).then(|| LayoutRefusal {
-        kind: "view_layout.display_limit",
-        message: format!(
-            "This Workspace has {MAX_VIEW_DISPLAYS} views open. Close a view to open another."
-        ),
-    })
+    (layout.display_count() + pending >= MAX_VIEW_DISPLAYS)
+        .then(|| LayoutError::DisplayLimit.into())
 }
 
 struct LayoutRefusal {
@@ -188,16 +186,18 @@ impl From<LayoutError> for LayoutRefusal {
 }
 
 /// Brings one Workspace's displays in line with the editor's tabs. Returns
-/// whether anything the file stores changed.
-fn reconcile_layout(
+/// whether anything the file stores changed, and the documents the display
+/// cap kept off screen.
+fn reconcile_layout<'t>(
     layout: &mut Layout,
     key: &WorkspaceKey,
     live: bool,
-    tabs: &[TabFacts],
+    tabs: &'t [TabFacts],
     requested: Option<&str>,
     now: u64,
-) -> bool {
+) -> (bool, Vec<&'t TabFacts>) {
     let mut stored = false;
+    let mut unshown = Vec::new();
     // A display whose document closed, by any path, goes with it.
     let gone: Vec<String> = layout
         .displays()
@@ -242,13 +242,19 @@ fn reconcile_layout(
         }
     }
     // A document of this Workspace that no display shows gets one, at the
-    // end of the area in use: a Reopen Closed, a created file.
+    // end of the area in use: a Reopen Closed, a created file. The actions
+    // that make one are refused at the cap; one that landed after the tree
+    // filled waits off screen until a view is closed (review U1).
     if live {
         for tab in tabs.iter().filter(|tab| tab.key.as_ref() == Some(key)) {
             if layout
                 .displays()
                 .any(|display| display.tab_id.as_deref() == Some(tab.id.as_str()))
             {
+                continue;
+            }
+            if layout.display_count() >= MAX_VIEW_DISPLAYS {
+                unshown.push(tab);
                 continue;
             }
             let mut display = layout.new_display(&tab.path, tab.kind, tab.committed, false);
@@ -275,7 +281,7 @@ fn reconcile_layout(
             stored |= layout.focus(&display_id, stamp).unwrap_or(false);
         }
     }
-    stored
+    (stored, unshown)
 }
 
 impl Runtime {
@@ -311,7 +317,7 @@ impl Runtime {
     /// Whether an open may add what it would add to the Workspace `key`; a
     /// refusal is set as the error and nothing changes (contract 2). An open
     /// of a document already shown is a focus and is never refused.
-    fn admit_view_open(
+    pub(super) fn admit_view_open(
         &mut self,
         key: &WorkspaceKey,
         path: &str,
@@ -348,8 +354,19 @@ impl Runtime {
         } else if layout
             .displays()
             .any(|display| display.shows(path, kind, committed))
-            || (preview && base.displays.iter().any(|display| display.preview))
         {
+            None
+        } else if preview
+            && base.displays.iter().any(|display| {
+                display.preview
+                    && !display
+                        .tab_id
+                        .as_deref()
+                        .is_some_and(|tab_id| self.document_kept(tab_id))
+            })
+        {
+            // The area's preview display takes the document in place; one
+            // whose document holds work stays and the open adds a display.
             None
         } else {
             display_limit(layout, pending)
@@ -620,8 +637,9 @@ impl Runtime {
             }
             Ok(((), true))
         });
-        if placed.is_err() {
-            return false;
+        if let Err(error) = placed {
+            self.refuse_placement(key, tab_id, error);
+            return true;
         }
         if let Some((_, old_tab, old_path, old_kind)) = slot
             && !old_kept
@@ -650,16 +668,26 @@ impl Runtime {
             let Some(target) = neighbour else {
                 let mut display = layout.new_display(path, kind, committed, false);
                 display.tab_id = Some(tab_id.to_owned());
-                if let Err(error) = layout.split_new(base, Edge::Right, display.clone(), stamp) {
-                    // The tree changed while the file was read: it opens in
-                    // the area it was asked from instead.
+                if let Err(error) = layout.split_new(base, Edge::Right, display, stamp) {
+                    // The tree changed while the file was read: a display
+                    // that shows the document already is focused, and with
+                    // none the open is refused rather than doubled up in the
+                    // area it was asked from (review U1).
+                    let Some(shown) = last_focused_showing(
+                        &layout.displays().collect::<Vec<_>>(),
+                        path,
+                        kind,
+                        committed,
+                    ) else {
+                        return Err(error);
+                    };
                     crate::diagnostic!(serde_json::json!({
                         "component": "view_areas",
                         "kind": "view_layout.beside_refused",
                         "device": key.0,
                         "reason": error.kind(),
                     }));
-                    layout.insert(base, display, stamp)?;
+                    layout.focus(&shown, stamp)?;
                 }
                 return Ok(((), true));
             };
@@ -686,7 +714,35 @@ impl Runtime {
             }
             Ok(((), true))
         });
-        placed.is_ok()
+        if let Err(error) = placed {
+            self.refuse_placement(key, tab_id, error);
+        }
+        true
+    }
+
+    /// An open whose display cannot be added says why, and the document it
+    /// read goes with it unless a display shows it or it holds work, so the
+    /// reconcile does not put it on screen anyway.
+    fn refuse_placement(&mut self, key: &WorkspaceKey, tab_id: &str, error: LayoutError) {
+        self.set_error(error.kind(), error.message(), false);
+        let shown = self.view_layout_of(key).is_some_and(|layout| {
+            layout
+                .displays()
+                .any(|display| display.tab_id.as_deref() == Some(tab_id))
+        });
+        if shown || self.document_kept(tab_id) {
+            return;
+        }
+        if let Some(index) = self
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .position(|tab| tab.id == tab_id)
+        {
+            self.retire_editor_tab(index);
+            self.rebuild_tab_strips();
+        }
     }
 
     /// The document a preview display showed before it took `new_tab`'s
@@ -1191,13 +1247,14 @@ impl Runtime {
         let store = self.workspace_views.as_mut().expect("checked above");
         let mut stored = false;
         let mut every_preview: HashMap<String, bool> = HashMap::new();
+        let mut unshown: Vec<(String, String, String)> = Vec::new();
         for view in &mut store.views.workspaces {
             let key = (view.device_id.clone(), view.path.clone());
             let requested = requested.as_deref().filter(|requested| {
                 tabs.iter()
                     .any(|tab| tab.id == *requested && tab.key.as_ref() == Some(&key))
             });
-            stored |= reconcile_layout(
+            let (changed, capped) = reconcile_layout(
                 &mut view.layout,
                 &key,
                 store.live.contains(&key),
@@ -1205,15 +1262,38 @@ impl Runtime {
                 requested,
                 now,
             );
+            stored |= changed;
+            unshown.extend(
+                capped
+                    .into_iter()
+                    .map(|tab| (tab.id.clone(), tab.path.clone(), key.1.clone())),
+            );
             for display in view.layout.displays() {
                 if let Some(tab_id) = &display.tab_id {
                     *every_preview.entry(tab_id.clone()).or_insert(true) &= display.preview;
                 }
             }
         }
+        // A document the cap keeps off screen is reported once, not on every
+        // pass that still finds it there.
+        let reported = std::mem::take(&mut store.unshown);
+        store.unshown = unshown
+            .iter()
+            .map(|(tab_id, _, _)| tab_id.clone())
+            .collect();
         if stored {
             store.generation += 1;
             self.persist_workspace_views();
+        }
+        for (tab_id, path, workspace) in unshown {
+            if !reported.contains(&tab_id) {
+                self.push_diagnostic(
+                    "view_layout.display_limit",
+                    format!(
+                        "{path} is open but not shown: {workspace} already has {MAX_VIEW_DISPLAYS} views, and it shows once one is closed"
+                    ),
+                );
+            }
         }
         // The tab's own flag says what its displays say.
         let mut strips = false;

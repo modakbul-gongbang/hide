@@ -217,11 +217,13 @@ struct V1Tab {
 
 impl V1View {
     /// The strip becomes the displays of one area, in saved order, with the
-    /// active tab as that area's active display.
+    /// active tab as that area's active display. A strip past the display
+    /// cap is taken whole and trimmed by the load's repair, which says so.
     fn migrate(self) -> WorkspaceView {
         let mut layout = Layout::default();
         let area = layout.active_area.clone();
         let mut active = None;
+        let mut displays = Vec::new();
         for tab in &self.tabs {
             let display = layout.new_display(&tab.path, tab.kind, tab.committed, tab.preview);
             if self.active.as_ref().is_some_and(|saved| {
@@ -229,11 +231,10 @@ impl V1View {
             }) {
                 active = Some(display.id.clone());
             }
-            layout
-                .insert(&area, display, 0)
-                .expect("the default layout has its area");
+            displays.push(display);
         }
         if let Some(area) = layout.area_mut(&area) {
+            area.displays = displays;
             area.active = active.or_else(|| area.displays.last().map(|display| display.id.clone()));
         }
         WorkspaceView {

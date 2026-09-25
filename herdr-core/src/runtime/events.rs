@@ -2334,19 +2334,38 @@ impl Runtime {
                     }
                 }
             }
-            Event::FileCreate(payload) => self.start_explorer_operation(
-                |root| {
-                    files::ExplorerOperation::create(
-                        files::ExplorerOperationKind::FileCreate,
-                        root,
-                        Path::new(&payload.parent),
-                        &payload.name,
+            Event::FileCreate(payload) => {
+                // The created file opens into a display, so a Workspace at its
+                // display cap refuses the create before anything is made
+                // (review U1).
+                let created = Path::new(&payload.parent).join(&payload.name);
+                if self.separate_view_areas()
+                    && let Some(key) = self.front_workspace_key()
+                    && !self.admit_view_open(
+                        &key,
+                        &created.to_string_lossy(),
+                        crate::view_layout::DisplayKind::File,
+                        None,
+                        false,
+                        false,
                     )
-                },
-                &payload.root,
-                &payload.parent,
-                payload.device_id.as_deref(),
-            ),
+                {
+                    return true;
+                }
+                self.start_explorer_operation(
+                    |root| {
+                        files::ExplorerOperation::create(
+                            files::ExplorerOperationKind::FileCreate,
+                            root,
+                            Path::new(&payload.parent),
+                            &payload.name,
+                        )
+                    },
+                    &payload.root,
+                    &payload.parent,
+                    payload.device_id.as_deref(),
+                )
+            }
             Event::DirCreate(payload) => self.start_explorer_operation(
                 |root| {
                     files::ExplorerOperation::create(

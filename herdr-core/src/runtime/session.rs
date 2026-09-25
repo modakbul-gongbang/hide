@@ -3663,6 +3663,21 @@ impl Runtime {
             self.settle_reveal_path(&payload, None);
             return true;
         }
+        // A revealed file opens into a display, so a Workspace at its display
+        // cap refuses it before it is read (review U1).
+        if self.separate_view_areas()
+            && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+            && !self.admit_view_open(
+                &key,
+                &payload.path,
+                crate::view_layout::DisplayKind::File,
+                None,
+                false,
+                false,
+            )
+        {
+            return true;
+        }
         // Nothing moves before the file is read: a reveal settles the whole
         // screen at once, and a file that cannot be read must not leave the
         // checkout focused and the tree expanded around a document that never
