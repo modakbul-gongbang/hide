@@ -12,10 +12,10 @@ import { workspaceViewOf } from "./workspace";
 const STATUS: Record<ChangedFileStatus, { mark: string; label: string; color: string }> = {
   modified: { mark: "M", label: "Modified", color: "text-warning" },
   added: { mark: "A", label: "Added", color: "text-success" },
-  deleted: { mark: "D", label: "Deleted", color: "text-danger" },
+  deleted: { mark: "D", label: "Deleted", color: "text-destructive" },
   untracked: { mark: "U", label: "Untracked", color: "text-success" },
   renamed: { mark: "R", label: "Renamed", color: "text-warning" },
-  conflict: { mark: "!", label: "Conflict", color: "text-danger" },
+  conflict: { mark: "!", label: "Conflict", color: "text-destructive" },
 };
 
 function identity(entry: ChangedFileSnapshot, committed: boolean): string {
@@ -52,7 +52,7 @@ function ChangeRow({ entry, committed, selected, actions }: {
     >
       <button
         type="button"
-        className={`flex h-[var(--size-pane-child-row)] w-full min-w-0 items-center gap-xs px-sm text-left text-caption hover:bg-elevated ${selected ? "bg-elevated text-primary" : "text-secondary"}`}
+        className={`flex h-[var(--size-pane-child-row)] w-full min-w-0 items-center gap-xs px-sm text-left text-caption hover:bg-accent ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
         aria-label={title}
         aria-current={selected ? "true" : undefined}
         title={title}
@@ -64,10 +64,10 @@ function ChangeRow({ entry, committed, selected, actions }: {
         <span aria-hidden="true" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>{icon.glyph}</span>
         <span className="flex min-w-0 flex-1 items-baseline gap-xs overflow-hidden">
           <span className="shrink-0 truncate">{name}</span>
-          {parent ? <span className="min-w-0 truncate text-muted">{parent}</span> : null}
+          {parent ? <span className="min-w-0 truncate text-muted-foreground">{parent}</span> : null}
         </span>
         {entry.added_lines !== null ? <span className="shrink-0 text-success" aria-label={`${entry.added_lines} lines added`}>+{entry.added_lines}</span> : null}
-        {entry.removed_lines !== null ? <span className="shrink-0 text-danger" aria-label={`${entry.removed_lines} lines removed`}>-{entry.removed_lines}</span> : null}
+        {entry.removed_lines !== null ? <span className="shrink-0 text-destructive" aria-label={`${entry.removed_lines} lines removed`}>-{entry.removed_lines}</span> : null}
         <span className={`shrink-0 ${status.color}`} aria-hidden="true">{status.mark}</span>
       </button>
     </ContextMenu>
@@ -102,9 +102,9 @@ export function HistoryList({ actions }: { actions: Actions }) {
     estimateSize: () => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-pane-child-row")) || 24,
     overscan: 12,
   });
-  if (!checkout) return <p className="px-md py-sm text-caption text-muted" data-history-state="no-workspace">Open a workspace to see History.</p>;
-  if (!rootPath) return <p className="px-md py-sm text-caption text-muted" data-history-state="no-folder">History has no folder for this checkout.</p>;
-  if (!changes) return <p className="px-md py-sm text-caption text-muted" data-history-state="loading">Reading changes…</p>;
+  if (!checkout) return <p className="px-md py-sm text-caption text-muted-foreground" data-history-state="no-workspace">Open a workspace to see History.</p>;
+  if (!rootPath) return <p className="px-md py-sm text-caption text-muted-foreground" data-history-state="no-folder">History has no folder for this checkout.</p>;
+  if (!changes) return <p className="px-md py-sm text-caption text-muted-foreground" data-history-state="loading">Reading changes…</p>;
   // The core's own reason, which names what to do where there is something
   // to do (allow the helper, install Git); History reads again on its own.
   if (changes.unavailable_reason) return <p className="break-words px-md py-sm text-caption text-warning" data-history-state="unavailable">History is unavailable: {changes.unavailable_reason}</p>;
@@ -117,7 +117,7 @@ export function HistoryList({ actions }: { actions: Actions }) {
     return (
       <>
         {stale}
-        <p className="px-md py-sm text-caption text-muted" data-history-state="clean">No changes in this checkout.</p>
+        <p className="px-md py-sm text-caption text-muted-foreground" data-history-state="clean">No changes in this checkout.</p>
       </>
     );
   }
@@ -135,7 +135,7 @@ export function HistoryList({ actions }: { actions: Actions }) {
           return <div key={item.kind === "group" ? `group:${item.committed}` : `${item.committed}:${item.entry.path}`} className="absolute inset-x-0" style={{ top: virtualRow.start }}>
             {item.kind === "group" ? <button
               type="button"
-              className="flex h-[var(--size-pane-child-row)] w-full items-center gap-xs px-sm text-left text-caption text-secondary hover:bg-elevated"
+              className="flex h-[var(--size-pane-child-row)] w-full items-center gap-xs px-sm text-left text-caption text-subtle-foreground hover:bg-accent"
               aria-expanded={item.committed ? expanded.committed : expanded.working}
               aria-label={`${item.title}, ${item.count} files`}
               data-history-group-section={item.committed ? "committed" : "working"}

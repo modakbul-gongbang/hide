@@ -26,10 +26,10 @@ export const FONT_SIZE_BASE = 13;
  * value and swatch come from; the class is spelled out for Tailwind's scanner.
  */
 export const ACCENT_CHOICES: readonly { name: string; token: string; swatch: string }[] = [
-  { name: "Lime", token: "--color-accent-choice-lime", swatch: "bg-[var(--color-accent-choice-lime)]" },
-  { name: "Sky", token: "--color-accent-choice-sky", swatch: "bg-[var(--color-accent-choice-sky)]" },
-  { name: "Violet", token: "--color-accent-choice-violet", swatch: "bg-[var(--color-accent-choice-violet)]" },
-  { name: "Amber", token: "--color-accent-choice-amber", swatch: "bg-[var(--color-accent-choice-amber)]" },
+  { name: "Lime", token: "--accent-choice-lime", swatch: "bg-accent-choice-lime" },
+  { name: "Sky", token: "--accent-choice-sky", swatch: "bg-accent-choice-sky" },
+  { name: "Violet", token: "--accent-choice-violet", swatch: "bg-accent-choice-violet" },
+  { name: "Amber", token: "--accent-choice-amber", swatch: "bg-accent-choice-amber" },
 ];
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;

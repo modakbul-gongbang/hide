@@ -50,11 +50,11 @@ export function chipTitle(chip: AgentChip): string {
 
 /** The colour class of a chip's status mark, as the native row picks it (`AgentStatusPresentation`). */
 export function chipTone(chip: Pick<AgentChip, "demand" | "activity" | "emphasized">): string {
-  if (chip.demand === "error") return "text-danger";
+  if (chip.demand === "error") return "text-destructive";
   if (chip.demand === "question" || chip.demand === "approval") return "text-warning";
   if (chip.activity === "working") return "text-agent-working";
   if (chip.activity === "stopped" && chip.emphasized) return "text-success";
-  return "text-secondary";
+  return "text-subtle-foreground";
 }
 
 export type RelationEntry = { paneId: string; label: string; relation: "parent" | "sibling" | "child"; chip: AgentChip | null };

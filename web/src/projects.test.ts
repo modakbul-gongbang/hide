@@ -87,7 +87,7 @@ describe("pullRequestBadge", () => {
     expect(pullRequestBadge({ ...base, badge: "merged", review: null })).toEqual({ label: "merged", color: "text-pr-merged" });
     expect(pullRequestBadge({ ...base, badge: "open", review: null, is_draft: true })).toEqual({ label: "draft", color: "text-pr-draft" });
     expect(pullRequestBadge({ ...base, badge: "review", review: "approved" })).toEqual({ label: "approved", color: "text-success" });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" })).toEqual({ label: "changes", color: "text-danger" });
+    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" })).toEqual({ label: "changes", color: "text-destructive" });
     expect(pullRequestBadge({ ...base, badge: "review", review: null })).toEqual({ label: "review", color: "text-warning" });
   });
 });

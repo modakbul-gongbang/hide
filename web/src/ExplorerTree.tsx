@@ -303,7 +303,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   if (!checkout || !rootPath) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-md text-center text-caption text-muted" data-explorer-state="no-checkout">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-md text-center text-caption text-muted-foreground" data-explorer-state="no-checkout">
         No checkout
       </div>
     );
@@ -324,13 +324,13 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-explorer={rootPath}>
-      <div className="flex shrink-0 items-center gap-xs border-b border-divider px-md py-xs text-caption text-secondary">
+      <div className="flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground">
         <span className="min-w-0 flex-1 truncate" title={rootPath} data-explorer-root="true">
           {baseName(rootPath)}
         </span>
         <button
           type="button"
-          className="text-muted hover:text-primary"
+          className="text-muted-foreground hover:text-foreground"
           aria-label="Refresh the file tree"
           title="Refresh"
           onClick={() => {
@@ -345,23 +345,23 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
         </button>
       </div>
       {gitLine ? (
-        <div className={`break-words border-b border-divider px-md py-xs text-caption ${gitLine.state === "loading" ? "text-muted" : "text-warning"}`} data-explorer-git={gitLine.state}>
+        <div className={`break-words border-b border-border px-md py-xs text-caption ${gitLine.state === "loading" ? "text-muted-foreground" : "text-warning"}`} data-explorer-git={gitLine.state}>
           {gitLine.text}
         </div>
       ) : null}
       {refused ? (
-        <div className="border-b border-divider px-md py-sm text-caption text-danger" data-explorer-refusal={refused}>
+        <div className="border-b border-border px-md py-sm text-caption text-destructive" data-explorer-refusal={refused}>
           {refused}
         </div>
       ) : null}
       {unavailable ? (
-        <div className="flex items-center gap-sm border-b border-divider px-md py-sm text-caption text-warning" data-explorer-unavailable={unavailable.code}>
+        <div className="flex items-center gap-sm border-b border-border px-md py-sm text-caption text-warning" data-explorer-unavailable={unavailable.code}>
           <span className="min-w-0 flex-1 break-words">
             {unavailable.root_path === rootPath ? "This checkout" : baseName(unavailable.root_path)} could not be listed: {unavailable.message}
           </span>
           <button
             type="button"
-            className="text-secondary hover:text-primary"
+            className="text-subtle-foreground hover:text-foreground"
             onClick={() => {
               pending.current.clear();
               setRefreshTick((tick) => tick + 1);
@@ -372,7 +372,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
         </div>
       ) : null}
       {!rootListing && !refused && !rootUnavailable ? (
-        <div className="px-md py-sm text-caption text-muted" data-explorer-state="loading">
+        <div className="px-md py-sm text-caption text-muted-foreground" data-explorer-state="loading">
           Loading…
         </div>
       ) : (
@@ -443,7 +443,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
             })}
             {failure && failureTop !== null ? (
               <div
-                className="absolute inset-x-0 flex items-center gap-xs pr-md text-caption text-danger"
+                className="absolute inset-x-0 flex items-center gap-xs pr-md text-caption text-destructive"
                 data-explorer-failure={failure.path}
                 style={{ top: failureTop + rowHeight(), height: "var(--size-pane-child-row)" }}
               >
@@ -509,7 +509,7 @@ function DraftRowView({
         autoFocus
         value={value}
         aria-label={rename ? "New name" : "New entry name"}
-        className="min-w-0 flex-1 rounded-xs border border-accent bg-background px-xxs text-body text-primary outline-none"
+        className="min-w-0 flex-1 rounded-xs border border-primary bg-background px-xxs text-body text-foreground outline-none"
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
@@ -561,7 +561,7 @@ function ContextMenu({
     <div
       role="menu"
       data-explorer-menu={menu.path}
-      className="fixed z-30 min-w-[var(--size-panel-min)] rounded-sm border border-divider bg-balloon py-xxs text-caption text-primary shadow-none"
+      className="fixed z-30 min-w-[var(--size-panel-min)] rounded-sm border border-border bg-popover py-xxs text-caption text-foreground shadow-none"
       style={{ left: menu.x, top: menu.y }}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -594,11 +594,11 @@ function MenuItem({ label, testId, danger, unavailable = null, onClick }: {
       data-menu-item={testId}
       disabled={unavailable !== null}
       title={unavailable ?? undefined}
-      className={`flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated disabled:text-muted disabled:hover:bg-transparent ${danger ? "text-danger" : "text-primary"}`}
+      className={`flex w-full flex-col items-start px-md py-xs text-left hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent ${danger ? "text-destructive" : "text-foreground"}`}
       onClick={onClick}
     >
       <span>{label}</span>
-      {unavailable ? <span className="text-caption text-muted">{unavailable}</span> : null}
+      {unavailable ? <span className="text-caption text-muted-foreground">{unavailable}</span> : null}
     </button>
   );
 }
@@ -641,8 +641,8 @@ function ExplorerRowView({
       data-decoration={row.decoration?.status ?? ""}
       data-drop={over ? "true" : "false"}
       className={`absolute inset-x-0 flex cursor-default items-center gap-xs pr-md text-body ${
-        selected ? "bg-elevated text-primary" : "text-secondary hover:bg-elevated"
-      } ${over ? "bg-elevated" : ""}`}
+        selected ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"
+      } ${over ? "bg-secondary" : ""}`}
       style={{
         top: 0,
         height: "var(--size-pane-child-row)",
@@ -681,7 +681,7 @@ function ExplorerRowView({
         setOver(false);
       }}
     >
-      <span className="w-[var(--size-lineage-chevron)] shrink-0 text-center text-caption text-muted" aria-hidden="true">
+      <span className="w-[var(--size-lineage-chevron)] shrink-0 text-center text-caption text-muted-foreground" aria-hidden="true">
         {disclosureMark(row)}
       </span>
       <span className={`shrink-0 ${row.icon.color}`} style={{ fontFamily: "seti" }} aria-hidden="true">
@@ -691,7 +691,7 @@ function ExplorerRowView({
       {needsRefresh ? (
         <button
           type="button"
-          className="shrink-0 rounded-xs px-xxs text-caption text-warning hover:text-primary"
+          className="shrink-0 rounded-xs px-xxs text-caption text-warning hover:text-foreground"
           data-explorer-refresh={row.path}
           aria-label={`Refresh ${row.name}`}
           title="This folder is no longer watched; refresh to read it"

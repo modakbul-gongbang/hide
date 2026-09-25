@@ -5,6 +5,12 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
+import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
+import { Slider } from "./components/ui/slider";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
+import { Hint } from "./components/ui/tooltip";
+import { ACCENT_STORED_HEX } from "./generated/accents";
+import { THEME_CHOICES, accentNameOf, readTheme, type AccentName, type ThemeChoice } from "./theme";
 import { Button, Dialog, Field, Group, Note, Row, Select, Status, Value } from "./components/ui/controls";
 import {
   ACCENT_CHOICES,
@@ -85,11 +91,11 @@ function SettingsSheet({ actions }: { actions: Actions }) {
   };
   return (
     <Dialog label="Settings" width="w-[var(--size-settings-sheet-w)] h-[var(--size-settings-sheet-h-max)]" onClose={close} data-settings="true">
-      <header className="flex items-start gap-md border-b border-divider px-xl py-lg">
+      <header className="flex items-start gap-md border-b border-border px-xl py-lg">
         <div className="min-w-0 flex-1">
-          <h2 className="text-headline font-semibold text-primary">Settings</h2>
-          <p className="text-body text-secondary">{subtitle}</p>
-          <p className="mt-xxs text-caption text-muted" data-settings-owner={daemon?.host_name ?? "unknown"}>
+          <h2 className="text-headline font-semibold text-foreground">Settings</h2>
+          <p className="text-body text-subtle-foreground">{subtitle}</p>
+          <p className="mt-xxs text-caption text-muted-foreground" data-settings-owner={daemon?.host_name ?? "unknown"}>
             {ownerLine(daemon, selected)}
           </p>
         </div>
@@ -97,7 +103,7 @@ function SettingsSheet({ actions }: { actions: Actions }) {
           ✕
         </Button>
       </header>
-      <div role="tablist" aria-label="Settings section" className="flex flex-wrap gap-xs border-b border-divider bg-sidebar px-xl py-sm" onKeyDown={moveTab}>
+      <div role="tablist" aria-label="Settings section" className="flex flex-wrap gap-xs border-b border-border bg-sidebar px-xl py-sm" onKeyDown={moveTab}>
         {SETTINGS_TABS.map((row) => (
           <button
             key={row.id}
@@ -111,8 +117,8 @@ function SettingsSheet({ actions }: { actions: Actions }) {
             aria-controls="settings-panel"
             tabIndex={tab === row.id ? 0 : -1}
             data-settings-tab={row.id}
-            className={`rounded-sm px-sm py-xxs text-body outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-              tab === row.id ? "bg-elevated font-semibold text-primary" : "text-secondary hover:text-primary"
+            className={`rounded-sm px-sm py-xxs text-body outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+              tab === row.id ? "bg-secondary font-semibold text-foreground" : "text-subtle-foreground hover:text-foreground"
             }`}
             onClick={() => setTab(row.id)}
           >
@@ -228,7 +234,7 @@ function GeneralTab() {
         </Row>
       </Group>
       <Group title="Authentication">
-        <Row label={<span className="text-body text-secondary">Hide delegates authentication to Herdr, SSH and the agent CLIs on the daemon's machine. It has no credential, token or passphrase field.</span>} />
+        <Row label={<span className="text-body text-subtle-foreground">Hide delegates authentication to Herdr, SSH and the agent CLIs on the daemon's machine. It has no credential, token or passphrase field.</span>} />
       </Group>
     </>
   );
@@ -241,8 +247,8 @@ function DiagnosticList() {
   return (
     <ul className="space-y-xxs" data-diagnostics={rows.length}>
       {rows.map((row) => (
-        <li key={`${row.occurred_at}-${row.kind}`} className="break-words font-mono text-caption text-secondary">
-          <span className="text-muted">{new Date(row.occurred_at).toLocaleTimeString()}</span> {row.kind}: {row.message}
+        <li key={`${row.occurred_at}-${row.kind}`} className="break-words font-mono text-caption text-subtle-foreground">
+          <span className="text-muted-foreground">{new Date(row.occurred_at).toLocaleTimeString()}</span> {row.kind}: {row.message}
         </li>
       ))}
     </ul>
@@ -251,76 +257,79 @@ function DiagnosticList() {
 
 // --- Appearance ----------------------------------------------------------------
 
-function accentHexOf(token: string): string | null {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
-  return usableAccent(value)?.toUpperCase() ?? null;
-}
-
 function AppearanceTab({ actions }: { actions: Actions }) {
   const accent = useShellStore((s) => usableAccent(s.rest?.ui_state?.accent_hex));
+  const theme = useShellStore((s) => readTheme(s.rest?.ui_state?.theme).choice);
   const fontSize = useShellStore((s) => usableFontSize(s.rest?.ui_state?.font_size)) ?? FONT_SIZE_BASE;
   const [changedAt, setChangedAt] = useState<number | null>(null);
   const error = useErrorSince(changedAt, ["ui_state."]);
   const [draftSize, setDraftSize] = useState(fontSize);
   useEffect(() => setDraftSize(fontSize), [fontSize]);
+  const chosenAccent = accentNameOf(accent);
+  const commitSize = (size: number) => {
+    if (size === fontSize) return;
+    setChangedAt(Date.now());
+    actions.setFontSize(size);
+  };
   return (
     <>
-      <Group title="Theme" note="Accent tints controls and selection. Agent status colors keep their meaning whatever the accent.">
+      <Group title="Theme" note="System follows macOS as it changes. Accent tints primary buttons, focus rings and the editor caret; agent status colors keep their meaning whatever the accent.">
+        <Row label="Appearance">
+          <ToggleGroup
+            type="single"
+            value={theme}
+            aria-label="Theme"
+            data-theme-choice={theme}
+            onValueChange={(value) => {
+              // A second press on the chosen item would clear it; a theme is always chosen.
+              if (!value || value === theme) return;
+              setChangedAt(Date.now());
+              actions.setTheme(value as ThemeChoice);
+            }}
+          >
+            {THEME_CHOICES.map((choice) => (
+              <ToggleGroupItem key={choice.id} value={choice.id} aria-label={choice.label} data-theme-option={choice.id}>
+                {choice.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </Row>
         <Row label="Accent" detail={error ? <Note tone="error" data-appearance-error="true">Not saved: {error}</Note> : null}>
-          <div role="radiogroup" aria-label="Accent" className="flex items-center gap-sm">
-            {ACCENT_CHOICES.map((choice) => {
-              const hex = accentHexOf(choice.token);
-              const selected = hex !== null && accent === hex.toLowerCase();
-              return (
-                <button
-                  key={choice.token}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  aria-label={`Accent ${choice.name}`}
-                  title={choice.name}
-                  disabled={!hex}
+          <RadioGroup
+            aria-label="Accent"
+            value={chosenAccent ?? ""}
+            className="flex items-center gap-sm"
+            onValueChange={(name) => {
+              const hex = ACCENT_STORED_HEX[name as AccentName];
+              setChangedAt(Date.now());
+              actions.setAccent(hex.toUpperCase());
+            }}
+          >
+            {ACCENT_CHOICES.map((choice) => (
+              <Hint key={choice.name} label={`Accent ${choice.name}`}>
+                <RadioGroupItem
+                  value={choice.name.toLowerCase()}
                   data-accent={choice.name.toLowerCase()}
-                  className={`h-[var(--size-checkbox)] w-[var(--size-checkbox)] rounded-full outline-none focus-visible:ring-1 focus-visible:ring-primary ${choice.swatch} ${
-                    selected ? "ring-2 ring-primary" : "ring-1 ring-divider"
-                  }`}
-                  onClick={() => {
-                    if (!hex) return;
-                    setChangedAt(Date.now());
-                    actions.setAccent(hex);
-                  }}
+                  className={`border-0 ${choice.swatch} ring-1 ring-border data-[state=checked]:ring-2 data-[state=checked]:ring-foreground [&_svg]:hidden`}
                 />
-              );
-            })}
-            <Value>{accent ? accent.toUpperCase() : "default"}</Value>
-          </div>
+              </Hint>
+            ))}
+          </RadioGroup>
+          <Value>{accent ? accent.toUpperCase() : "default"}</Value>
         </Row>
       </Group>
       <Group title="Density" note="Terminal and editor text keep their own size (⌘= and ⌘- in a pane or document).">
         <Row label="Interface font">
-          <input
-            type="range"
+          <Slider
             min={FONT_SIZE_MIN}
             max={FONT_SIZE_MAX}
             step={1}
-            value={draftSize}
+            value={[draftSize]}
             aria-label="Interface font size"
-            aria-valuetext={`${draftSize} points`}
             data-font-size="true"
-            className="w-[var(--size-settings-control-w)] accent-[var(--color-accent)]"
-            onChange={(event) => setDraftSize(Number(event.target.value))}
-            onPointerUp={() => {
-              if (draftSize !== fontSize) {
-                setChangedAt(Date.now());
-                actions.setFontSize(draftSize);
-              }
-            }}
-            onKeyUp={() => {
-              if (draftSize !== fontSize) {
-                setChangedAt(Date.now());
-                actions.setFontSize(draftSize);
-              }
-            }}
+            className="w-(--size-settings-control-w)"
+            onValueChange={([size]) => size !== undefined && setDraftSize(size)}
+            onValueCommit={([size]) => size !== undefined && commitSize(size)}
           />
           <Value>{draftSize} pt</Value>
         </Row>
@@ -461,7 +470,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
               label={
                 <span className="flex min-w-0 flex-col">
                   <span className="font-semibold">{runtime.label}</span>
-                  <span className="break-all font-mono text-caption text-muted">{runtime.path}</span>
+                  <span className="break-all font-mono text-caption text-muted-foreground">{runtime.path}</span>
                 </span>
               }
               detail={pressed?.id === runtime.id && hookError ? <Note tone="error" data-hook-error={runtime.id}>Nothing was written: {hookError}</Note> : null}
@@ -486,8 +495,8 @@ function AgentsTab({ actions }: { actions: Actions }) {
         <Dialog label={`Install the Hide hook for ${installing.label}`} role="alertdialog" initialFocus="container" onClose={() => setInstalling(null)} data-hook-confirm={installing.id}>
           <div className="p-lg">
             <h2 className="mb-xs text-title font-semibold">Install the Hide hook for {installing.label}?</h2>
-            <p className="mb-sm break-all font-mono text-body text-secondary">{installing.path}</p>
-            <p className="mb-md text-body text-secondary">
+            <p className="mb-sm break-all font-mono text-body text-subtle-foreground">{installing.path}</p>
+            <p className="mb-md text-body text-subtle-foreground">
               Hide adds its own entries, marked hide-subagents, to this file on the daemon's machine. Every other entry and setting in it is kept as it is, and no other machine's file is written.
             </p>
             <div className="flex flex-wrap justify-end gap-sm">
@@ -549,7 +558,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
               label={
                 <span className="flex min-w-0 flex-col">
                   <span className="break-words font-semibold">{device.label}</span>
-                  <span className="break-all font-mono text-caption text-muted">{device.kind === "remote" ? device.ssh_alias : "local, no SSH alias"}</span>
+                  <span className="break-all font-mono text-caption text-muted-foreground">{device.kind === "remote" ? device.ssh_alias : "local, no SSH alias"}</span>
                 </span>
               }
               detail={
@@ -658,7 +667,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
         <Dialog label={`Revoke Hide's helper on ${revoking.label}`} role="alertdialog" initialFocus="container" onClose={() => setRevoking(null)} data-device-host-revoke-confirm={revoking.id}>
           <div className="p-lg">
             <h2 className="mb-xs text-title font-semibold">Revoke Hide's helper on {revoking.label}?</h2>
-            <p className="mb-md text-body text-secondary">
+            <p className="mb-md text-body text-subtle-foreground">
               Hide stops starting new file, Git and worktree work on {revoking.ssh_alias}. A save already sent is read back before its tab says anything; your drafts and the files on the device are not deleted, and neither is the installed helper.
             </p>
             <div className="flex flex-wrap justify-end gap-sm">
@@ -682,11 +691,11 @@ function DevicesTab({ actions }: { actions: Actions }) {
         <Dialog label={`Remove ${removing.label}`} role="alertdialog" initialFocus="container" onClose={() => { if (!removalBusy) setRemoving(null); }} data-device-remove-confirm={removing.id}>
           <div className="p-lg">
             <h2 className="mb-xs text-title font-semibold">Remove {removing.label}?</h2>
-            <p className="mb-md text-body text-secondary">
+            <p className="mb-md text-body text-subtle-foreground">
               Hide forgets this device's registration and closes its connection here. Files, the Herdr server and any agents running on {removing.ssh_alias} keep running untouched.
             </p>
             {removalLines.map((line) => (
-              <p key={line} className="mb-md text-body text-secondary" data-device-remove-effect="true">
+              <p key={line} className="mb-md text-body text-subtle-foreground" data-device-remove-effect="true">
                 {line}
               </p>
             ))}
@@ -737,7 +746,7 @@ function DeviceConnection({ device, facts }: { device: Device; facts: string[] }
   return (
     <>
       {facts.length > 0 ? (
-        <p className="break-words font-mono text-caption text-muted" data-device-facts={device.id}>
+        <p className="break-words font-mono text-caption text-muted-foreground" data-device-facts={device.id}>
           {facts.join(" · ")}
         </p>
       ) : null}
@@ -749,7 +758,7 @@ function DeviceConnection({ device, facts }: { device: Device; facts: string[] }
       ) : null}
       {device.state !== "ready" && device.message ? (
         problem ? (
-          <p className="break-words font-mono text-caption text-muted">{device.message}</p>
+          <p className="break-words font-mono text-caption text-muted-foreground">{device.message}</p>
         ) : (
           <Note tone="warn">{device.message}</Note>
         )
@@ -765,8 +774,8 @@ function DeviceHelper({ device }: { device: Device }) {
   return (
     <div className="mt-xs space-y-xxs" data-device-host={`${device.id}:${host?.state ?? "unknown"}`}>
       <Status tone={line.tone}>{line.text}</Status>
-      {host?.consent === "granted" && host.helper_root ? <p className="break-all font-mono text-caption text-muted">installs to {host.helper_root}</p> : null}
-      {host?.bound_identity ? <p className="break-all font-mono text-caption text-muted">bound to {host.bound_identity}</p> : null}
+      {host?.consent === "granted" && host.helper_root ? <p className="break-all font-mono text-caption text-muted-foreground">installs to {host.helper_root}</p> : null}
+      {host?.bound_identity ? <p className="break-all font-mono text-caption text-muted-foreground">bound to {host.bound_identity}</p> : null}
       {host && host.state !== "ready" && host.message ? <Note tone={line.tone === "muted" ? "muted" : "warn"}>{host.message}</Note> : null}
     </div>
   );
@@ -774,7 +783,7 @@ function DeviceHelper({ device }: { device: Device }) {
 
 function HelperTerms({ helperRoot }: { helperRoot: string | null }) {
   return (
-    <ul className="list-disc space-y-xs pl-md text-body text-secondary" data-helper-terms="true">
+    <ul className="list-disc space-y-xs pl-md text-body text-subtle-foreground" data-helper-terms="true">
       {helperConsentTerms(helperRoot).map((term) => (
         <li key={term}>{term}</li>
       ))}
@@ -793,12 +802,12 @@ function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
       <Status tone={tone}>{headline}</Status>
       {test.stages.map((stage) => (
         <div key={stage.stage} className="flex gap-xs text-caption">
-          <span className={stage.state === "passed" ? "text-success" : stage.state === "pending" ? "text-muted" : "text-warning"} aria-hidden="true">
+          <span className={stage.state === "passed" ? "text-success" : stage.state === "pending" ? "text-muted-foreground" : "text-warning"} aria-hidden="true">
             {stage.state === "passed" ? "✓" : stage.state === "pending" ? "…" : "✕"}
           </span>
           <span className="sr-only">{stage.state === "passed" ? "passed" : stage.state === "pending" ? "not run" : "failed"}</span>
-          <span className="w-[var(--size-device-test-stage-col)] shrink-0 font-mono text-primary">{stage.stage}</span>
-          <span className="min-w-0 break-words text-secondary">{stage.detail}</span>
+          <span className="w-[var(--size-device-test-stage-col)] shrink-0 font-mono text-foreground">{stage.stage}</span>
+          <span className="min-w-0 break-words text-subtle-foreground">{stage.detail}</span>
         </div>
       ))}
     </div>
@@ -857,7 +866,7 @@ function AddDevice({ actions, devices, helperRoot }: { actions: Actions; devices
           data-device-socket="true"
         />
       </Row>
-      <Row label={<span className="text-secondary">Hide's helper</span>} detail={<HelperTerms helperRoot={helperRoot} />} />
+      <Row label={<span className="text-subtle-foreground">Hide's helper</span>} detail={<HelperTerms helperRoot={helperRoot} />} />
       <Row label="">
         <Button appearance="quiet" disabled={blocked} onClick={() => submit(false)} data-add-device-without-helper="true">
           Add without files
@@ -911,7 +920,7 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
             }}
           />
         ))}
-        <Row label={<span className="text-secondary">Toggle Conversation</span>}>
+        <Row label={<span className="text-subtle-foreground">Toggle Conversation</span>}>
           <Status tone="muted">macOS app only; the web shell has no conversation view</Status>
         </Row>
       </Group>
@@ -979,13 +988,13 @@ function ShortcutRow({
         ) : null
       }
     >
-      <kbd className="rounded-xs bg-elevated px-xs font-mono text-caption leading-[var(--size-keycap-height)] text-secondary" data-shortcut-effective={id}>
+      <kbd className="rounded-xs bg-secondary px-xs font-mono text-caption leading-[var(--size-keycap-height)] text-subtle-foreground" data-shortcut-effective={id}>
         {command.browser ? displayChord(command.browser) : "-"}
       </kbd>
       {draft ? (
         <>
-          <span className="text-body text-secondary">→</span>
-          <kbd className="rounded-xs bg-elevated px-xs font-mono text-caption leading-[var(--size-keycap-height)] text-primary" data-shortcut-draft={id}>
+          <span className="text-body text-subtle-foreground">→</span>
+          <kbd className="rounded-xs bg-secondary px-xs font-mono text-caption leading-[var(--size-keycap-height)] text-foreground" data-shortcut-draft={id}>
             {displayChord(draft)}
           </kbd>
           <Button

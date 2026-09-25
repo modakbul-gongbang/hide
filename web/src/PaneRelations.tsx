@@ -28,7 +28,7 @@ export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Acti
   return (
     <button
       type="button"
-      className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] shrink-0 items-center justify-center rounded-xs text-secondary outline-none hover:bg-balloon hover:text-primary focus-visible:ring-1 focus-visible:ring-accent disabled:text-muted"
+      className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] shrink-0 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-popover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:text-muted-foreground"
       aria-label={label}
       title={label}
       aria-busy={pending}
@@ -54,7 +54,7 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
   const state = relation?.sourcePaneId === pane.id ? relationState(relation, outcome) : null;
   return (
     <div
-      className="flex h-[var(--size-pane-child-row)] shrink-0 items-center gap-xxs overflow-x-auto overflow-y-hidden whitespace-nowrap bg-panel px-sm text-caption"
+      className="flex h-[var(--size-pane-child-row)] shrink-0 items-center gap-xxs overflow-x-auto overflow-y-hidden whitespace-nowrap bg-card px-sm text-caption"
       role="group"
       aria-label={`Children of ${pane.identity_label ?? pane.id}`}
       data-pane-children={pane.id}
@@ -66,8 +66,8 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
           <button
             key={chip.pane_id}
             type="button"
-            className={`flex max-w-[var(--size-pane-child-chip-max)] shrink-0 items-center gap-xxs rounded-xs border border-divider px-xxs outline-none hover:bg-elevated focus-visible:ring-1 focus-visible:ring-accent ${
-              chip.delegated ? "text-secondary" : "text-primary"
+            className={`flex max-w-[var(--size-pane-child-chip-max)] shrink-0 items-center gap-xxs rounded-xs border border-border px-xxs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring ${
+              chip.delegated ? "text-subtle-foreground" : "text-foreground"
             }`}
             aria-label={`Open child ${title}`}
             title={title}
@@ -105,25 +105,25 @@ export function RelationStatus({ actions }: { actions: Actions }) {
   if (!state) return null;
   if (state.phase === "pending") {
     return (
-      <div className="flex shrink-0 items-center gap-sm bg-panel px-sm py-xxs text-caption text-muted" role="status" data-relation-status="pending">
+      <div className="flex shrink-0 items-center gap-sm bg-card px-sm py-xxs text-caption text-muted-foreground" role="status" data-relation-status="pending">
         <span className="min-w-0 flex-1 truncate">Opening {relation.label}…</span>
-        <button type="button" className="shrink-0 text-muted hover:text-primary" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
+        <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
           Dismiss
         </button>
       </div>
     );
   }
   return (
-    <div className="flex shrink-0 items-center gap-sm bg-panel px-sm py-xxs text-caption" role="alert" data-relation-status="failed">
-      <span className="min-w-0 flex-1 truncate text-danger" title={state.message}>
+    <div className="flex shrink-0 items-center gap-sm bg-card px-sm py-xxs text-caption" role="alert" data-relation-status="failed">
+      <span className="min-w-0 flex-1 truncate text-destructive" title={state.message}>
         {state.message}
       </span>
       {state.retryable ? (
-        <button type="button" className="shrink-0 text-secondary hover:text-primary" data-relation-retry="true" onClick={() => actions.retryRelation()}>
+        <button type="button" className="shrink-0 text-subtle-foreground hover:text-foreground" data-relation-retry="true" onClick={() => actions.retryRelation()}>
           Retry
         </button>
       ) : null}
-      <button type="button" className="shrink-0 text-muted hover:text-primary" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
+      <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
         Dismiss
       </button>
     </div>

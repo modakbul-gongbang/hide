@@ -11,10 +11,10 @@ import { useUiStore } from "../../ui";
 type Appearance = "standard" | "quiet" | "prominent" | "danger";
 
 const APPEARANCE: Record<Appearance, string> = {
-  standard: "border border-divider bg-elevated text-primary hover:bg-divider",
-  quiet: "text-secondary hover:bg-elevated hover:text-primary",
-  prominent: "bg-accent text-background hover:opacity-[var(--opacity-emphasis-fill)]",
-  danger: "bg-danger text-background hover:opacity-[var(--opacity-emphasis-fill)]",
+  standard: "border border-border bg-secondary text-foreground hover:bg-border",
+  quiet: "text-subtle-foreground hover:bg-accent hover:text-foreground",
+  prominent: "bg-primary text-primary-foreground hover:opacity-[var(--opacity-emphasis-fill)]",
+  danger: "bg-destructive text-destructive-foreground hover:opacity-[var(--opacity-emphasis-fill)]",
 };
 
 export function Button({
@@ -26,7 +26,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`inline-flex h-[var(--size-control-compact)] shrink-0 items-center justify-center gap-xs whitespace-nowrap rounded-sm px-sm text-body font-semibold outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-default disabled:opacity-[var(--opacity-disabled)] ${APPEARANCE[appearance]} ${className}`}
+      className={`inline-flex h-[var(--size-control-compact)] shrink-0 items-center justify-center gap-xs whitespace-nowrap rounded-sm px-sm text-body font-semibold outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-[var(--opacity-disabled)] ${APPEARANCE[appearance]} ${className}`}
       {...props}
     />
   );
@@ -36,7 +36,7 @@ export function Button({
 export function Field({ className = "", mono = true, ...props }: InputHTMLAttributes<HTMLInputElement> & { mono?: boolean }) {
   return (
     <input
-      className={`h-[var(--size-settings-field)] min-w-0 rounded-sm border border-divider bg-elevated px-xs text-body text-primary outline-none placeholder:text-muted focus:border-accent disabled:opacity-[var(--opacity-disabled)] ${mono ? "font-mono" : ""} ${className}`}
+      className={`h-[var(--size-settings-field)] min-w-0 rounded-sm border border-border bg-secondary px-xs text-body text-foreground outline-none placeholder:text-muted-foreground focus:border-primary disabled:opacity-[var(--opacity-disabled)] ${mono ? "font-mono" : ""} ${className}`}
       {...props}
     />
   );
@@ -45,7 +45,7 @@ export function Field({ className = "", mono = true, ...props }: InputHTMLAttrib
 export function Select({ className = "", children, ...props }: SelectHTMLAttributes<HTMLSelectElement> & { children: ReactNode }) {
   return (
     <select
-      className={`h-[var(--size-settings-field)] w-[var(--size-settings-control-w)] max-w-full rounded-sm border border-divider bg-elevated px-xs text-body text-primary outline-none focus:border-accent disabled:opacity-[var(--opacity-disabled)] ${className}`}
+      className={`h-[var(--size-settings-field)] w-[var(--size-settings-control-w)] max-w-full rounded-sm border border-border bg-secondary px-xs text-body text-foreground outline-none focus:border-primary disabled:opacity-[var(--opacity-disabled)] ${className}`}
       {...props}
     >
       {children}
@@ -57,9 +57,9 @@ export function Select({ className = "", children, ...props }: SelectHTMLAttribu
 export function Group({ title, note, children, ...data }: { title: string; note?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
     <section className="mb-lg" {...data}>
-      <h3 className="mb-sm text-body font-semibold text-secondary">{title}</h3>
-      <div className="divide-y divide-divider rounded-md border border-divider bg-panel">{children}</div>
-      {note ? <p className="mt-sm text-body text-muted">{note}</p> : null}
+      <h3 className="mb-sm text-body font-semibold text-subtle-foreground">{title}</h3>
+      <div className="divide-y divide-border rounded-md border border-border bg-card">{children}</div>
+      {note ? <p className="mt-sm text-body text-muted-foreground">{note}</p> : null}
     </section>
   );
 }
@@ -69,7 +69,7 @@ export function Row({ label, children, detail }: { label: ReactNode; children?: 
   return (
     <div className="px-md py-sm">
       <div className="flex flex-wrap items-center gap-x-md gap-y-xs">
-        <div className="min-w-[min(100%,var(--size-settings-control-w))] flex-1 text-subhead text-primary">{label}</div>
+        <div className="min-w-[min(100%,var(--size-settings-control-w))] flex-1 text-subhead text-foreground">{label}</div>
         {children ? <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-sm">{children}</div> : null}
       </div>
       {detail ? <div className="mt-xs">{detail}</div> : null}
@@ -79,7 +79,7 @@ export function Row({ label, children, detail }: { label: ReactNode; children?: 
 
 /** A value a row reports; long paths break anywhere rather than overflow the sheet. */
 export function Value({ children, mono = true }: { children: ReactNode; mono?: boolean }) {
-  return <span className={`min-w-0 break-all text-right text-body text-secondary ${mono ? "font-mono" : ""}`}>{children}</span>;
+  return <span className={`min-w-0 break-all text-right text-body text-subtle-foreground ${mono ? "font-mono" : ""}`}>{children}</span>;
 }
 
 export type Tone = "ok" | "warn" | "error" | "pending" | "local" | "muted";
@@ -87,10 +87,10 @@ export type Tone = "ok" | "warn" | "error" | "pending" | "local" | "muted";
 const TONE_TEXT: Record<Tone, string> = {
   ok: "text-success",
   warn: "text-warning",
-  error: "text-danger",
-  pending: "text-secondary",
-  local: "text-accent",
-  muted: "text-muted",
+  error: "text-destructive",
+  pending: "text-subtle-foreground",
+  local: "text-primary",
+  muted: "text-muted-foreground",
 };
 
 const TONE_SYMBOL: Record<Tone, string> = { ok: "✓", warn: "!", error: "✕", pending: "…", local: "●", muted: "·" };
@@ -179,7 +179,7 @@ export function Dialog({
         aria-label={label}
         tabIndex={-1}
         onKeyDown={trapTab}
-        className={`relative flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-divider bg-balloon text-body text-primary shadow-lg outline-none ${width}`}
+        className={`relative flex max-h-full max-w-full flex-col overflow-hidden rounded-lg border border-border bg-popover text-body text-foreground shadow-lg outline-none ${width}`}
         {...data}
       >
         {children}

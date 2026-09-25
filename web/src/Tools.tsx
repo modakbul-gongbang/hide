@@ -71,8 +71,8 @@ export function Tools({ explorer, changes, overlay, actions }: { explorer: boole
       onKeyDown={overlay ? closeFromKeyboard : undefined}
       className={
         overlay
-          ? "absolute inset-y-0 right-0 z-20 flex w-[var(--size-panel-ideal)] max-w-full flex-col border-l border-divider bg-panel text-primary shadow-lg outline-none"
-          : "flex h-full min-w-[var(--size-panel-min)] shrink-[1000] grow-0 basis-[var(--size-panel-ideal)] flex-col border-l border-divider bg-panel text-primary"
+          ? "absolute inset-y-0 right-0 z-20 flex w-[var(--size-panel-ideal)] max-w-full flex-col border-l border-border bg-card text-foreground shadow-lg outline-none"
+          : "flex h-full min-w-[var(--size-panel-min)] shrink-[1000] grow-0 basis-[var(--size-panel-ideal)] flex-col border-l border-border bg-card text-foreground"
       }
       aria-label="Workspace tools"
       data-workspace-tools={[explorer ? "explorer" : "", changes ? "changes" : ""].filter(Boolean).join(" ")}
@@ -96,15 +96,15 @@ export function Tools({ explorer, changes, overlay, actions }: { explorer: boole
 
 function ToolSection({ title, tool, divided = false, onClose, children }: { title: string; tool: string; divided?: boolean; onClose: () => void; children: React.ReactNode }) {
   return (
-    <section className={`flex min-h-0 flex-1 flex-col ${divided ? "border-t border-divider" : ""}`} aria-label={title} data-tool={tool} data-right-panel={tool === "explorer" ? "explorer" : "changes"}>
-      <header className="flex h-[var(--size-pane-header)] shrink-0 items-center gap-xs px-md text-caption text-secondary">
-        <h2 className="min-w-0 flex-1 truncate font-semibold uppercase text-muted">{title}</h2>
+    <section className={`flex min-h-0 flex-1 flex-col ${divided ? "border-t border-border" : ""}`} aria-label={title} data-tool={tool} data-right-panel={tool === "explorer" ? "explorer" : "changes"}>
+      <header className="flex h-[var(--size-pane-header)] shrink-0 items-center gap-xs px-md text-caption text-subtle-foreground">
+        <h2 className="min-w-0 flex-1 truncate font-semibold uppercase text-muted-foreground">{title}</h2>
         <button
           type="button"
           aria-label={`Hide ${title}`}
           title={`Hide ${title}`}
           data-tool-close={tool}
-          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-muted hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
+          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
           onClick={onClose}
         >
           ×

@@ -75,7 +75,7 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
   const drag = useTabDrag(actions, checkout.strip);
   const entries = agentEntries(checkout);
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel" role="tablist" aria-label="Agent tabs" data-tab-bar={checkout.id} data-agent-tab-bar="true" data-remote-tab-bar={device ? "true" : undefined}>
+    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-card" role="tablist" aria-label="Agent tabs" data-tab-bar={checkout.id} data-agent-tab-bar="true" data-remote-tab-bar={device ? "true" : undefined}>
       {entries.map((entry) => {
         const tab = checkout.tabs.find((row) => row.id === entry.source_id);
         const agent = tabAgent(tab, agents ?? NO_AGENTS, focusedPaneId);
@@ -105,7 +105,7 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
       })}
       <button
         type="button"
-        className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
+        className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
         aria-label={`New tab ${checkout.next_tab_label}`}
         title="New tab (⌥T)"
         data-new-agent-tab="true"
@@ -174,8 +174,8 @@ const TabButton = memo(function TabButton({
       data-tab={entry.source_id}
       data-tab-kind={entry.kind}
       data-closing={closing ? "true" : "false"}
-      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-        active ? "bg-background text-primary" : "text-secondary hover:bg-elevated"
+      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
+        active ? "bg-background text-foreground" : "text-subtle-foreground hover:bg-accent"
       } ${dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -192,15 +192,15 @@ const TabButton = memo(function TabButton({
         }
       }}
     >
-      {over ? <span className="absolute inset-y-0 left-0 w-[var(--size-tab-indicator)] bg-accent" /> : null}
+      {over ? <span className="absolute inset-y-0 left-0 w-[var(--size-tab-indicator)] bg-primary" /> : null}
       {mark}
       <span className="min-w-0 flex-1 truncate">
         {entry.label}
-        {closing ? <span className="text-muted"> closing…</span> : null}
+        {closing ? <span className="text-muted-foreground"> closing…</span> : null}
       </span>
       <button
         type="button"
-        className={`rounded-xs px-xxs text-secondary hover:bg-balloon hover:text-primary focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}
+        className={`rounded-xs px-xxs text-subtle-foreground hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}
         aria-label={closeLabel}
         title={closeLabel}
         onClick={(event) => {
@@ -210,7 +210,7 @@ const TabButton = memo(function TabButton({
       >
         ×
       </button>
-      {active ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-accent" /> : null}
+      {active ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
     </div>
   );
 });

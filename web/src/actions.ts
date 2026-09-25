@@ -2,6 +2,7 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
+import type { ThemeChoice } from "./theme";
 import {
   closeWithSaveOutcome,
   deleteBuffer,
@@ -692,6 +693,11 @@ export function createActions(dispatch: DispatchFn) {
 
     setAccent(hex: string) {
       updateUiState({ accent_hex: hex });
+    },
+
+    /** One typed event; the core owns the choice and stores it (D-15). */
+    setTheme(theme: ThemeChoice) {
+      dispatch({ schema_version: 2, kind: "theme_set", payload: { theme } });
     },
 
     setFontSize(size: number) {

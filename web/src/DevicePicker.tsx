@@ -83,7 +83,7 @@ export function DevicePicker({ actions }: { actions: Actions }) {
 
   const label = selected?.label ?? "No device";
   return (
-    <div className="relative shrink-0 border-t border-divider px-md py-xs">
+    <div className="relative shrink-0 border-t border-border px-md py-xs">
       <button
         ref={trigger}
         type="button"
@@ -92,20 +92,20 @@ export function DevicePicker({ actions }: { actions: Actions }) {
         aria-label={`Choose device, ${label}`}
         title="Choose device"
         data-device-picker-trigger={selected?.id ?? ""}
-        className="inline-flex h-[var(--size-control-compact)] max-w-full items-center gap-xs rounded-sm px-xs text-caption text-secondary outline-none hover:bg-elevated hover:text-primary focus-visible:ring-1 focus-visible:ring-accent"
+        className="inline-flex h-[var(--size-control-compact)] max-w-full items-center gap-xs rounded-sm px-xs text-caption text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         onClick={() => setOpen(!open)}
       >
         <DeviceIcon remote={selected?.kind === "remote"} />
         <span className="min-w-0 truncate">{label}</span>
-        <span aria-hidden="true" className="text-muted">
+        <span aria-hidden="true" className="text-muted-foreground">
           ▾
         </span>
       </button>
       {open ? (
-        <div className="absolute bottom-full left-sm z-30 mb-xxs w-[var(--size-tooltip-max-width)] max-w-[calc(100vw-var(--spacing-lg))] rounded-md border border-divider bg-elevated p-md shadow-lg" data-device-picker="true">
-          <p className="mb-sm px-sm text-caption font-bold text-muted">DEVICES</p>
+        <div className="absolute bottom-full left-sm z-30 mb-xxs w-[var(--size-tooltip-max-width)] max-w-[calc(100vw-var(--spacing-lg))] rounded-md border border-border bg-secondary p-md shadow-lg" data-device-picker="true">
+          <p className="mb-sm px-sm text-caption font-bold text-muted-foreground">DEVICES</p>
           {devices.length === 0 ? (
-            <p className="p-sm text-body text-secondary">No devices available</p>
+            <p className="p-sm text-body text-subtle-foreground">No devices available</p>
           ) : (
             <ul ref={list} role="listbox" aria-label="Devices" onKeyDown={move} className="max-h-[var(--size-relationship-list-max)] space-y-xxs overflow-auto">
               {devices.map((device) => {
@@ -117,19 +117,19 @@ export function DevicePicker({ actions }: { actions: Actions }) {
                       type="button"
                       data-device-option={device.id}
                       aria-label={[device.label, detail, isSelected ? "Selected" : null].filter(Boolean).join(", ")}
-                      className="relative flex w-full items-center gap-md rounded-md px-md py-sm text-left outline-none hover:bg-balloon focus-visible:ring-1 focus-visible:ring-accent"
+                      className="relative flex w-full items-center gap-md rounded-md px-md py-sm text-left outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring"
                       onClick={() => choose(device)}
                     >
-                      {isSelected ? <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-md bg-accent opacity-[var(--opacity-selected-fill)]" /> : null}
-                      <span className="w-[var(--size-checkout-icon)] text-title text-secondary">
+                      {isSelected ? <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-md bg-primary opacity-[var(--opacity-selected-fill)]" /> : null}
+                      <span className="w-[var(--size-checkout-icon)] text-title text-subtle-foreground">
                         <DeviceIcon remote={device.kind === "remote"} />
                       </span>
                       <span className="flex min-w-0 flex-1 flex-col gap-xxs">
-                        <span className="truncate text-subhead font-semibold text-primary">{device.label}</span>
-                        <span className="text-caption text-secondary">{detail}</span>
+                        <span className="truncate text-subhead font-semibold text-foreground">{device.label}</span>
+                        <span className="text-caption text-subtle-foreground">{detail}</span>
                       </span>
                       {isSelected ? (
-                        <span aria-hidden="true" className="text-body font-semibold text-primary">
+                        <span aria-hidden="true" className="text-body font-semibold text-foreground">
                           ✓
                         </span>
                       ) : null}

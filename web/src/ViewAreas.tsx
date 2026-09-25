@@ -122,7 +122,7 @@ function ViewsEmpty({ opening, explorerShown, actions }: { opening: boolean; exp
         </Button>
       )}
       <Button appearance="quiet" onClick={() => useUiStore.getState().openOverlay("file_palette")} data-empty-open-file="true">
-        Open file <span className="text-muted">⌘P</span>
+        Open file <span className="text-muted-foreground">⌘P</span>
       </Button>
     </AreaEmpty>
   );
@@ -405,7 +405,7 @@ function ResizeGuide({ control }: { control: React.MutableRefObject<((rect: Rect
     };
   }, [control]);
   if (!rect) return null;
-  return <div className="pointer-events-none absolute z-20 bg-accent" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }} data-view-resize-guide="true" />;
+  return <div className="pointer-events-none absolute z-20 bg-primary" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }} data-view-resize-guide="true" />;
 }
 
 /** Where a divider dragged to `ratio` would sit. */
@@ -454,7 +454,7 @@ function Separator({ split, box }: { split: ViewSplitSnapshot; box: DividerBox }
       aria-valuemax={Math.round(RATIO_MAX * 100)}
       tabIndex={0}
       data-view-divider={split.id}
-      className={`relative z-10 shrink-0 bg-divider outline-none hover:bg-accent focus-visible:bg-accent ${row ? "w-[var(--size-resize-handle)] cursor-col-resize" : "h-[var(--size-resize-handle)] cursor-row-resize"}`}
+      className={`relative z-10 shrink-0 bg-border outline-none hover:bg-primary focus-visible:bg-primary ${row ? "w-[var(--size-resize-handle)] cursor-col-resize" : "h-[var(--size-resize-handle)] cursor-row-resize"}`}
       onPointerDown={(event) => tree.startResize(box, event)}
       onKeyDown={(event) => {
         const back = row ? "ArrowLeft" : "ArrowUp";
@@ -544,7 +544,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
     return () => observer.disconnect();
   }, [area.active, area.displays.length]);
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch bg-panel" data-view-tab-bar={area.id}>
+    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch bg-card" data-view-tab-bar={area.id}>
       <div ref={strip} role="tablist" aria-label={`View tabs, area ${index + 1} of ${count}`} className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
         {area.displays.map((display) => (
           <ContextMenu
@@ -597,8 +597,8 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
       data-tab-only={tabOnly ? "true" : "false"}
       data-unavailable={unavailable ? "true" : "false"}
       data-view-state={display.state}
-      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-        selected ? "bg-background text-primary" : "text-secondary hover:bg-elevated"
+      className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
+        selected ? "bg-background text-foreground" : "text-subtle-foreground hover:bg-accent"
       } ${tree.draggingId === display.id ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={(event) => tree.press(display.id, event)}
       onClick={() => {
@@ -613,14 +613,14 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
       }}
     >
       {displayMark(display)}
-      <span className={`min-w-0 flex-1 truncate ${display.preview ? "italic" : ""} ${unavailable ? "text-muted line-through" : ""}`}>
+      <span className={`min-w-0 flex-1 truncate ${display.preview ? "italic" : ""} ${unavailable ? "text-muted-foreground line-through" : ""}`}>
         {display.label}
-        {saving ? <span className="text-muted"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
-        {tabOnly ? <span className="text-muted"> kept in this tab only</span> : null}
+        {saving ? <span className="text-muted-foreground"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
+        {tabOnly ? <span className="text-muted-foreground"> kept in this tab only</span> : null}
       </span>
       <button
         type="button"
-        className={`rounded-xs px-xxs text-secondary hover:bg-balloon hover:text-primary focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
+        className={`rounded-xs px-xxs text-subtle-foreground hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
         aria-label={`Close view ${display.label}`}
         title={`Close view ${display.label}`}
         onPointerDown={(event) => event.stopPropagation()}
@@ -631,7 +631,7 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
       >
         ×
       </button>
-      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-accent" /> : null}
+      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
     </div>
   );
 }
@@ -670,7 +670,7 @@ function MenuButton<Id extends string>({
         aria-expanded={at !== null}
         aria-label={label}
         title={label}
-        className="flex min-w-[var(--size-tab-overflow-control)] items-center justify-center px-xxs text-caption text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
+        className="flex min-w-[var(--size-tab-overflow-control)] items-center justify-center px-xxs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
         {...data}
         onClick={(event) => {
           if (at) return setAt(null);
@@ -718,7 +718,7 @@ function DragPreview({ session }: { session: Extract<DragSession, { phase: "drag
     <>
       {target.kind === "bar" ? (
         <div
-          className="pointer-events-none absolute z-30 w-[var(--size-tab-indicator)] -translate-x-1/2 bg-accent"
+          className="pointer-events-none absolute z-30 w-[var(--size-tab-indicator)] -translate-x-1/2 bg-primary"
           style={{ left: target.line.x, top: target.line.y, height: target.line.height }}
           data-view-drop="bar"
         />
@@ -729,10 +729,10 @@ function DragPreview({ session }: { session: Extract<DragSession, { phase: "drag
           style={{ left: target.preview.x, top: target.preview.y, width: target.preview.width, height: target.preview.height }}
           data-view-drop={target.edge}
         >
-          <div className="absolute inset-0 bg-accent opacity-[var(--opacity-selected-fill)]" />
-          <div className="absolute inset-0 border border-accent" />
+          <div className="absolute inset-0 bg-primary opacity-[var(--opacity-selected-fill)]" />
+          <div className="absolute inset-0 border border-primary" />
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="rounded-sm bg-balloon px-sm py-xxs text-caption text-primary shadow-lg">{target.label}</span>
+            <span className="rounded-sm bg-popover px-sm py-xxs text-caption text-foreground shadow-lg">{target.label}</span>
           </div>
         </div>
       ) : null}
@@ -751,7 +751,7 @@ function FloatingTab({ display, start, reason }: { display: ViewDisplaySnapshot;
   }, []);
   return (
     <div
-      className="pointer-events-none fixed z-50 flex max-w-[var(--size-tab-preferred)] translate-x-sm translate-y-sm flex-col gap-xxs rounded-sm border border-divider bg-elevated px-sm py-xxs text-caption text-primary shadow-lg"
+      className="pointer-events-none fixed z-50 flex max-w-[var(--size-tab-preferred)] translate-x-sm translate-y-sm flex-col gap-xxs rounded-sm border border-border bg-secondary px-sm py-xxs text-caption text-foreground shadow-lg"
       style={{ left: point.x, top: point.y }}
       data-view-drag-tab={display.id}
     >
@@ -759,7 +759,7 @@ function FloatingTab({ display, start, reason }: { display: ViewDisplaySnapshot;
         {displayMark(display)}
         <span className={`truncate ${display.preview ? "italic" : ""}`}>{display.label}</span>
       </span>
-      {reason ? <span className="text-muted">{reason}</span> : null}
+      {reason ? <span className="text-muted-foreground">{reason}</span> : null}
     </div>
   );
 }

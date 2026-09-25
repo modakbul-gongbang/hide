@@ -142,7 +142,7 @@ export const PaneView = memo(function PaneView({
     >
       <header
         className={`relative flex h-[var(--size-pane-header)] shrink-0 items-center gap-sm px-sm text-caption ${
-          focused ? "bg-elevated text-primary" : "bg-panel text-secondary"
+          focused ? "bg-secondary text-foreground" : "bg-card text-subtle-foreground"
         }`}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -155,13 +155,13 @@ export const PaneView = memo(function PaneView({
           {title}
         </span>
         {caption ? (
-          <span className="truncate text-muted">{caption.text}</span>
+          <span className="truncate text-muted-foreground">{caption.text}</span>
         ) : (
-          <span className="truncate text-muted">{pane.status_label}</span>
+          <span className="truncate text-muted-foreground">{pane.status_label}</span>
         )}
         <button
           type="button"
-          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-secondary outline-none hover:bg-balloon hover:text-primary focus-visible:ring-1 focus-visible:ring-accent"
+          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-popover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
           aria-label={`Pane actions for ${title}`}
           title="Pane actions"
           aria-haspopup="menu"
@@ -182,7 +182,7 @@ export const PaneView = memo(function PaneView({
         </button>
         <button
           type="button"
-          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-secondary outline-none hover:bg-balloon hover:text-primary focus-visible:ring-1 focus-visible:ring-accent"
+          className="flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-popover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
           aria-label={`Close pane ${title}`}
           title="Close pane"
           onClick={() => actions.closePane(paneId)}
@@ -192,13 +192,13 @@ export const PaneView = memo(function PaneView({
         {paneMenu.menu}
       </header>
       <ChildChipRow pane={pane} actions={actions} />
-      <div className="h-[var(--size-hairline)] shrink-0 bg-divider" />
+      <div className="h-[var(--size-hairline)] shrink-0 bg-border" />
       <div className="relative min-h-0 flex-1">
         <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} />
         {refusal?.pane_id === paneId ? (
-          <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-panel px-sm py-xxs text-caption text-danger" data-pane-attachment-refusal="true">
+          <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-card px-sm py-xxs text-caption text-destructive" data-pane-attachment-refusal="true">
             <span className="min-w-0 flex-1 truncate">{refusalText(refusal.reason)}</span>
-            <button type="button" className="text-muted" aria-label="Dismiss" onClick={() => setRefusal(null)}>
+            <button type="button" className="text-muted-foreground" aria-label="Dismiss" onClick={() => setRefusal(null)}>
               ×
             </button>
           </div>
@@ -206,7 +206,7 @@ export const PaneView = memo(function PaneView({
         {caption?.reconnects ? (
           <button
             type="button"
-            className="absolute inset-0 flex items-center justify-center bg-panel text-caption text-secondary"
+            className="absolute inset-0 flex items-center justify-center bg-card text-caption text-subtle-foreground"
             onClick={() =>
               dispatch({ schema_version: 2, kind: "reconnect_pane", payload: { pane_id: paneId } })
             }

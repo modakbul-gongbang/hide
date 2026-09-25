@@ -113,16 +113,16 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
   };
   return (
     <ContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
-      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-divider bg-sidebar px-sm text-caption" data-workspace-toolbar="true">
+      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar px-sm text-caption" data-workspace-toolbar="true">
         <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
-          <button type="button" className="shrink-0 rounded-xs px-xs text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
+          <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
             Main
           </button>
-          <span aria-hidden="true" className="text-muted">/</span>
+          <span aria-hidden="true" className="text-muted-foreground">/</span>
           {project ? (
             <button
               type="button"
-              className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
+              className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
               title={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}
               data-go-overview={project.id}
               onClick={() => setScreen({ kind: "overview", projectId: project.id })}
@@ -130,12 +130,12 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
               {project.label}
             </button>
           ) : null}
-          <span aria-hidden="true" className="text-muted">/</span>
-          <span className="min-w-0 truncate text-primary" title={`${name} · ${checkout.path}`} aria-current="page">
+          <span aria-hidden="true" className="text-muted-foreground">/</span>
+          <span className="min-w-0 truncate text-foreground" title={`${name} · ${checkout.path}`} aria-current="page">
             {name}
           </span>
           {device ? (
-            <span className="shrink-0 rounded-xs bg-elevated px-xs text-micro text-secondary" title={`On ${device.label}`} data-workspace-device={device.id}>
+            <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro text-subtle-foreground" title={`On ${device.label}`} data-workspace-device={device.id}>
               {device.label}
             </span>
           ) : null}
@@ -163,7 +163,7 @@ function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
   }));
   return (
     <div className="relative flex items-center gap-xxs">
-      <div role="radiogroup" aria-label="Layout" className="flex items-center rounded-sm bg-panel p-xxs">
+      <div role="radiogroup" aria-label="Layout" className="flex items-center rounded-sm bg-card p-xxs">
         {LAYOUTS.map((layout) => (
           <button
             key={layout.mode}
@@ -173,8 +173,8 @@ function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
             aria-label={layout.label}
             title={layout.label}
             data-layout-choice={layout.mode}
-            className={`flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-              layout.mode === mode ? "bg-elevated text-primary" : "text-muted hover:text-secondary"
+            className={`flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+              layout.mode === mode ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-subtle-foreground"
             }`}
             onClick={() => actions.setLayout(layout.mode)}
           >
@@ -189,7 +189,7 @@ function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
         aria-label={`Layout menu: ${layoutLabel(mode)}`}
         title={`Layout menu: ${layoutLabel(mode)}`}
         data-layout-menu="true"
-        className="rounded-xs px-xs text-muted hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
+        className="rounded-xs px-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
         onClick={() => setMenu(!menu)}
       >
         ▾
@@ -214,7 +214,7 @@ const REGIONS: readonly { region: WorkingRegion; label: string }[] = [
 function RegionSwitch() {
   const region = useUiStore((s) => s.workingRegion);
   return (
-    <div role="radiogroup" aria-label="Working region, one at a time in this narrow window" className="flex items-center rounded-sm bg-panel p-xxs" data-region-switch={region}>
+    <div role="radiogroup" aria-label="Working region, one at a time in this narrow window" className="flex items-center rounded-sm bg-card p-xxs" data-region-switch={region}>
       {REGIONS.map((choice) => (
         <button
           key={choice.region}
@@ -223,8 +223,8 @@ function RegionSwitch() {
           aria-checked={choice.region === region}
           title={`Show ${choice.label}`}
           data-region-choice={choice.region}
-          className={`rounded-xs px-xs text-caption outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-            choice.region === region ? "bg-elevated text-primary" : "text-muted hover:text-secondary"
+          className={`rounded-xs px-xs text-caption outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+            choice.region === region ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-subtle-foreground"
           }`}
           onClick={() => useUiStore.getState().setWorkingRegion(choice.region)}
         >
@@ -243,8 +243,8 @@ function ToolToggle({ tool, label, on, actions }: { tool: "explorer" | "changes"
       aria-label={`${on ? "Hide" : "Show"} ${label}`}
       title={`${on ? "Hide" : "Show"} ${label}`}
       data-tool-toggle={tool}
-      className={`flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-        on ? "bg-elevated text-primary" : "text-muted hover:text-secondary"
+      className={`flex h-[var(--size-icon-button-toolbar)] w-[var(--size-icon-button-toolbar)] items-center justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+        on ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-subtle-foreground"
       }`}
       onClick={() => actions.setTool(tool, !on)}
     >
@@ -341,7 +341,7 @@ function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout;
           aria-valuemax={80}
           tabIndex={0}
           data-area-divider="true"
-          className="relative z-10 w-[var(--size-resize-handle)] shrink-0 cursor-col-resize bg-divider outline-none hover:bg-accent focus-visible:bg-accent"
+          className="relative z-10 w-[var(--size-resize-handle)] shrink-0 cursor-col-resize bg-border outline-none hover:bg-primary focus-visible:bg-primary"
           onPointerDown={drag}
           onKeyDown={(event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -357,7 +357,7 @@ function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout;
           <ViewAreas checkout={checkout} actions={actions} />
         </div>
       ) : null}
-      {guide !== null ? <div className="pointer-events-none absolute inset-y-0 w-[var(--size-resize-handle)] bg-accent" style={{ left: guide }} data-area-guide="true" /> : null}
+      {guide !== null ? <div className="pointer-events-none absolute inset-y-0 w-[var(--size-resize-handle)] bg-primary" style={{ left: guide }} data-area-guide="true" /> : null}
     </div>
   );
 }
@@ -382,7 +382,7 @@ function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Ac
       ) : (
         <AreaEmpty state="no-agent-tab" text="No agent tab is open in this Workspace.">
           <Button onClick={() => actions.createTab()} data-empty-new-tab="true">
-            New tab <span className="text-muted">⌥T</span>
+            New tab <span className="text-muted-foreground">⌥T</span>
           </Button>
         </AreaEmpty>
       )}
@@ -406,9 +406,9 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
   if (!view) {
     const line = deviceLine(device, status ?? undefined);
     return (
-      <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-sm p-xl text-body text-secondary" data-remote-device-surface={device.id} data-remote-state={status?.state ?? "none"}>
-        <h2 className="text-title font-semibold text-primary">
-          {device.label} <span className="font-mono text-caption text-muted">{device.ssh_alias}</span>
+      <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-sm p-xl text-body text-subtle-foreground" data-remote-device-surface={device.id} data-remote-state={status?.state ?? "none"}>
+        <h2 className="text-title font-semibold text-foreground">
+          {device.label} <span className="font-mono text-caption text-muted-foreground">{device.ssh_alias}</span>
         </h2>
         <p>{connected ? `${device.label} is connected, but no Herdr workspace is open there.` : `${device.label} is ${line.text}${status?.message ? `: ${status.message}` : "."}`}</p>
         <div className="flex gap-sm">
@@ -429,7 +429,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
       {connected ? null : (
         // A lost connection keeps the last session on screen, but the host
         // takes no command until it is back (`remote.control.not_connected`).
-        <div role="status" className="flex items-center gap-md border-b border-divider bg-panel px-md py-xs text-caption text-warning" data-remote-stale={device.id}>
+        <div role="status" className="flex items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-warning" data-remote-stale={device.id}>
           <span className="min-w-0 flex-1 truncate" title={status?.message ?? undefined}>
             {device.label} is not connected{status?.message ? `: ${status.message}` : ""}. Showing the last state it reported; nothing is sent until it reconnects.
           </span>

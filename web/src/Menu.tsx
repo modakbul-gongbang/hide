@@ -77,24 +77,24 @@ export function MenuList<Id extends string>({
       aria-label={label}
       onKeyDown={move}
       style={style}
-      className={`z-30 w-[var(--size-settings-control-w)] rounded-md border border-divider bg-balloon py-xxs text-body shadow-lg ${className}`}
+      className={`z-30 w-[var(--size-settings-control-w)] rounded-md border border-border bg-popover py-xxs text-body shadow-lg ${className}`}
     >
       {items.map((item) => (
-        <li key={item.id} role="none" className={item.separated ? "mt-xxs border-t border-divider pt-xxs" : undefined}>
+        <li key={item.id} role="none" className={item.separated ? "mt-xxs border-t border-border pt-xxs" : undefined}>
           <button
             type="button"
             role="menuitem"
             disabled={item.unavailable !== null}
             title={item.unavailable ?? undefined}
             data-menu-item={item.id}
-            className="flex w-full flex-col items-start px-sm py-xxs text-left text-primary outline-none hover:bg-elevated focus-visible:bg-elevated disabled:text-muted"
+            className="flex w-full flex-col items-start px-sm py-xxs text-left text-foreground outline-none hover:bg-accent focus-visible:bg-accent disabled:text-muted-foreground"
             onClick={() => {
               onClose();
               onSelect(item.id);
             }}
           >
             <span>{item.label}</span>
-            {item.unavailable ? <span className="text-caption text-muted">{item.unavailable}</span> : null}
+            {item.unavailable ? <span className="text-caption text-muted-foreground">{item.unavailable}</span> : null}
           </button>
         </li>
       ))}

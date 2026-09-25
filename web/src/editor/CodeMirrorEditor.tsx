@@ -344,7 +344,7 @@ export function CodeMirrorEditor({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-editor-codemirror="true">
       {split ? (
         <div
-          className="shrink-0 overflow-hidden border-b border-divider bg-elevated"
+          className="shrink-0 overflow-hidden border-b border-border bg-secondary"
           data-editor-frontmatter="true"
           style={{ height: `calc(var(--text-editor-document) * ${scale} * ${FRONTMATTER_LINES * LINE_HEIGHT})` }}
         >

@@ -61,11 +61,11 @@ export function gitBadgeColor(status: ChangedFileStatus): string {
       return "text-success";
     case "deleted":
     case "conflict":
-      return "text-danger";
+      return "text-destructive";
     case "modified":
       return "text-warning";
     case "renamed":
-      return "text-accent";
+      return "text-primary";
   }
 }
 

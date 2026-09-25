@@ -1,8 +1,22 @@
+@import "tailwindcss";
 @import "./tokens.css";
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* `dark:` follows the theme class the shell puts on <html> (Settings > Appearance). */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * The dev gallery pins a pointer or keyboard state on a System part with
+ * `data-gallery-state`, so each state Pen draws renders without a pointer.
+ * Nothing in the shell sets the attribute.
+ */
+@custom-variant hover (&:hover, &[data-gallery-state~="hover"]);
+@custom-variant focus-visible (&:focus-visible, &[data-gallery-state~="focus"]);
+
+/* Font stacks are not numeric tokens; the terminal reads --font-mono at mount. */
+@theme {
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
 
 /*
  * The Seti glyph subset the file rows draw, the same bytes the macOS shell
@@ -18,21 +32,37 @@
   font-display: block;
 }
 
-:root {
-  /* Dark is the only theme: native scrollbars and form controls follow it. */
-  color-scheme: dark;
-  /* Font stacks are not numeric tokens; the terminal reads this one at mount. */
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-}
+@layer base {
+  /* Native scrollbars and form controls follow the theme on <html>. */
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
 
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-  background: var(--color-background);
-  color: var(--color-primary);
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+    outline-color: var(--ring);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+
+  /* Tailwind v3's preflight gave buttons a pointer; v4 dropped it and the shell keeps it. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
 }
 
 .xterm,

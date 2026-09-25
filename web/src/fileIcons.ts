@@ -21,7 +21,7 @@ type FileColor =
 export type FileIcon = {
   /** The private-use codepoint the seti subset draws. */
   glyph: string;
-  /** The class the --color-file-* token backs, so no row writes a colour. */
+  /** The class the --file-* token backs, so no row writes a colour. */
   color: FileColor;
 };
 

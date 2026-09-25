@@ -43,14 +43,14 @@ function PaletteShell({
   return (
     <div className="absolute inset-0 z-40 flex justify-center pt-[var(--size-settings-sheet-window-inset)]" role="presentation" data-palette={label}>
       <div className="absolute inset-0 bg-background opacity-[var(--opacity-secondary)]" onClick={() => close()} />
-      <div className="relative w-[var(--size-search-sheet-w)] max-w-full rounded-lg border border-divider bg-panel text-body text-primary shadow-lg">
+      <div className="relative w-[var(--size-search-sheet-w)] max-w-full rounded-lg border border-border bg-card text-body text-foreground shadow-lg">
         <input
           autoFocus
           value={query}
           placeholder={placeholder}
           aria-label={label}
           data-palette-input="true"
-          className="w-full rounded-t-lg border-b border-divider bg-panel px-md py-sm text-body text-primary outline-none"
+          className="w-full rounded-t-lg border-b border-border bg-card px-md py-sm text-body text-foreground outline-none"
           onChange={(event) => onQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return;
@@ -61,7 +61,7 @@ function PaletteShell({
           {children}
         </div>
         {footer ? (
-          <div className="border-t border-divider px-md py-xxs text-caption text-muted" data-palette-footer="true">
+          <div className="border-t border-border px-md py-xxs text-caption text-muted-foreground" data-palette-footer="true">
             {footer}
           </div>
         ) : null}
@@ -96,7 +96,7 @@ function PaletteRow({
       data-palette-row={testId}
       aria-selected={active}
       aria-disabled={unavailable || undefined}
-      className={`flex w-full items-baseline gap-sm px-md py-xs text-left ${active ? "bg-elevated" : ""} ${unavailable ? "text-muted" : active ? "text-primary" : "text-secondary"}`}
+      className={`flex w-full items-baseline gap-sm px-md py-xs text-left ${active ? "bg-secondary" : ""} ${unavailable ? "text-muted-foreground" : active ? "text-foreground" : "text-subtle-foreground"}`}
       onPointerEnter={onHover}
       onClick={onPick}
     >
@@ -105,12 +105,12 @@ function PaletteRow({
         // The whole reason, under the title, as every web menu draws an item it cannot run (B9).
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate">{title}</span>
-          {subtitle ? <span className="text-caption text-muted">{subtitle}</span> : null}
+          {subtitle ? <span className="text-caption text-muted-foreground">{subtitle}</span> : null}
         </span>
       ) : (
         <>
           <span className="min-w-0 flex-1 truncate">{title}</span>
-          {subtitle ? <span className="max-w-[var(--size-recent-location-max)] shrink-0 truncate text-caption text-muted">{subtitle}</span> : null}
+          {subtitle ? <span className="max-w-[var(--size-recent-location-max)] shrink-0 truncate text-caption text-muted-foreground">{subtitle}</span> : null}
         </>
       )}
     </button>
@@ -182,15 +182,15 @@ function FilePalette({ beside, actions }: { beside: boolean; actions: Actions })
       footer={fileIndex?.truncated ? "The index is truncated at 50,000 files" : ""}
     >
       {fileIndex?.unavailable ? (
-        <div className="px-md py-sm text-caption text-muted" role="alert" data-palette-state="unavailable">
+        <div className="px-md py-sm text-caption text-muted-foreground" role="alert" data-palette-state="unavailable">
           {`Files could not be listed: ${fileIndex.unavailable}`}
         </div>
       ) : fileIndex?.indexing && entries.length === 0 ? (
-        <div className="px-md py-sm text-caption text-muted" data-palette-state="indexing">
+        <div className="px-md py-sm text-caption text-muted-foreground" data-palette-state="indexing">
           Indexing…
         </div>
       ) : entries.length === 0 ? (
-        <div className="px-md py-sm text-caption text-muted" data-palette-state="empty">
+        <div className="px-md py-sm text-caption text-muted-foreground" data-palette-state="empty">
           {query ? "No matching files" : "Type to search this checkout"}
         </div>
       ) : (
@@ -251,7 +251,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
       footer=""
     >
       {entries.length === 0 ? (
-        <div className="px-md py-sm text-caption text-muted" data-palette-state="empty">
+        <div className="px-md py-sm text-caption text-muted-foreground" data-palette-state="empty">
           No matching agents or workspaces
         </div>
       ) : (

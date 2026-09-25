@@ -98,7 +98,7 @@ function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions
       <div className="space-y-sm p-lg">
         <DialogHeader title={`Remove project ${workspace.label}?`} detail={workspace.path} />
         {at === null ? (
-          <ul className="list-disc space-y-xxs pl-lg text-body text-secondary" data-remove-consequences="true">
+          <ul className="list-disc space-y-xxs pl-lg text-body text-subtle-foreground" data-remove-consequences="true">
             {projectRemovalConsequences(workspace).map((line) => (
               <li key={line} className="break-words">
                 {line}
@@ -147,8 +147,8 @@ function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions
 function DialogHeader({ title, detail }: { title: string; detail?: string }) {
   return (
     <div className="mb-md">
-      <h2 className="break-words text-title font-semibold text-primary">{title}</h2>
-      {detail ? <p className="break-all font-mono text-caption text-muted">{detail}</p> : null}
+      <h2 className="break-words text-title font-semibold text-foreground">{title}</h2>
+      {detail ? <p className="break-all font-mono text-caption text-muted-foreground">{detail}</p> : null}
     </div>
   );
 }
@@ -205,12 +205,12 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
         }}
       >
         <DialogHeader title={`New worktree in ${workspace.label}`} detail={workspace.path} />
-        <label className="block text-body text-secondary">
+        <label className="block text-body text-subtle-foreground">
           Branch
           <Field value={branch} disabled={working} autoComplete="off" spellCheck={false} placeholder="feature/name" className="mt-xxs w-full" onChange={(event) => setBranch(event.target.value)} data-worktree-branch="true" />
         </label>
         {problem ? <Note tone="warn">{problem}</Note> : null}
-        <label className="block text-body text-secondary">
+        <label className="block text-body text-subtle-foreground">
           Base
           <Select value={base} disabled={working || branches.length === 0} className="mt-xxs w-full" onChange={(event) => setBase(event.target.value)} data-worktree-base="true">
             {branches.length === 0 ? <option value="">No branches read yet</option> : null}
@@ -221,23 +221,23 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
             ))}
           </Select>
         </label>
-        <fieldset className="text-body text-secondary" disabled={working}>
+        <fieldset className="text-body text-subtle-foreground" disabled={working}>
           <legend>Start in the new pane</legend>
           <div className="mt-xxs flex flex-wrap gap-md">
             {AGENTS.map((row) => (
-              <label key={row.id} className="inline-flex items-center gap-xs text-primary">
+              <label key={row.id} className="inline-flex items-center gap-xs text-foreground">
                 <input type="radio" name="worktree-agent" value={row.id} checked={agent === row.id} onChange={() => setAgent(row.id)} data-worktree-agent={row.id} />
                 {row.label}
               </label>
             ))}
           </div>
         </fieldset>
-        <label className="block text-body text-secondary">
+        <label className="block text-body text-subtle-foreground">
           Purpose (optional)
           <Field value={purpose} mono={false} disabled={working} maxLength={PURPOSE_HARD_LIMIT * 2} className="mt-xxs w-full" onChange={(event) => setPurpose(normalizePurpose(event.target.value))} data-worktree-purpose="true" />
         </label>
         {purpose ? (
-          <p className={`text-caption ${purposeIsLong(purpose) ? "text-warning" : "text-muted"}`}>{purposeCountLabel(purpose)}{purposeIsLong(purpose) ? " · longer than a sidebar row shows" : ""}</p>
+          <p className={`text-caption ${purposeIsLong(purpose) ? "text-warning" : "text-muted-foreground"}`}>{purposeCountLabel(purpose)}{purposeIsLong(purpose) ? " · longer than a sidebar row shows" : ""}</p>
         ) : null}
         {failure ? <Note tone="error" data-worktree-error="true">{failure}</Note> : null}
         {working ? <Status tone="pending">Creating the worktree…</Status> : null}
@@ -296,11 +296,11 @@ function PurposeDialog({ actions, checkout, deviceLabel, onClose }: { actions: A
           }}
           data-purpose-field="true"
         />
-        <p className={`text-caption ${purposeIsLong(text) ? "text-warning" : "text-muted"}`} data-purpose-count="true">
+        <p className={`text-caption ${purposeIsLong(text) ? "text-warning" : "text-muted-foreground"}`} data-purpose-count="true">
           {purposeCountLabel(text)}
           {purposeIsLong(text) ? " · longer than a sidebar row shows" : ""}
         </p>
-        <p className="text-caption text-muted" data-purpose-scope="true">
+        <p className="text-caption text-muted-foreground" data-purpose-scope="true">
           {purposeScope(deviceLabel, checkout.branch ?? null)}
         </p>
         {failure ? (
@@ -364,7 +364,7 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
         ) : null}
         {row && gate && !gate.blocked_reason && !request ? (
           <>
-            <ul className="list-disc space-y-xxs pl-lg text-body text-secondary" data-delete-consequences="true">
+            <ul className="list-disc space-y-xxs pl-lg text-body text-subtle-foreground" data-delete-consequences="true">
               {deletionConsequences(checkout, paneCount).map((line) => (
                 <li key={line} className="break-words">
                   {line}
@@ -372,7 +372,7 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
               ))}
             </ul>
             {branch ? (
-              <label className={`flex items-start gap-xs text-body ${gate.can_delete_branch ? "text-primary" : "text-muted"}`}>
+              <label className={`flex items-start gap-xs text-body ${gate.can_delete_branch ? "text-foreground" : "text-muted-foreground"}`}>
                 <input type="checkbox" checked={deleteBranch} disabled={!gate.can_delete_branch} onChange={(event) => setDeleteBranch(event.target.checked)} data-delete-branch="true" />
                 <span>
                   Also delete the local branch {branch}
@@ -453,23 +453,23 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
   if (!task || !task.agent_phase || task.agent_phase === "started") return null;
   const dismiss = () => useUiStore.getState().setWatchedTask(null);
   return (
-    <div role="status" data-task-agent={task.agent_phase} className="flex flex-wrap items-center gap-md border-b border-divider bg-panel px-md py-xs text-caption text-secondary">
+    <div role="status" data-task-agent={task.agent_phase} className="flex flex-wrap items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-subtle-foreground">
       <span className="min-w-0 flex-1 break-words">
         {task.agent_phase === "starting"
           ? `Starting ${task.agent_kind} in the new pane…`
           : `${task.agent_message ?? "The agent did not start."} The worktree and its pane are kept.`}
       </span>
       {task.agent_phase === "failed" ? (
-        <button type="button" className="text-primary underline" onClick={() => actions.retryTaskAgent(task.id)} data-task-agent-retry="true">
+        <button type="button" className="text-foreground underline" onClick={() => actions.retryTaskAgent(task.id)} data-task-agent-retry="true">
           Retry agent start
         </button>
       ) : null}
       {task.pane_id ? (
-        <button type="button" className="text-primary underline" onClick={() => actions.focusPane(task.pane_id as string)}>
+        <button type="button" className="text-foreground underline" onClick={() => actions.focusPane(task.pane_id as string)}>
           Show pane
         </button>
       ) : null}
-      <button type="button" className="text-muted" aria-label="Dismiss" onClick={dismiss}>
+      <button type="button" className="text-muted-foreground" aria-label="Dismiss" onClick={dismiss}>
         ×
       </button>
     </div>

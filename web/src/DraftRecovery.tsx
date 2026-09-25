@@ -80,14 +80,14 @@ export function DraftRecoveryLine({ actions }: { actions: Actions }) {
   if (count === 0) return null;
   return (
     <>
-      <div role="status" data-draft-recovery={count} className="flex items-center gap-md border-b border-divider bg-panel px-md py-xs text-caption text-warning">
+      <div role="status" data-draft-recovery={count} className="flex items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-warning">
         <span
           className="min-w-0 flex-1 truncate"
           title={`${count === 1 ? "1 unsaved draft is" : `${count} unsaved drafts are`} not open in any tab. Nothing is discarded until you choose.`}
         >
           {count === 1 ? "1 unsaved draft is" : `${count} unsaved drafts are`} not open in any tab. Nothing is discarded until you choose.
         </span>
-        <button type="button" className="text-primary underline" data-draft-recovery-review="true" onClick={() => setOpen(true)}>
+        <button type="button" className="text-foreground underline" data-draft-recovery-review="true" onClick={() => setOpen(true)}>
           Review
         </button>
       </div>
@@ -104,8 +104,8 @@ function DraftRecoverySheet({ actions, onClose }: { actions: Actions; onClose: (
   return (
     <Dialog label="Unsaved drafts" onClose={onClose} data-draft-recovery-sheet="true">
       <div className="flex max-h-[var(--size-settings-sheet-h-max)] flex-col gap-sm overflow-auto p-md text-body">
-        <h2 className="text-title font-semibold text-primary">Unsaved drafts</h2>
-        {drafts.length === 0 ? <p className="text-caption text-muted">No draft is waiting.</p> : null}
+        <h2 className="text-title font-semibold text-foreground">Unsaved drafts</h2>
+        {drafts.length === 0 ? <p className="text-caption text-muted-foreground">No draft is waiting.</p> : null}
         <ul className="flex flex-col gap-sm">
           {drafts.map((draft) => {
             const place = draftPlace(draft, host, rest);
@@ -113,9 +113,9 @@ function DraftRecoverySheet({ actions, onClose }: { actions: Actions; onClose: (
             // cannot match; the attributes carry it URI-encoded.
             const tag = encodeURIComponent(draft.id);
             return (
-              <li key={draft.id} className="flex flex-col gap-xxs border-b border-divider pb-sm" data-draft={tag}>
-                <span className="truncate font-mono text-caption text-primary" title={draft.path}>{draft.path}</span>
-                <span className="text-caption text-muted">
+              <li key={draft.id} className="flex flex-col gap-xxs border-b border-border pb-sm" data-draft={tag}>
+                <span className="truncate font-mono text-caption text-foreground" title={draft.path}>{draft.path}</span>
+                <span className="text-caption text-muted-foreground">
                   {origin(draft, host, rest)} · {new Date(draft.updated_at).toLocaleString()}
                   {place.kind === "none" ? ` · cannot open here: ${place.reason}` : ""}
                 </span>

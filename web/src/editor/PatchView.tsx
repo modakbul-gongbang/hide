@@ -20,10 +20,10 @@ const patchTheme = EditorView.theme({
   ".cm-line": { width: "max-content", minWidth: "100%" },
   ".cm-gutter": { width: "var(--size-editor-diff-line-number-col)", textAlign: "right" },
   ".cm-gutterElement": { paddingRight: "var(--spacing-xs)" },
-  ".cm-patch-added": { backgroundColor: "color-mix(in srgb, var(--color-diff-added) 15%, transparent)" },
-  ".cm-patch-removed": { backgroundColor: "color-mix(in srgb, var(--color-diff-removed) 15%, transparent)" },
-  ".cm-patch-hunk": { backgroundColor: "var(--color-panel)", color: "var(--color-file-blue)" },
-  ".cm-patch-header": { color: "var(--color-muted)" },
+  ".cm-patch-added": { backgroundColor: "color-mix(in srgb, var(--diff-added) 15%, transparent)" },
+  ".cm-patch-removed": { backgroundColor: "color-mix(in srgb, var(--diff-removed) 15%, transparent)" },
+  ".cm-patch-hunk": { backgroundColor: "var(--card)", color: "var(--file-blue)" },
+  ".cm-patch-header": { color: "var(--muted-foreground)" },
 });
 
 export function PatchView({ text, scale }: { text: string; scale: number }) {

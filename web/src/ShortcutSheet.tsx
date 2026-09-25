@@ -20,12 +20,12 @@ export function ShortcutSheet({ actions }: { actions: Actions }) {
         role="dialog"
         aria-label="Keyboard shortcuts"
         data-shortcut-sheet="true"
-        className="relative max-h-full w-[var(--size-search-sheet-w)] overflow-auto rounded-lg border border-divider bg-balloon p-lg text-body text-primary shadow-lg"
+        className="relative max-h-full w-[var(--size-search-sheet-w)] overflow-auto rounded-lg border border-border bg-popover p-lg text-body text-foreground shadow-lg"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-md flex items-baseline justify-between">
           <h2 className="text-title">Keyboard shortcuts</h2>
-          <span className="text-caption text-muted">browser host · Electron column TODO</span>
+          <span className="text-caption text-muted-foreground">browser host · Electron column TODO</span>
         </div>
         {diagnostic ? (
           <p className="mb-md text-caption text-warning" data-shortcut-diagnostic="true">
@@ -34,7 +34,7 @@ export function ShortcutSheet({ actions }: { actions: Actions }) {
         ) : null}
         {GROUPS.map((group) => (
           <section key={group} className="mb-md">
-            <h3 className="mb-xs text-caption uppercase text-muted">{group}</h3>
+            <h3 className="mb-xs text-caption uppercase text-muted-foreground">{group}</h3>
             <ul>
               {registry.filter((command) => command.group === group).map((command) => (
                 <li key={command.id} className="flex items-center gap-md py-xxs" data-shortcut={command.id}>
@@ -44,8 +44,8 @@ export function ShortcutSheet({ actions }: { actions: Actions }) {
                       moved for Chrome ({command.movedFrom})
                     </span>
                   ) : null}
-                  {command.passthrough ? <span className="text-caption text-muted">{command.passthrough}</span> : null}
-                  <kbd className="rounded-xs bg-elevated px-xs font-mono text-caption leading-[var(--size-keycap-height)] text-secondary">
+                  {command.passthrough ? <span className="text-caption text-muted-foreground">{command.passthrough}</span> : null}
+                  <kbd className="rounded-xs bg-secondary px-xs font-mono text-caption leading-[var(--size-keycap-height)] text-subtle-foreground">
                     {command.browser ? displayChord(command.browser) : "-"}
                   </kbd>
                 </li>

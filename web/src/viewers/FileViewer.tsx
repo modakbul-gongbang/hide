@@ -12,7 +12,7 @@ import { isVideoPath, videoMime } from "./video";
 /** The one line a failed read or an unsupported file leaves behind. */
 export function ViewerNotice({ reason, state }: { reason: string; state: string }) {
   return (
-    <div className="flex flex-1 items-center justify-center px-md text-center text-caption text-muted" data-viewer-state={state}>
+    <div className="flex flex-1 items-center justify-center px-md text-center text-caption text-muted-foreground" data-viewer-state={state}>
       {reason}
     </div>
   );

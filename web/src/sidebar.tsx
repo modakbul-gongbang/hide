@@ -32,7 +32,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
   if (!visible) return null;
 
   return (
-    <nav className="flex h-full w-[var(--size-sidebar-ideal)] shrink-0 flex-col bg-sidebar text-primary" data-sidebar={mode}>
+    <nav className="flex h-full w-[var(--size-sidebar-ideal)] shrink-0 flex-col bg-sidebar text-foreground" data-sidebar={mode}>
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm px-md text-caption">
         {SIDEBAR_MODES.map((candidate) => (
           <button
@@ -40,37 +40,37 @@ export function Sidebar({ actions }: { actions: Actions }) {
             type="button"
             data-sidebar-mode={candidate}
             aria-pressed={mode === candidate}
-            className={mode === candidate ? "text-primary" : "text-muted hover:text-secondary"}
+            className={mode === candidate ? "text-foreground" : "text-muted-foreground hover:text-subtle-foreground"}
             onClick={() => actions.showSidebarMode(candidate)}
           >
             {candidate === "agents" ? "Agents" : "Projects"}
           </button>
         ))}
         <span className="flex-1" />
-        <span className="text-muted">⌘E</span>
+        <span className="text-muted-foreground">⌘E</span>
         <button
           type="button"
           aria-label={`Settings (${displayBrowser("settings")})`}
           title={`Settings (${displayBrowser("settings")})`}
           data-open-settings="true"
-          className="text-muted hover:text-primary focus-visible:text-primary"
+          className="text-muted-foreground hover:text-foreground focus-visible:text-foreground"
           onClick={() => actions.openSettings()}
         >
           ⚙
         </button>
       </div>
       {status ? (
-        <div className="border-b border-divider px-md py-sm text-caption text-muted">{status}</div>
+        <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
       ) : null}
       {mode === "agents" ? <AgentList actions={actions} /> : <ProjectList actions={actions} />}
       <NewWorkspace actions={actions} />
       <button
         type="button"
         data-new-workspace-button="true"
-        className="shrink-0 border-t border-divider px-md py-sm text-left text-caption text-secondary hover:text-primary"
+        className="shrink-0 border-t border-border px-md py-sm text-left text-caption text-subtle-foreground hover:text-foreground"
         onClick={() => actions.openNewWorkspace()}
       >
-        + 새 워크스페이스 <span className="text-muted">⌥⇧N</span>
+        + 새 워크스페이스 <span className="text-muted-foreground">⌥⇧N</span>
       </button>
       <DevicePicker actions={actions} />
     </nav>
@@ -96,13 +96,13 @@ function AgentList({ actions }: { actions: Actions }) {
   const sections = useMemo(() => agentSections(agents), [agents]);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   if (sections.length === 0) {
-    return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted" data-agents-empty="true">No agents are running</div>;
+    return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted-foreground" data-agents-empty="true">No agents are running</div>;
   }
   return (
     <ul className="min-h-0 flex-1 overflow-auto" data-agent-list="true">
       {sections.map((section) => (
         <li key={section.group} data-agent-group={section.group}>
-          <div className="px-md pb-xxs pt-sm text-micro uppercase text-muted" id={`agent-group-${section.group}`}>
+          <div className="px-md pb-xxs pt-sm text-micro uppercase text-muted-foreground" id={`agent-group-${section.group}`}>
             {section.label} · {section.agents.length}
           </div>
           <ul aria-labelledby={`agent-group-${section.group}`}>
@@ -157,7 +157,7 @@ const AgentRowView = memo(function AgentRowView({
   const attention = agent.group === "needs_you" || agent.unread;
   // A delegated row is somebody else's work: drawn quieter and indented,
   // and never loud, since it is only ever Working or Seen.
-  const tone = agent.delegated ? "text-muted" : agent.emphasized || attention ? "text-primary" : "text-secondary";
+  const tone = agent.delegated ? "text-muted-foreground" : agent.emphasized || attention ? "text-foreground" : "text-subtle-foreground";
   return (
     <li>
       <button
@@ -168,9 +168,9 @@ const AgentRowView = memo(function AgentRowView({
         data-delegated={agent.delegated ? "true" : "false"}
         title={device ? `${agent.identity_label} · ${device}` : agent.identity_label}
         data-agent-device={device ?? "local"}
-        className={`flex w-full flex-col items-start py-xs pr-md text-left outline-none focus-visible:bg-elevated ${
+        className={`flex w-full flex-col items-start py-xs pr-md text-left outline-none focus-visible:bg-accent ${
           agent.delegated ? "pl-[calc(var(--spacing-md)+var(--size-lineage-indent))]" : "pl-md"
-        } ${selected ? "bg-elevated" : ""} ${tone}`}
+        } ${selected ? "bg-secondary" : ""} ${tone}`}
       >
         <span className="flex w-full items-baseline gap-xs text-body">
           <span className={`w-[var(--size-agent-mark)] font-mono text-caption ${agent.delegated ? "" : chipTone({ demand: agent.demand ?? "none", activity: agent.activity ?? "", emphasized: agent.emphasized })}`}>
@@ -179,7 +179,7 @@ const AgentRowView = memo(function AgentRowView({
           <span className="flex-1 truncate">{agent.identity_label}</span>
           {descendants > 0 ? (
             <span
-              className="shrink-0 rounded-xs bg-elevated px-xxs text-micro text-secondary"
+              className="shrink-0 rounded-xs bg-secondary px-xxs text-micro text-subtle-foreground"
               title={descendantDetail(agent, descendants)}
               aria-label={descendantDetail(agent, descendants)}
               data-descendant-badge={descendants}
@@ -187,9 +187,9 @@ const AgentRowView = memo(function AgentRowView({
               ↳{descendants}
             </span>
           ) : null}
-          <span className="text-micro text-muted">{agent.elapsed}</span>
+          <span className="text-micro text-muted-foreground">{agent.elapsed}</span>
         </span>
-        <span className="pl-[var(--size-agent-mark)] text-caption text-secondary">
+        <span className="pl-[var(--size-agent-mark)] text-caption text-subtle-foreground">
           {device ? `${device} · ` : ""}
           {agent.unknown ? "unknown" : `${agent.agent_kind}${agent.detail ? ` / ${agent.detail}` : ""}`}
         </span>
@@ -226,7 +226,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   return (
     <ul className="min-h-0 flex-1 overflow-auto" data-project-list="true">
       {catalogLine ? (
-        <li role="status" className="px-md py-xs text-caption text-muted" data-device-catalog={catalogLine.state}>
+        <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
           {catalogLine.text}
         </li>
       ) : null}
@@ -261,7 +261,7 @@ const ProjectRowView = memo(function ProjectRowView({
 }) {
   if (row.kind === "header") {
     return (
-      <li className="px-md pt-sm pb-xxs text-micro uppercase text-muted" data-section={row.title}>
+      <li className="px-md pt-sm pb-xxs text-micro uppercase text-muted-foreground" data-section={row.title}>
         {row.title} · {row.count}
       </li>
     );
@@ -273,7 +273,7 @@ const ProjectRowView = memo(function ProjectRowView({
           type="button"
           data-inactive-projects={row.group.device_id}
           aria-expanded={row.group.expanded}
-          className="flex w-full items-center gap-xs px-md py-xs text-left text-caption text-muted hover:text-secondary"
+          className="flex w-full items-center gap-xs px-md py-xs text-left text-caption text-muted-foreground hover:text-subtle-foreground"
           onClick={() => actions.toggleInactiveProjects(row.group.device_id)}
         >
           <span className="font-mono">{row.group.expanded ? "▾" : "▸"}</span>
@@ -312,18 +312,18 @@ function WorkspaceRows({
         <button
           type="button"
           data-project-row={workspace.id}
-          className="flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated"
+          className="flex w-full flex-col items-start px-md py-xs text-left hover:bg-accent"
           onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
         >
-          <span className="flex w-full items-baseline gap-xs text-body text-primary">
+          <span className="flex w-full items-baseline gap-xs text-body text-foreground">
             <span className="min-w-0 flex-1 truncate">{workspace.label}</span>
             {workspace.pinned ? (
-              <span className="text-micro uppercase text-muted" data-pinned="true">
+              <span className="text-micro uppercase text-muted-foreground" data-pinned="true">
                 pinned
               </span>
             ) : null}
           </span>
-          <span className="text-caption text-muted">{activityLabel(workspace, agents, Date.now())}</span>
+          <span className="text-caption text-muted-foreground">{activityLabel(workspace, agents, Date.now())}</span>
         </button>
       </RowMenu>
       <ul>
@@ -336,7 +336,7 @@ function WorkspaceRows({
               type="button"
               data-inactive-checkouts={workspace.path}
               aria-expanded={workspace.inactive_checkouts.expanded}
-              className="flex w-full items-center gap-xs px-md py-xxs pl-[var(--size-lineage-indent)] text-left text-caption text-muted hover:text-secondary"
+              className="flex w-full items-center gap-xs px-md py-xxs pl-[var(--size-lineage-indent)] text-left text-caption text-muted-foreground hover:text-subtle-foreground"
               onClick={() => actions.toggleInactiveCheckouts(workspace.path)}
             >
               <span className="font-mono">{workspace.inactive_checkouts.expanded ? "▾" : "▸"}</span>
@@ -380,12 +380,12 @@ const CheckoutRowView = memo(function CheckoutRowView({
           data-checkout={checkout.id}
           aria-current={focused ? "true" : undefined}
           className={`flex w-full flex-col items-start px-md py-xs pl-[var(--size-lineage-indent)] text-left ${
-            focused ? "bg-elevated text-primary" : "text-secondary hover:bg-elevated"
+            focused ? "bg-secondary text-foreground" : "text-subtle-foreground hover:bg-accent"
           }`}
           onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id)}
         >
           <span className="flex w-full items-baseline gap-xs text-body">
-            <span className="w-[var(--size-checkout-icon)] font-mono text-caption text-muted" aria-hidden="true">
+            <span className="w-[var(--size-checkout-icon)] font-mono text-caption text-muted-foreground" aria-hidden="true">
               {checkout.is_worktree ? "⑂" : "◆"}
             </span>
             <span className="min-w-0 flex-1 truncate">{checkout.branch ?? checkout.label}</span>
@@ -396,7 +396,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
             ) : null}
           </span>
           {checkout.purpose?.text ? (
-            <span className="w-full truncate pl-[var(--size-checkout-icon)] text-caption text-muted" data-purpose={checkout.purpose.origin}>
+            <span className="w-full truncate pl-[var(--size-checkout-icon)] text-caption text-muted-foreground" data-purpose={checkout.purpose.origin}>
               {checkout.purpose.text}
             </span>
           ) : null}
