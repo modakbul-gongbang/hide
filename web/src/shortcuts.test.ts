@@ -5,9 +5,11 @@ import {
   bindingProblem,
   chordEquals,
   displayChord,
+  displayCommand,
   effectiveRegistry,
+  hostRegistry,
   isChromeReserved,
-  matchBrowser,
+  matchHost,
   parseChord,
   serializeChord,
 } from "./shortcuts";
@@ -26,8 +28,70 @@ describe("shortcut registry", () => {
     );
   });
 
-  it("leaves the electron column empty", () => {
-    expect(REGISTRY.every((command) => command.electron === null)).toBe(true);
+  it("gives the desktop app the Swift chords", () => {
+    // ShellMenuCommand.swift and PaneShortcutSettings.swift, as the operator reads them;
+    // Keyboard shortcuts has no Swift chord and keeps the browser's.
+    const swift: Record<string, string> = {
+      new_tab: "⌘T",
+      close_tab: "⌘W",
+      reopen_closed_tab: "⇧⌘T",
+      recent_tab: "⌃⇥",
+      previous_recent_tab: "⌃⇧⇥",
+      new_workspace: "⇧⌘N",
+      recent_project: "⌥⇥",
+      previous_recent_project: "⌥⇧⇥",
+      search: "⌘K",
+      open_file: "⌘P",
+      project_home: "⇧⌘H",
+      toggle_left_sidebar: "⌘B",
+      toggle_sidebar_view: "⌘E",
+      toggle_right_panel: "⇧⌘B",
+      find_in_pane: "⌘F",
+      save_file: "⌘S",
+      keep_open: "⇧⌘K",
+      split_right: "⌘D",
+      split_down: "⇧⌘D",
+      toggle_zoom: "⌥⌘↩",
+      close_pane: "⇧⌘W",
+      text_larger: "⌘=",
+      text_smaller: "⌘-",
+      text_reset: "⌘0",
+      move_to_trash: "⌘⌫",
+      settings: "⌘,",
+      shortcuts: "⌘/",
+    };
+    expect(Object.fromEntries(REGISTRY.map((command) => [command.id, displayCommand(command.id, "electron")]))).toEqual(swift);
+  });
+
+  it("binds every electron chord once", () => {
+    const shown = REGISTRY.map((command) => displayCommand(command.id, "electron"));
+    expect(new Set(shown).size).toBe(shown.length);
+  });
+
+  it("answers the native chords in the desktop app and leaves the browser's alone", () => {
+    const press = (code: string, mods: { meta?: boolean; alt?: boolean; shift?: boolean; ctrl?: boolean } = {}) => ({
+      code,
+      metaKey: !!mods.meta,
+      altKey: !!mods.alt,
+      shiftKey: !!mods.shift,
+      ctrlKey: !!mods.ctrl,
+    });
+    expect(matchHost(press("KeyT", { meta: true }), REGISTRY, "electron")?.id).toBe("new_tab");
+    expect(matchHost(press("KeyW", { meta: true }), REGISTRY, "electron")?.id).toBe("close_tab");
+    expect(matchHost(press("KeyT", { meta: true, shift: true }), REGISTRY, "electron")?.id).toBe("reopen_closed_tab");
+    expect(matchHost(press("Tab", { ctrl: true }), REGISTRY, "electron")?.id).toBe("recent_tab");
+    expect(matchHost(press("KeyT", { alt: true }), REGISTRY, "electron")).toBeNull();
+    expect(matchHost(press("Backspace", { meta: true }), REGISTRY, "electron")).toBeNull();
+    // B12: the browser host still runs its own column.
+    expect(matchHost(press("KeyT", { meta: true }), REGISTRY, "browser")).toBeNull();
+    expect(matchHost(press("KeyT", { alt: true }), REGISTRY, "browser")?.id).toBe("new_tab");
+  });
+
+  it("runs the browser overrides on the browser host only", () => {
+    const stored = { split_right: "alt+KeyR" };
+    expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, hostRegistry(stored, "browser").registry, "browser")?.id).toBe("split_right");
+    expect(hostRegistry(stored, "electron").registry).toBe(REGISTRY);
+    expect(matchHost({ code: "KeyD", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, hostRegistry(stored, "electron").registry, "electron")?.id).toBe("split_right");
   });
 
   it("binds every browser chord once", () => {
@@ -41,12 +105,12 @@ describe("shortcut registry", () => {
   });
 
   it("matches on the physical key and every modifier", () => {
-    expect(matchBrowser({ code: "KeyT", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false })?.id).toBe("new_tab");
-    expect(matchBrowser({ code: "KeyT", metaKey: false, altKey: true, shiftKey: true, ctrlKey: false })?.id).toBe("reopen_closed_tab");
-    expect(matchBrowser({ code: "KeyT", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false })).toBeNull();
-    expect(matchBrowser({ code: "Backquote", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false })?.id).toBe("recent_tab");
-    expect(matchBrowser({ code: "Slash", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false })?.id).toBe("shortcuts");
-    expect(matchBrowser({ code: "Backspace", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false })).toBeNull();
+    expect(matchHost({ code: "KeyT", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("new_tab");
+    expect(matchHost({ code: "KeyT", metaKey: false, altKey: true, shiftKey: true, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("reopen_closed_tab");
+    expect(matchHost({ code: "KeyT", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")).toBeNull();
+    expect(matchHost({ code: "Backquote", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("recent_tab");
+    expect(matchHost({ code: "Slash", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("shortcuts");
+    expect(matchHost({ code: "Backspace", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")).toBeNull();
     expect(chordEquals({ code: "KeyA" }, { code: "KeyA", meta: false })).toBe(true);
   });
 
@@ -79,9 +143,9 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
   it("runs and lists a stored override in place of the default", () => {
     const { registry, diagnostic } = effectiveRegistry({ split_right: "alt+KeyR" });
     expect(diagnostic).toBeNull();
-    expect(matchBrowser(press("KeyR", { alt: true }), registry)?.id).toBe("split_right");
-    expect(matchBrowser(press("KeyD", { meta: true }), registry)).toBeNull();
-    expect(matchBrowser(press("KeyD", { meta: true, shift: true }), registry)?.id).toBe("split_down");
+    expect(matchHost(press("KeyR", { alt: true }), registry, "browser")?.id).toBe("split_right");
+    expect(matchHost(press("KeyD", { meta: true }), registry, "browser")).toBeNull();
+    expect(matchHost(press("KeyD", { meta: true, shift: true }), registry, "browser")?.id).toBe("split_down");
   });
 
   it("refuses a chord with no command modifier, a Chrome chord, and another command's chord", () => {

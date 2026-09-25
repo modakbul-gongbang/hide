@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
+import { hostKind } from "./host";
 import { Button, Dialog, Field, Group, Note, Row, Select, Status, Value } from "./components/ui/controls";
 import {
   ACCENT_CHOICES,
@@ -889,7 +890,11 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
     <>
       <Group
         title="Pane chords"
-        note="These chords are this browser host's own; the macOS app keeps its own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
+        note={
+          hostKind() === "electron"
+            ? "These chords apply when hide runs in a browser; this desktop app uses the chords its menus show."
+            : "These chords are this browser host's own; the macOS app keeps its own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
+        }
       >
         {EDITABLE_PANE_COMMANDS.map((id) => (
           <ShortcutRow

@@ -6,7 +6,8 @@ import { chipTone } from "./lineage";
 import { agentSections, allAgents, liveDescendantCounts } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import { RowMenu } from "./RowMenu";
-import { displayBrowser } from "./shortcuts";
+import { hostKind } from "./host";
+import { displayCommand } from "./shortcuts";
 import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { checkoutMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
@@ -50,8 +51,8 @@ export function Sidebar({ actions }: { actions: Actions }) {
         <span className="text-muted">⌘E</span>
         <button
           type="button"
-          aria-label={`Settings (${displayBrowser("settings")})`}
-          title={`Settings (${displayBrowser("settings")})`}
+          aria-label={`Settings (${displayCommand("settings", hostKind())})`}
+          title={`Settings (${displayCommand("settings", hostKind())})`}
           data-open-settings="true"
           className="text-muted hover:text-primary focus-visible:text-primary"
           onClick={() => actions.openSettings()}

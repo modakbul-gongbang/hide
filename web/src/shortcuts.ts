@@ -3,13 +3,17 @@
 // The browser column is what Chrome lets a page claim. Six chords Chrome keeps
 // for itself (⌘T ⌘W ⌘⇧T ⌘⇧N ⌃Tab ⌃⇧Tab) moved to the ⌥ family, and ⌘⇧W
 // (Chrome's close-window) moved with them (D-06); `moved` marks each so the
-// sheet can say so. The Electron column is the Swift chord set and is empty
-// until the Electron host exists (TODO: fill from `ShellMenuCommand.swift`
-// and `PaneShortcutSettings.swift` when the host lands).
+// sheet can say so. The Electron column is the Swift chord set
+// (`ShellMenuCommand.swift`, `PaneShortcutSettings.swift`): the desktop host
+// has no browser keeping chords, so the moved ones return to their native
+// keys there. Its app menu is built from this same column
+// (`desktop/src/main/menu.ts`), so the menu and the sheet cannot disagree.
 //
 // Chords match on `KeyboardEvent.code`, not `key`: macOS turns ⌥-letters into
 // dead keys and symbols (⌥T is "†"), and a physical position is what the
 // operator's fingers know.
+
+import type { HostKind } from "./host";
 
 export type Chord = {
   code: string;
@@ -53,7 +57,7 @@ export type Command = {
   title: string;
   group: "Tabs" | "Navigate" | "Panels" | "Panes" | "Help";
   browser: Chord | null;
-  /** The Electron host's chord; every row is null until that host exists. */
+  /** The Electron host's chord: the Swift chord, or the browser one where Swift has none. */
   electron: Chord | null;
   /** True when the browser chord differs from the Swift chord because Chrome reserves the original. */
   moved: boolean;
@@ -64,33 +68,33 @@ export type Command = {
 };
 
 export const REGISTRY: readonly Command[] = [
-  { id: "new_tab", title: "New tab", group: "Tabs", browser: { code: "KeyT", alt: true }, electron: null, moved: true, movedFrom: "⌘T" },
-  { id: "close_tab", title: "Close tab", group: "Tabs", browser: { code: "KeyW", alt: true }, electron: null, moved: true, movedFrom: "⌘W" },
-  { id: "reopen_closed_tab", title: "Reopen closed tab", group: "Tabs", browser: { code: "KeyT", alt: true, shift: true }, electron: null, moved: true, movedFrom: "⌘⇧T" },
-  { id: "recent_tab", title: "Next recent tab", group: "Tabs", browser: { code: "Backquote", alt: true }, electron: null, moved: true, movedFrom: "⌃Tab" },
-  { id: "previous_recent_tab", title: "Previous recent tab", group: "Tabs", browser: { code: "Backquote", alt: true, shift: true }, electron: null, moved: true, movedFrom: "⌃⇧Tab" },
-  { id: "new_workspace", title: "New workspace", group: "Navigate", browser: { code: "KeyN", alt: true, shift: true }, electron: null, moved: true, movedFrom: "⌘⇧N" },
-  { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: null, moved: false },
-  { id: "previous_recent_project", title: "Previous recent project", group: "Navigate", browser: { code: "Tab", alt: true, shift: true }, electron: null, moved: false },
-  { id: "search", title: "Search", group: "Navigate", browser: { code: "KeyK", meta: true }, electron: null, moved: false },
-  { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: null, moved: false },
-  { id: "project_home", title: "Project home", group: "Navigate", browser: { code: "KeyH", meta: true, shift: true }, electron: null, moved: false },
-  { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: null, moved: false },
-  { id: "toggle_sidebar_view", title: "Toggle sidebar view", group: "Panels", browser: { code: "KeyE", meta: true }, electron: null, moved: false },
-  { id: "toggle_right_panel", title: "Toggle right panel", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: null, moved: false },
-  { id: "find_in_pane", title: "Find in pane", group: "Panes", browser: { code: "KeyF", meta: true }, electron: null, moved: false },
-  { id: "save_file", title: "Save file", group: "Panes", browser: { code: "KeyS", meta: true }, electron: null, moved: false },
-  { id: "keep_open", title: "Keep open", group: "Panes", browser: { code: "KeyK", meta: true, shift: true }, electron: null, moved: false },
-  { id: "split_right", title: "Split right", group: "Panes", browser: { code: "KeyD", meta: true }, electron: null, moved: false },
-  { id: "split_down", title: "Split down", group: "Panes", browser: { code: "KeyD", meta: true, shift: true }, electron: null, moved: false },
-  { id: "toggle_zoom", title: "Zoom pane", group: "Panes", browser: { code: "Enter", meta: true, alt: true }, electron: null, moved: false },
-  { id: "close_pane", title: "Close pane", group: "Panes", browser: { code: "KeyW", alt: true, shift: true }, electron: null, moved: true, movedFrom: "⌘⇧W" },
-  { id: "text_larger", title: "Larger text", group: "Panes", browser: { code: "Equal", meta: true }, electron: null, moved: false },
-  { id: "text_smaller", title: "Smaller text", group: "Panes", browser: { code: "Minus", meta: true }, electron: null, moved: false },
-  { id: "text_reset", title: "Reset text size", group: "Panes", browser: { code: "Digit0", meta: true }, electron: null, moved: false },
-  { id: "move_to_trash", title: "Move to Trash", group: "Panes", browser: { code: "Backspace", meta: true }, electron: null, moved: false, passthrough: "Explorer only; in a terminal ⌘⌫ clears the line" },
-  { id: "settings", title: "Settings", group: "Help", browser: { code: "Comma", alt: true }, electron: null, moved: true, movedFrom: "⌘," },
-  { id: "shortcuts", title: "Keyboard shortcuts", group: "Help", browser: { code: "Slash", meta: true }, electron: null, moved: false },
+  { id: "new_tab", title: "New tab", group: "Tabs", browser: { code: "KeyT", alt: true }, electron: { code: "KeyT", meta: true }, moved: true, movedFrom: "⌘T" },
+  { id: "close_tab", title: "Close tab", group: "Tabs", browser: { code: "KeyW", alt: true }, electron: { code: "KeyW", meta: true }, moved: true, movedFrom: "⌘W" },
+  { id: "reopen_closed_tab", title: "Reopen closed tab", group: "Tabs", browser: { code: "KeyT", alt: true, shift: true }, electron: { code: "KeyT", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧T" },
+  { id: "recent_tab", title: "Next recent tab", group: "Tabs", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
+  { id: "previous_recent_tab", title: "Previous recent tab", group: "Tabs", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
+  { id: "new_workspace", title: "New workspace", group: "Navigate", browser: { code: "KeyN", alt: true, shift: true }, electron: { code: "KeyN", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧N" },
+  { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: { code: "Tab", alt: true }, moved: false },
+  { id: "previous_recent_project", title: "Previous recent project", group: "Navigate", browser: { code: "Tab", alt: true, shift: true }, electron: { code: "Tab", alt: true, shift: true }, moved: false },
+  { id: "search", title: "Search", group: "Navigate", browser: { code: "KeyK", meta: true }, electron: { code: "KeyK", meta: true }, moved: false },
+  { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
+  { id: "project_home", title: "Project home", group: "Navigate", browser: { code: "KeyH", meta: true, shift: true }, electron: { code: "KeyH", meta: true, shift: true }, moved: false },
+  { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
+  { id: "toggle_sidebar_view", title: "Toggle sidebar view", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
+  { id: "toggle_right_panel", title: "Toggle right panel", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
+  { id: "find_in_pane", title: "Find in pane", group: "Panes", browser: { code: "KeyF", meta: true }, electron: { code: "KeyF", meta: true }, moved: false },
+  { id: "save_file", title: "Save file", group: "Panes", browser: { code: "KeyS", meta: true }, electron: { code: "KeyS", meta: true }, moved: false },
+  { id: "keep_open", title: "Keep open", group: "Panes", browser: { code: "KeyK", meta: true, shift: true }, electron: { code: "KeyK", meta: true, shift: true }, moved: false },
+  { id: "split_right", title: "Split right", group: "Panes", browser: { code: "KeyD", meta: true }, electron: { code: "KeyD", meta: true }, moved: false },
+  { id: "split_down", title: "Split down", group: "Panes", browser: { code: "KeyD", meta: true, shift: true }, electron: { code: "KeyD", meta: true, shift: true }, moved: false },
+  { id: "toggle_zoom", title: "Zoom pane", group: "Panes", browser: { code: "Enter", meta: true, alt: true }, electron: { code: "Enter", meta: true, alt: true }, moved: false },
+  { id: "close_pane", title: "Close pane", group: "Panes", browser: { code: "KeyW", alt: true, shift: true }, electron: { code: "KeyW", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧W" },
+  { id: "text_larger", title: "Larger text", group: "Panes", browser: { code: "Equal", meta: true }, electron: { code: "Equal", meta: true }, moved: false },
+  { id: "text_smaller", title: "Smaller text", group: "Panes", browser: { code: "Minus", meta: true }, electron: { code: "Minus", meta: true }, moved: false },
+  { id: "text_reset", title: "Reset text size", group: "Panes", browser: { code: "Digit0", meta: true }, electron: { code: "Digit0", meta: true }, moved: false },
+  { id: "move_to_trash", title: "Move to Trash", group: "Panes", browser: { code: "Backspace", meta: true }, electron: { code: "Backspace", meta: true }, moved: false, passthrough: "Explorer only; in a terminal ⌘⌫ clears the line" },
+  { id: "settings", title: "Settings", group: "Help", browser: { code: "Comma", alt: true }, electron: { code: "Comma", meta: true }, moved: true, movedFrom: "⌘," },
+  { id: "shortcuts", title: "Keyboard shortcuts", group: "Help", browser: { code: "Slash", meta: true }, electron: { code: "Slash", meta: true }, moved: false },
 ];
 
 /** Chords Chrome or macOS never hands to a page; a browser chord using one is a registry error. */
@@ -129,10 +133,20 @@ export function chordFromEvent(event: KeyEventLike): Chord {
   return { code: event.code, meta: event.metaKey, alt: event.altKey, shift: event.shiftKey, ctrl: event.ctrlKey };
 }
 
-/** The command a keydown names on the browser host, or null. */
-export function matchBrowser(event: KeyEventLike, registry: readonly Command[] = REGISTRY): Command | null {
+/** A command's chord on `host`. */
+export function hostChord(command: Command, host: HostKind): Chord | null {
+  return host === "electron" ? command.electron : command.browser;
+}
+
+/** The command a keydown names on `host`, or null. */
+export function matchHost(event: KeyEventLike, registry: readonly Command[], host: HostKind): Command | null {
   const chord = chordFromEvent(event);
-  return registry.find((command) => command.browser && !command.passthrough && chordEquals(command.browser, chord)) ?? null;
+  return (
+    registry.find((command) => {
+      const bound = hostChord(command, host);
+      return bound && !command.passthrough && chordEquals(bound, chord);
+    }) ?? null
+  );
 }
 
 // The pane commands an operator may rebind on the browser host (PRD S5 D-07):
@@ -225,6 +239,15 @@ export function resolvedRegistry(stored: Record<string, string> | null | undefin
   return resolved.value;
 }
 
+/**
+ * The registry `host` runs. The stored overrides are the browser host's
+ * (`browser_shortcut_bindings`, validated against Chrome's reserved keys);
+ * the Electron host runs its own column as it stands.
+ */
+export function hostRegistry(stored: Record<string, string> | null | undefined, host: HostKind): EffectiveRegistry {
+  return host === "electron" ? { registry: REGISTRY, diagnostic: null } : resolvedRegistry(stored);
+}
+
 /** The default browser chord for a command, before any override. */
 export function defaultBrowserChord(id: CommandId): Chord | null {
   return REGISTRY.find((command) => command.id === id)?.browser ?? null;
@@ -259,7 +282,9 @@ export function displayChord(chord: Chord): string {
   return `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}${key}`;
 }
 
-export function displayBrowser(id: CommandId, registry: readonly Command[] = REGISTRY): string {
+/** A command's chord on `host` as the operator reads it, or "" when it has none. */
+export function displayCommand(id: CommandId, host: HostKind, registry: readonly Command[] = REGISTRY): string {
   const command = registry.find((row) => row.id === id);
-  return command?.browser ? displayChord(command.browser) : "";
+  const chord = command ? hostChord(command, host) : null;
+  return chord ? displayChord(chord) : "";
 }
