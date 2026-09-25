@@ -107,7 +107,7 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0, { timeout: 20_000 });
     const chip = page.locator(`[data-pane-children="${parent}"] [data-child-chip="${child}"]`);
     await expect(chip).toBeVisible({ timeout: 20_000 });
-    await expect(chip).toHaveAttribute("title", /Agent two/);
+    await expect(chip).toHaveAttribute("aria-label", /Agent two/);
     await screenshot(page, "s6-child-chip");
     await chip.click();
     await expect.poll(() => last.get("focus_pane")?.pane_id).toBe(child);

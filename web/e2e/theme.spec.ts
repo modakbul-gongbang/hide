@@ -14,12 +14,31 @@ import { enterWorkspace, screenshot } from "./wire";
 test.describe.configure({ timeout: 120_000 });
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
-  await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+  // The probe reads the terminal buffer, which xterm draws on a canvas.
+  await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 }
 
-/** A token's value as the page resolves it now, lower-cased hex. */
+/** What the focused terminal shows; xterm draws on a canvas, so the page's probe reads its buffer. */
+function screenText(page: Page): Promise<string> {
+  return page.evaluate(() => window.__hideProbe?.screenText() ?? "");
+}
+
+/** A color token as the page resolves it now, as the browser's rgb() form. */
 function token(page: Page, name: string): Promise<string> {
-  return page.evaluate((property) => getComputedStyle(document.documentElement).getPropertyValue(property).trim().toLowerCase(), name);
+  return page.evaluate((property) => {
+    const probe = document.createElement("span");
+    probe.style.setProperty("color", `var(${property})`);
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, name);
+}
+
+/** A tokens.json hex in the same rgb() form. */
+function rgb(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16));
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function tokenFile(): Record<string, { type: string; value: string; light?: string }> {
@@ -45,7 +64,7 @@ test("the theme and accent switch at once, keep the terminal, and survive a rest
     // The first paint is Dark, the default (D-14).
     const root = page.locator("html");
     await expect(root).toHaveClass(/(^|\s)dark(\s|$)/);
-    expect(await token(page, "--background")).toBe(tokens["--background"]!.value.toLowerCase());
+    expect(await token(page, "--background")).toBe(rgb(tokens["--background"]!.value));
 
     // A line typed into the terminal, and a mark on its element, tell a
     // re-colored terminal from a recreated one.
@@ -53,7 +72,7 @@ test("the theme and accent switch at once, keep the terminal, and survive a rest
     await pane.locator(".xterm-helper-textarea").focus();
     await page.keyboard.type("echo theme-probe-7");
     await page.keyboard.press("Enter");
-    await expect(pane.locator(".xterm-rows")).toContainText("theme-probe-7", { timeout: 15_000 });
+    await expect.poll(() => screenText(page), { timeout: 15_000 }).toContain("theme-probe-7");
     await pane.locator(".xterm").evaluate((element) => {
       (element as HTMLElement).dataset.themeProbe = "kept";
     });
@@ -64,18 +83,19 @@ test("the theme and accent switch at once, keep the terminal, and survive a rest
     await page.locator('[data-theme-option="light"]').click();
     await expect(root).toHaveClass(/(^|\s)light(\s|$)/);
     await expect(root).not.toHaveClass(/(^|\s)dark(\s|$)/);
-    expect(await token(page, "--background")).toBe(tokens["--background"]!.light!.toLowerCase());
+    expect(await token(page, "--background")).toBe(rgb(tokens["--background"]!.light!));
     await page.locator('[data-accent="sky"]').click();
-    await expect.poll(() => token(page, "--primary")).toBe(tokens["--accent-choice-sky"]!.light!.toLowerCase());
+    await expect.poll(() => token(page, "--primary")).toBe(rgb(tokens["--accent-choice-sky"]!.light!));
     await screenshot(page, "theme-light-settings");
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
 
-    // The terminal is the same element with the same content, and xterm drew
-    // its background from the Light token.
+    // The terminal is the same element with the same content and the same
+    // half-typed line (B13).
     await expect(pane.locator('.xterm[data-theme-probe="kept"]')).toHaveCount(1);
-    await expect(pane.locator(".xterm-rows")).toContainText("theme-probe-7");
-    await expect(pane.locator(".xterm-rows")).toContainText("half-typed");
+    const shown = await screenText(page);
+    expect(shown).toContain("theme-probe-7");
+    expect(shown).toContain("half-typed");
     await screenshot(page, "theme-light-workspace");
 
     // System follows the OS appearance live (D-14).
@@ -94,7 +114,7 @@ test("the theme and accent switch at once, keep the terminal, and survive a rest
     await open(page, daemon);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
     await expect(root).toHaveClass(/(^|\s)light(\s|$)/);
-    await expect.poll(() => token(page, "--primary")).toBe(tokens["--accent-choice-sky"]!.light!.toLowerCase());
+    await expect.poll(() => token(page, "--primary")).toBe(rgb(tokens["--accent-choice-sky"]!.light!));
   } finally {
     daemon?.stop();
     herdr.stop();

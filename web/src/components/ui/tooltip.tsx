@@ -6,8 +6,10 @@ import { cn } from "../../lib/utils";
 // tooltip shows is also the control's accessible name, so a screen reader and
 // a pointer read the same words.
 
-function TooltipProvider({ delayDuration = 500, ...props }: ComponentProps<typeof TooltipPrimitive.Provider>) {
-  return <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} {...props} />;
+// A hint is read, never used: it holds nothing to click, so it closes when the
+// pointer leaves its trigger and lets a click through to whatever it covers.
+function TooltipProvider({ delayDuration = 500, disableHoverableContent = true, ...props }: ComponentProps<typeof TooltipPrimitive.Provider>) {
+  return <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} disableHoverableContent={disableHoverableContent} {...props} />;
 }
 
 function Tooltip(props: ComponentProps<typeof TooltipPrimitive.Root>) {
@@ -24,7 +26,7 @@ function TooltipContent({ className, sideOffset = 4, children, ...props }: Compo
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
-        className={cn("z-50 max-w-(--size-tooltip-max-width) text-balance rounded-sm border border-border bg-popover px-sm py-xs text-caption text-popover-foreground shadow-lg", className)}
+        className={cn("pointer-events-none z-50 max-w-(--size-tooltip-max-width) text-balance rounded-sm border border-border bg-popover px-sm py-xs text-caption text-popover-foreground shadow-lg", className)}
         {...props}
       >
         {children}

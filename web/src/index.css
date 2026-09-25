@@ -33,6 +33,12 @@
 }
 
 @layer base {
+  /* A hint holds nothing to click; Radix positions it in a wrapper of its own,
+     which must let a click through to the control it covers. */
+  [data-radix-popper-content-wrapper]:has(> [data-slot="tooltip-content"]) {
+    pointer-events: none;
+  }
+
   /* Native scrollbars and form controls follow the theme on <html>. */
   :root {
     color-scheme: light;

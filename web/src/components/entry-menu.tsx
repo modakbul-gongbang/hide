@@ -48,6 +48,8 @@ function EntryItems<Id extends string>({ items, onSelect, parts }: { items: Menu
  * Wraps a target so a right-click opens its menu at the pointer, and the menu
  * key or ⇧F10 under the target. `items` is read when the menu opens, so a
  * target whose state changed while it was closed offers what it can do now.
+ * The `data-*` hooks name both the target and its menu, which opens in a
+ * portal outside the target.
  */
 export function EntryContextMenu<Id extends string>({
   label,
@@ -70,7 +72,7 @@ export function EntryContextMenu<Id extends string>({
         {children}
       </ContextMenuTrigger>
       {entries.length ? (
-        <ContextMenuContent aria-label={label}>
+        <ContextMenuContent aria-label={label} {...data}>
           <EntryItems items={entries} onSelect={onSelect} parts={{ Item: ContextMenuItem, Separator: ContextMenuSeparator }} />
         </ContextMenuContent>
       ) : null}
