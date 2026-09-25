@@ -135,7 +135,7 @@ function ProjectSessions({ workspace, deviceLabel, actions }: { workspace: Works
           />
         </section>
         <section aria-label="Session" className="flex min-h-0 min-w-[var(--size-workspace-area-min)] flex-1 flex-col" data-session-detail={detail.kind}>
-          <SessionDetail state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} workspace={workspace} onRetry={retry} />
+          <SessionDetail state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} />
         </section>
       </div>
     </section>
@@ -420,9 +420,22 @@ function CopySource({ locator, id }: { locator: string; id: string }) {
   );
 }
 
-function SessionDetail({ state, rows, workspace, onRetry }: { state: DetailState; rows: SessionRow[]; workspace: Workspace; onRetry: () => void }) {
+function SessionDetail({
+  state,
+  rows,
+  choosable,
+  workspace,
+  onRetry,
+}: {
+  state: DetailState;
+  rows: SessionRow[];
+  /** Whether the list shows a session to choose; the hint says nothing otherwise. */
+  choosable: boolean;
+  workspace: Workspace;
+  onRetry: () => void;
+}) {
   if (state.kind === "none") {
-    return <p className="m-auto p-lg text-caption text-muted">Choose a session to read it here.</p>;
+    return choosable ? <p className="m-auto p-lg text-caption text-muted">Choose a session to read it here.</p> : null;
   }
   const row = rows.find((candidate) => candidate.id === state.detail.session_id) ?? null;
   if (state.kind === "loading") {
