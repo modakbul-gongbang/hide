@@ -1,4 +1,4 @@
-name: Native design contract
+name: Design contract
 
 on:
   pull_request:
@@ -16,8 +16,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - name: Reject style literals and duplicated components
+      - name: Reject token literals and a Pen library out of step with tokens and the gallery
         run: |
           node scripts/check-design-contract.mjs
-          node --test scripts/tests/design-controls.test.mjs
+          node --test scripts/tests/pen-gallery.test.mjs
+          node --test scripts/tests/pen-transplant.test.mjs
           node --test scripts/tests/design-scratch.test.mjs

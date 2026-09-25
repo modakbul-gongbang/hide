@@ -9,7 +9,8 @@ const workflow = fs.readFileSync('.github/workflows/design-contract.yml', 'utf8'
 assert(workflow.includes('pull_request:') && workflow.includes('push:'), 'CI must cover review and main');
 const workflowCommands = [
   'node scripts/check-design-contract.mjs',
-  'node --test scripts/tests/design-controls.test.mjs',
+  'node --test scripts/tests/pen-gallery.test.mjs',
+  'node --test scripts/tests/pen-transplant.test.mjs',
   'node --test scripts/tests/design-scratch.test.mjs',
 ];
 const workflowLines = workflow.split(/\r?\n/).map(line => line.trim());
@@ -17,6 +18,7 @@ for (const command of workflowCommands) {
   assert(workflowLines.includes(command), 'Missing CI invocation for ' + command);
 }
 execFileSync(process.execPath, ['scripts/check-design-contract.mjs'], {stdio: 'inherit'});
-execFileSync(process.execPath, ['--test', 'scripts/tests/design-controls.test.mjs'], {stdio: 'inherit'});
-execFileSync(process.execPath, ['--test', 'scripts/tests/design-scratch.test.mjs'], {stdio: 'inherit'});
+for (const suite of ['pen-gallery', 'pen-transplant', 'design-scratch']) {
+  execFileSync(process.execPath, ['--test', `scripts/tests/${suite}.test.mjs`], {stdio: 'inherit'});
+}
 console.log('Product enforcement and CI binding PASS');

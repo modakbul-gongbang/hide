@@ -5,7 +5,8 @@ Read the repository `AGENTS.md` for core versus shell ownership and runtime inte
 Read `docs/UI_BEHAVIOR.md` for UI behavior and `CONTRIBUTING.md` for required gates.
 Do not restate those contracts here.
 
-The Swift shell is frozen for the web design system reset: `HideTheme.swift` is not regenerated or hand-edited, and its own design-contract tests (`HideDesignContractTests.swift` and the Swift-only `check-hide-design*`/`check-hide-theme-literals`/`check-hide-components`/`check-design-controls` checkers) are gone.
+The Swift shell is frozen for the web design system reset: `HideTheme.swift` is not regenerated or hand-edited, and the design contract that read it against DESIGN.md is gone: the document test in `HideDesignContractTests.swift` and the Swift-only `check-hide-design.mjs`, `check-hide-theme-literals.mjs`, `check-hide-components.mjs` and `check-design-controls.mjs` checkers.
+The one test that did not depend on the document, that the bundled chrome font is Inter with ss03, remains as `HideChromeFontTests.swift`.
 Visual and numeric design authority moved to the Pen library and `design/tokens.json`, which no longer feed `HideTheme`; see `docs/DESIGN_WORKFLOW.md`.
 Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception, per `docs/UI_BEHAVIOR.md`.
 

@@ -40,11 +40,10 @@ bash scripts/check-worktree-removal-boundary.sh
 zsh scripts/check-herdr-pin-single-source.sh
 zsh scripts/check-herdr-contract.sh --schema-only
 
-# design-contract workflow
+# design-contract workflow; the enforcement checker also asserts the workflow
+# still binds these commands.
 node scripts/check-design-contract.mjs
-node --test scripts/tests/design-controls.test.mjs
-
-# local only: DESIGN.md lint needs the network, and the enforcement checker
-# asserts the workflow still binds the commands above.
-node scripts/check-hide-design.mjs
+node --test scripts/tests/pen-gallery.test.mjs
+node --test scripts/tests/pen-transplant.test.mjs
+node --test scripts/tests/design-scratch.test.mjs
 node scripts/check-hide-design-enforcement.mjs

@@ -7,7 +7,6 @@ cd "$root"
 
 git grep -q 'Git context refreshes local worktree state only when repository metadata' -- docs/ARCHITECTURE.md
 for token in lineageIndent lineageElbowY gitRowFontSize gitDetailFontSize; do
-  git grep -q "$token" -- DESIGN.md
   git grep -q "static let $token" -- macos/Sources/HerdrMacOS/HideTheme.swift
 done
 git grep -Eq 'HideTheme\.(GitIcon|Overview)' \
