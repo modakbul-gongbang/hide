@@ -5,14 +5,18 @@ import {
   displayIdentity,
   displayMenu,
   dropTarget,
+  focusRequestArrived,
   narrowWorkspace,
   neighbourArea,
+  placeKey,
   ratioForFirst,
   resizeTarget,
   splitEligibility,
   steppedRatio,
   viewCommands,
   viewGeometry,
+  viewLayoutPayload,
+  viewRefusal,
   type LayoutSizes,
   type Rect,
   type TabSlot,
@@ -163,6 +167,50 @@ describe("a display's menu", () => {
   });
 });
 
+describe("the Workspace an action names (contract 4.1)", () => {
+  it("carries the frame's Workspace beside the action's own fields", () => {
+    expect(viewLayoutPayload({ device_id: "mini", path: "/repo" }, { action: "close", display_id: "d2", discard: true })).toEqual({
+      workspace: { device_id: "mini", path: "/repo" },
+      action: "close",
+      display_id: "d2",
+      discard: true,
+    });
+  });
+
+  it("tells the operator every View refusal in the core's words, except one for a Workspace no longer in front", () => {
+    const told = (kind: string) => viewRefusal({ kind, message: `reason for ${kind}` });
+    expect(told("view_layout.display_limit")).toBe("reason for view_layout.display_limit");
+    expect(told("view_layout.unsaved")).toBe("reason for view_layout.unsaved");
+    expect(told("view_layout.unknown_display")).toBe("reason for view_layout.unknown_display");
+    expect(told("view_layout.stale_workspace")).toBeNull();
+    expect(told("file.save_failed")).toBeNull();
+    expect(viewRefusal(null)).toBeNull();
+  });
+});
+
+describe("where a display's place and the keyboard go", () => {
+  const here = "local\u0000/repo";
+
+  it("keeps a display's place per document, so a retargeted preview starts the next one at its own place", () => {
+    const a = placeKey(here, { id: "d1", tab_id: "file:/repo/a.md" });
+    expect(placeKey(here, { id: "d1", tab_id: "file:/repo/b.md" })).not.toBe(a);
+    expect(placeKey(here, { id: "d1", tab_id: "file:/repo/a.md" })).toBe(a);
+    expect(placeKey("mini\u0000/repo", { id: "d1", tab_id: "file:/repo/a.md" })).not.toBe(a);
+  });
+
+  it("follows a moved view only on the frame that lands it, in the Workspace it was asked in", () => {
+    const request = { workspace: here, displayId: "d1", from: { areaId: "a1", index: 0 } };
+    const asked = layout(split("s1", "row", 0.5, area("a1", ["d1", "d2"]), area("a2", ["d3"])));
+    expect(focusRequestArrived(request, here, asked)).toBe(false);
+    const landed = layout(split("s1", "row", 0.5, area("a1", ["d2"]), { area: { id: "a2", active: "d1", displays: [display("d3"), display("d1")] } }));
+    landed.active_area = "a2";
+    expect(focusRequestArrived(request, here, landed)).toBe(true);
+    expect(focusRequestArrived(request, "mini\u0000/repo", landed)).toBe(false);
+    expect(focusRequestArrived({ workspace: here, areaId: "a2" }, here, asked)).toBe(false);
+    expect(focusRequestArrived({ workspace: here, areaId: "a2" }, here, landed)).toBe(true);
+  });
+});
+
 describe("a dragged tab's target", () => {
   // a1 [d1 d2 d3] on the left (0..500), a2 [d4] on the right (502..1002).
   const tree = split("s1", "row", 0.5, area("a1", ["d1", "d2", "d3"]), area("a2", ["d4"]));
@@ -214,24 +262,35 @@ describe("palette commands", () => {
     return Object.fromEntries(commands.map((command) => [command.id, command.unavailable]));
   };
 
-  it("offers what one area allows and says why the rest cannot run", () => {
+  it("offers every item of the active view's menu and the area commands, each with why it cannot run now", () => {
+    const only = "This is the only view in its area.";
+    const alone = "There is only one view area.";
     expect(reasons(area("a1", ["d1"]))).toEqual({
-      split_right: "This is the only view in its area.",
-      split_down: "This is the only view in its area.",
-      move_next: "There is only one view area.",
-      focus_next: "There is only one view area.",
-      focus_previous: "There is only one view area.",
+      keep_open: "This view is already kept open.",
+      split_right: only,
+      split_left: only,
+      split_up: only,
+      split_down: only,
+      move_right: "There is no view area to the right.",
+      move_left: "There is no view area to the left.",
+      move_up: "There is no view area above.",
+      move_down: "There is no view area below.",
+      copy_path: null,
+      reveal: null,
       close_view: null,
-      grow: "There is only one view area.",
-      shrink: "There is only one view area.",
+      focus_next: alone,
+      focus_previous: alone,
+      grow: alone,
+      shrink: alone,
     });
-    expect(reasons(area("a1", ["d1", "d2"])).split_right).toBeNull();
+    const preview = reasons(split("s1", "row", 0.5, area("a1", [display("d1", { preview: true }), "d2"]), area("a2", ["d3"])));
+    expect(preview).toMatchObject({ keep_open: null, split_right: null, move_right: null, move_left: "There is no view area to the left.", focus_next: null, grow: null });
   });
 
   it("judges no split before the areas are drawn, and acts on nothing without an active view", () => {
     expect(reasons(area("a1", ["d1", "d2"]), false).split_right).toBe("The View areas are not on screen.");
     const empty: ViewNode = { area: { id: "a1", active: null, displays: [] } };
-    expect(reasons(empty)).toMatchObject({ split_right: "No view is open in the active view area.", close_view: "No view is open in the active view area." });
+    expect(reasons(empty)).toMatchObject({ keep_open: "No view is open in the active view area.", move_up: "No view is open in the active view area.", close_view: "No view is open in the active view area." });
   });
 
   it("grows the active area toward its sibling by one step and stops at the core's range", () => {

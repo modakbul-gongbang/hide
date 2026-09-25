@@ -53,7 +53,11 @@ const LINE_HEIGHT = 1.5;
 /** A display's place in its document: its selection and the first line it shows. */
 type Place = { anchor: number; head: number; top: number };
 
-/** Places by display, the newest `PLACE_CAP` kept; a display id is never reused within its Workspace. */
+/**
+ * Places by display and document (`placeKey`), the newest `PLACE_CAP` kept: a
+ * display id is never reused within its Workspace, and a preview display
+ * retargeted to another document starts that document at its own place.
+ */
 const places = new Map<string, Place>();
 const PLACE_CAP = 256;
 
@@ -94,7 +98,7 @@ export function CodeMirrorEditor({
   onDraft,
 }: {
   tabId: string;
-  /** The display this view draws, scoped to its Workspace: its selection and scroll are kept under it. */
+  /** The display this view draws and its document, scoped to its Workspace: the selection and scroll are kept under it. */
   placeKey: string;
   document: EditorDocumentSnapshot;
   scale: number;

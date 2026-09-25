@@ -37,6 +37,40 @@ const EDGE_NAME: Record<Edge, string> = { right: "right", left: "left", up: "up"
 /** The order a display's menu offers directions in. */
 const MENU_EDGES: readonly Edge[] = ["right", "left", "up", "down"];
 
+// --- the Workspace an action names ---------------------------------------------
+
+/** The Workspace a View action was taken on, as its frame's `workspace_view` names it (contract 4.1). */
+export type ViewWorkspace = { device_id: string; path: string };
+
+/** What the operator acted on: one Workspace's View areas as a frame drew them. */
+export type ViewFrame = { workspace: ViewWorkspace; layout: ViewLayoutSnapshot };
+
+/** One string per Workspace, for keys and comparisons. */
+export function workspaceKey(workspace: ViewWorkspace): string {
+  return `${workspace.device_id}\u0000${workspace.path}`;
+}
+
+/**
+ * A `view_layout` payload (contract 4.1): the action and its fields with the
+ * Workspace of the frame it was taken on. Display, area and split ids repeat
+ * across Workspaces and the front can move before the event lands, so the
+ * core applies the action only while that Workspace is still in front.
+ */
+export function viewLayoutPayload(workspace: ViewWorkspace, action: { action: string } & Record<string, unknown>): Record<string, unknown> {
+  return { workspace: { device_id: workspace.device_id, path: workspace.path }, ...action };
+}
+
+/**
+ * What the operator is told when the core refuses a View action or open
+ * (B19): the core's reason, for every `view_layout.*` refusal. An action
+ * that arrived for a Workspace no longer in front (`stale_workspace`) is the
+ * log's alone, since the screen already shows another Workspace.
+ */
+export function viewRefusal(error: { kind: string; message: string } | null | undefined): string | null {
+  if (!error || !error.kind.startsWith("view_layout.") || error.kind === "view_layout.stale_workspace") return null;
+  return error.message;
+}
+
 // --- tree queries ------------------------------------------------------------
 
 /** Every area, in tree order: first child before second, depth first. */
@@ -321,6 +355,51 @@ export type ViewMenuId =
 
 export type ViewMenuEntry = { id: ViewMenuId; label: string; unavailable: string | null; separated?: boolean };
 
+/** The menu's items in DESIGN.md's order, with its fixed labels. */
+const MENU_ITEMS: readonly { id: ViewMenuId; label: string }[] = [
+  { id: "keep_open", label: "Keep open" },
+  ...MENU_EDGES.map((edge) => ({ id: `split_${edge}` as const, label: `Split ${EDGE_NAME[edge]}` })),
+  ...MENU_EDGES.map((edge) => ({ id: `move_${edge}` as const, label: `Move ${EDGE_NAME[edge]}` })),
+  { id: "copy_path", label: "Copy path" },
+  { id: "reveal", label: "Reveal in Explorer" },
+  { id: "close_view", label: "Close view" },
+];
+
+const NO_AREA: Record<Edge, string> = {
+  right: "There is no view area to the right.",
+  left: "There is no view area to the left.",
+  up: "There is no view area above.",
+  down: "There is no view area below.",
+};
+
+/**
+ * Every command of a display's menu with the reason it cannot run now, or
+ * null: Keep open for a preview, a split that can land (B9, B19), a move
+ * toward an area that exists, Reveal while the file can be read. `drawn` is
+ * what the page last drew; without it a split's room cannot be judged.
+ */
+function displayCommands(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry; sizes: LayoutSizes } | null, located: LocatedDisplay): (ViewMenuEntry & { hidden: boolean })[] {
+  const { area, display } = located;
+  return MENU_ITEMS.map(({ id, label }) => {
+    const edge = menuEdge(id);
+    let unavailable: string | null = null;
+    let hidden = false;
+    if (id === "keep_open") {
+      unavailable = display.preview ? null : "This view is already kept open.";
+      hidden = !display.preview;
+    } else if (edge && id.startsWith("split_")) {
+      const eligibility = drawn ? splitEligibility(layout, drawn.geometry, drawn.sizes, display.id, area.id, edge) : refuse("The View areas are not on screen.");
+      unavailable = eligibility.ok ? null : eligibility.reason;
+    } else if (edge) {
+      unavailable = neighbourArea(layout.root, area.id, edge) ? null : NO_AREA[edge];
+      hidden = unavailable !== null;
+    } else if (id === "reveal") {
+      unavailable = revealBlocked(display);
+    }
+    return { id, label, unavailable, hidden, separated: id === "copy_path" || id === "close_view" };
+  });
+}
+
 /**
  * The commands a display's tab menu and its area's overflow button offer, and
  * nothing else (B11, D-07): Keep open while it is a preview, a split in each
@@ -331,20 +410,19 @@ export type ViewMenuEntry = { id: ViewMenuId; label: string; unavailable: string
 export function displayMenu(layout: ViewLayoutSnapshot, geometry: Geometry, sizes: LayoutSizes, displayId: string): ViewMenuEntry[] {
   const located = locateDisplay(layout.root, displayId);
   if (!located) return [];
-  const { area, display } = located;
-  const entries: ViewMenuEntry[] = [];
-  if (display.preview) entries.push({ id: "keep_open", label: "Keep open", unavailable: null });
-  for (const edge of MENU_EDGES) {
-    const eligibility = splitEligibility(layout, geometry, sizes, displayId, area.id, edge);
-    entries.push({ id: `split_${edge}`, label: `Split ${EDGE_NAME[edge]}`, unavailable: eligibility.ok ? null : eligibility.reason });
-  }
-  for (const edge of MENU_EDGES) {
-    if (neighbourArea(layout.root, area.id, edge)) entries.push({ id: `move_${edge}`, label: `Move ${EDGE_NAME[edge]}`, unavailable: null });
-  }
-  entries.push({ id: "copy_path", label: "Copy path", unavailable: null, separated: true });
-  entries.push({ id: "reveal", label: "Reveal in Explorer", unavailable: revealBlocked(display) });
-  entries.push({ id: "close_view", label: "Close view", unavailable: null, separated: true });
-  return entries;
+  return displayCommands(layout, { geometry, sizes }, located)
+    .filter((entry) => !entry.hidden)
+    .map(({ id, label, unavailable, separated }) => ({ id, label, unavailable, ...(separated ? { separated } : {}) }));
+}
+
+/**
+ * Where a display's selection and scroll are remembered: per Workspace,
+ * display and document. A preview display is retargeted in place to the
+ * next document, which starts at its own top rather than at the place the
+ * last one was left (B1, B4).
+ */
+export function placeKey(workspace: string, display: Pick<ViewDisplaySnapshot, "id" | "tab_id">): string {
+  return `${workspace}\u0000${display.id}\u0000${display.tab_id ?? ""}`;
 }
 
 function revealBlocked(display: ViewDisplaySnapshot): string | null {
@@ -475,40 +553,66 @@ export function sameTarget(a: DropTarget, b: DropTarget): boolean {
 
 // --- palette commands --------------------------------------------------------
 
-export type ViewCommandId = "split_right" | "split_down" | "move_next" | "focus_next" | "focus_previous" | "close_view" | "grow" | "shrink";
+export type ViewCommandId = ViewMenuId | "focus_next" | "focus_previous" | "grow" | "shrink";
 
 export type ViewCommand = { id: ViewCommandId; title: string; unavailable: string | null };
 
 /**
- * The View commands the palette offers (B20, D-13), each acting on the
- * active area's active display or on the active area, with the reason one
- * cannot run now. `drawn` is what the page last drew of the areas; without
- * it a split's room cannot be judged, so a split is not offered.
+ * The View commands the palette offers (B20, D-13, DESIGN.md "The View tab
+ * menu"): every item of the active view's menu, a Move toward each
+ * direction and Keep open included, then focus to the next or previous area
+ * and resizing the active area; each with the reason it cannot run now.
+ * `drawn` is what the page last drew of the areas; without it a split's
+ * room cannot be judged, so every split is offered disabled with that reason.
  */
 export function viewCommands(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry; sizes: LayoutSizes } | null): ViewCommand[] {
   const active = activeDisplay(layout);
   const alone = areasOf(layout.root).length < 2 ? "There is only one view area." : null;
-  const noView = active ? null : "No view is open in the active view area.";
-  const split = (edge: Edge): string | null => {
-    if (!active) return noView;
-    if (!drawn) return "The View areas are not on screen.";
-    const eligibility = splitEligibility(layout, drawn.geometry, drawn.sizes, active.display.id, active.area.id, edge);
-    return eligibility.ok ? null : eligibility.reason;
-  };
   const resize = (grow: boolean): string | null => {
     const target = resizeTarget(layout, drawn?.geometry ?? null, grow);
     return "reason" in target ? target.reason : null;
   };
+  const display: ViewCommand[] = active
+    ? displayCommands(layout, drawn, active).map(({ id, label, unavailable }) => ({ id, title: label, unavailable }))
+    : MENU_ITEMS.map(({ id, label }) => ({ id, title: label, unavailable: "No view is open in the active view area." }));
   return [
-    { id: "split_right", title: "Split right", unavailable: split("right") },
-    { id: "split_down", title: "Split down", unavailable: split("down") },
-    { id: "move_next", title: "Move to the next area", unavailable: noView ?? alone },
+    ...display,
     { id: "focus_next", title: "Focus next view area", unavailable: alone },
     { id: "focus_previous", title: "Focus previous view area", unavailable: alone },
-    { id: "close_view", title: "Close view", unavailable: noView },
     { id: "grow", title: "Grow view area", unavailable: resize(true) },
     { id: "shrink", title: "Shrink view area", unavailable: resize(false) },
   ];
+}
+
+/** Whether a palette command is one of a display's menu commands, run on the active view. */
+export function isMenuCommand(id: ViewCommandId): id is ViewMenuId {
+  return MENU_ITEMS.some((item) => item.id === id);
+}
+
+// --- where the keyboard goes -------------------------------------------------
+
+/**
+ * Where the keyboard goes once the core shows it (B20): a display a menu,
+ * the palette or a drop moved or split, with where it stood when asked, or
+ * an area a focus command chose; each in the Workspace it was asked in.
+ */
+export type ViewFocusRequest =
+  | { workspace: string; displayId: string; from: { areaId: string; index: number } | null }
+  | { workspace: string; areaId: string };
+
+/**
+ * Whether the core now shows what a focus request asked for, so the keyboard
+ * can follow: the named area active, or the display active in the active
+ * area and no longer where it stood when asked. A move or split of the
+ * active view therefore resolves once it has landed, never on the frame it
+ * was asked from, and a refused one never resolves.
+ */
+export function focusRequestArrived(request: ViewFocusRequest, workspace: string, layout: ViewLayoutSnapshot): boolean {
+  if (request.workspace !== workspace) return false;
+  if ("areaId" in request) return layout.active_area === request.areaId;
+  const located = locateDisplay(layout.root, request.displayId);
+  if (!located || layout.active_area !== located.area.id || located.area.active !== request.displayId) return false;
+  return !request.from || located.area.id !== request.from.areaId || located.index !== request.from.index;
 }
 
 /**

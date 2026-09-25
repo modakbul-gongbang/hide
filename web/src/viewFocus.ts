@@ -5,7 +5,7 @@
 // the page, so none of it lives in the rules or the store.
 
 import type { SnapshotRest } from "./snapshot";
-import type { Geometry, LayoutSizes } from "./viewLayout";
+import type { Geometry, LayoutSizes, ViewFrame } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
 
 /** The View area when only Views show or the keyboard is inside it, else the Agent area. */
@@ -18,12 +18,19 @@ export function viewAreaInUse(rest: SnapshotRest | null): boolean {
   return active instanceof Element && active.closest("[data-view-area]") !== null;
 }
 
-/** The View areas as they are drawn now, and the token sizes they were measured with. */
-export type DrawnViews = { geometry: Geometry; sizes: LayoutSizes };
+/**
+ * The View areas as they are drawn now: the frame they show (its Workspace
+ * and layout, which every View action names and acts on, contract 4.1), and
+ * the geometry and token sizes they were measured with.
+ */
+export type DrawnViews = ViewFrame & { geometry: Geometry; sizes: LayoutSizes };
 
 let drawn: DrawnViews | null = null;
 
-/** The View areas report every draw here, and null when they leave the screen. */
+/**
+ * The View areas report every draw here as it is committed, and null when
+ * they leave the screen, so an action reads the frame the operator sees.
+ */
 export function noteDrawnViews(views: DrawnViews | null): void {
   drawn = views;
 }

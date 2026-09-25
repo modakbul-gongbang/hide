@@ -14,19 +14,21 @@ import {
   RATIO_MAX,
   RATIO_MIN,
   RESIZE_STEP,
-  activeDisplay,
   areasOf,
   displayIdentity,
   displayMenu,
   dropTarget,
   findArea,
+  focusRequestArrived,
   locateDisplay,
+  placeKey,
   ratioAtOffset,
   sameTarget,
   shownDisplays,
   singleAreaGeometry,
   steppedRatio,
   viewGeometry,
+  workspaceKey,
   type DividerBox,
   type DropTarget,
   type Geometry,
@@ -67,7 +69,7 @@ type Tree = {
   /** What is drawn: the whole tree, or the active area alone in a narrow window. */
   geometry: Geometry;
   sizes: LayoutSizes;
-  /** The Workspace, since display ids are only unique within one. */
+  /** The Workspace's key, since display ids are only unique within one. */
   workspaceKey: string;
   actions: Actions;
   draggingId: string | null;
@@ -101,7 +103,7 @@ export function ViewAreas({ checkout, actions }: { checkout: Checkout; actions: 
   if (areasOf(layout.root).every((area) => area.displays.length === 0)) {
     return <ViewsEmpty opening={opening} explorerShown={view.explorer && !toolsDismissed} actions={actions} />;
   }
-  return <ViewTree layout={layout} workspaceKey={`${view.device_id}\u0000${view.path}`} actions={actions} />;
+  return <ViewTree layout={layout} deviceId={view.device_id} path={view.path} actions={actions} />;
 }
 
 /** Nothing open in any area: the mode stays, and the way to a file is offered. */
@@ -121,7 +123,9 @@ function ViewsEmpty({ opening, explorerShown, actions }: { opening: boolean; exp
   );
 }
 
-function ViewTree({ layout, workspaceKey, actions }: { layout: ViewLayoutSnapshot; workspaceKey: string; actions: Actions }) {
+function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; actions: Actions }) {
+  const workspace = useMemo(() => ({ device_id: deviceId, path }), [deviceId, path]);
+  const key = workspaceKey(workspace);
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   useLayoutEffect(() => {
@@ -145,27 +149,37 @@ function ViewTree({ layout, workspaceKey, actions }: { layout: ViewLayoutSnapsho
   const single = measured && !whole.fits && shownArea !== null;
   const geometry = useMemo(() => (single && shownArea ? singleAreaGeometry(shownArea, rect, sizes) : whole), [single, shownArea, rect, sizes, whole]);
 
-  useEffect(() => {
+  // Published as the draw is committed, before any input can reach it, so
+  // an action reads the frame the operator sees (contract 4.1).
+  useLayoutEffect(() => {
     if (!measured) return undefined;
-    noteDrawnViews({ geometry, sizes });
+    noteDrawnViews({ workspace, layout, geometry, sizes });
     return () => noteDrawnViews(null);
-  }, [measured, geometry, sizes]);
+  }, [measured, workspace, layout, geometry, sizes]);
 
   useEffect(() => installFocusModality(), []);
 
   // A menu, the palette or a drop moved the keyboard's place; once the core
-  // shows it active, the keyboard follows there, and this focus asks the
-  // core for nothing (B20).
+  // shows it there, the keyboard follows, and this focus asks the core for
+  // nothing (B20). A move of the active view resolves on the frame that
+  // lands it, never on the one it was asked from. The keyboard goes there
+  // once that frame's editors have settled, since an editor that moved to
+  // a new area is built as it mounts (twice, in a development build), and
+  // not when something else took the keyboard in between.
   const request = useUiStore((s) => s.viewFocusRequest);
   useEffect(() => {
-    if (!request || !body) return;
-    const arrived = "areaId" in request ? layout.active_area === request.areaId : activeDisplay(layout)?.display.id === request.displayId;
-    if (!arrived) return;
+    if (!request || !body || !focusRequestArrived(request, key, layout)) return;
     useUiStore.getState().setViewFocusRequest(null);
-    const area = body.querySelector<HTMLElement>(`[data-view-area-id="${CSS.escape(layout.active_area)}"]`);
-    const target = area?.querySelector<HTMLElement>("[data-editor-body] .cm-content") ?? area?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-    target?.focus({ preventScroll: true });
-  }, [request, layout, body]);
+    const areaId = layout.active_area;
+    const before = document.activeElement;
+    requestAnimationFrame(() => {
+      const now = document.activeElement;
+      if (now !== before && now !== null && now !== document.body) return;
+      const area = body.querySelector<HTMLElement>(`[data-view-area-id="${CSS.escape(areaId)}"]`);
+      const target = area?.querySelector<HTMLElement>("[data-editor-body] .cm-content") ?? area?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      target?.focus({ preventScroll: true });
+    });
+  }, [request, key, layout, body]);
 
   // One focus per choice: a second press before the core answered asks again for nothing.
   const claimed = useRef<{ displayId: string; layout: ViewLayoutSnapshot } | null>(null);
@@ -280,8 +294,9 @@ function ViewTree({ layout, workspaceKey, actions }: { layout: ViewLayoutSnapsho
     };
   }, [cursor]);
 
-  // A divider drag moves a guide line and lands one resize on release (B9).
-  const [guide, setGuide] = useState<Rect | null>(null);
+  // A divider drag moves a guide line and lands one resize on release (B9);
+  // the line is its own component, so a pointer move redraws nothing else.
+  const guide = useRef<((rect: Rect | null) => void) | null>(null);
   const startResize = (box: DividerBox, event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0 || !body) return;
     event.preventDefault();
@@ -290,13 +305,13 @@ function ViewTree({ layout, workspaceKey, actions }: { layout: ViewLayoutSnapsho
     const origin = body.getBoundingClientRect();
     const row = box.axis === "row";
     const ratioAt = (next: PointerEvent) => ratioAtOffset(box, row ? next.clientX - origin.left - box.span.x : next.clientY - origin.top - box.span.y);
-    const move = (next: PointerEvent) => setGuide(guideAt(box, ratioAt(next)));
+    const move = (next: PointerEvent) => guide.current?.(guideAt(box, ratioAt(next)));
     const end = () => {
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
       target.removeEventListener("pointercancel", end);
       target.removeEventListener("lostpointercapture", end);
-      setGuide(null);
+      guide.current?.(null);
     };
     const up = (next: PointerEvent) => {
       end();
@@ -319,7 +334,7 @@ function ViewTree({ layout, workspaceKey, actions }: { layout: ViewLayoutSnapsho
     layout,
     geometry,
     sizes,
-    workspaceKey,
+    workspaceKey: key,
     actions,
     draggingId: session.phase === "dragging" ? session.displayId : null,
     press: (displayId, event) => {
@@ -348,9 +363,7 @@ function ViewTree({ layout, workspaceKey, actions }: { layout: ViewLayoutSnapsho
         ) : (
           <NodeView node={layout.root} />
         )}
-        {guide ? (
-          <div className="pointer-events-none absolute z-20 bg-accent" style={{ left: guide.x, top: guide.y, width: guide.width, height: guide.height }} data-view-resize-guide="true" />
-        ) : null}
+        <ResizeGuide control={guide} />
         {session.phase === "dragging" ? <DragPreview session={session} /> : null}
       </div>
     </TreeContext.Provider>
@@ -375,6 +388,19 @@ function measureTabs(body: HTMLElement, origin: DOMRect): Record<string, TabSlot
     });
   }
   return slots;
+}
+
+/** The guide line of a divider drag: the only thing a pointer move redraws. */
+function ResizeGuide({ control }: { control: React.MutableRefObject<((rect: Rect | null) => void) | null> }) {
+  const [rect, setRect] = useState<Rect | null>(null);
+  useLayoutEffect(() => {
+    control.current = setRect;
+    return () => {
+      control.current = null;
+    };
+  }, [control]);
+  if (!rect) return null;
+  return <div className="pointer-events-none absolute z-20 bg-accent" style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }} data-view-resize-guide="true" />;
 }
 
 /** Where a divider dragged to `ratio` would sit. */
@@ -472,7 +498,7 @@ function AreaView({ area, index, count, switcher }: { area: ViewAreaSnapshot; in
 function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
   const tree = useTree();
   if (display.state === "open") {
-    return <DisplayEditor display={display} placeKey={`${tree.workspaceKey}\u0000${display.id}`} actions={tree.actions} />;
+    return <DisplayEditor display={display} placeKey={placeKey(tree.workspaceKey, display)} actions={tree.actions} />;
   }
   if (display.state === "opening") return <AreaEmpty state="view-opening" text={`Opening ${display.label}…`} />;
   if (display.state === "waiting") return <AreaEmpty state="view-waiting" text={display.reason ?? `Waiting to read ${display.path}.`} />;
@@ -488,7 +514,7 @@ function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
   );
 }
 
-/** An area's own tab bar; the active area's shown tab carries the accent (B1, B20). */
+/** An area's own tab bar; only the active area's shown tab carries the accent indicator (B1, B20). */
 function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSnapshot; active: boolean; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
   const shown = area.displays.find((row) => row.id === area.active) ?? null;
@@ -580,7 +606,7 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
       >
         ×
       </button>
-      {selected ? <span className={`absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] ${areaActive ? "bg-accent" : "bg-divider"}`} /> : null}
+      {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-accent" /> : null}
     </div>
   );
 }

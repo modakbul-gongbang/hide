@@ -5,6 +5,9 @@
 import { create } from "zustand";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
+import type { ViewFocusRequest, ViewWorkspace } from "./viewLayout";
+
+export type { ViewFocusRequest } from "./viewLayout";
 
 export type SidebarMode = "agents" | "projects";
 
@@ -34,15 +37,19 @@ export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } 
 /** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
 export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "search" | "settings";
 
-/**
- * Where the keyboard goes once the core has moved there (S7 B20): a display
- * that a menu, the palette or a drop moved or split, or an area a focus
- * command chose. The View areas focus it when the snapshot shows it active.
- */
-export type ViewFocusRequest = { displayId: string } | { areaId: string };
-
 /** The two working regions of a Workspace, for a Together window too narrow for both (S7 B13). */
 export type WorkingRegion = "agents" | "views";
+
+/**
+ * A notice the operator can act on: `refreshable` offers `refresh_status`
+ * (activity unknown), and `dontSave` offers closing a view whose document
+ * holds unsaved work this page cannot save, without saving it (S7 B5).
+ */
+export type Notice = {
+  text: string;
+  refreshable: boolean;
+  dontSave?: { workspace: ViewWorkspace; displayId: string };
+};
 
 /** A project or checkout management dialog, named by the row that opened it. */
 export type WorkspaceDialog =
@@ -117,8 +124,8 @@ type UiStore = {
   overlay: Overlay;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
-  /** A notice the operator can act on; `refreshable` offers `refresh_status` (activity unknown). */
-  notice: { text: string; refreshable: boolean } | null;
+  /** A notice the operator can act on. */
+  notice: Notice | null;
   /** The management dialog a sidebar menu opened, or null. */
   workspaceDialog: WorkspaceDialog | null;
   /**
@@ -155,7 +162,7 @@ type UiStore = {
   closeOverlay: (overlay?: Overlay) => void;
   setPendingClose: (pending: PendingClose | null) => void;
   setCycle: (cycle: Cycle | null) => void;
-  setNotice: (notice: { text: string; refreshable: boolean } | null) => void;
+  setNotice: (notice: Notice | null) => void;
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;

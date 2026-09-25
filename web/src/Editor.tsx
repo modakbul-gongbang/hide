@@ -209,8 +209,9 @@ export function DocumentKeeper({ tabId, actions }: { tabId: string; actions: Act
 
 /**
  * One open display (S7 B4): its header and its document or diff. `placeKey`
- * names the display within its Workspace, so its selection and scroll come
- * back with it.
+ * names the display and its document within its Workspace, so the selection
+ * and scroll it had in that document come back with it, and a preview
+ * retargeted to another document starts that one at its own place.
  */
 export function DisplayEditor({ display, placeKey, actions }: { display: ViewDisplaySnapshot; placeKey: string; actions: Actions }) {
   const tab = useShellStore((s) => editorTabFor(s.editor, display.tab_id));
@@ -230,18 +231,25 @@ export function DisplayEditor({ display, placeKey, actions }: { display: ViewDis
   );
 }
 
-/** A diff display's own entry of `changes.diffs`, found by its path and group (S7 A5, A10). */
+/**
+ * A diff display's own entry of `changes.diffs`, found by its path and group
+ * (S7 A5, A10). The core answers every diff display it shows, with its text
+ * or its own reason there is none; the page's sentence is only for a display
+ * the core sent nothing for.
+ */
 function DiffBody({ display, scale }: { display: ViewDisplaySnapshot; scale: number }) {
   const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   if (!changes) return <Notice text="Reading the diff…" state="diff-loading" />;
   if (changes.unavailable_reason) return <Notice text={`History is unavailable: ${changes.unavailable_reason}`} state="diff-unavailable" />;
   const committed = display.committed === true;
-  const group = committed ? changes.committed : changes.entries;
-  if (!group.some((entry) => entry.path === display.path)) {
-    return <Notice text="This file is no longer in the selected History group. Close this view or choose another row." state="diff-unavailable" />;
-  }
   const diff = (changes.diffs ?? []).find((row) => row.path === display.path && row.committed === committed) ?? null;
-  if (!diff) return <Notice text="Reading the diff…" state="diff-loading" />;
+  if (!diff) {
+    const group = committed ? changes.committed : changes.entries;
+    if (!group.some((entry) => entry.path === display.path)) {
+      return <Notice text="This file is no longer in the selected History group. Close this view or choose another row." state="diff-unavailable" />;
+    }
+    return <Notice text="Reading the diff…" state="diff-loading" />;
+  }
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-diff-path={display.path} data-diff-group={committed ? "committed" : "working"}>
       {diff.notice ? <div className="border-b border-divider px-md py-xs text-caption text-warning" data-diff-notice="true">{diff.notice}</div> : null}
