@@ -1515,6 +1515,13 @@ impl Runtime {
         {
             return match (tab.kind, &tab.unavailable_reason) {
                 (EditorTabKind::Diff, _) => (ViewDisplayState::Open, None),
+                // Retry reads the file again into the same tab, which keeps
+                // its old reason until the read lands.
+                (_, Some(_))
+                    if self.document_opens_path(&tab.workspace_id, &tab.checkout_id, &tab.path) =>
+                {
+                    (ViewDisplayState::Opening, None)
+                }
                 (_, Some(reason)) => (ViewDisplayState::Unavailable, Some(reason.clone())),
                 _ if self.editor_documents.contains_key(&tab.id) => (ViewDisplayState::Open, None),
                 _ => (

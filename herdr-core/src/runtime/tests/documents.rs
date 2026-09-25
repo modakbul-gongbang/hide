@@ -1578,3 +1578,59 @@ fn a_preview_open_landing_right_after_its_restore_read_replaces_that_preview() {
         .collect();
     assert_eq!(tabs, vec!["a.txt"], "the replaced preview's document goes");
 }
+
+/// S7 contract 3, B16: a view whose file could not be read shows `opening`
+/// while Retry reads it again, not its old failure with Retry still offered,
+/// and `open` once the read lands.
+#[test]
+fn a_retried_view_shows_opening_while_its_read_is_in_flight() {
+    let f = Fixture::new();
+    let root = f.root.to_string_lossy().into_owned();
+    let views_dir = tempfile::tempdir().unwrap();
+    let file = views_dir.path().join("workspace-views.json");
+    let mut views = crate::workspace_views::WorkspaceViews::default();
+    let layout = &mut views.entry(DEVICE, &root).layout;
+    let restored = layout.new_display(&f.path("gone.txt"), DisplayKind::File, None, false);
+    let restored_id = restored.id.clone();
+    layout.insert("a1", restored, 1).unwrap();
+    crate::workspace_views::save(&file, &views).unwrap();
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        studio_connecting(&mut runtime);
+        runtime.workspace_views = Some(WorkspaceViewStore::open(file, Default::default()).0);
+        helper_ready(&mut runtime, &f.device);
+        runtime.sync_workspace_view();
+    }
+    f.wait("the restore read to fail", |runtime| {
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.unavailable_reason.is_some())
+    });
+    let state = || {
+        let mut runtime = f.shared.lock().unwrap();
+        let shown = view_displays(&mut runtime);
+        let [(_, state, reason)] = shown.as_slice() else {
+            panic!("one view: {shown:?}");
+        };
+        (*state, reason.is_some())
+    };
+    assert_eq!(state(), (ViewDisplayState::Unavailable, true));
+
+    std::fs::write(f.root.join("gone.txt"), "back\n").unwrap();
+    f.device.hold_read("gone.txt");
+    f.dispatch(
+        "view_layout",
+        serde_json::json!({
+            "workspace": {"device_id": DEVICE, "path": root},
+            "action": "retry", "display_id": restored_id,
+        }),
+    );
+    assert_eq!(state(), (ViewDisplayState::Opening, false));
+
+    f.device.release_read("gone.txt");
+    f.wait_for_document("gone.txt", "the retried read", |_| true);
+    assert_eq!(state(), (ViewDisplayState::Open, false));
+}
