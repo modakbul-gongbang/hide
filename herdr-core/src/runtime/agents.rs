@@ -748,7 +748,7 @@ impl Runtime {
             self.apply_area_intent_to(&key, AreaIntent::Agents);
         }
         if let Some(key) = chosen_key {
-            self.choose_when_in_front(key);
+            self.choose_when_in_front(&target_id, &dispatched_request_id, key);
         }
         true
     }
@@ -1779,6 +1779,7 @@ impl Runtime {
         {
             let message =
                 "Remote result arrived after its deadline; no mutation was resent".to_owned();
+            self.drop_pending_choice(target_id, request_id);
             self.mark_remote_operation_unknown(&remote_operation_key, message.clone());
             if is_pane_focus {
                 self.finish_pane_focus_request_by_id(request_id, "failed", Some(message), true);
@@ -1787,6 +1788,9 @@ impl Runtime {
         }
         if let Some(key) = remote_tab_creation_key(target_id, &action) {
             self.remote_tab_creations_in_flight.remove(&key);
+        }
+        if result.is_err() {
+            self.drop_pending_choice(target_id, request_id);
         }
         match result {
             Ok(RemoteControlOutcome::Acknowledged {

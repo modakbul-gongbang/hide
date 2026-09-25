@@ -1045,6 +1045,30 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
     assert_eq!(resumed(&mut runtime), (t.linked.clone(), true));
     moved(&mut runtime, "w1");
     assert_eq!(resumed(&mut runtime), (t.main.clone(), true));
+
+    // A request the device refuses chooses nothing, even when its Herdr
+    // later moves there on its own.
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "refused".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w2"),
+            checkout_id: Some(format!("remote:{TARGET}:checkout:w2")),
+        },
+    });
+    runtime.ingest_remote_control_result(
+        TARGET,
+        "refused",
+        RemoteControlAction::FocusWorkspace {
+            workspace_id: "w2".to_owned(),
+        },
+        Err("the workspace is gone".to_owned()),
+        3,
+    );
+    moved(&mut runtime, "w2");
+    assert_eq!(resumed(&mut runtime), (t.linked.clone(), false));
 }
 
 /// S6 B21: a device request refused before it is sent leaves the device

@@ -17,6 +17,12 @@ use crate::workspace_views::{
 /// A Workspace's identity: the device and the checkout path.
 pub(super) type WorkspaceKey = (String, String);
 
+struct PendingChoice {
+    device_id: String,
+    request_id: String,
+    key: WorkspaceKey,
+}
+
 pub(super) struct WorkspaceViewStore {
     path: PathBuf,
     pub(super) views: WorkspaceViews,
@@ -32,8 +38,9 @@ pub(super) struct WorkspaceViewStore {
     /// The Workspace the operator last chose, in this process or before it
     /// started: the one the app opens on (D-11); none on a first run.
     resumable: Option<WorkspaceKey>,
-    /// A device Workspace the operator asked for, chosen once it is in front.
-    pending_choice: Option<WorkspaceKey>,
+    /// A device Workspace the operator asked for, chosen once it is in front,
+    /// with the device and request that asked, so a refusal drops it.
+    pending_choice: Option<PendingChoice>,
     /// The right panel the settings file held at start. The snapshot's panel
     /// follows the front Workspace's tools, a projection the settings file
     /// never takes (D-10).
@@ -281,9 +288,30 @@ impl Runtime {
     /// A device request that chooses a Workspace: the device's Herdr moves
     /// its front only when it accepts, so the choice is remembered when the
     /// sync sees the front land there, and a refusal remembers nothing.
-    pub(super) fn choose_when_in_front(&mut self, key: WorkspaceKey) {
+    pub(super) fn choose_when_in_front(
+        &mut self,
+        device_id: &str,
+        request_id: &str,
+        key: WorkspaceKey,
+    ) {
         if let Some(store) = self.workspace_views.as_mut() {
-            store.pending_choice = Some(key);
+            store.pending_choice = Some(PendingChoice {
+                device_id: device_id.to_owned(),
+                request_id: request_id.to_owned(),
+                key,
+            });
+        }
+    }
+
+    /// The device refused the request, or its answer was lost: a later move
+    /// Herdr makes there on its own is not the operator's choice.
+    pub(super) fn drop_pending_choice(&mut self, device_id: &str, request_id: &str) {
+        if let Some(store) = self.workspace_views.as_mut()
+            && store.pending_choice.as_ref().is_some_and(|pending| {
+                pending.device_id == device_id && pending.request_id == request_id
+            })
+        {
+            store.pending_choice = None;
         }
     }
 
@@ -433,7 +461,8 @@ impl Runtime {
             && self
                 .workspace_views
                 .as_ref()
-                .is_some_and(|store| store.pending_choice.as_ref() == Some(key))
+                .and_then(|store| store.pending_choice.as_ref())
+                .is_some_and(|pending| &pending.key == key)
         {
             self.mark_workspace_chosen(key);
         }
@@ -909,6 +938,13 @@ impl Runtime {
             .workspaces
             .retain(|view| view.device_id != device_id);
         store.live.retain(|(device, _)| device != device_id);
+        if store
+            .pending_choice
+            .as_ref()
+            .is_some_and(|pending| pending.device_id == device_id)
+        {
+            store.pending_choice = None;
+        }
         if store
             .front
             .as_ref()
