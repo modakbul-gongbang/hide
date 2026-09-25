@@ -948,7 +948,7 @@ A View tab dragged past `--size-tab-drag-activation` lifts a floating copy on `{
 Over a tab bar, a thin insertion line (`--size-tab-indicator` in `{colors.accent}`) marks where the tab will land: in its own bar the drop reorders, and in another area's bar it moves the view there with no split and no copy.
 Over the left, right, top or bottom edge of an area's content, the half of that area the drop would create is washed at `--opacity-selected-fill` inside a hairline `{colors.accent}` boundary, with one short label such as `Split right`, and the drop creates that area and moves the view into it.
 Only one destination is highlighted at a time, and moving to another edge or bar replaces it.
-Where the view cannot go, because the area cannot be halved at its minimum size, the Workspace is at its area or depth limit, or the target is not a View area, no overlay appears and the pointer shows the forbidden cursor.
+Where the view cannot go, because it is the only view of the area whose edge it is over, the area cannot be halved at its minimum size, the Workspace is at its area or depth limit, or the target is not a View area, no overlay appears and the pointer shows the forbidden cursor.
 Escape, a release outside a valid target or outside the window, and a target that disappeared or became ineligible before the release keep the original order and layout; only a valid drop changes the layout, once.
 Nothing is resized, reattached or saved while a drag is in progress, and the drag itself is never stored.
 The half-area preview, the one-winner rule and the eligibility rules are fixed; how close to an edge the pointer has to be is the implementation's.
