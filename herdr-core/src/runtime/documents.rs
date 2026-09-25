@@ -81,6 +81,11 @@ pub(super) struct OpenRequest {
     /// Replaces the open tab's document (Reload) instead of adding a tab.
     reload: bool,
     reveal: Option<PendingReveal>,
+    /// A View tab read back after a restart (`workspace_view.rs`): it joins
+    /// the strip without taking the screen unless it was the Workspace's
+    /// active tab (`Some(true)`), and a failed read becomes an unavailable
+    /// tab rather than an error.
+    restore: Option<bool>,
 }
 
 /// A reveal waiting on its file. The screen moves when the read lands, all
@@ -101,11 +106,9 @@ impl Runtime {
     /// and registered projects in the navigator, and each device's Herdr
     /// session. Device ids are scoped (`remote:<device>:…`), so one id never
     /// names checkouts on two machines.
-    pub(super) fn catalog_checkout(
-        &self,
-        workspace_id: &str,
-        checkout_id: &str,
-    ) -> Option<(&WorkspaceSnapshot, &CheckoutSnapshot)> {
+    /// Every project the catalog carries: this machine's navigator, then each
+    /// device's Herdr session.
+    pub(super) fn catalog_workspaces(&self) -> impl Iterator<Item = &WorkspaceSnapshot> {
         let sessions = self
             .snapshot
             .status
@@ -113,11 +116,15 @@ impl Runtime {
             .iter()
             .filter_map(|remote| remote.session.as_ref())
             .flat_map(|session| session.workspaces.iter());
-        self.snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .chain(sessions)
+        self.snapshot.navigator.workspaces.iter().chain(sessions)
+    }
+
+    pub(super) fn catalog_checkout(
+        &self,
+        workspace_id: &str,
+        checkout_id: &str,
+    ) -> Option<(&WorkspaceSnapshot, &CheckoutSnapshot)> {
+        self.catalog_workspaces()
             .find(|workspace| workspace.id == workspace_id)
             .and_then(|workspace| {
                 workspace
@@ -126,6 +133,28 @@ impl Runtime {
                     .find(|checkout| checkout.id == checkout_id)
                     .map(|checkout| (workspace, checkout))
             })
+    }
+
+    /// Whether a read of `path` in this checkout is still running.
+    pub(super) fn document_opens_path(
+        &self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+    ) -> bool {
+        self.document_opens.values().any(|open| {
+            open.workspace_id == workspace_id
+                && open.checkout_id == checkout_id
+                && open.path == path
+        })
+    }
+
+    /// The checkouts that still have a restored View tab being read back.
+    pub(super) fn document_restores(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.document_opens
+            .values()
+            .filter(|open| open.restore.is_some())
+            .map(|open| (open.workspace_id.as_str(), open.checkout_id.as_str()))
     }
 
     /// The checkout the operator is looking at: this machine's focus while
@@ -248,6 +277,7 @@ impl Runtime {
                 preview: request.preview,
                 reload: request.reload,
                 reveal: request.reveal,
+                restore: request.restore,
             },
         );
         self.sync_opening_snapshot();
@@ -345,6 +375,17 @@ impl Runtime {
         self.sync_opening_snapshot();
         let (document, place) = match result {
             Ok(opened) => opened,
+            Err(failure) if request.restore.is_some() => {
+                self.insert_unavailable_file_tab(
+                    &request.workspace_id,
+                    &request.checkout_id,
+                    &request.path,
+                    request.preview,
+                    failure.message(),
+                );
+                self.settle_restored_order(&request.workspace_id, &request.checkout_id);
+                return true;
+            }
             Err(failure) => {
                 self.set_error(
                     if request.reload {
@@ -358,6 +399,43 @@ impl Runtime {
                 return true;
             }
         };
+        // A restored tab that said its file was unavailable takes the file now
+        // that it could be read, and shows it like any open would (B20).
+        if !request.reload
+            && request.restore.is_none()
+            && let Some(tab) = self
+                .snapshot
+                .editor
+                .tabs
+                .iter_mut()
+                .find(|tab| tab.id == tab_id && tab.unavailable_reason.is_some())
+        {
+            tab.unavailable_reason = None;
+            self.replace_document(tab_id, document, place);
+            let prepared = PreparedFileTab::Open(tab_id.to_owned());
+            if let Some(reveal) = &request.reveal
+                && self.front_checkout_owned() == reveal.front
+            {
+                self.settle_reveal(
+                    &request.workspace_id,
+                    &request.checkout_id,
+                    &request.path,
+                    Some(prepared),
+                );
+            } else if self.front_checkout()
+                == Some((request.workspace_id.as_str(), request.checkout_id.as_str()))
+            {
+                self.show_file_tab(
+                    prepared,
+                    &request.workspace_id,
+                    &request.checkout_id,
+                    &request.path,
+                    request.preview,
+                );
+            }
+            self.persist_current_ui_state();
+            return true;
+        }
         let open = self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id);
         if let Some(reveal) = &request.reveal
             && !open
@@ -382,6 +460,34 @@ impl Runtime {
             return true;
         }
         if open {
+            if request.restore.is_some() {
+                self.settle_restored_order(&request.workspace_id, &request.checkout_id);
+            }
+            return true;
+        }
+        if let Some(active) = request.restore {
+            let prepared = PreparedFileTab::Read {
+                tab_id: tab_id.to_owned(),
+                document: Box::new(document),
+                place,
+            };
+            let inserted = self.insert_file_tab(
+                prepared,
+                &request.workspace_id,
+                &request.checkout_id,
+                &request.path,
+                request.preview,
+            );
+            let in_front = self.front_checkout()
+                == Some((request.workspace_id.as_str(), request.checkout_id.as_str()));
+            if active
+                && in_front
+                && let Some(tab_id) = inserted
+                && let Err(message) = self.activate_editor_tab(&tab_id)
+            {
+                self.set_error("file.focus_failed", message, false);
+            }
+            self.settle_restored_order(&request.workspace_id, &request.checkout_id);
             return true;
         }
         let in_front = self.front_checkout()
@@ -472,6 +578,7 @@ impl Runtime {
                     preview: false,
                     reload: true,
                     reveal: None,
+                    restore: None,
                 },
             ),
             Err(message) => self.set_error("file.reload_failed", message, true),
@@ -1055,6 +1162,7 @@ pub(super) struct OpenRequestFields {
     pub(super) preview: bool,
     pub(super) reload: bool,
     pub(super) reveal: Option<PendingReveal>,
+    pub(super) restore: Option<bool>,
 }
 
 fn outcome_word(outcome: &SaveOutcome) -> &'static str {

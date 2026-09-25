@@ -2026,7 +2026,7 @@ impl Runtime {
         self.sync_changes_root_path();
         self.refresh_inactive_groups();
         self.remeasure_disk();
-        self.deactivate_editor_tab();
+        self.yield_surface_to_terminal();
         crate::diagnostic!(serde_json::json!({
             "component": "view_state",
             "kind": "pane.focus_context_changed",
@@ -2060,14 +2060,6 @@ impl Runtime {
         origin: PaneFocusOrigin,
         request_id: Option<String>,
     ) {
-        if self.close_operation_holds_pane(&pane_id) {
-            self.set_error(
-                "pane.close_pending",
-                format!("Pane {pane_id} is closing; focus was not moved back to it"),
-                true,
-            );
-            return;
-        }
         let request_id = request_id.filter(|value| !value.trim().is_empty());
         if let Some(request_id) = request_id.as_deref() {
             if self
@@ -2090,18 +2082,32 @@ impl Runtime {
                 message: None,
                 retryable: false,
             });
-            if !self.pane_exists_for_focus(&pane_id) {
-                let message = format!("Pane {pane_id} is no longer available.");
-                self.finish_pane_focus_request(
-                    Some(request_id),
-                    &pane_id,
-                    "failed",
-                    Some(message.clone()),
-                    true,
-                );
-                self.set_error("pane.focus_target_unavailable", message, true);
-                return;
-            }
+        }
+        // A refusal still answers the request it refuses, or the control
+        // that asked would wait for a receipt that never comes.
+        if self.close_operation_holds_pane(&pane_id) {
+            let message = format!("Pane {pane_id} is closing; focus was not moved back to it");
+            self.finish_pane_focus_request(
+                request_id.as_deref(),
+                &pane_id,
+                "failed",
+                Some(message.clone()),
+                false,
+            );
+            self.set_error("pane.close_pending", message, true);
+            return;
+        }
+        if request_id.is_some() && !self.pane_exists_for_focus(&pane_id) {
+            let message = format!("Pane {pane_id} is no longer available.");
+            self.finish_pane_focus_request(
+                request_id.as_deref(),
+                &pane_id,
+                "failed",
+                Some(message.clone()),
+                true,
+            );
+            self.set_error("pane.focus_target_unavailable", message, true);
+            return;
         }
         let context_changed = self.focus_context_for_pane(&pane_id);
         let already_focused =
@@ -3000,7 +3006,7 @@ impl Runtime {
     }
     /// The folders the Explorer has expanded on `device`: this machine's in
     /// `expanded_paths`, a device's in its own entry.
-    fn expanded_paths_on(&mut self, device: &str) -> &mut Vec<String> {
+    pub(super) fn expanded_paths_on(&mut self, device: &str) -> &mut Vec<String> {
         if device == workspace::LOCAL_DEVICE_ID {
             &mut self.snapshot.ui_state.expanded_paths
         } else {
@@ -3377,7 +3383,7 @@ impl Runtime {
                         self.pending_tab_focus =
                             Some(PendingViewFocus::new(checkout_id, tab_id.clone()));
                     }
-                    self.deactivate_editor_tab();
+                    self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
                 }
                 self.push_diagnostic(
@@ -3674,6 +3680,7 @@ impl Runtime {
                         preview: false,
                         reload: false,
                         reveal: Some(documents::PendingReveal { front }),
+                        restore: None,
                     },
                 );
             }
@@ -3853,8 +3860,12 @@ impl Runtime {
         // that one frame cleared a question nobody had read.
         self.operator_focused_pane_id = None;
         self.refresh_pane_read_state();
-        self.deactivate_editor_tab();
+        self.yield_surface_to_terminal();
+        // With separate View areas the alignment above already chose the
+        // Workspace's remembered View tab; only the shared canvas needs a
+        // document to show in place of a missing terminal.
         if !has_herdr_tab
+            && !self.separate_view_areas()
             && let Some(file_tab_id) = self
                 .snapshot
                 .editor

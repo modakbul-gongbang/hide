@@ -608,6 +608,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
             target_id: TARGET.to_owned(),
             request_id: request.to_owned(),
             report_pane_focus_outcome: false,
+            focus_device: false,
             request: RemoteControlRequest::CreateTab {
                 workspace_id: workspace_id.to_owned(),
                 checkout_id: Some(format!("{workspace_id}#registered")),
@@ -743,6 +744,7 @@ fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_drop
         wrap: false,
         dirty: false,
         preview: false,
+        unavailable_reason: None,
     });
     runtime.rebuild_tab_strips();
     let t1 = format!("herdr:remote:{TARGET}:tab:t1");
@@ -863,6 +865,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
         wrap: false,
         dirty: true,
         preview: false,
+        unavailable_reason: None,
     };
     runtime.snapshot.editor.tabs = vec![
         tab("file:here", "checkout:here"),
@@ -925,4 +928,295 @@ fn a_registration_answer_after_its_device_was_removed_is_dropped() {
         }),
     ));
     assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+}
+
+/// S6 D-08, B12, B21: an agent chosen on a device is one event that brings
+/// the device forward, and the Agent area comes back on the Workspace that
+/// holds the agent, not on the one the device showed before its Herdr moved.
+#[test]
+fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() {
+    use crate::workspace_views::ViewMode;
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.devices.push(DeviceSnapshot {
+        id: TARGET.to_owned(),
+        label: "Mac mini".to_owned(),
+        kind: "remote".to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        problem: None,
+        ssh_alias: Some(TARGET.to_owned()),
+        herdr_socket_path: None,
+        agent_count: 0,
+        test: None,
+        host: Default::default(),
+    });
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let mut raw = session(vec![
+        herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
+        herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),
+    ]);
+    raw.focused_workspace_id = Some(format!("remote:{TARGET}:workspace:w1"));
+    raw.focused_checkout_id = Some(format!("remote:{TARGET}:checkout:w1"));
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+    );
+    runtime.install_remote_control(RemoteControlContext::new(
+        TARGET,
+        connector,
+        Weak::new(),
+        ChangeNotifier::noop(),
+    ));
+    let views = tempfile::tempdir().unwrap();
+    let mut store = WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0;
+    store.views.entry(TARGET, &t.main).mode = ViewMode::Views;
+    store.views.entry(TARGET, &t.linked).mode = ViewMode::Views;
+    runtime.workspace_views = Some(store);
+
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "open-agent".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusPane {
+            pane_id: format!("remote:{TARGET}:pane:t3"),
+        },
+    });
+
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_device_id.as_deref(),
+        Some(TARGET)
+    );
+    let mode = |runtime: &Runtime, path: &str| {
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .views
+            .get(TARGET, path)
+            .unwrap()
+            .mode
+    };
+    assert_eq!(mode(&runtime, &t.linked), ViewMode::Together);
+    assert_eq!(mode(&runtime, &t.main), ViewMode::Views);
+
+    // D-11: the choice is remembered only once the device's Herdr has moved
+    // there, so a refusal on the device would remember nothing.
+    let resumed = |runtime: &mut Runtime| {
+        runtime.sync_workspace_view();
+        let view = runtime.snapshot.workspace_view.clone().expect("front");
+        (view.path, view.resumed)
+    };
+    assert_eq!(resumed(&mut runtime), (t.main.clone(), false));
+    let moved = |runtime: &mut Runtime, workspace: &str| {
+        let mut raw = session(vec![
+            herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
+            herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),
+        ]);
+        raw.focused_workspace_id = Some(format!("remote:{TARGET}:workspace:{workspace}"));
+        raw.focused_checkout_id = Some(format!("remote:{TARGET}:checkout:{workspace}"));
+        runtime.ingest_remote_session(TARGET, Ok(raw));
+    };
+    moved(&mut runtime, "w2");
+    assert_eq!(resumed(&mut runtime), (t.linked.clone(), true));
+
+    // A Workspace opened from Main or an Overview is chosen the same way.
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "open-workspace".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w1"),
+            checkout_id: Some(format!("remote:{TARGET}:checkout:w1")),
+        },
+    });
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(resumed(&mut runtime), (t.linked.clone(), true));
+    moved(&mut runtime, "w1");
+    assert_eq!(resumed(&mut runtime), (t.main.clone(), true));
+
+    // A request the device refuses chooses nothing, even when its Herdr
+    // later moves there on its own.
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "refused".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w2"),
+            checkout_id: Some(format!("remote:{TARGET}:checkout:w2")),
+        },
+    });
+    runtime.ingest_remote_control_result(
+        TARGET,
+        "refused",
+        RemoteControlAction::FocusWorkspace {
+            workspace_id: "w2".to_owned(),
+        },
+        Err("the workspace is gone".to_owned()),
+        3,
+    );
+    moved(&mut runtime, "w2");
+    assert_eq!(resumed(&mut runtime), (t.linked.clone(), false));
+
+    // So does one whose answer comes back on a connection that is gone.
+    moved(&mut runtime, "w1");
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "lost".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w2"),
+            checkout_id: Some(format!("remote:{TARGET}:checkout:w2")),
+        },
+    });
+    runtime.ingest_remote_control_result_with_generation(
+        TARGET,
+        "lost",
+        RemoteControlAction::FocusWorkspace {
+            workspace_id: "w2".to_owned(),
+        },
+        Err("the connection closed".to_owned()),
+        3,
+        Some(u64::MAX),
+    );
+    moved(&mut runtime, "w2");
+    assert_eq!(resumed(&mut runtime), (t.linked.clone(), false));
+
+    // Removing the device forgets a choice still waiting for it.
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "removed".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w1"),
+            checkout_id: Some(format!("remote:{TARGET}:checkout:w1")),
+        },
+    });
+    runtime.forget_device_views(TARGET);
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .is_some_and(|store| store.views.get(TARGET, &t.main).is_none())
+    );
+}
+
+/// S6 B21: a device request refused before it is sent leaves the device
+/// that was in front where it was.
+#[test]
+fn a_refused_device_request_does_not_bring_the_device_forward() {
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "not_connected".to_owned(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
+        hide_herdr_client::UnixSocketConnector::new("/tmp/herdr-core-never-connect.sock"),
+    );
+    runtime.install_remote_control(RemoteControlContext::new(
+        TARGET,
+        connector,
+        Weak::new(),
+        ChangeNotifier::noop(),
+    ));
+    let before = runtime.snapshot.navigator.focused_device_id.clone();
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "open-workspace".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w1"),
+            checkout_id: None,
+        },
+    });
+    assert!(runtime.snapshot.status.last_error.is_some());
+    assert_eq!(runtime.snapshot.navigator.focused_device_id, before);
+}
+
+/// S6 B14-B16, B21: a device pane carries its direct children and its path
+/// back to the parent from the device's own lineage, as a pane here does.
+#[test]
+fn a_device_pane_carries_its_children_and_its_path_to_the_parent() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let mut raw = session(vec![herdr_workspace(
+        TARGET,
+        "w1",
+        &t.main,
+        &[("t1", &t.main), ("t2", &t.main)],
+    )]);
+    let parent = format!("remote:{TARGET}:pane:t1");
+    let child = format!("remote:{TARGET}:pane:t2");
+    let row = |pane: &str, spawned_from: Option<&str>| {
+        let mut agents = crate::sidebar::project_agents(
+            serde_json::from_value(serde_json::json!({"agents": [{
+                "pane_id": pane, "agent": "claude", "agent_status": "working",
+                "state_change_seq": 1, "tokens": {"task": format!("Task {pane}")}
+            }]}))
+            .unwrap(),
+        )
+        .agents;
+        let mut agent = agents.remove(0);
+        agent.spawned_from_pane_id = spawned_from.map(str::to_owned);
+        agent
+    };
+    raw.agents = vec![row(&parent, None), row(&child, Some(&parent))];
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+
+    let panes = runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .flat_map(|checkout| &checkout.tabs)
+        .flat_map(|tab| &tab.panes)
+        .cloned()
+        .collect::<Vec<_>>();
+    let pane = |id: &str| panes.iter().find(|pane| pane.id == id).unwrap();
+    let chips = &pane(&parent).children.as_ref().expect("children").chips;
+    assert_eq!(
+        chips
+            .iter()
+            .map(|chip| chip.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        [child.as_str()]
+    );
+    let path = &pane(&child).lineage_path;
+    assert_eq!(
+        path.iter()
+            .map(|step| step.pane_id.as_str())
+            .collect::<Vec<_>>(),
+        [parent.as_str(), child.as_str()]
+    );
 }

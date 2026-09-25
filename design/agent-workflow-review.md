@@ -3,6 +3,7 @@
 This document maps the retained Agent workflow components in `design/hide-ui.lib.pen` to their code owners and behavioral contracts.
 Product screens and historical candidates are not library content.
 The former Final, R2, R3, handoff candidates, and the Overview family-only comparison are historical and must not be reconstructed.
+It is the native shell's contract; the web shell's Workspace, whose chips show every direct child and whose Agents explorer has no My Work scope, follows [DESIGN.md: Web Workspace](../DESIGN.md#web-workspace).
 
 ## Product decisions
 

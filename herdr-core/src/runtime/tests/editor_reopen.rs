@@ -995,6 +995,7 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         wrap: false,
         dirty: false,
         preview: false,
+        unavailable_reason: None,
     };
     runtime
         .snapshot
@@ -1144,6 +1145,7 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
         wrap: false,
         dirty: false,
         preview: false,
+        unavailable_reason: None,
     });
 
     let mut document = files::tests::open_local(&lib).0;
@@ -1634,6 +1636,7 @@ fn recent_closed_tracks_file_tabs_but_not_diff_tabs() {
             wrap: false,
             dirty: false,
             preview: false,
+            unavailable_reason: None,
         });
     }
     assert!(runtime.dispatch_json(&explorer_event(
@@ -1836,6 +1839,7 @@ fn a_new_file_at_a_renamed_tabs_old_path_gets_its_own_tab_id() {
         wrap: false,
         dirty: false,
         preview: false,
+        unavailable_reason: None,
     });
     assert_eq!(
         runtime.new_file_tab_id("w", "c", "/r/a.txt"),

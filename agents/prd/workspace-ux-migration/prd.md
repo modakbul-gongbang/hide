@@ -27,6 +27,7 @@ S5.5 관련 추가 문안은 이전 인터뷰의 승인·검증을 승계하지 
 - 새 통계 수집·분석 시스템, Memory 엔진, 세션 분석 모델은 만들지 않는다. Main/Overview와 Memory/Sessions는 실제 기존 데이터·기능을 재구성한다.
 - Swift 동시 UX 재설계, 새로운 Agents 분류 체계와 My Work 필터는 제외한다. Agents는 All 하나로 보이고 차후 사용자 아이디어를 위한 변경은 별도 요청으로 다룬다.
 - Project Memory의 옆에서 보기, Workspace Memory 탭, 목적지 Workspace 선택은 제공하지 않는다. 파일의 명시적 옆에 열기는 이 제외와 관계없이 포함한다.
+- Project Memory 웹 구현은 D-20에 따라 S6~S9 범위 밖의 후속 TODO이다. 그동안 Memory 관리는 기존 macOS 앱에서 하며 Memory backend·저장 데이터·hook·macOS 표면은 보존한다. 웹에 가짜 Memory UI나 placeholder를 두지 않는다. TODO는 D-10과 B14의 계약을 승계하고, 착수 전 hided와 hook이 서로 다른 Memory 저장소를 여는 문제, Memory 명령의 focused checkout 의존, Swift에만 있는 disclosure 문구를 먼저 해결한다. 사용자가 Memory 웹 구현을 다시 요청하면 재검토한다.
 - Herdr tab/pane 복제 저장소, 자동 세션 부활, Workspace 사이 View drag, 일반 drag에 의한 문서 복제, 새로운 Git staging/discard/commit 흐름은 도입하지 않는다.
 - 자동 merge·release, 설치 앱 교체, 실사용 pane 조작 및 Swift 삭제 승인은 이 문서 개정에 포함하지 않는다. 별도 실행 단계에서도 새 비용·보안 경계·파괴적 작업의 권한을 추정하지 않는다.
 
@@ -35,7 +36,7 @@ S5.5 관련 추가 문안은 이전 인터뷰의 승인·검증을 승계하지 
 | D-n | 결정 | 근거 |
 | --- | --- | --- |
 | D-01 | S0~S5의 번호·범위·검증 이력을 유지하고 새 UX를 웹 셸에 추가한다. 기존 우산 계약의 기술 스택, 루프백 인증, WS, 성능 기준, 공존·attach 경계는 유지한다. 기존 S3가 이미 포함한 terminal 파일/이미지 첨부와 영상 뷰어를 다시 Electron으로 미루지 않는다. | user Q1 추천 1·2 승인; 기존 S3 D-02/D-09 |
-| D-02 | 작성자 단계 분해안: S5.5 기기 독립 Workspace 기반과 로컬/원격 동등성 → S6 Workspace 탐색과 기본 작업 셸 → S7 Views 분할·문서 표시·복원 → S8 Project Memory/Sessions → S9 통합 수용·전환 검토 → S10 Swift 제거. 구 S6의 삭제 요구는 S10으로 이동하며 새 번호는 사용자가 직접 지정한 것이 아니다. 각 단계는 별도 슬라이스 PRD/런으로 수행한다. | Q1 "우선 S문서 개정하고 어떻게 재구성할지"; 가정: engineering 3의 사용 가능한 end-to-end 단위 |
+| D-02 | 작성자 단계 분해안: S5.5 기기 독립 Workspace 기반과 로컬/원격 동등성 → S6 Workspace 탐색과 기본 작업 셸 → S7 Views 분할·문서 표시·복원 → S8 Project Memory/Sessions(D-20 이후 Sessions만) → S9 통합 수용·전환 검토 → S10 Swift 제거. 구 S6의 삭제 요구는 S10으로 이동하며 새 번호는 사용자가 직접 지정한 것이 아니다. 각 단계는 별도 슬라이스 PRD/런으로 수행한다. | Q1 "우선 S문서 개정하고 어떻게 재구성할지"; 가정: engineering 3의 사용 가능한 end-to-end 단위 |
 | D-03 | Main은 전체 Project, Project Overview는 한 Project, Workspace는 checkout의 작업 공간이다. Project Memory/Sessions는 Project에, Explorer/Changes는 Workspace에, Agent/View 상태는 Workspace에 속한다. Main/Overview는 현재 데이터가 없는 지표를 새로 만들지 않는다. | user Q1 추천 1; proposal D01/D05/D06 |
 | D-04 | Agent 탭 아래 여러 Herdr pane을 유지하며 Views는 별도 탭 영역이다. 상단 Agents/Together/Views 3아이콘 A안을 채택하고 Explorer/Changes 토글은 독립한다. B 가장자리 손잡이는 기각한다. 모드 선택은 공간만 바꾸며 비교 split을 만들지 않는다. | user Q1 추천 3; proposal D02/D04/D13 |
 | D-05 | 마지막 사용 View 영역에 파일을 열고 영역별 preview 1개는 단일클릭으로 교체한다. 더블클릭/편집은 고정한다. 이미 열린 파일은 기존 탭으로 이동한다. 명시적 파일 옆에 열기만 복수 표시를 만들며 하나의 편집 버퍼와 각 표시의 독립 스크롤을 사용한다. | user Q1 추천 4 승인; 9번 예외는 Memory에만 적용 |
@@ -53,6 +54,7 @@ S5.5 관련 추가 문안은 이전 인터뷰의 승인·검증을 승계하지 
 | D-17 | S6 전에 로컬/원격을 동일한 인터페이스로 제공할 기반과 관련 리팩토링을 정리한다. 기기를 바꾸면 대상 호스트만 바뀌며 파일·프로젝트·작업 상태를 다른 기기의 동일 경로와 섞지 않는다. 기존 S5 완료를 전체 원격 기능 동등성의 완료로 해석하지 않는다. | user: "난 local, remote 다 동일한 인터페이스에서 동작하는게 가장 중요한것같은데"; "그거 먼저 진행하자 S6전에"; "리팩토링 할 거있으면 싹다 미리 하자" |
 | D-18 | 작성자 구조 제안은 기기별 대상/catalog, 상태 identity, 파일/Git 경계, 공통 명령/비동기 수명, capability/설정 범위, 전환 경로 정리의 여섯 축이다. 기존 core/Herdr/hide-project 책임을 재사용하고 아래 A~D는 구현 순서의 제안이지 승인된 PR 개수나 새 런타임 도입 결정이 아니다. | 가정: engineering 3·5·7·8; 위 사용자 방향을 상세 PRD로 구체화할 담당자의 검토 대상 |
 | D-19 | 현재 인계는 S5.5 PRD 작성만 허용한다. 기존 기능의 원격 확대에 필요한 삭제·hook/설정 쓰기·호스트 신뢰·전송 보조 프로세스의 권한과 안전성은 기존 계약을 먼저 대조하고 미해결이면 차단 사항으로 남긴다. 기기 간 Memory 자동 동기화나 새 원격 daemon 설치를 묵시적으로 승인하지 않는다. | user: "이것들 남기고 handoff시켜서"; "5.5 PRD 정리하게 해주라"; 가정: 이번 요청의 작업 경계 |
+| D-20 | 사용자 결정(2026-09-24 후속): S8의 Project Memory 웹 구현은 명시적 후속 TODO로 미루고 Sessions/archive는 S8에 남긴다. 기능·데이터 제거가 아니라 구현 연기이며 기존 Memory backend·데이터·hook·macOS 표면을 보존한다. D-10의 Memory 부분과 B14는 그 TODO의 계약으로 남는다. 가정(작성자): macOS 앱이 유일한 Memory 관리 표면이므로 S10은 Memory 웹 구현 또는 그에 대한 별도 사용자 결정 전에는 시작하지 않는다. | 사용자: "어 근데 s8에 메모리는 그냥 아예 나중 구현으로 TODO로 적용해보면 어떨까 싶네? 그 observer에서하고잇는거" |
 
 ## Behaviors
 
@@ -71,13 +73,13 @@ S5.5 관련 추가 문안은 이전 인터뷰의 승인·검증을 승계하지 
 | B11 | Agents는 전체 현재 에이전트를 보여주며 My Work/All 전환은 없다. 탐색기 자체 변경은 focus/read state를 바꾸지 않는다. delegated Working/Seen과 descendant-to-ancestor unread 의미는 유지하고 상태 변화만으로 사용자의 작업 화면을 전환하지 않는다. | D-09 |
 | B12 | 부모 아래 직접 자식 칩을 한 줄에서 모두 찾을 수 있고 넘치면 가로로 이동한다. 클릭은 해당 기존 tab/pane으로 직접 이동하며 관계 상세는 별도 메뉴이다. 중복 pending 요청은 막고 사라진 대상/거절/실패는 그 요청의 재시도·dismiss로 처리하며 부모 pane을 새로 split하지 않는다. | D-09, D-12 |
 | B13 | Views-only에서 에이전트를 열거나 Agents-only에서 파일을 열면 Together로 바뀌고 요청한 대상에 focus한다. 공간이 모자라면 B8의 임시 단일 영역 규칙을 적용한다. 단순 항목 hover/메뉴 열기는 이 이동을 일으키지 않는다. | D-07, D-09, D-12 |
-| B14 | Project Memory에서 disclosure·enable/disable, 검색/개수, 목록·상세·source/revision·제공 세션 수, Edit/Save/Cancel, Forget/Undo, 충돌 해결, 분석/복구 및 hook 갱신, This turn/Show all을 기존 의미로 사용한다. Workspace로 보내기, 옆에서 보기, 목적지 선택은 없고 Workspace가 없는 Project에서도 관리한다. 비활성화는 데이터를 보존하고 확인 후 파생 데이터 삭제도 raw provider session을 지우지 않는다. 실패/충돌은 해당 항목이나 설정에서 복구한다. | D-03, D-10 |
+| B14 | (후속 TODO, D-20: S6~S9 범위 밖) Project Memory에서 disclosure·enable/disable, 검색/개수, 목록·상세·source/revision·제공 세션 수, Edit/Save/Cancel, Forget/Undo, 충돌 해결, 분석/복구 및 hook 갱신, This turn/Show all을 기존 의미로 사용한다. Workspace로 보내기, 옆에서 보기, 목적지 선택은 없고 Workspace가 없는 Project에서도 관리한다. 비활성화는 데이터를 보존하고 확인 후 파생 데이터 삭제도 raw provider session을 지우지 않는다. 실패/충돌은 해당 항목이나 설정에서 복구한다. | D-03, D-10 |
 | B15 | Project Sessions에서 연결된 worktree들의 기존 이력을 최신순, provider 필터와 검색으로 찾고 읽기 전용 archive 상세를 Project 안에서 연다. 실제 요청/제목·checkout·시각·가용성을 표시한다. 결과 없음과 읽기 실패, 삭제/이동된 원본은 구별하고 Retry/Copy source location을 유지하며 자동 agent 재실행으로 대체하지 않는다. 실행 중 terminal 대화 뷰어 추가로 확대하지 않는다. | D-01, D-10 |
 | B16 | Agent/provider, 파일 종류, Diff는 탭의 아이콘과 제목으로 구별된다. 좁아져 제목이 줄어도 전체 이름과 종류는 tooltip/접근성 이름으로 확인한다. 여러 pane의 탭은 기존 focused-pane identity 규칙을 사용하고 Herdr 탭 이름을 UI가 덮어쓰지 않는다. Browser 아이콘은 실제 후속 Browser 기능에 붙이며 지금 가짜 Browser 탭을 만들지 않는다. | D-04, D-11 |
 | B17 | 우클릭/overflow/키보드 메뉴는 클릭한 대상의 가능한 동작만 제공한다. 닫기와 숨기기는 같은 말로 표시하지 않고, 방향 메뉴는 적합한 목적지만 보인다. 문서 닫기는 파일 삭제가 아니며 pane/tab/worktree/Memory의 파괴적 동작은 기존 확인과 read-only 경계를 유지한다. | D-12 |
 | B18 | 매 단계의 화면은 선택된 Pen 구조 및 공용 컴포넌트와 맞으며 hover/focus/selected/pending/empty/loading/failed/stale/read-only 상태를 실제 의미에 맞는 작은 표식으로 구별한다. 조작할 수 없는 내부 오류는 로그에 남기고 화면 경고로 만들지 않는다. 한글·혼합 제목·긴 경로를 실제 지원 폭에서 읽을 수 있다. | D-11, D-13, D-16 |
 | B19 | 모드/도구/Workspace 전환은 terminal 입력을 삼키거나 불필요한 재시작/재attach를 만들지 않는다. 기존 bounded attach·통지·입력 비용 계약과 IME/에코/프레임 성능 기준을 유지한다. drag preview는 한 개로 한정하고 View 분할 깊이·개수, 열린 문서와 저장 상태의 자원 상한 및 초과 시 복구 행동을 각 슬라이스가 명시한다. | D-01, D-06, D-08, D-16 |
-| B20 | 새 UI 저장 상태를 만들어도 기존 설정을 덮어쓰지 않으며 사용자가 이전 앱을 선택하면 기존 설정과 실제 Herdr 대상을 사용할 수 있다. S9에서는 전체 작업 흐름·복원·기존 설정 복귀를 격리 환경에서 확인하고 실사용 전환 결정을 남긴다. S10은 S5.5를 포함한 S1~S9 PASS와 별도 삭제 승인 없이는 시작하지 않는다. | D-02, D-14 |
+| B20 | 새 UI 저장 상태를 만들어도 기존 설정을 덮어쓰지 않으며 사용자가 이전 앱을 선택하면 기존 설정과 실제 Herdr 대상을 사용할 수 있다. S9에서는 전체 작업 흐름·복원·기존 설정 복귀를 격리 환경에서 확인하고 실사용 전환 결정을 남긴다. S10은 S5.5를 포함한 S1~S9 PASS, Project Memory 웹 구현 완료 또는 그에 대한 별도 사용자 결정, 별도 삭제 승인 없이는 시작하지 않는다. | D-02, D-14, D-20 |
 | B21 | S5.5 이후 기기를 바꾸어 같은 Explorer/파일/Changes/Workspace 작업 진입점을 사용한다. 기능의 실제 가용 여부와 제한은 선택한 호스트 기준으로 표시하며 원격에서 거절된 명령을 로컬에서 대신 실행하지 않는다. 지원할 세부 동작과 미지원 사유는 S5.5 상세 PRD에서 현재 계약과 대조한다. | D-17, D-18, D-19 |
 | B22 | 다른 기기에 같은 경로의 파일이 있어도 편집 draft·문서·작업 대상을 섞지 않는다. 기기 전환이나 연결 끊김 뒤 도착한 응답이 현재 대상을 덮어쓰지 않고, 저장 결과가 불명확하면 성공으로 표시하거나 중복 실행하지 않으며 복구할 내용을 보존한다. | D-17, D-18 |
 
@@ -87,7 +89,7 @@ S5.5 관련 추가 문안은 이전 인터뷰의 승인·검증을 승계하지 
 Herdr가 실제 tab/pane 존재·terminal split/zoom·PTY·agent lifecycle을 소유하고, Hide core가 Workspace별 View 표시 트리·선택·모드·도구 상태를 소유한다.
 동일 문서의 편집 identity와 표시 identity를 구분하여 buffer를 복제하지 않으며 버전이 있는 UI 상태는 기존 설정과 분리한다.
 Project Memory/Sessions backend를 재사용하고 Browser plugin 자원 소유권이나 저장 엔진을 새로 만들지 않는다.
-현행 Memory 명령의 focused checkout 의존은 S8에서 명시적 Project identity로 확장하여 관리 대상이 현재 agent focus에 따라 바뀌지 않게 한다.
+현행 Sessions 명령의 focused checkout 의존은 S8에서 명시적 Project identity로 확장하여 대상이 현재 agent focus에 따라 바뀌지 않게 하고, Memory 명령의 같은 확장은 D-20의 후속 TODO에서 한다.
 기존 archive 편집/읽기 모델은 재사용하되 새 Project 상세의 표시 컨텍스트를 Workspace View와 분리하며 background 분석·provenance·hook retrieval은 유지한다.
 
 | 단계 | 변경 범위와 종료 결과 | 선행 조건 |
@@ -101,9 +103,9 @@ Project Memory/Sessions backend를 재사용하고 Browser plugin 자원 소유�
 | S5.5 | 기기별 Project/checkout 대상 정규화, Explorer/파일·Changes·작업 명령 동등성, 설정/권한 범위와 실패 복구, 관련 중복 제거. 상세 범위·미해결 권한을 별도 PRD로 정리한 뒤 승인된 범위만 구현한다. | S3~S5의 현행 계약과 코드 대조 + S5.5 상세 PRD |
 | S6 | Main/Project/Workspace 탐색, All Agents·직접 자식 이동, 모드/독립 Tools, 종류별 탭 identity. 기존 editor/diff를 기본 View 영역에서 사용하고 새 상태는 처음부터 버전·Workspace 범위를 갖춘다. | S3~S5 및 S5.5 PASS |
 | S7 | View 영역별 preview/고정·공유 buffer, 반복 split·drag preview·resize·빈 영역 정리, 좁은 창 대응과 전체 재시작/충돌 복원 | S6 PASS |
-| S8 | Project Memory와 Sessions의 기존 기능을 Project 범위 웹 표면에서 완료; Memory 옆에서 보기 없음 | S6 PASS; S7과 독립 검증 가능 |
-| S9 | S6~S8 전체 여정, Pen/제품/library 일치, 키보드·한글·성능·복원·rollback 통합 검증 및 사용자 전환 검토 | S7·S8 PASS |
-| S10 | 구 S6 Swift 제거: macos/vendor/build·sign/Swift CI·생성기 정리, 공유 자산·Herdr pin의 후속 소유자 확정, 미룸 항목의 Electron 인계 | S5.5를 포함한 S1~S9 PASS + 별도 삭제 PRD 사용자 승인 |
+| S8 | Project Sessions의 기존 기능을 Project 범위 웹 표면에서 완료. Project Memory 웹 구현은 D-20에 따라 후속 TODO; Memory 옆에서 보기 없음 | S6 PASS; S7과 독립 검증 가능 |
+| S9 | S8 다음에 반드시 이어서 수행(사용자 "그럼 S9도 근데 돌리는거맞지?"). S6~S8 전체 여정(Project Memory 웹 표면 제외, macOS Memory 표면·데이터·hook 불변 확인), Pen/제품/library 일치, 키보드·한글·성능·복원·rollback 통합 검증 및 사용자 전환 검토 | S7·S8 PASS |
+| S10 | 구 S6 Swift 제거: macos/vendor/build·sign/Swift CI·생성기 정리, 공유 자산·Herdr pin의 후속 소유자 확정, 미룸 항목의 Electron 인계 | S5.5를 포함한 S1~S9 PASS + Project Memory 웹 구현 완료 또는 그에 대한 별도 사용자 결정(D-20) + 별도 삭제 PRD 사용자 승인 |
 
 S5.5 구조 제안은 다음과 같으며 공개 API 이름이나 새 저장소를 지금 확정하지 않는다.
 

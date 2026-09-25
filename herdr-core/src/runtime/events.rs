@@ -88,6 +88,11 @@ pub(super) struct FocusPaneRequestPayload {
     pub(super) origin: PaneFocusOrigin,
     #[serde(default)]
     pub(super) request_id: Option<String>,
+    /// Also makes this machine the device in front, in the same event, when
+    /// the focus is accepted: an agent chosen from Main or the Agents list
+    /// while another device is in front is one action (S6 B12, B21).
+    #[serde(default)]
+    pub(super) focus_device: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +141,10 @@ pub(super) struct CreateTabPayload {
 pub(super) struct FocusCheckoutPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
+    /// Also makes this machine the device in front when the checkout is
+    /// accepted, as `FocusPaneRequestPayload::focus_device` does.
+    #[serde(default)]
+    pub(super) focus_device: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -274,6 +283,11 @@ pub(super) struct RemoteControlPayload {
     /// receipt into B24's visible pane-focus outcome.
     #[serde(default)]
     pub(super) report_pane_focus_outcome: bool,
+    /// Also makes the target the device in front once the request is sent,
+    /// so choosing a device's Workspace or agent is one event that moves both
+    /// or, refused, neither (S6 B21).
+    #[serde(default)]
+    pub(super) focus_device: bool,
     #[serde(flatten)]
     pub(super) request: RemoteControlRequest,
 }
@@ -797,6 +811,7 @@ pub(super) struct TerminalResizePayload {
 }
 
 pub(super) enum Event {
+    WorkspaceView(WorkspaceViewPayload),
     Key(KeyPayload),
     Attachment(AttachmentPayload),
     AttachmentReady(AttachmentCompletionPayload),
@@ -1053,6 +1068,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_drag" => decode!(PetDragPayload, PetDrag),
         "pet_activity" => Ok(Event::PetActivity),
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
+        "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
         _ => Err(EventValidationError {
             kind: "event.unknown_kind",
             message: format!("Unknown event kind: {kind}"),
@@ -1063,6 +1079,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
 impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
+            Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
             Event::SessionsRefresh => self.request_sessions_refresh(),
             Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
@@ -1168,6 +1185,12 @@ impl Runtime {
             }
             Event::FocusPane(payload) => {
                 self.focus_pane(payload.pane_id, payload.origin, payload.request_id);
+                if payload.focus_device
+                    && self.snapshot.status.last_error.is_none()
+                    && !self.device_in_front(workspace::LOCAL_DEVICE_ID)
+                {
+                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                }
                 true
             }
             Event::ReconnectPane(payload) => {
@@ -1365,7 +1388,7 @@ impl Runtime {
                 self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
                 self.snapshot.navigator.root_path = Some(cwd.clone());
                 self.sync_changes_root_path();
-                self.deactivate_editor_tab();
+                self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
                 let action = match session_workspace_id {
                     Some(session_workspace_id) => RemoteControlAction::CreateTab {
@@ -1388,7 +1411,14 @@ impl Runtime {
                 true
             }
             Event::FocusCheckout(payload) => {
-                self.focus_checkout(&payload.workspace_id, &payload.checkout_id)
+                let changed = self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
+                if payload.focus_device
+                    && self.snapshot.status.last_error.is_none()
+                    && !self.device_in_front(workspace::LOCAL_DEVICE_ID)
+                {
+                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                }
+                changed
             }
             Event::FocusTab(payload) => {
                 let Some(workspace_snapshot) = self
@@ -1465,7 +1495,7 @@ impl Runtime {
                 // while nobody was looking at it.
                 self.operator_focused_pane_id = next_pane_id;
                 self.refresh_pane_read_state();
-                self.deactivate_editor_tab();
+                self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
                 // A first visit attaches the tab's panes now. Waiting for the
                 // next session update to do it left the canvas empty until
@@ -1523,29 +1553,7 @@ impl Runtime {
             }
             Event::ReorderTab(payload) => self.reorder_tab(payload),
             Event::FocusDevice(payload) => {
-                if !self
-                    .snapshot
-                    .navigator
-                    .devices
-                    .iter()
-                    .any(|device| device.id == payload.device_id)
-                {
-                    self.set_error(
-                        "device.unknown",
-                        format!("Device {} is not registered", payload.device_id),
-                        false,
-                    );
-                    return true;
-                }
-                let local = payload.device_id == workspace::LOCAL_DEVICE_ID;
-                self.snapshot.navigator.focused_device_id = Some(payload.device_id);
-                self.deactivate_editor_tab();
-                if local {
-                    self.return_keyboard_to_local_pane();
-                }
-                self.reconcile_remote_terminal_selection();
-                self.sync_recent_closed_snapshot();
-                self.persist_current_ui_state();
+                self.bring_device_forward(payload.device_id);
                 true
             }
             Event::InactiveCheckoutsToggle(payload) => {
@@ -1743,6 +1751,7 @@ impl Runtime {
                     .filter(|tab| tab.checkout_id.starts_with(&scope))
                     .count();
                 self.retire_device_editor_tabs(&payload.device_id);
+                self.forget_device_views(&payload.device_id);
                 self.rebuild_device_rows();
                 self.rebuild_tab_strips();
                 self.persist_current_ui_state();
@@ -2879,5 +2888,24 @@ impl Runtime {
                 }
             }
         }
+    }
+}
+
+impl Event {
+    /// Terminal input and output, which arrive per keystroke and per chunk
+    /// and never move a Workspace's areas.
+    pub(super) fn is_terminal_io(&self) -> bool {
+        matches!(
+            self,
+            Event::Key(_)
+                | Event::TerminalOutput(_)
+                | Event::TerminalResize(_)
+                | Event::TerminalViewport(_)
+                | Event::TerminalScroll(_)
+                | Event::TerminalClick(_)
+                | Event::Attachment(_)
+                | Event::AttachmentReady(_)
+                | Event::AttachmentAction(_)
+        )
     }
 }

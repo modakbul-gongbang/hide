@@ -297,6 +297,9 @@ impl Runtime {
                 self.settle_device_saves(device_id);
                 self.reset_device_facts(device_id);
                 self.relist_remote_files(device_id);
+                // A device Workspace in front waited for this helper to
+                // bring its View tabs back.
+                self.restore_front_when_ready();
             }
             Err(error) => {
                 let message = error.to_string();

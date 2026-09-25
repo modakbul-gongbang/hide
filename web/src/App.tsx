@@ -4,26 +4,24 @@ import { identity, moveBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { DraftRecoveryLine, refreshRecoveryDrafts } from "./DraftRecovery";
 import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
-import { EditorSurface } from "./Editor";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard } from "./keyboard";
-import { ConfirmClose, ConfirmTrash, CycleOverlay, FindBar, NoticeBar } from "./Overlays";
-import { PaneCanvas } from "./PaneGrid";
+import { MainScreen, OverviewScreen } from "./MainScreen";
+import { ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
-import { RemoteSurface } from "./RemoteSurface";
-import { RightPanel } from "./RightPanel";
 import { SettingsGate } from "./SettingsSheet";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { editorFor, focusedCheckout, focusedRemoteDevice } from "./snapshot";
+import { focusedCheckout, focusedRemoteDevice, frontCheckout } from "./snapshot";
+import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
-import { TabBar } from "./TabBar";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { useUiStore } from "./ui";
+import { WorkspaceScreen } from "./WorkspaceScreen";
 import { connectShell, type DispatchFn } from "./ws";
 
 const noop: DispatchFn = () => {};
@@ -164,9 +162,8 @@ export function App() {
       <div className="flex min-h-0 flex-1">
         <Sidebar actions={actions} />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <MainSurface actions={actions} />
+          <CenterScreen actions={actions} />
         </main>
-        <RightPanel actions={actions} />
       </div>
       <CycleOverlay />
       <ConfirmClose actions={actions} />
@@ -184,29 +181,70 @@ function ShortcutSheetGate({ actions }: { actions: Actions }) {
   return open ? <ShortcutSheet actions={actions} /> : null;
 }
 
-/** This machine's tabs, or the selected SSH device's own tabs and panes in their place (B19). */
-function MainSurface({ actions }: { actions: Actions }) {
-  const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
-  if (remote) return <RemoteSurface actions={actions} />;
-  return (
-    <>
-      <TabBar actions={actions} />
-      <FindBar actions={actions} />
-      <Canvas actions={actions} />
-    </>
-  );
-}
-
 /**
- * The center surface. The core keeps the editor's tabs while a terminal tab
- * shows, so the editor's own `active_tab_id` is what says which one is drawn;
- * with none, the focused checkout's visible tab is the terminal canvas.
+ * Main, a Project's Overview, or the front Workspace (PRD S6 D-02, D-11). The
+ * page starts on the Workspace the core kept in front when it is the one used
+ * last and still in the catalog, and on Main on a first run or when it is
+ * gone; while the device in front is still being reached the choice waits,
+ * so a Workspace that is about to appear does not first flash Main. A
+ * Workspace that goes away while it is shown gives way to Main.
  */
-function Canvas({ actions }: { actions: Actions }) {
-  const editorShowing = useShellStore((s) => editorFor(s.editor) !== null);
-  return editorShowing ? (
-    <EditorSurface actions={actions} />
-  ) : (
-    <PaneCanvas dispatch={actions.dispatch} onClosePane={(paneId) => actions.closePane(paneId)} />
-  );
+function CenterScreen({ actions }: { actions: Actions }) {
+  const screen = useUiStore((s) => s.screen);
+  const front = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
+  const hasView = useShellStore((s) => Boolean(s.rest?.workspace_view));
+  const first = useShellStore((s) => startupScreen(s.rest, front !== null));
+  const loaded = useShellStore((s) => s.rest !== null);
+  const remoteFront = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
+  const opening = useUiStore((s) => s.opening);
+  const progress = useShellStore((s) => (opening && !opening.failure ? openingProgress(s.rest, opening) : null));
+  // An open from Main, an Overview or the Agents list shows its Workspace
+  // once the core has moved there; a refusal or no answer stays put and says
+  // why on Main or the Overview. On a Workspace the core's error notice
+  // already says it, so nothing is kept for later (B2, B21).
+  useEffect(() => {
+    if (!opening || opening.failure || progress === null) return;
+    const store = useUiStore.getState();
+    if (progress === "landed") {
+      store.setOpening(null);
+      store.setScreen({ kind: "workspace" });
+      return;
+    }
+    store.setOpening(store.screen?.kind === "workspace" ? null : { ...opening, failure: progress });
+  }, [opening, progress]);
+  useEffect(() => {
+    if (!opening || opening.failure) return undefined;
+    const timer = window.setTimeout(() => {
+      const store = useUiStore.getState();
+      if (store.opening !== opening) return;
+      const failure = "It did not come forward in time; nothing changed.";
+      if (store.screen?.kind !== "workspace") return store.setOpening({ ...opening, failure });
+      store.setOpening(null);
+      store.setNotice({ text: `Not opened: ${failure}`, refreshable: false });
+    }, OPEN_ANSWER_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [opening]);
+  useEffect(() => {
+    if (screen !== null || !loaded) return undefined;
+    if (first) {
+      useUiStore.getState().setScreen({ kind: first });
+      return undefined;
+    }
+    // A Herdr or a device that never answers must not hold the page on a
+    // blank screen; a device gets longer, since it is reached over SSH.
+    const timer = window.setTimeout(() => {
+      if (useUiStore.getState().screen === null) useUiStore.getState().setScreen({ kind: "main" });
+    }, remoteFront ? 15_000 : 3000);
+    return () => window.clearTimeout(timer);
+  }, [screen, loaded, first, remoteFront]);
+  if (screen === null) {
+    return (
+      <div className="flex flex-1 items-center justify-center text-caption text-muted" data-center-screen="starting">
+        Opening your last Workspace…
+      </div>
+    );
+  }
+  if (screen.kind === "overview") return <OverviewScreen projectId={screen.projectId} actions={actions} />;
+  if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
+  return <MainScreen actions={actions} />;
 }

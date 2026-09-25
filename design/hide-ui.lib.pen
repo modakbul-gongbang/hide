@@ -9106,7 +9106,7 @@
           "fill": "$--color-secondary",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "28pt identity + known children only: 24pt row. First child uses status, provider and body title; +N inspects remaining children. Titles come from canonical metadata. Zero / one / many and 240pt Korean states reuse this master. Core async operation state stays in the pane header; unknown activity blocks close until Check status completes.",
+          "content": "28pt identity + known children only: 24pt row. First child uses status, provider and body title; +N inspects remaining children in the native shell; the web Workspace shows every direct child with Component / Pane child row. Titles come from canonical metadata. Zero / one / many and 240pt Korean states reuse this master. Core async operation state stays in the pane header; unknown activity blocks close until Check status completes.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -13219,6 +13219,670 @@
           "fontWeight": "normal"
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "pane-child-row-sheet",
+      "x": 3400,
+      "y": 7264,
+      "name": "Component / Pane child row",
+      "width": 560,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "pane-child-row-sheet-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pane-child-row-sheet-title-name",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "Pane child row (web Workspace)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "pane-child-row-sheet-title-spec",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "content": "Every direct child on one 24pt row under the pane header (--size-pane-child-row); each chip is a status mark, the provider mark and a title capped at --size-pane-child-chip-max. The row clips and scrolls sideways instead of growing, and a pane with no children has no row. A chip opens the existing child at once; while that move is in flight it shows … and ignores repeats; a failure puts the core reason under the header with Retry (when retryable) and Dismiss. Supersedes first child + N for the web shell; the native pane header keeps its own master until the native shell changes.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pane-child-row-sheet-master",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pane-child-row-sheet-master-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Masters - the chip and the row; every state below is a ref",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pane-child-chip",
+              "name": "Component / Pane child chip",
+              "reusable": true,
+              "height": 20,
+              "cornerRadius": "$--radius-xs",
+              "stroke": "$--color-divider",
+              "strokeWidth": "$--size-hairline",
+              "gap": "$--spacing-xxs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-xxs"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pane-child-chip-mark",
+                  "name": "Status mark",
+                  "fill": "$--color-agent-working",
+                  "content": "●",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "pane-child-chip-provider",
+                  "name": "Provider mark",
+                  "width": 14,
+                  "height": 14,
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                    "mode": "fit"
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "pane-child-chip-title",
+                  "name": "Title",
+                  "fill": "$--color-primary",
+                  "content": "18편 구성 검토",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": 96
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "pane-child-row",
+              "name": "Component / Pane child row",
+              "reusable": true,
+              "width": 480,
+              "height": 24,
+              "clip": true,
+              "fill": "$--color-panel",
+              "gap": "$--spacing-xxs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "pane-child-row-1",
+                  "type": "ref",
+                  "ref": "pane-child-chip",
+                  "name": "Child 1"
+                },
+                {
+                  "id": "pane-child-row-2",
+                  "type": "ref",
+                  "ref": "pane-child-chip",
+                  "name": "Child 2",
+                  "descendants": {
+                    "pane-child-chip-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "pane-child-chip-title": {
+                      "content": "API 계약 확인"
+                    }
+                  }
+                },
+                {
+                  "id": "pane-child-row-3",
+                  "type": "ref",
+                  "ref": "pane-child-chip",
+                  "name": "Child 3",
+                  "descendants": {
+                    "pane-child-chip-mark": {
+                      "content": "◆",
+                      "fill": "$--color-warning"
+                    },
+                    "pane-child-chip-title": {
+                      "content": "Review release notes draft"
+                    }
+                  }
+                },
+                {
+                  "id": "pane-child-row-4",
+                  "type": "ref",
+                  "ref": "pane-child-chip",
+                  "name": "Child 4",
+                  "descendants": {
+                    "pane-child-chip-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "pane-child-chip-mark": {
+                      "content": "✓",
+                      "fill": "$--color-success"
+                    },
+                    "pane-child-chip-title": {
+                      "content": "Fixture cleanup"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pane-child-row-state-overflow",
+          "name": "State / Many children at 280, scrolls sideways",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pane-child-row-state-overflow-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Many children at 280, scrolls sideways",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "pane-child-row-overflow",
+              "type": "ref",
+              "ref": "pane-child-row",
+              "name": "Overflow 280",
+              "width": 280
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pane-child-row-state-hover",
+          "name": "State / Hover chip",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pane-child-row-state-hover-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Hover chip",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "pane-child-chip-hover",
+              "type": "ref",
+              "ref": "pane-child-chip",
+              "name": "Hover",
+              "fill": "$--color-elevated"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pane-child-row-state-pending",
+          "name": "State / Move in flight",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pane-child-row-state-pending-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Move in flight",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "pane-child-chip-pending",
+              "type": "ref",
+              "ref": "pane-child-chip",
+              "name": "Pending",
+              "descendants": {
+                "pane-child-chip-mark": {
+                  "content": "…",
+                  "fill": "$--color-muted"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pane-child-row-state-delegated",
+          "name": "State / Delegated child, muted title",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pane-child-row-state-delegated-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Delegated child, muted title",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "pane-child-chip-delegated",
+              "type": "ref",
+              "ref": "pane-child-chip",
+              "name": "Delegated",
+              "descendants": {
+                "pane-child-chip-title": {
+                  "fill": "$--color-secondary"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pane-child-row-state-failed",
+          "name": "State / Failed move with Retry and Dismiss",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "pane-child-row-state-failed-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Failed move with Retry and Dismiss",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pane-child-failure",
+              "name": "Failed move",
+              "width": 480,
+              "height": 24,
+              "fill": "$--color-panel",
+              "gap": "$--spacing-sm",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pane-child-failure-reason",
+                  "name": "Core reason",
+                  "fill": "$--color-danger",
+                  "content": "Herdr did not answer in time",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "text",
+                  "id": "pane-child-failure-retry",
+                  "name": "Retry",
+                  "fill": "$--color-secondary",
+                  "content": "Retry",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "pane-child-failure-dismiss",
+                  "name": "Dismiss",
+                  "fill": "$--color-muted",
+                  "content": "Dismiss",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "layout-switch-sheet",
+      "x": 4040,
+      "y": 7264,
+      "name": "Component / Layout switch",
+      "width": 320,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "layout-switch-sheet-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "layout-switch-sheet-title-name",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "Layout switch (web Workspace)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "layout-switch-sheet-title-spec",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "content": "Agents only, Agents and Views, Views only as three adjacent icon buttons in one group; the chosen one sits on --color-elevated with a primary glyph, the others muted. Each icon tooltip is its accessible name; the chevron opens the same three names as a menu, and the palette carries them as commands. Choosing a layout only changes space.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "layout-switch-sheet-master",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "layout-switch-sheet-master-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Master - glyphs muted; each state below chooses one",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "layout-switch",
+              "name": "Component / Layout switch",
+              "reusable": true,
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "layout-switch-group",
+                  "name": "Segmented group",
+                  "fill": "$--color-background",
+                  "cornerRadius": "$--radius-sm",
+                  "padding": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "layout-switch-agents",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Agents only",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "square-terminal",
+                          "fill": "$--color-muted"
+                        }
+                      }
+                    },
+                    {
+                      "id": "layout-switch-together",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Agents and Views",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "columns-2",
+                          "fill": "$--color-muted"
+                        }
+                      }
+                    },
+                    {
+                      "id": "layout-switch-views",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Views only",
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "file-text",
+                          "fill": "$--color-muted"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "layout-switch-menu",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Layout menu",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "chevron-down",
+                      "fill": "$--color-muted"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "layout-switch-state-agents",
+          "name": "State / Agents only chosen",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "layout-switch-state-agents-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Agents only chosen",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "layout-switch-agents-ref",
+              "type": "ref",
+              "ref": "layout-switch",
+              "name": "Agents only",
+              "descendants": {
+                "layout-switch-agents": {
+                  "fill": "$--color-elevated"
+                },
+                "layout-switch-agents/ZIZFR": {
+                  "fill": "$--color-primary"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "layout-switch-state-together",
+          "name": "State / Agents and Views chosen",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "layout-switch-state-together-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Agents and Views chosen",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "layout-switch-together-ref",
+              "type": "ref",
+              "ref": "layout-switch",
+              "name": "Agents and Views",
+              "descendants": {
+                "layout-switch-together": {
+                  "fill": "$--color-elevated"
+                },
+                "layout-switch-together/ZIZFR": {
+                  "fill": "$--color-primary"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "layout-switch-state-views",
+          "name": "State / Views only chosen",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "layout-switch-state-views-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Views only chosen",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "layout-switch-views-ref",
+              "type": "ref",
+              "ref": "layout-switch",
+              "name": "Views only",
+              "descendants": {
+                "layout-switch-views": {
+                  "fill": "$--color-elevated"
+                },
+                "layout-switch-views/ZIZFR": {
+                  "fill": "$--color-primary"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "layout-switch-state-hover",
+          "name": "State / Hover on an unchosen layout",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "layout-switch-state-hover-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Hover on an unchosen layout",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "layout-switch-hover-ref",
+              "type": "ref",
+              "ref": "layout-switch",
+              "name": "Hover",
+              "descendants": {
+                "layout-switch-together": {
+                  "fill": "$--color-elevated"
+                },
+                "layout-switch-together/ZIZFR": {
+                  "fill": "$--color-primary"
+                },
+                "layout-switch-views": {
+                  "fill": "$--color-hover-wash"
+                },
+                "layout-switch-views/ZIZFR": {
+                  "fill": "$--color-secondary"
+                }
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {
@@ -13901,6 +14565,10 @@
     "--color-accent-choice-violet": {
       "type": "color",
       "value": "#C4B5FD"
+    },
+    "--size-workspace-area-min": {
+      "type": "number",
+      "value": 224
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

@@ -37,6 +37,9 @@ async function screen(page: Page): Promise<string> {
 test.describe.configure({ timeout: 90_000 });
 
 test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, context }) => {
+  // A Workspace opens with the Explorer beside its agents; the room keeps
+  // the split panes wide enough that typed lines do not wrap.
+  await page.setViewportSize({ width: 1680, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
@@ -82,8 +85,11 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect(page.locator("[data-pane-view]")).toHaveCount(1);
     await expect.poll(() => sent.get("focus_checkout")).toBe(focusEvents + 1);
 
-    // A project row goes back to that project's last checkout.
+    // A project row opens that Project's Overview (S6 B1), and its
+    // Workspace row enters the Workspace (B2).
     await firstProject.locator("[data-project-row]").click();
+    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await page.locator("[data-overview-workspace]").first().click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
 

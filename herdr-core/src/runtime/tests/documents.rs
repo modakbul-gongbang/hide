@@ -1192,3 +1192,92 @@ fn a_closed_device_file_reopens_only_on_its_device_and_leaves_this_machines_clos
     assert_eq!(runtime.recent_closed.len(), 1);
     assert_eq!(runtime.recent_closed[0].label(), "local.txt");
 }
+
+/// S6 B20, B21: after a restart a device Workspace's View tabs wait for the
+/// device helper rather than coming back unavailable while it connects.
+#[test]
+fn a_device_workspaces_view_tabs_wait_for_its_helper_after_a_restart() {
+    use crate::workspace_views::{ViewTabKind, ViewTabRecord};
+    let f = Fixture::new();
+    let root = f.root.to_string_lossy().into_owned();
+    let views_dir = tempfile::tempdir().unwrap();
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: DEVICE.to_owned(),
+            state: "connected".to_owned(),
+            message: None,
+            herdr_version: None,
+            session: None,
+            files: RemoteFileListSnapshot::idle(),
+            catalog: crate::model::DeviceCatalogSnapshot {
+                state: "ready".to_owned(),
+                ..Default::default()
+            },
+        });
+        runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
+        let mut store =
+            WorkspaceViewStore::open(views_dir.path().join("views.json"), Default::default()).0;
+        let record = ViewTabRecord {
+            path: f.path("a.txt"),
+            kind: ViewTabKind::File,
+            committed: None,
+            preview: false,
+        };
+        let entry = store.views.entry(DEVICE, &root);
+        // A diff tab comes back at once, so the editor changes while the
+        // file is still being read.
+        let diff = ViewTabRecord {
+            path: f.path("a.txt"),
+            kind: ViewTabKind::Diff,
+            committed: Some(false),
+            preview: false,
+        };
+        entry.tabs = vec![diff, record.clone()];
+        entry.active = Some(record);
+        runtime.workspace_views = Some(store);
+        runtime.sync_workspace_view();
+        assert!(
+            runtime.snapshot.editor.tabs.is_empty(),
+            "nothing is restored, or marked unavailable, while the helper connects"
+        );
+        runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
+            host: f.device.clone(),
+            platform: "macos aarch64".to_owned(),
+            helper_path: "/fake/hide-host-helper".to_owned(),
+        };
+        runtime.snapshot.status.remote[0].catalog.state = "resolving".to_owned();
+        assert!(
+            !runtime.restore_front_when_ready(),
+            "the device's checkouts are not in their Projects yet"
+        );
+        runtime.snapshot.status.remote[0].catalog.state = "ready".to_owned();
+        f.device.hold();
+        assert!(runtime.restore_front_when_ready());
+        runtime.sync_workspace_view();
+        let saved = &runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .views
+            .get(DEVICE, &root)
+            .unwrap()
+            .tabs;
+        assert_eq!(
+            saved.len(),
+            2,
+            "a tab still being read back stays in the saved list"
+        );
+    }
+    f.device.release();
+    f.wait_for_document("a.txt", "the restored device file", |_| true);
+    let runtime = f.shared.lock().unwrap();
+    let tab = runtime
+        .snapshot
+        .editor
+        .tabs
+        .iter()
+        .find(|tab| tab.path == f.path("a.txt"))
+        .expect("the restored tab");
+    assert_eq!(tab.unavailable_reason, None);
+}

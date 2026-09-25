@@ -438,6 +438,12 @@ impl SessionReplica {
             let source_pane_id = agent.pane_id.clone();
             agent.id = format!("remote:{target_id}:agent:{source_pane_id}");
             agent.pane_id = remote_pane_id(target_id, &source_pane_id);
+            // The parent a device declared is one of its own panes, so the
+            // lineage joins it by the same scoped id.
+            agent.spawned_from_pane_id = agent
+                .spawned_from_pane_id
+                .as_deref()
+                .map(|parent| remote_pane_id(target_id, parent));
         }
 
         // Remote rows use the same representative-agent and purpose fallback

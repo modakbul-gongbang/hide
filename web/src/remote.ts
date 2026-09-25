@@ -141,6 +141,11 @@ export function remoteControl(targetId: string, request: RemoteAction, requestId
   return { schema_version: 2, kind: "remote_control", payload: { target_id: targetId, request_id: requestId, ...request } };
 }
 
+/** The same request, also bringing its device forward once it is sent: one event for both (S6 B21). */
+export function withDeviceForward(event: ReturnType<typeof remoteControl>) {
+  return { ...event, payload: { ...event.payload, focus_device: true } };
+}
+
 /** A remote pane's rectangle as CSS percentages of the canvas. */
 export function frameStyle(frame: { x: number; y: number; width: number; height: number }): Record<string, string> {
   const percent = (value: number) => `${Math.max(0, Math.min(1, value)) * 100}%`;

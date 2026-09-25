@@ -59,6 +59,9 @@ impl Runtime {
             .cloned()
             .ok_or_else(|| format!("Editor tab {tab_id} is not open"))?;
         let document = match tab.kind {
+            // A restored tab whose file could not be read has no document;
+            // showing it shows why (B20).
+            EditorTabKind::File if tab.unavailable_reason.is_some() => None,
             EditorTabKind::File => Some(
                 self.editor_documents
                     .get(tab_id)
@@ -178,12 +181,14 @@ impl Runtime {
         checkout_id: &str,
         path: &str,
     ) -> Result<PreparedFileTab, String> {
+        // A tab that could not read its file reads it again on the next open.
         if let Some(tab_id) = self.snapshot.editor.tabs.iter().find_map(|tab| {
             (tab.kind == EditorTabKind::File
                 && tab.workspace_id == workspace_id
                 && tab.checkout_id == checkout_id
-                && tab.path == path)
-                .then(|| tab.id.clone())
+                && tab.path == path
+                && tab.unavailable_reason.is_none())
+            .then(|| tab.id.clone())
         }) {
             return Ok(PreparedFileTab::Open(tab_id));
         }
@@ -222,6 +227,7 @@ impl Runtime {
                         preview,
                         reload: false,
                         reveal: None,
+                        restore: None,
                     },
                 );
                 self.snapshot.ui_state.selected_path = Some(path.to_owned());
@@ -278,6 +284,7 @@ impl Runtime {
             wrap: false,
             dirty: false,
             preview,
+            unavailable_reason: None,
         };
         self.place_editor_tab(tab);
         Some(tab_id)
@@ -292,7 +299,7 @@ impl Runtime {
     /// are dropped without a Recent Closed entry (D-04). A dirty preview tab
     /// is never replaced: it is promoted where it sits and the new preview
     /// opens beside it (D-05). File and diff tabs share the one slot (D-02).
-    fn place_editor_tab(&mut self, tab: EditorTabSnapshot) {
+    pub(super) fn place_editor_tab(&mut self, tab: EditorTabSnapshot) {
         let replaced = tab.preview.then(|| {
             self.snapshot
                 .editor
@@ -490,39 +497,54 @@ impl Runtime {
         committed: bool,
         preview: bool,
     ) {
+        let tab_id = self.insert_diff_tab(workspace_id, checkout_id, path, committed, preview);
+        if let Err(message) = self.activate_editor_tab(&tab_id) {
+            self.set_error("diff.focus_failed", message, false);
+        }
+    }
+
+    /// Puts a diff tab in its checkout's strip without showing it, or keeps
+    /// the one already there (promoted unless a preview was asked for).
+    pub(super) fn insert_diff_tab(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        path: &str,
+        committed: bool,
+        preview: bool,
+    ) -> String {
         let tab_id = Self::diff_tab_id(workspace_id, checkout_id, path, committed);
         if self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
             if !preview {
                 self.promote_editor_tab(&tab_id);
             }
+            return tab_id;
+        }
+        let name = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(path);
+        let scope = if committed {
+            "branch diff"
         } else {
-            let name = Path::new(path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .filter(|name| !name.is_empty())
-                .unwrap_or(path);
-            let scope = if committed {
-                "branch diff"
-            } else {
-                "working diff"
-            };
-            self.place_editor_tab(EditorTabSnapshot {
-                id: tab_id.clone(),
-                workspace_id: workspace_id.to_owned(),
-                checkout_id: checkout_id.to_owned(),
-                path: path.to_owned(),
-                label: format!("{name} ({scope})"),
-                kind: EditorTabKind::Diff,
-                diff_committed: Some(committed),
-                markdown_live: true,
-                wrap: false,
-                dirty: false,
-                preview,
-            });
-        }
-        if let Err(message) = self.activate_editor_tab(&tab_id) {
-            self.set_error("diff.focus_failed", message, false);
-        }
+            "working diff"
+        };
+        self.place_editor_tab(EditorTabSnapshot {
+            id: tab_id.clone(),
+            workspace_id: workspace_id.to_owned(),
+            checkout_id: checkout_id.to_owned(),
+            path: path.to_owned(),
+            label: format!("{name} ({scope})"),
+            kind: EditorTabKind::Diff,
+            diff_committed: Some(committed),
+            markdown_live: true,
+            wrap: false,
+            dirty: false,
+            preview,
+            unavailable_reason: None,
+        });
+        tab_id
     }
 
     pub(super) fn show_archive_tab(
@@ -560,6 +582,7 @@ impl Runtime {
                 wrap: true,
                 dirty: false,
                 preview,
+                unavailable_reason: None,
             });
         }
         if let Err(message) = self.activate_editor_tab(&tab_id) {
@@ -2237,7 +2260,7 @@ impl Runtime {
                     self.snapshot.focused.surface = Surface::Terminal;
                     self.snapshot.focused.pane_id = Some(pane_id.clone());
                     self.snapshot.ui_state.selected_pane_id = Some(pane_id);
-                    self.deactivate_editor_tab();
+                    self.yield_surface_to_terminal();
                 }
                 self.set_reopen_notices(outcome.notices);
             }

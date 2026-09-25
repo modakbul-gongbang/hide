@@ -19,11 +19,13 @@ mod projects;
 mod session;
 mod snapshot_delta;
 mod terminal;
+mod workspace_view;
 
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use events::*;
 use operations::*;
+use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
 use crate::ffi::ChangeNotifier;
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
@@ -1145,6 +1147,9 @@ pub struct Runtime {
     unconfirmed_created_purposes: HashMap<String, String>,
     next_explorer_operation_id: u64,
     delta: snapshot_delta::DeltaState,
+    /// Each Workspace's presentation; present only in a shell that draws
+    /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
+    workspace_views: Option<WorkspaceViewStore>,
 }
 
 #[derive(Clone)]
@@ -1209,6 +1214,29 @@ impl Runtime {
                 occurred_at: unix_milliseconds(),
             });
         }
+        let workspace_views = options.workspace_views_path.as_ref().map(|path| {
+            let (store, diagnostic) = WorkspaceViewStore::open(
+                PathBuf::from(path),
+                (
+                    snapshot.ui_state.right_panel_visible,
+                    snapshot.ui_state.right_panel_section,
+                ),
+            );
+            if let Some((kind, message)) = diagnostic {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "workspace_views",
+                    "kind": kind,
+                    "message": message,
+                    "fallback": "defaults"
+                }));
+                snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                    kind: kind.to_owned(),
+                    message,
+                    occurred_at: unix_milliseconds(),
+                });
+            }
+            store
+        });
         let mut runtime = Self {
             snapshot,
             file_roots: None,
@@ -1345,6 +1373,7 @@ impl Runtime {
             unconfirmed_created_purposes: HashMap::new(),
             next_explorer_operation_id: 0,
             delta: snapshot_delta::DeltaState::default(),
+            workspace_views,
         };
         runtime.resync_navigator_focus();
         runtime.apply_persisted_pet_state();
@@ -1375,8 +1404,11 @@ impl Runtime {
 
     /// The daemon installs only handles opened under its pinned registrations.
     /// An empty set still enforces the boundary; Swift leaves this as `None`.
-    pub fn set_file_roots(&mut self, roots: crate::files::FileRoots) {
+    /// Returns whether the front Workspace's View tabs, which waited for its
+    /// root, began to restore, so the caller announces the change.
+    pub fn set_file_roots(&mut self, roots: crate::files::FileRoots) -> bool {
         self.file_roots = Some(roots);
+        self.restore_front_when_ready()
     }
 
     pub fn set_live(&mut self, context: LiveContext) {
@@ -1474,7 +1506,30 @@ impl Runtime {
         };
 
         let cleared_error = self.snapshot.status.last_error.take().is_some();
+        let intent = self
+            .separate_view_areas()
+            .then(|| AreaIntent::of(&event))
+            .flatten();
+        let high_frequency = event.is_terminal_io();
+        let chooses_workspace = matches!(
+            event,
+            Event::FocusCheckout(_) | Event::FocusPane(_) | Event::FocusTab(_)
+        );
         let changed = self.apply(event) || cleared_error;
+        // The areas follow the event that moved the screen, in the same
+        // frame (D-08); terminal input and output never move them, so they
+        // skip the pass.
+        if self.separate_view_areas() && !high_frequency {
+            if let Some(intent) = intent
+                && self.snapshot.status.last_error.is_none()
+            {
+                self.apply_area_intent(intent);
+            }
+            if chooses_workspace && self.snapshot.status.last_error.is_none() {
+                self.mark_front_chosen();
+            }
+            self.sync_workspace_view();
+        }
         // Every event that can move the visible tab funnels through here, so
         // the attach window is maintained once rather than at each of the four
         // places a tab becomes visible.

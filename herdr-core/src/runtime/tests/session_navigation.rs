@@ -2740,3 +2740,70 @@ fn browser_shortcut_bindings_survive_a_ui_state_update_that_omits_them() {
         Some("ui_state.browser_shortcuts_invalid")
     );
 }
+
+/// S6 B15. A chip or Return aimed at a pane that is closing is refused, and
+/// the refusal answers that request, or the control would stay pending.
+#[test]
+fn pane_focus_request_on_a_closing_pane_is_answered_as_failed() {
+    let checkout_path = "/private/tmp/hide-pane-focus-closing";
+    let (mut runtime, _) = live_tab_order_runtime(checkout_path);
+    runtime.suppress_terminal_session_workers = true;
+    let tabs = ["w-order:t1", "w-order:t2"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    let close = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "close_pane",
+        "payload": {"pane_id": "w-order:t2:p", "confirmed": true}
+    }))
+    .expect("close pane event");
+    runtime.dispatch_json(&close);
+
+    runtime.dispatch_json(&correlated_pane_focus_event("w-order:t2:p", "chip-1"));
+    let request = runtime
+        .snapshot()
+        .status
+        .pane_focus_request
+        .as_ref()
+        .expect("the refusal answers the request");
+    assert_eq!(request.request_id, "chip-1");
+    assert_eq!(request.phase, "failed");
+    assert!(!request.retryable);
+    assert!(request.message.as_deref().unwrap_or("").contains("closing"));
+}
+
+/// S6 B21: a Workspace on this machine chosen while a device is in front is
+/// one event that brings this machine forward too, and a refused one moves
+/// neither.
+#[test]
+fn a_checkout_chosen_with_its_device_moves_both_or_neither() {
+    let checkout_path = "/private/tmp/hide-checkout-with-device";
+    let (mut runtime, checkout_id) = tab_order_runtime(checkout_path);
+    let choose = |checkout_id: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_checkout",
+            "payload": {"workspace_id": "workspace:order", "checkout_id": checkout_id, "focus_device": true}
+        }))
+        .expect("focus checkout event")
+    };
+    runtime.snapshot.navigator.focused_device_id = Some("mini".to_owned());
+
+    runtime.dispatch_json(&choose("checkout:missing"));
+    assert!(runtime.snapshot.status.last_error.is_some());
+    assert_eq!(
+        runtime.snapshot.navigator.focused_device_id.as_deref(),
+        Some("mini")
+    );
+
+    runtime.dispatch_json(&choose(&checkout_id));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_device_id.as_deref(),
+        Some(workspace::LOCAL_DEVICE_ID)
+    );
+}

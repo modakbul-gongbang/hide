@@ -22,6 +22,12 @@ pub struct CoreOptions {
     /// home. Absent means `remote::host::DEFAULT_HELPER_ROOT`.
     #[serde(default)]
     pub host_helper_root: Option<String>,
+    /// Where a shell that draws separate Agent and View areas keeps each
+    /// Workspace's presentation (PRD S6 D-10). Its presence is what turns
+    /// those semantics on: the web daemon passes it, the Swift shell passes
+    /// nothing and keeps a document in place of the terminal canvas.
+    #[serde(default)]
+    pub workspace_views_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -57,6 +63,29 @@ pub struct Snapshot {
     pub status: StatusSnapshot,
     pub pet: PetSnapshot,
     pub recent_closed: RecentClosedSnapshot,
+    /// The front Workspace's presentation, present only in a shell that draws
+    /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
+    /// Omitted rather than null otherwise, so the Swift shell's snapshot
+    /// keeps exactly its keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_view: Option<WorkspaceViewSnapshot>,
+}
+
+/// What the front Workspace shows: its areas, its tools and the boundary
+/// between the areas. The View area's active document is the editor's own
+/// `active_tab_id`, which the core keeps on this Workspace's View tab.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct WorkspaceViewSnapshot {
+    pub device_id: String,
+    pub path: String,
+    pub mode: crate::workspace_views::ViewMode,
+    pub explorer: bool,
+    pub changes: bool,
+    pub agent_share: f32,
+    /// Whether this is the Workspace the operator last chose, now or before a
+    /// restart, which the shell opens on; any other front starts on Main
+    /// (D-11).
+    pub resumed: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -1222,9 +1251,15 @@ pub struct EditorTabSnapshot {
     /// The checkout's one replaceable preview tab (VS Code's model): opened by
     /// a single click, replaced in place by the next single click, and
     /// promoted to an ordinary tab by a double-click, the first edit, Keep
-    /// Open, or a drag. A dirty tab is never replaced. Editor tabs are
-    /// ephemeral, so this is never persisted.
+    /// Open, or a drag. A dirty tab is never replaced. Only a shell with
+    /// separate View areas remembers its tabs across a restart.
     pub preview: bool,
+    /// Why a View tab restored after a restart has no document: its file is
+    /// gone or its device cannot read it. Such a tab only offers Close (B20).
+    /// Absent from the wire when there is none, so the Swift shell's tabs
+    /// keep exactly their keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -2610,6 +2645,7 @@ impl Snapshot {
             },
             pet: PetSnapshot::initial(),
             recent_closed: RecentClosedSnapshot::default(),
+            workspace_view: None,
         }
     }
 }
@@ -2665,6 +2701,7 @@ pub struct RestSections {
     pub status: StatusSnapshot,
     pub pet: PetSnapshot,
     pub recent_closed: RecentClosedSnapshot,
+    pub workspace_view: Option<WorkspaceViewSnapshot>,
 }
 
 impl RestSections {
@@ -2694,6 +2731,7 @@ impl RestSections {
             status: snapshot.status.clone(),
             pet: snapshot.pet.clone(),
             recent_closed: snapshot.recent_closed.clone(),
+            workspace_view: snapshot.workspace_view.clone(),
         }
     }
 
@@ -2724,6 +2762,7 @@ impl RestSections {
             && self.status == snapshot.status
             && self.pet == snapshot.pet
             && self.recent_closed == snapshot.recent_closed
+            && self.workspace_view == snapshot.workspace_view
     }
 }
 
@@ -2815,6 +2854,8 @@ pub struct RestWire<'a> {
     pub status: &'a StatusSnapshot,
     pub pet: &'a PetSnapshot,
     pub recent_closed: &'a RecentClosedSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_view: &'a Option<WorkspaceViewSnapshot>,
 }
 
 impl<'a> RestWire<'a> {
@@ -2846,6 +2887,7 @@ impl<'a> RestWire<'a> {
             status: &rest.status,
             pet: &rest.pet,
             recent_closed: &rest.recent_closed,
+            workspace_view: &rest.workspace_view,
         }
     }
 }

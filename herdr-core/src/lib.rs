@@ -39,6 +39,7 @@ mod terminal_recovery;
 mod usage;
 mod wire;
 pub mod workspace;
+pub mod workspace_views;
 mod worktrees;
 mod zoneinfo;
 

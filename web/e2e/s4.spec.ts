@@ -41,10 +41,11 @@ test("History opens a scoped patch, then updates after editing the original file
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first().click();
-    await page.keyboard.press("Meta+Shift+KeyB");
-    await expect(page.locator('[data-right-panel-section="explorer"]')).toBeVisible();
-    await page.getByRole("button", { name: "History", exact: true }).click();
-    await expect(page.locator('[data-right-panel-section="changes"]')).toBeVisible();
+    // The Workspace opens with the Explorer; History is a second tool beside it (S6 B10).
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await page.locator('[data-tool-toggle="changes"]').click();
+    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     await expect(page.locator('[data-history-group-section="working"]')).toBeVisible();
     await expect(page.locator('[data-history-group-section="committed"]')).toBeVisible();
     const row = page.locator('[data-history-group="working"][data-history-path="한글 notes.txt"]');
@@ -62,12 +63,13 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-diff-group="committed"] [data-patch-view] .cm-content')).toContainText("+branch");
     await row.click();
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
-    await page.locator('[data-right-panel-collapse="true"]').click();
-    await expect(page.locator("[data-right-panel]")).toHaveCount(0);
+    // ⌘⇧B hides every tool that shows, and brings the Explorer back alone.
     await page.keyboard.press("Meta+Shift+KeyB");
-    await expect(page.locator('[data-right-panel-section="changes"]')).toBeVisible();
+    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
+    await page.keyboard.press("Meta+Shift+KeyB");
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Explorer" }).click();
     const fileRow = page.locator(`[data-explorer-row="${file}"]`);
     await expect(fileRow).toBeVisible();
     await fileRow.click();
@@ -76,7 +78,7 @@ test("History opens a scoped patch, then updates after editing the original file
     await page.keyboard.press("Meta+KeyA");
     await page.keyboard.type("first\nthird\n");
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("first\nthird\n");
-    await page.getByRole("button", { name: "History", exact: true }).click();
+    await page.locator('[data-tool-toggle="changes"]').click();
     await row.click();
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+third");
     await expect(page.locator('[data-patch-view] .cm-content')).not.toContainText("second <script>");
@@ -134,8 +136,7 @@ test("registered subfolder History opens inside patches and hides sibling change
     const project = page.locator("[data-project]", { hasText: "registered" });
     await expect(project).toBeVisible({ timeout: 20_000 });
     await project.locator("[data-checkout]").first().click();
-    await page.keyboard.press("Meta+Shift+KeyB");
-    await page.getByRole("button", { name: "History", exact: true }).click();
+    await page.locator('[data-tool-toggle="changes"]').click();
     const history = page.locator('[data-history-root]');
     await expect(history).toHaveAttribute("data-history-root", registered);
     await expect(page.locator('[data-history-path="inside.txt"]')).toBeVisible();

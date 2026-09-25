@@ -180,6 +180,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             app_state_path: state_path.to_string_lossy().into_owned(),
             host_helper_dir: None,
             host_helper_root: None,
+            workspace_views_path: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
@@ -571,6 +572,7 @@ fn official_remote_session_coordinator_probe() {
             app_state_path: state_path.to_string_lossy().into_owned(),
             host_helper_dir: None,
             host_helper_root: None,
+            workspace_views_path: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
@@ -1441,4 +1443,27 @@ fn coordinator_recovers_a_stream_error_with_one_fresh_snapshot_and_stops_its_rea
     drop(handle);
     server.join().expect("fake server joins");
     remove_fixture(&root, &socket_path, &state_path);
+}
+
+/// S6 B21: a device's declared parent is one of its own panes, so it is
+/// scoped to the device like the pane ids the lineage joins it with.
+#[test]
+fn a_device_agents_declared_parent_is_scoped_to_the_device() {
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let mut child = agent("w1:p1", "1m");
+    child.spawned_from_pane_id = Some("w1:p0".to_owned());
+    child.tokens.remove("activity");
+    replica.replace_agents(vec![child]);
+    replica.refresh_published_state().expect("published");
+    let (remote, excluded) = replica.project_remote("mini").expect("remote projection");
+    assert!(excluded.is_empty(), "{excluded:?}");
+    let row = remote
+        .agents
+        .iter()
+        .find(|row| row.pane_id == "remote:mini:pane:w1:p1")
+        .expect("the device agent");
+    assert_eq!(
+        row.spawned_from_pane_id.as_deref(),
+        Some("remote:mini:pane:w1:p0")
+    );
 }

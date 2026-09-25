@@ -3,6 +3,8 @@
 // owns (focus, tabs, layout, sidebar visibility) stays in `store.ts`.
 
 import { create } from "zustand";
+import type { Relation } from "./lineage";
+import type { Opening } from "./navigation";
 
 export type SidebarMode = "agents" | "projects";
 
@@ -19,6 +21,15 @@ export type PendingClose = {
   consequence: string;
   affected: string[];
 };
+
+/**
+ * Where the center stands (PRD S6 D-02): Main lists every Project, Overview
+ * one Project's Workspaces and agents, Workspace the front checkout. It is
+ * this page's own navigation, like the sidebar's mode: every value it shows
+ * is the core's, and the Workspace it shows is the core's front checkout.
+ * `null` until the first snapshot decides where the page starts (D-11).
+ */
+export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "workspace" };
 
 export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "search" | "settings";
 
@@ -63,6 +74,9 @@ export type PendingTrash = {
 };
 
 type UiStore = {
+  screen: Screen | null;
+  /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
+  relation: Relation | null;
   sidebarMode: SidebarMode;
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
@@ -88,6 +102,8 @@ type UiStore = {
   watchedTask: number | null;
   /** The pane a creation made, to be focused once the snapshot lists it (B13). */
   focusWhenListed: string | null;
+  /** A Workspace or agent asked for from Main, an Overview or the Agents list, until it is in front or refused (S6 B2, B21). */
+  opening: Opening | null;
   watchedRemoval: { deviceId: string; path: string; afterId: number } | null;
   /** True while a Shortcuts row is recording: the window listener then runs no command. */
   recordingShortcut: boolean;
@@ -97,6 +113,8 @@ type UiStore = {
    * confirmation closes before the sheet behind it.
    */
   escapeLayers: (() => void)[];
+  setScreen: (screen: Screen) => void;
+  setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
@@ -111,6 +129,7 @@ type UiStore = {
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
+  setOpening: (opening: Opening | null) => void;
   setWatchedRemoval: (removal: { deviceId: string; path: string; afterId: number } | null) => void;
   setRecordingShortcut: (recording: boolean) => void;
   /** Registers an Escape layer and returns its removal. */
@@ -118,6 +137,8 @@ type UiStore = {
 };
 
 export const useUiStore = create<UiStore>((set, get) => ({
+  screen: null,
+  relation: null,
   sidebarMode: "agents",
   explorerSelection: null,
   editorFindRequest: 0,
@@ -130,9 +151,14 @@ export const useUiStore = create<UiStore>((set, get) => ({
   workspaceDialog: null,
   watchedTask: null,
   focusWhenListed: null,
+  opening: null,
   watchedRemoval: null,
   recordingShortcut: false,
   escapeLayers: [],
+  // Moving by hand drops an open still waiting for its Workspace, so a late
+  // answer does not pull the screen away from where the operator went.
+  setScreen: (screen) => set({ screen, opening: null }),
+  setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
@@ -152,6 +178,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setWorkspaceDialog: (workspaceDialog) => set({ workspaceDialog }),
   setWatchedTask: (watchedTask) => set({ watchedTask }),
   setFocusWhenListed: (focusWhenListed) => set({ focusWhenListed }),
+  setOpening: (opening) => set({ opening }),
   setWatchedRemoval: (watchedRemoval) => set({ watchedRemoval }),
   setRecordingShortcut: (recordingShortcut) => set({ recordingShortcut }),
   pushEscape: (handler) => {

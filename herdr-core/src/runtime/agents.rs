@@ -277,6 +277,7 @@ impl Runtime {
     pub(super) fn request_remote_control(&mut self, payload: RemoteControlPayload) -> bool {
         let target_id = payload.target_id;
         let request_id = payload.request_id;
+        let focus_device = payload.focus_device;
         let pane_focus_target = match (&payload.request, payload.report_pane_focus_outcome) {
             (RemoteControlRequest::FocusPane { pane_id }, true) => Some(pane_id.clone()),
             _ => None,
@@ -430,6 +431,29 @@ impl Runtime {
             }
         }
 
+        // An agent chosen on the device brings the Agent area back on the
+        // Workspace that holds it, which is in front only once the device's
+        // Herdr has moved there (D-08).
+        let agents_area_key = self
+            .separate_view_areas()
+            .then(|| self.remote_request_workspace_key(&target_id, &session, &payload.request))
+            .flatten();
+        // The Workspace this request chooses, remembered once the device's
+        // front lands there (D-11): a Workspace opened from Main or an
+        // Overview names its checkout; an agent or tab, the checkout holding
+        // it.
+        let chosen_key = match &payload.request {
+            RemoteControlRequest::FocusWorkspace {
+                workspace_id,
+                checkout_id: Some(checkout_id),
+            }
+            | RemoteControlRequest::CreateTab {
+                workspace_id,
+                checkout_id: Some(checkout_id),
+                ..
+            } if self.separate_view_areas() => self.workspace_key(workspace_id, checkout_id),
+            _ => agents_area_key.clone(),
+        };
         let action = match payload.request {
             RemoteControlRequest::FocusPane { .. } => {
                 RemoteControlAction::Pane(PaneControlAction::Focus {
@@ -638,7 +662,7 @@ impl Runtime {
                 | RemoteControlAction::FocusWorkspace { .. }
         ) && self.active_editor_tab_on_device(&target_id)
         {
-            self.deactivate_editor_tab();
+            self.yield_surface_to_terminal();
         }
         let creation_key = remote_tab_creation_key(&target_id, &action);
         if let Some(key) = creation_key.as_ref()
@@ -715,8 +739,50 @@ impl Runtime {
             if remote_operation_key.is_none() {
                 self.set_error("remote.control.worker_failed", message, true);
             }
+            return true;
+        }
+        if focus_device && !self.device_in_front(&target_id) {
+            self.bring_device_forward(target_id.clone());
+        }
+        if let Some(key) = agents_area_key {
+            self.apply_area_intent_to(&key, AreaIntent::Agents);
+        }
+        if let Some(key) = chosen_key {
+            self.choose_when_in_front(&target_id, &dispatched_request_id, key);
         }
         true
+    }
+
+    /// The Workspace a device focus request lands on: the checkout holding
+    /// the pane or tab it names.
+    fn remote_request_workspace_key(
+        &self,
+        target_id: &str,
+        session: &RemoteSessionSnapshot,
+        request: &RemoteControlRequest,
+    ) -> Option<workspace_view::WorkspaceKey> {
+        let holds = |checkout: &CheckoutSnapshot| match request {
+            RemoteControlRequest::FocusPane { pane_id } => checkout
+                .tabs
+                .iter()
+                .any(|tab| tab.panes.iter().any(|pane| &pane.id == pane_id)),
+            RemoteControlRequest::FocusTab { tab_id } => checkout
+                .tabs
+                .iter()
+                .any(|tab| tab.id.as_deref() == Some(tab_id.as_str())),
+            _ => false,
+        };
+        let (workspace, checkout) = session.workspaces.iter().find_map(|workspace| {
+            workspace
+                .checkouts
+                .iter()
+                .find(|checkout| holds(checkout))
+                .map(|checkout| (workspace, checkout))
+        })?;
+        Some(
+            self.workspace_key(&workspace.id, &checkout.id)
+                .unwrap_or_else(|| (target_id.to_owned(), checkout.path.clone())),
+        )
     }
 
     pub fn ingest_provider_usage(
@@ -954,7 +1020,8 @@ impl Runtime {
         if lineage_pruned {
             self.persist_ui_state();
         }
-        let synced = sync_pane_status(&mut session.workspaces, &session.agents);
+        let synced = sync_pane_status(&mut session.workspaces, &session.agents)
+            | sync_remote_pane_relations(session);
         let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
             &session.workspaces,
@@ -1481,7 +1548,7 @@ impl Runtime {
             // Standalone runtimes have no shared mutex or worker context.
             return persistence::save(
                 &self.state_path,
-                &self.snapshot.ui_state,
+                &self.ui_state_to_save(),
                 &self
                     .terminal_sizes
                     .iter()
@@ -1510,7 +1577,7 @@ impl Runtime {
                         guard.state_save_pending = false;
                         (
                             guard.state_path.clone(),
-                            guard.snapshot.ui_state.clone(),
+                            guard.ui_state_to_save(),
                             guard
                                 .terminal_sizes
                                 .iter()
@@ -1683,6 +1750,8 @@ impl Runtime {
                 .unwrap_or(0)
                 != generation
             {
+                // An answer from a connection that is gone is a lost answer.
+                self.drop_pending_choice(target_id, request_id);
                 self.push_diagnostic(
                     "remote.control.stale_result",
                     format!(
@@ -1696,6 +1765,7 @@ impl Runtime {
                 .get(&remote_operation_key)
                 .is_some_and(|operation| operation.connection_generation != generation)
             {
+                self.drop_pending_choice(target_id, request_id);
                 return false;
             }
         }
@@ -1712,6 +1782,7 @@ impl Runtime {
         {
             let message =
                 "Remote result arrived after its deadline; no mutation was resent".to_owned();
+            self.drop_pending_choice(target_id, request_id);
             self.mark_remote_operation_unknown(&remote_operation_key, message.clone());
             if is_pane_focus {
                 self.finish_pane_focus_request_by_id(request_id, "failed", Some(message), true);
@@ -1720,6 +1791,9 @@ impl Runtime {
         }
         if let Some(key) = remote_tab_creation_key(target_id, &action) {
             self.remote_tab_creations_in_flight.remove(&key);
+        }
+        if result.is_err() {
+            self.drop_pending_choice(target_id, request_id);
         }
         match result {
             Ok(RemoteControlOutcome::Acknowledged {
@@ -1924,4 +1998,38 @@ pub(super) fn remote_herdr_workspace(
             .map(str::to_owned),
         None => remote_workspace_source_id(target_id, workspace_id).map(str::to_owned),
     }
+}
+
+/// A device pane's children and ancestors, from that device's own lineage,
+/// so its header carries the same child row and Return as a pane on this
+/// machine (S6 B14-B16, B21). A device pane has no local hook tokens; the
+/// projection reports it as uninstrumented for in-process counts, while its
+/// Herdr-declared children are still known.
+fn sync_remote_pane_relations(session: &mut RemoteSessionSnapshot) -> bool {
+    let agents = &session.agents;
+    let mut changed = false;
+    for pane in session
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+        .flat_map(|checkout| checkout.tabs.iter_mut())
+        .flat_map(|tab| tab.panes.iter_mut())
+    {
+        let children = crate::sidebar::project_pane_children(
+            agents,
+            &pane.id,
+            crate::agent_hooks::PaneHookTokens::default(),
+            &|_| None,
+        );
+        let lineage_path = crate::sidebar::project_lineage_path(agents, &pane.id);
+        if pane.children != children {
+            pane.children = children;
+            changed = true;
+        }
+        if pane.lineage_path != lineage_path {
+            pane.lineage_path = lineage_path;
+            changed = true;
+        }
+    }
+    changed
 }

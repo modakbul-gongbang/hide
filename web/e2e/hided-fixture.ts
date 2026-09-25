@@ -13,7 +13,15 @@ import type { HerdrFixture } from "./herdr-fixture";
  * and port, as a daemon restart does: the core loses what it held in memory,
  * the host keeps its id, and the browser keeps its origin and so its drafts.
  */
-export type Daemon = { origin: string; token: string; home: string; hostId: string; stop: () => void; restart: () => Promise<Daemon> };
+export type Daemon = {
+  origin: string;
+  token: string;
+  home: string;
+  hostId: string;
+  stop: () => void;
+  /** `beforeStart` runs on the daemon's state directory while it is down. */
+  restart: (beforeStart?: (stateDir: string) => void) => Promise<Daemon>;
+};
 
 export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string): Promise<Daemon> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `hide-e2e-${label}-`));
@@ -73,9 +81,10 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
         const origin = `http://127.0.0.1:${state.port}`;
         if ((await fetch(`${origin}/health`)).ok) {
           const hostId = fs.readFileSync(path.join(dir, "hide", "host-id"), "utf8").trim();
-          const restart = async () => {
+          const restart = async (beforeStart?: (stateDir: string) => void) => {
             child.kill();
             await exited;
+            beforeStart?.(path.join(dir, "hide"));
             return launch(herdr, label, dir, home, String(state.port));
           };
           return { origin, token: state.token, home: fs.realpathSync(home), hostId, stop, restart };

@@ -31,6 +31,8 @@ mod session_navigation;
 mod snapshot_delta;
 #[path = "tests/terminal.rs"]
 mod terminal;
+#[path = "tests/workspace_view.rs"]
+mod workspace_view;
 
 /// The `tab_list` Herdr answers a `tab.move` with, carrying the tabs in
 /// their new order. Only the order is read here; the other fields are
@@ -294,6 +296,7 @@ fn runtime() -> Runtime {
             .into_owned(),
         host_helper_dir: None,
         host_helper_root: None,
+        workspace_views_path: None,
     };
     Runtime::new(
         options,
