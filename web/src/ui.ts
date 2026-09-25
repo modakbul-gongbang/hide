@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
+import type { SettingsTab } from "./settings";
 import { placementForWidth, type ToolsPlacement, type ViewFocusRequest, type ViewWorkspace } from "./viewLayout";
 
 export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
@@ -123,6 +124,8 @@ type UiStore = {
   /** The trash confirmation the Explorer is showing, or null. */
   pendingTrash: PendingTrash | null;
   overlay: Overlay;
+  /** The tab the Settings sheet opens on. */
+  settingsTab: SettingsTab;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
   /** A notice the operator can act on. */
@@ -166,6 +169,7 @@ type UiStore = {
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
   closeOverlay: (overlay?: Overlay) => void;
+  openSettings: (tab: SettingsTab) => void;
   setPendingClose: (pending: PendingClose | null) => void;
   setCycle: (cycle: Cycle | null) => void;
   setNotice: (notice: Notice | null) => void;
@@ -192,6 +196,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
+  settingsTab: "general",
   pendingClose: null,
   cycle: null,
   notice: null,
@@ -234,6 +239,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   closeOverlay: (overlay) => {
     if (!overlay || get().overlay === overlay) set({ overlay: "none" });
   },
+  openSettings: (settingsTab) => set({ overlay: "settings", settingsTab }),
   setPendingClose: (pendingClose) => set({ pendingClose }),
   setCycle: (cycle) => set({ cycle }),
   setNotice: (notice) => set({ notice }),

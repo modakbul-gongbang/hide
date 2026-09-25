@@ -66,7 +66,7 @@ export function SettingsGate({ actions }: { actions: Actions }) {
 
 function SettingsSheet({ actions }: { actions: Actions }) {
   const close = () => useUiStore.getState().closeOverlay("settings");
-  const [tab, setTab] = useState<SettingsTab>("general");
+  const [tab, setTab] = useState<SettingsTab>(() => useUiStore.getState().settingsTab);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const subtitle = SETTINGS_TABS.find((row) => row.id === tab)?.subtitle ?? "";
   const daemon = useShellStore((s) => s.daemon);
