@@ -6,7 +6,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
     let pane = "w-grid:p1";
     runtime.terminal_sessions.insert(
         pane.to_owned(),
-        TerminalSession::test_stub(pane, 1, TerminalSessionMode::Observe),
+        TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control),
     );
     runtime
         .terminal_session_generations
@@ -20,7 +20,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
             runtime.ingest_terminal_session_frame(
                 pane,
                 1,
-                TerminalSessionMode::Observe,
+                TerminalSessionMode::Control,
                 b"foreign",
                 crate::model::TerminalFrame {
                     width,
@@ -36,7 +36,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
         runtime.ingest_terminal_session_frame(
             pane,
             1,
-            TerminalSessionMode::Observe,
+            TerminalSessionMode::Control,
             b"partial",
             crate::model::TerminalFrame {
                 width: 115,
@@ -50,7 +50,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
         runtime.ingest_terminal_session_frame(
             pane,
             1,
-            TerminalSessionMode::Observe,
+            TerminalSessionMode::Control,
             b"matching",
             crate::model::TerminalFrame {
                 width: 115,
@@ -73,6 +73,74 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
             .unwrap()
             .width,
         115
+    );
+}
+
+/// B2. Herdr draws an observer at the grid it attached with and an observer
+/// cannot resize, so a view that changed size after the attach (the web
+/// pane beside a Swift window that holds control) held every frame and the
+/// pane froze. The observer attaches again at the view's grid instead.
+#[test]
+fn an_observed_frame_at_an_old_grid_reattaches_the_observer_at_the_views_grid() {
+    let mut runtime = runtime();
+    runtime.suppress_terminal_session_workers = true;
+    let pane = "w-observed:p1";
+    runtime.terminal_sessions.insert(
+        pane.to_owned(),
+        TerminalSession::test_stub(pane, 7, TerminalSessionMode::Observe),
+    );
+    runtime
+        .terminal_session_generations
+        .insert(pane.to_owned(), 7);
+    runtime.terminal_session_lifecycles.insert(
+        pane.to_owned(),
+        TerminalSessionLifecycle {
+            state: "observing",
+            attempt: 5,
+            mode: Some(TerminalSessionMode::Observe),
+            ..TerminalSessionLifecycle::default()
+        },
+    );
+    runtime
+        .terminal_view_sizes
+        .insert(pane.to_owned(), (33, 143));
+    let frame = |width| crate::model::TerminalFrame {
+        width,
+        height: 33,
+        full: false,
+    };
+    assert_eq!(
+        runtime.ingest_terminal_session_frame(
+            pane,
+            7,
+            TerminalSessionMode::Observe,
+            b"old",
+            frame(186)
+        ),
+        None,
+        "the old observer retires"
+    );
+    let generation = runtime.terminal_session_generations[pane];
+    assert_ne!(generation, 7);
+    assert_eq!(runtime.terminal_sizes[pane], (33, 143));
+    assert_eq!(
+        runtime.terminal_sessions[pane].mode,
+        TerminalSessionMode::Observe
+    );
+    assert_eq!(runtime.terminal_session_lifecycles[pane].attempt, 5);
+    assert_eq!(
+        runtime.ingest_terminal_session_frame(
+            pane,
+            generation,
+            TerminalSessionMode::Observe,
+            b"new",
+            crate::model::TerminalFrame {
+                width: 143,
+                height: 33,
+                full: true
+            }
+        ),
+        Some(true)
     );
 }
 
