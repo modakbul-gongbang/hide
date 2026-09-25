@@ -71,7 +71,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
         className="shrink-0 border-t border-divider px-md py-sm text-left text-caption text-secondary hover:text-primary"
         onClick={() => actions.openNewWorkspace()}
       >
-        + 새 워크스페이스 <span className="text-muted">⌥⇧N</span>
+        + 새 워크스페이스 <span className="text-muted">{displayCommand("new_workspace", hostKind())}</span>
       </button>
       <DevicePicker actions={actions} />
     </nav>

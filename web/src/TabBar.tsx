@@ -5,6 +5,8 @@ import { ContextMenu, type MenuEntry } from "./Menu";
 import type { AgentRow, AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 import { agentEntries, tabAgent, tabIdentity } from "./workspace";
+import { hostKind } from "./host";
+import { displayCommand } from "./shortcuts";
 
 // The Agent area's tab strip (PRD S6 D-04, B17): the checkout's Herdr tabs,
 // in the order the core put them in its strip; the web joins no lists of its
@@ -107,7 +109,7 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
         type="button"
         className="flex w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-secondary hover:bg-elevated hover:text-primary focus-visible:bg-elevated"
         aria-label={`New tab ${checkout.next_tab_label}`}
-        title="New tab (⌥T)"
+        title={`New tab (${displayCommand("new_tab", hostKind())})`}
         data-new-agent-tab="true"
         onClick={() => actions.createTab()}
       >

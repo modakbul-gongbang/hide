@@ -7,6 +7,8 @@ import { pullRequestBadge } from "./projects";
 import type { AgentRow, Checkout, Device, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { hostKind } from "./host";
+import { displayCommand } from "./shortcuts";
 
 // Main and Project Overview (PRD S6 D-02, B1-B4, B21). Main lists every
 // registered Project by device; a Project opens its Overview, which lists its
@@ -24,7 +26,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
       <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-divider bg-sidebar px-md">
         <h1 className="flex-1 text-subhead font-semibold text-primary">Projects</h1>
         <Button appearance="quiet" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
-          Add project <span className="text-muted">⌥⇧N</span>
+          Add project <span className="text-muted">{displayCommand("new_workspace", hostKind())}</span>
         </Button>
       </header>
       <OpeningStatus actions={actions} />
