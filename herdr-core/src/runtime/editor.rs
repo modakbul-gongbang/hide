@@ -2157,7 +2157,7 @@ impl Runtime {
             ClosedItem::File { .. } => (true, true, None),
         };
         // With View areas the reopened file takes a display, so a Workspace
-        // at its display cap refuses it here and the item stays (review U1).
+        // at its display cap refuses it here and the item stays.
         if self.separate_view_areas()
             && let ClosedItem::File {
                 workspace_id,
@@ -2271,7 +2271,7 @@ impl Runtime {
                             self.show_file_tab(prepared, workspace_id, checkout_id, path, false);
                             // With View areas the open can still be refused as
                             // it lands, when the Workspace filled its views
-                            // meanwhile: the item stays and says why (review U1).
+                            // meanwhile: the item stays and says why.
                             if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
                                 let reason = self
                                     .snapshot

@@ -3667,7 +3667,7 @@ impl Runtime {
             return true;
         }
         // A revealed file opens into a display, so a Workspace at its display
-        // cap refuses it before it is read (review U1).
+        // cap refuses it before it is read.
         if self.separate_view_areas()
             && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
             && !self.admit_view_open(

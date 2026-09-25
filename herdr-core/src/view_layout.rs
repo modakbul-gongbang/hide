@@ -1184,7 +1184,7 @@ mod tests {
         assert_eq!(layout, before);
     }
 
-    /// Review U1: the 64th display fits, and every way of adding one more is
+    /// B19: the 64th display fits, and every way of adding one more is
     /// refused and changes nothing, whichever path asked.
     #[test]
     fn every_way_of_adding_a_display_past_the_cap_is_refused() {

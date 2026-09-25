@@ -257,7 +257,7 @@ fn reconcile_layout<'t>(
     // A document of this Workspace that no display shows gets one, at the
     // end of the area in use: a Reopen Closed, a created file. The actions
     // that make one are refused at the cap; one that landed after the tree
-    // filled waits off screen until a view is closed (review U1).
+    // filled waits off screen until a view is closed.
     if live {
         for tab in tabs.iter().filter(|tab| tab.key.as_ref() == Some(key)) {
             if layout
@@ -692,7 +692,7 @@ impl Runtime {
                     // The tree changed while the file was read: a display
                     // that shows the document already is focused, and with
                     // none the open is refused rather than doubled up in the
-                    // area it was asked from (review U1).
+                    // area it was asked from.
                     let Some(shown) = last_focused_showing(
                         &layout.displays().collect::<Vec<_>>(),
                         path,

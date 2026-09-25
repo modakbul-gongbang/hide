@@ -2339,8 +2339,7 @@ impl Runtime {
             }
             Event::FileCreate(payload) => {
                 // The created file opens into a display, so a Workspace at its
-                // display cap refuses the create before anything is made
-                // (review U1).
+                // display cap refuses the create before anything is made.
                 let created = Path::new(&payload.parent).join(&payload.name);
                 if self.separate_view_areas()
                     && let Some(key) = self.front_workspace_key()

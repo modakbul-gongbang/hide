@@ -462,7 +462,7 @@ fn fill(runtime: &mut Runtime, directory: &Path, count: usize) {
         .layout = layout;
 }
 
-/// Review U1, B19: at 64 views nothing adds a 65th. Reopen Closed, a created
+/// B19: at 64 views nothing adds a 65th. Reopen Closed, a created
 /// file and a revealed file are refused with the reason before anything is
 /// read or made, and the closed file stays reopenable.
 #[test]
@@ -520,7 +520,7 @@ fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
     );
 }
 
-/// Review U1: a file that lands after the tree filled, here a Reopen Closed
+/// B19: a file that lands after the tree filled, here a Reopen Closed
 /// admitted at 63 views, is refused with the reason as it lands rather than
 /// making a 65th view; nothing is opened and the file stays reopenable.
 #[test]
@@ -595,7 +595,7 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
     );
 }
 
-/// Review U1: the reconcile holds the cap too. A document of the Workspace
+/// B19: the reconcile holds the cap too. A document of the Workspace
 /// that no view shows while it has 64, which no action makes now but a
 /// future path might, waits off screen, is reported once in the diagnostic
 /// log, and shows once a view is closed.
@@ -797,7 +797,7 @@ fn moving_an_areas_last_display_away_collapses_the_area() {
     assert_eq!(active_label(&runtime).as_deref(), Some("b.md"));
 }
 
-/// Contract 4.1, review F1: an action names the Workspace of the frame it
+/// Contract 4.1: an action names the Workspace of the frame it
 /// was taken on. Ids like `d2` repeat across Workspaces, so a close or move
 /// that arrives after the front moved on changes neither tree and closes no
 /// document, least of all the other Workspace's dirty one; the same action
