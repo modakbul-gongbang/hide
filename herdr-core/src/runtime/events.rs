@@ -2274,7 +2274,8 @@ impl Runtime {
                         }
                     },
                 };
-                let Some(document) = self.editor_documents.get_mut(&tab_id) else {
+                let Some(document) = self.editor_documents.get_mut(&tab_id).map(Edited::edit)
+                else {
                     self.set_error(
                         "file.draft_rejected",
                         "The active file tab has no document state",
@@ -2722,8 +2723,9 @@ impl Runtime {
                     if self.snapshot.changes.selected_path.is_none() {
                         return false;
                     }
-                    self.snapshot.changes.selected_path = None;
-                    self.snapshot.changes.diff = None;
+                    let changes = self.snapshot.changes.edit();
+                    changes.selected_path = None;
+                    changes.diff = None;
                     return true;
                 };
                 if self.snapshot.changes.root_path.as_deref()

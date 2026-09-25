@@ -48,7 +48,9 @@ pub struct Snapshot {
     pub terminal: TerminalSnapshot,
     pub editor: EditorSnapshot,
     pub sessions: SessionsSnapshot,
-    pub changes: ChangesSnapshot,
+    /// Edited rather than compared: the section carries every diff on
+    /// screen, and a snapshot read tells it changed by its edit number.
+    pub changes: Edited<ChangesSnapshot>,
     pub card: CheckoutCardSnapshot,
     pub git_worktrees: Option<ProjectWorktreesSnapshot>,
     pub git_worktrees_loading: bool,
@@ -69,6 +71,86 @@ pub struct Snapshot {
     /// keeps exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_view: Option<WorkspaceViewSnapshot>,
+}
+
+/// A snapshot value that takes a new edit number whenever it may change, so
+/// a snapshot read tells a changed value from an unchanged one by comparing
+/// two numbers instead of the contents: the Changes section carries every
+/// diff on screen, and a View document a whole file, and a read runs on
+/// every terminal output burst.
+///
+/// The value is reachable mutably only through [`Edited::edit`] and
+/// [`Edited::set`], which take the number, so no change can skip it; a
+/// mutable borrow that changes nothing costs one extra send, never a missed
+/// one. Numbers come from one process-wide counter, so a value moved or
+/// replaced never repeats a number a stamp still holds, and two equal
+/// numbers always mean equal values.
+#[derive(Clone, Debug)]
+pub struct Edited<T> {
+    value: T,
+    edit: u64,
+}
+
+fn next_edit() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl<T> Edited<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            value,
+            edit: next_edit(),
+        }
+    }
+
+    /// The value to change in place, under a new edit number.
+    pub fn edit(&mut self) -> &mut T {
+        self.edit = next_edit();
+        &mut self.value
+    }
+
+    pub fn set(&mut self, value: T) {
+        *self = Self::new(value);
+    }
+
+    pub fn edit_number(&self) -> u64 {
+        self.edit
+    }
+}
+
+impl<T> std::ops::Deref for Edited<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T: Default> Default for Edited<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+/// Equality is the value's; the edit numbers only say whether it moved.
+impl<T: PartialEq> PartialEq for Edited<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl<T: PartialEq> PartialEq<T> for Edited<T> {
+    fn eq(&self, other: &T) -> bool {
+        self.value == *other
+    }
+}
+
+/// On the wire an edited value is the value alone.
+impl<T: Serialize> Serialize for Edited<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.value.serialize(serializer)
+    }
 }
 
 /// What the front Workspace shows: its areas, its tools, the boundary
@@ -2694,7 +2776,7 @@ impl Snapshot {
                 opening: Vec::new(),
             },
             sessions: SessionsSnapshot::default(),
-            changes: ChangesSnapshot::default(),
+            changes: Edited::default(),
             card: CheckoutCardSnapshot::default(),
             git_worktrees: None,
             git_worktrees_loading: true,

@@ -571,7 +571,8 @@ impl Runtime {
         document: EditorDocumentSnapshot,
         place: DocumentPlace,
     ) {
-        self.editor_documents.insert(tab_id.to_owned(), document);
+        self.editor_documents
+            .insert(tab_id.to_owned(), Edited::new(document));
         self.document_places.insert(tab_id.to_owned(), place);
         self.document_saves.remove(tab_id);
         self.sync_file_tab_dirty(tab_id);
@@ -635,7 +636,7 @@ impl Runtime {
     /// Keep Editing: the draft stays and is now judged against what the file
     /// holds, so the next save replaces that version on purpose.
     pub(super) fn keep_editing_document(&mut self, tab_id: &str) -> bool {
-        let Some(document) = self.editor_documents.get_mut(tab_id) else {
+        let Some(document) = self.editor_documents.get_mut(tab_id).map(Edited::edit) else {
             self.set_error(
                 "file.conflict_without_document",
                 "The active file tab has no document state",
@@ -669,7 +670,7 @@ impl Runtime {
             self.set_error("file.save_rejected", "The save target is not open", false);
             return true;
         };
-        let Some(document) = self.editor_documents.get_mut(&tab_id) else {
+        let Some(document) = self.editor_documents.get_mut(&tab_id).map(Edited::edit) else {
             self.set_error(
                 "file.save_rejected",
                 "The save target has no document state",
@@ -698,7 +699,7 @@ impl Runtime {
             );
             return true;
         }
-        let Some(document) = self.editor_documents.get_mut(&tab_id) else {
+        let Some(document) = self.editor_documents.get_mut(&tab_id).map(Edited::edit) else {
             return true;
         };
         document.contents_utf8 = Some(payload.contents_utf8.clone());
@@ -849,7 +850,7 @@ impl Runtime {
             None => None,
         };
         let path = format!("{}/{}", request.place.root.path, request.place.relative);
-        let Some(document) = self.editor_documents.get_mut(tab_id) else {
+        let Some(document) = self.editor_documents.get_mut(tab_id).map(Edited::edit) else {
             self.document_saves.remove(tab_id);
             self.push_diagnostic(
                 "file.save_after_close",
@@ -1013,7 +1014,7 @@ impl Runtime {
         if slot.unsettled.as_ref() != Some(&unsettled) {
             return false;
         }
-        let Some(document) = self.editor_documents.get_mut(tab_id) else {
+        let Some(document) = self.editor_documents.get_mut(tab_id).map(Edited::edit) else {
             self.document_saves.remove(tab_id);
             return false;
         };
@@ -1178,7 +1179,7 @@ impl Runtime {
                 })
             }
         });
-        if let Some(document) = self.editor_documents.get_mut(tab_id) {
+        if let Some(document) = self.editor_documents.get_mut(tab_id).map(Edited::edit) {
             document.save = save;
         }
         self.sync_active_editor_document();

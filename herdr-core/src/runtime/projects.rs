@@ -175,7 +175,9 @@ impl Runtime {
         // than shown under the new device until the next read lands (B22).
         let front = self.front_changes_key();
         if self.changes_published_key.is_some() && self.changes_published_key != front {
-            self.snapshot.changes = crate::model::ChangesSnapshot::default();
+            self.snapshot
+                .changes
+                .set(crate::model::ChangesSnapshot::default());
             self.changes_published_key = None;
         }
     }
@@ -2141,15 +2143,17 @@ impl Runtime {
             && self.snapshot.changes.unavailable_reason.is_none()
             && self.snapshot.changes.root_path == changes.root_path
         {
-            let mut kept = self.snapshot.changes.clone();
+            let mut kept = crate::model::ChangesSnapshot::clone(&self.snapshot.changes);
             kept.stale_reason = Some(reason);
             changes = kept;
         }
         self.changes_published_key = answer.key;
+        // The one comparison of the section: it takes a new edit number, and
+        // is sent again, only when this read changed it.
         if self.snapshot.changes == changes {
             return false;
         }
-        self.snapshot.changes = changes;
+        self.snapshot.changes.set(changes);
         true
     }
 

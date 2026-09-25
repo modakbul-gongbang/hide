@@ -1362,8 +1362,8 @@ fn the_changes_read_takes_every_diff_on_screen() {
         .iter()
         .map(|name| directory.join(name))
         .collect();
-    runtime.snapshot.changes.root_path = Some(directory.to_string_lossy().into_owned());
-    runtime.snapshot.changes.entries = changed
+    runtime.snapshot.changes.edit().root_path = Some(directory.to_string_lossy().into_owned());
+    runtime.snapshot.changes.edit().entries = changed
         .iter()
         .map(|path| crate::model::ChangedFileSnapshot {
             path: path.to_string_lossy().into_owned(),

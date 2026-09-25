@@ -3078,7 +3078,9 @@ impl Runtime {
                             .map(str::to_owned)
                             .unwrap_or_else(|| moved.clone());
                         tab.path = moved.clone();
-                        if let Some(document) = self.editor_documents.get_mut(&tab.id) {
+                        if let Some(document) =
+                            self.editor_documents.get_mut(&tab.id).map(Edited::edit)
+                        {
                             document.path = moved.clone();
                         }
                         if let Some(place) = self.document_places.get_mut(&tab.id)
@@ -3105,7 +3107,8 @@ impl Runtime {
                         .map(|tab| tab.id.clone())
                         .collect();
                     for tab_id in removed {
-                        if let Some(document) = self.editor_documents.get_mut(&tab_id)
+                        if let Some(document) =
+                            self.editor_documents.get_mut(&tab_id).map(Edited::edit)
                             && let Some(revision) = document.revision.clone()
                         {
                             document.conflict = Some(crate::model::EditorConflictSnapshot {

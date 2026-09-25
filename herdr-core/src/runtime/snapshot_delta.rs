@@ -14,8 +14,12 @@ pub fn serialize_snapshot_delta(
 }
 
 /// Revision bookkeeping for the delta snapshot wire. Revisions are stamped
-/// lazily at read time by comparing live sections against the last stamped
-/// copy, so mutation sites carry no dirty-tracking obligations.
+/// lazily at read time. The rest and editor sections are compared against
+/// the last stamped copy; the changes section and each View document carry
+/// an edit number ([`crate::model::Edited`]) taken wherever they may change,
+/// so a read compares two numbers instead of several diffs or a whole file.
+/// A change between reads always leaves a number the stamp does not hold,
+/// so it is never swallowed.
 #[derive(Default)]
 pub(super) struct DeltaState {
     revision: u64,
@@ -29,6 +33,8 @@ pub(super) struct DeltaState {
     last_rest: Option<Arc<crate::model::RestSections>>,
     last_editor: Option<Arc<crate::model::EditorSnapshot>>,
     last_changes: Option<Arc<crate::model::ChangesSnapshot>>,
+    /// The edit number `last_changes` was copied at.
+    last_changes_edit: u64,
     /// The View documents on screen, each stamped with its own revision
     /// (PRD S7 contract 3.1), so a keystroke re-sends only its document.
     /// Empty in a shell without View areas.
@@ -39,6 +45,8 @@ pub(super) struct DeltaState {
 
 struct StampedDocument {
     revision: u64,
+    /// The edit number `document` was copied at.
+    edit: u64,
     document: Arc<EditorDocumentSnapshot>,
 }
 
@@ -80,10 +88,14 @@ impl Runtime {
             self.delta.editor_revision = self.delta.revision;
             self.delta.last_editor = Some(Arc::new(self.snapshot.editor.clone()));
         }
-        if self.delta.last_changes.as_deref() != Some(&self.snapshot.changes) {
+        let changes_edit = self.snapshot.changes.edit_number();
+        if self.delta.last_changes.is_none() || self.delta.last_changes_edit != changes_edit {
             self.delta.revision += 1;
             self.delta.changes_revision = self.delta.revision;
-            self.delta.last_changes = Some(Arc::new(self.snapshot.changes.clone()));
+            self.delta.last_changes = Some(Arc::new(crate::model::ChangesSnapshot::clone(
+                &self.snapshot.changes,
+            )));
+            self.delta.last_changes_edit = changes_edit;
         }
         let views = self.separate_view_areas();
         if views {
@@ -155,21 +167,22 @@ impl Runtime {
         }
     }
 
-    /// Stamps each visible View document whose contents differ from its last
-    /// stamped copy, and the visible set when it changed. At most one
-    /// document per View area is compared, the comparison the editor section
-    /// makes for its one document.
+    /// Stamps each visible View document edited since its last stamped
+    /// copy, and the visible set when it changed. Per visible document a
+    /// read costs two map lookups and one number comparison; a document is
+    /// copied only when it was edited.
     fn stamp_view_documents(&mut self) {
         let visible = self.visible_view_documents();
         for tab_id in &visible {
             let Some(document) = self.editor_documents.get(tab_id) else {
                 continue;
             };
+            let edit = document.edit_number();
             if self
                 .delta
                 .documents
                 .get(tab_id)
-                .is_some_and(|stamped| *stamped.document == *document)
+                .is_some_and(|stamped| stamped.edit == edit)
             {
                 continue;
             }
@@ -178,7 +191,8 @@ impl Runtime {
                 tab_id.clone(),
                 StampedDocument {
                     revision: self.delta.revision,
-                    document: Arc::new(document.clone()),
+                    edit,
+                    document: Arc::new(EditorDocumentSnapshot::clone(document)),
                 },
             );
         }

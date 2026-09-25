@@ -62,12 +62,17 @@ impl Runtime {
             // A restored tab whose file could not be read has no document;
             // showing it shows why (B20).
             EditorTabKind::File if tab.unavailable_reason.is_some() => None,
-            EditorTabKind::File => Some(
-                self.editor_documents
+            EditorTabKind::File => {
+                let document = self
+                    .editor_documents
                     .get(tab_id)
-                    .cloned()
-                    .ok_or_else(|| format!("File tab {tab_id} has no document state"))?,
-            ),
+                    .ok_or_else(|| format!("File tab {tab_id} has no document state"))?;
+                // With View areas the documents ride their own snapshot
+                // section, one per visible display (PRD S7 A4), so a
+                // keystroke re-sends one document, not the editor, and
+                // the editor carries no copy.
+                (!self.separate_view_areas()).then(|| EditorDocumentSnapshot::clone(document))
+            }
             EditorTabKind::Diff => {
                 if tab.diff_committed.is_none() {
                     return Err(format!("Diff tab {tab_id} has no comparison scope"));
@@ -86,12 +91,7 @@ impl Runtime {
         self.snapshot.editor.archive_detail = None;
         match tab.kind {
             EditorTabKind::File => {
-                // With View areas the documents ride their own snapshot
-                // section, one per visible display (PRD S7 A4), so a
-                // keystroke re-sends one document, not the editor.
-                if !self.separate_view_areas() {
-                    self.snapshot.editor.document = document;
-                }
+                self.snapshot.editor.document = document;
                 self.snapshot.ui_state.selected_path = Some(tab.path);
             }
             EditorTabKind::Diff => {
@@ -99,10 +99,11 @@ impl Runtime {
                 if self.snapshot.changes.selected_path.as_deref() != Some(tab.path.as_str())
                     || self.snapshot.changes.selected_committed != committed
                 {
-                    self.snapshot.changes.diff = None;
+                    let changes = self.snapshot.changes.edit();
+                    changes.diff = None;
+                    changes.selected_path = Some(tab.path);
+                    changes.selected_committed = committed;
                 }
-                self.snapshot.changes.selected_path = Some(tab.path);
-                self.snapshot.changes.selected_committed = committed;
                 self.snapshot.editor.document = None;
                 self.snapshot.ui_state.selected_path = None;
             }
@@ -137,7 +138,7 @@ impl Runtime {
                             .tabs
                             .iter()
                             .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::File)
-                            .map(|_| document.clone())
+                            .map(|_| EditorDocumentSnapshot::clone(document))
                     })
                 })
         };
@@ -278,7 +279,8 @@ impl Runtime {
         else {
             return None;
         };
-        self.editor_documents.insert(tab_id.clone(), *document);
+        self.editor_documents
+            .insert(tab_id.clone(), Edited::new(*document));
         self.document_places.insert(tab_id.clone(), place);
         let tab = EditorTabSnapshot {
             id: tab_id.clone(),
@@ -391,8 +393,9 @@ impl Runtime {
             self.snapshot.editor.document = None;
             self.snapshot.editor.archive_detail = None;
             if tab.kind == EditorTabKind::Diff {
-                self.snapshot.changes.selected_path = None;
-                self.snapshot.changes.diff = None;
+                let changes = self.snapshot.changes.edit();
+                changes.selected_path = None;
+                changes.diff = None;
             }
         }
         tab

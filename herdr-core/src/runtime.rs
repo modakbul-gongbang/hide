@@ -38,7 +38,7 @@ use crate::live::{
 };
 use crate::model::{
     ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
-    DiagnosticSnapshot, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
+    DiagnosticSnapshot, Edited, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
     ExplorerOperationSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindSnapshot,
     PaneFocusRequestSnapshot, PaneForkSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
     PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
@@ -979,7 +979,9 @@ pub struct Runtime {
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
-    editor_documents: HashMap<String, EditorDocumentSnapshot>,
+    /// Each open file tab's document, edited under a number so a snapshot
+    /// read re-sends a View document only when it moved.
+    editor_documents: HashMap<String, Edited<EditorDocumentSnapshot>>,
     archive_documents: HashMap<String, ArchiveDetailSnapshot>,
     session_catalog_rows: Vec<SessionRowSnapshot>,
     memory_catalog_rows: Vec<crate::model::MemoryRowSnapshot>,

@@ -237,7 +237,7 @@ impl Fixture {
             .unwrap()
             .editor_documents
             .get(&tab_id)
-            .cloned()
+            .map(|document| EditorDocumentSnapshot::clone(document))
     }
 
     fn wait(&self, what: &str, mut ready: impl FnMut(&Runtime) -> bool) {
@@ -259,7 +259,10 @@ impl Fixture {
     ) {
         let tab_id = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &self.path(name));
         self.wait(what, |runtime| {
-            runtime.editor_documents.get(&tab_id).is_some_and(&ready)
+            runtime
+                .editor_documents
+                .get(&tab_id)
+                .is_some_and(|document| ready(document))
         });
     }
 
