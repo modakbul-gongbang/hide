@@ -96,7 +96,9 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     const askingPane = await workspaceAt(herdr, tree("asking"), "사이드바 상태 규칙 구현");
     await workspaceAt(herdr, tree("shipped"), "머지된 작업");
     // An agent asking the operator: its card is raised in 작업 중, not moved.
-    execFileSync(herdr.bin, ["pane", "report-agent", askingPane, "--source", "e2e", "--agent", "claude", "--state", "blocked", "--message", "Done 그룹 회색 링을 기존 표시로 바꿔도 될까요?"], { env: herdr.env, timeout: 30_000 });
+    // The question sentence is the label plugin's `expected_reply` token.
+    execFileSync(herdr.bin, ["pane", "report-agent", askingPane, "--source", "e2e", "--agent", "claude", "--state", "blocked"], { env: herdr.env, timeout: 30_000 });
+    execFileSync(herdr.bin, ["pane", "report-metadata", askingPane, "--source", "e2e", "--token", "expected_reply=Done 그룹 회색 링을 바꿔도 될까요?"], { env: herdr.env, timeout: 30_000 });
     // A project with only a shell: no agent at all.
     const quiet = path.join(herdr.root, "quiet");
     fs.mkdirSync(quiet);
@@ -129,7 +131,8 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     // The asking agent's card carries the halo and leads 작업 중 without leaving it (B7).
     const asking = column("working").locator("[data-overview-card]").first();
     await expect(asking).toHaveAttribute("data-needs-you", "true", { timeout: 20_000 });
-    await expect(asking.locator(`[data-overview-agent="${askingPane}"]`)).toBeVisible();
+    // Its row carries the question on a second line (B8).
+    await expect(asking.locator(`[data-overview-agent="${askingPane}"][data-agent-detail="true"]`)).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
     const working = column("working").locator("[data-overview-card]", { hasText: "prd/web-overview-with-a-long-branch-name" });
     await expect(working.locator('[data-overview-delivery="working"]')).toContainText("변경 1 · ↑1 커밋");
     // Merged starts folded and lists only its names until opened.
