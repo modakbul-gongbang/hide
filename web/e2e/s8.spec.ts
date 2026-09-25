@@ -183,6 +183,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-sessions-search]")).toHaveValue("");
     await expect(rows).toHaveCount(4);
+    // Clear filters left the pointer over the first row; hover would raise it.
+    await page.mouse.move(1000, 700);
     await screenshot(page, "s8-detail");
     // The detail copies the file it read.
     await page.locator('[data-session-copy="detail"]').click();
