@@ -4,8 +4,10 @@
 //
 //   node scripts/check-hide-screens.mjs
 //
-// Six failures, independent of one another and all reported together:
+// Seven failures, independent of one another and all reported together:
 //   - a top-level node whose name does not start with `Screen / `
+//   - an id that names more than one node, counting a node written whole in
+//     a ref's `descendants` (Pen's loader reports it as duplicate ids)
 //   - a `Screen / ` sheet whose subtree carries no `theme: {Mode: 'Light'}`
 //     node, or no `theme: {Mode: 'Dark'}` node
 //   - a `$--name` variable reference the document's own `variables` block
@@ -32,7 +34,7 @@
 // This is a structural check on whatever document it is pointed at (the real
 // file by default, or a copy under --file for the transplant proof in
 // scripts/tests/hide-screens.test.mjs), so it passes equally on the
-// generator's output and on a scripts/pen-transplant.mjs result. The sixth
+// generator's output and on a scripts/pen-transplant.mjs result. The last
 // rule is the exception: it needs design/tokens.json and design/hide-ui.lib.pen
 // at their real repository paths (via readLocalVariables(root)), so it is
 // skipped when `root` does not resolve a real checkout (the transplant test's
@@ -40,6 +42,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import {duplicateIds} from './pen-canvas.mjs';
 import {readLocalVariables} from './pen-screens.mjs';
 
 const SCREEN_PREFIX = 'Screen / ';
@@ -163,7 +166,7 @@ function collectReferences(node, into = {local: new Set(), aliased: new Set()}, 
 
 /**
  * Check `document` (loaded from `file`, whose directory resolves `imports`
- * paths) against the six rules above. Returns an array of failure strings;
+ * paths) against the seven rules above. Returns an array of failure strings;
  * empty means the document passes.
  */
 export function check(document, file) {
@@ -185,6 +188,11 @@ export function check(document, file) {
     if (missing.length) missingFrames.push(`${sheet.id} (${JSON.stringify(sheet.name)}) is missing a ${missing.join(' and a ')} frame`);
   }
   if (missingFrames.length) failures.push(`${missingFrames.length} sheet(s) missing a required theme frame:\n` + missingFrames.map(line => `    ${line}`).join('\n'));
+
+  const duplicates = duplicateIds(document.children ?? []);
+  if (duplicates.length) {
+    failures.push(`${duplicates.length} id(s) name more than one node:\n` + duplicates.map(([id, paths]) => `    ${id}: ${paths.join(', ')}`).join('\n'));
+  }
 
   const refs = collectReferences(document);
   const definedVariables = new Set(Object.keys(document.variables ?? {}));

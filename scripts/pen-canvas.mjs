@@ -50,3 +50,21 @@ export function unplaced(text) {
   const children = document.children.map(({x, y, ...node}) => node).sort((a, b) => a.id.localeCompare(b.id));
   return serialize({...document, children});
 }
+
+/**
+ * Each id that names more than one node in `children`, with where each use
+ * sits. A node written whole inside a ref's `descendants` counts: its key
+ * already addresses the node it replaces, so an id of its own is a second
+ * node by that id, which Pen's loader reports as duplicate ids.
+ */
+export function duplicateIds(children) {
+  const seen = new Map();
+  (function walk(node, path) {
+    if (Array.isArray(node)) return node.forEach((child, index) => walk(child, `${path}[${index}]`));
+    if (!node || typeof node !== 'object') return;
+    if (typeof node.id === 'string') seen.set(node.id, [...(seen.get(node.id) ?? []), path]);
+    if (node.children) walk(node.children, `${path}/${node.id ?? node.name ?? '?'}`);
+    for (const [target, patch] of Object.entries(node.descendants ?? {})) walk(patch, `${path}/${node.id}.descendants.${target}`);
+  })(children, '');
+  return [...seen].filter(([, paths]) => paths.length > 1);
+}

@@ -3,18 +3,21 @@
 //
 //   node scripts/check-pen.mjs
 //
-// Four failures, in the order a person can act on them. A canvas variable claimed
+// Five failures, in the order a person can act on them. A canvas variable claimed
 // by neither list of the map is the one worth having: a variable reaches the
 // design and never design/tokens.json, and nothing else says so. A value that
 // drifted is visible, and named with both sides. A board with no band prefix
 // cannot be found by the scheme. Anything else the generator would change - a
 // stale Foundations or System sheet, a token value written by hand - is reported
 // as one difference, with the command that repairs it. Where a board sits is not
-// checked; see `unplaced`.
+// checked; see `unplaced`. An id that names two nodes - counting a node written
+// whole inside a ref's `descendants`, where the key already addresses it - makes
+// Pen's loader report duplicate ids and leaves which node an override reaches
+// to chance.
 
 import {CANVAS, MAP} from './pen-tokens.mjs';
 import {BANDS} from './pen-bands.mjs';
-import {generate, unplaced} from './pen-canvas.mjs';
+import {duplicateIds, generate, unplaced} from './pen-canvas.mjs';
 
 const {map, expected, document, orphans, unknown, before, after} = generate(process.cwd());
 const failures = [];
@@ -31,6 +34,12 @@ for (const [name, want] of expected) {
   } else if (got.type !== want.type || JSON.stringify(got.value) !== JSON.stringify(want.value)) {
     failures.push(`${CANVAS} carries ${name} = ${got.type} ${JSON.stringify(got.value)}; design/tokens.json is ${want.type} ${JSON.stringify(want.value)}`);
   }
+}
+const duplicates = duplicateIds(document.children);
+if (duplicates.length) {
+  failures.push(`${duplicates.length} id(s) name more than one node:\n` +
+    duplicates.map(([id, paths]) => `    ${id}: ${paths.join(', ')}`).join('\n') +
+    `\n  Give each node its own id; a descendants entry is addressed by its key and carries no id of its own.`);
 }
 if (unknown.length) {
   failures.push(`${unknown.length} board(s) carry no band prefix:\n` +

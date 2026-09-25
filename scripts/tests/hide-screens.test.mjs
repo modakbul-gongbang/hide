@@ -51,6 +51,17 @@ test('a top-level node not named "Screen / " is refused, naming it', t => {
   assert.ok(failures.some(f => f.includes('sys-1') && f.includes('System / Button')));
 });
 
+test('an id carried by a descendants entry as well as its node is refused, naming both places', t => {
+  const root = fixture(t);
+  const button = {id: 'act-1', type: 'frame', name: 'Action', children: []};
+  const instance = {id: 'inst-1', type: 'ref', ref: 'row-m', descendants: {'act-1': {id: 'act-1', type: 'frame', name: 'Action'}}};
+  const document = doc([screen('scr-1', 'Screen / Main', {children: [themed('scr-1-l', 'Light', [button, instance]), themed('scr-1-d', 'Dark')]})]);
+  const failures = check(document, path.join(root, 'hide-screens.pen'));
+  assert.ok(failures.some(f => f.includes('act-1') && f.includes('inst-1.descendants.act-1')));
+  delete instance.descendants['act-1'].id;
+  assert.ok(!check(document, path.join(root, 'hide-screens.pen')).some(f => f.includes('more than one node')));
+});
+
 test('a Screen sheet missing a Dark frame is refused, naming it', t => {
   const root = fixture(t);
   const document = doc([screen('scr-1', 'Screen / Main', {children: [themed('scr-1-l', 'Light')]})]);
