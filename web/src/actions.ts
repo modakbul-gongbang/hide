@@ -15,7 +15,7 @@ import {
   type CloseWatchFrame,
 } from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
-import { draftExported, unstoredDeviceDrafts } from "./settings";
+import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import type { OpenTarget } from "./navigation";
@@ -686,8 +686,8 @@ export function createActions(dispatch: DispatchFn) {
     revealAncestors,
     taskIdNow,
 
-    openSettings() {
-      ui().openOverlay("settings");
+    openSettings(tab: SettingsTab = "general") {
+      ui().openSettings(tab);
     },
 
     setAccent(hex: string) {

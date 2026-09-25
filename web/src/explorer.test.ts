@@ -5,6 +5,7 @@ import {
   explorerRows,
   firstChildSelection,
   gitDecorations,
+  helperNeedsSettings,
   moveSelection,
   parentPath,
   parentSelection,
@@ -13,7 +14,7 @@ import {
   rowTitle,
   selectionAfterRemoval,
 } from "./explorer";
-import type { ChangedFileStatus, ChangesSnapshot } from "./snapshot";
+import type { ChangedFileStatus, ChangesSnapshot, DeviceHost } from "./snapshot";
 import type { DirectoryList } from "./store";
 
 const ROOT = "/checkout/hide";
@@ -254,5 +255,16 @@ describe("the Explorer's Git status line (S5.5 B20, B22)", () => {
     expect(explorerGitLine({ ...base, unavailable_reason: "git is not installed" })?.text).toBe("Git status unavailable: git is not installed");
     expect(explorerGitLine({ ...base, stale_reason: "git status timed out" })?.state).toBe("stale");
     expect(explorerGitLine(base)).toBeNull();
+  });
+});
+
+describe("a device listing that waits on Settings", () => {
+  const host = (state: DeviceHost["state"]) => ({ state }) as DeviceHost;
+  it("sends the operator to Settings only when a consent decision is what is missing", () => {
+    expect(helperNeedsSettings(host("not_allowed"))).toBe(true);
+    expect(helperNeedsSettings(host("identity_changed"))).toBe(true);
+    expect(helperNeedsSettings(host("connecting"))).toBe(false);
+    expect(helperNeedsSettings(host("unavailable"))).toBe(false);
+    expect(helperNeedsSettings(undefined)).toBe(false);
   });
 });
