@@ -34,13 +34,17 @@ function ChangeRow({ entry, committed, selected, actions }: {
   const icon = fileIcon(name);
   const status = STATUS[entry.status];
   const title = identity(entry, committed);
-  // The row's file beside the active View area (S7 B4): the working copy,
-  // which a deleted file no longer has.
-  const menu = (): MenuEntry<"open_beside">[] => [
-    { id: "open_beside", label: "Open to the side", unavailable: entry.status === "deleted" ? "The file was deleted" : null },
-  ];
+  // The row's diff beside the active View area (S7 B4, contract 4.2), as a
+  // click would open it in the active area; a deleted file has a diff too.
+  const menu = (): MenuEntry<"open_beside">[] => [{ id: "open_beside", label: "Open to the side", unavailable: null }];
   return (
-    <ContextMenu label={`${name} actions`} items={menu} onSelect={() => actions.openFileBeside(entry.path)} className="block" data-history-menu={entry.relative_path}>
+    <ContextMenu
+      label={`${name} actions`}
+      items={menu}
+      onSelect={() => actions.openChangeBeside(entry.path, committed)}
+      className="block"
+      data-history-menu={entry.relative_path}
+    >
       <button
         type="button"
         className={`flex h-[var(--size-pane-child-row)] w-full min-w-0 items-center gap-xs px-sm text-left text-caption hover:bg-elevated ${selected ? "bg-elevated text-primary" : "text-secondary"}`}
