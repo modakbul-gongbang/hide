@@ -214,14 +214,22 @@ fn dev(mut env: Env) -> Result<(), String> {
     serve(env, true)
 }
 
-fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let hided = exe
-        .parent()
+/// The `hided` beside this CLI's real file. A CLI reached through a symlink
+/// (a desktop host's `HIDE_CLI_PATH`, a PATH entry) resolves to the build it
+/// names; there is no other daemon to run, and running this CLI in its place
+/// would start one more CLI per attempt, each starting the next.
+fn daemon_binary() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .map_err(|error| error.to_string())?;
+    exe.parent()
         .map(|dir| dir.join("hided"))
-        .filter(|path| path.exists())
-        .unwrap_or(exe);
-    let mut command = Command::new(hided);
+        .filter(|path| path.is_file())
+        .ok_or_else(|| format!("no hided beside {}", exe.display()))
+}
+
+fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
+    let mut command = Command::new(daemon_binary()?);
     command.env("HIDE_STATE_DIR", &env.state_dir);
     if keep_alive {
         command.env("HIDE_KEEP_ALIVE", "1");
