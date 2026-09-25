@@ -45,3 +45,6 @@ macos/build/
 
 # A per-user agent permission file, not a project input.
 .claude/settings.local.json
+
+# Isolated agent worktrees, each a checkout of its own; never source.
+/.claude/worktrees/
