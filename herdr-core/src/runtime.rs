@@ -914,6 +914,11 @@ pub struct Runtime {
     /// Observed panes whose last wheel Herdr did not move: another client
     /// holds their scrolling (`TerminalPaneSnapshot::scroll_held_elsewhere`).
     panes_scroll_held: HashSet<String>,
+    /// Observed panes whose view settled at a grid they were not attached
+    /// at, by the time of the latest such resize. The async-operation tick
+    /// attaches each again once its resizes go quiet, so a window drag costs
+    /// one new observer, not one per intermediate size.
+    observers_resized: HashMap<String, u64>,
     /// The tabs that have been on screen, most recent first. An attach lives
     /// for as long as its tab is in this window; every other pane's session is
     /// released. Herdr renders a pane for every attached client, so an attach
@@ -1300,6 +1305,7 @@ impl Runtime {
             wheel_before_attach: HashMap::new(),
             viewport_scrolls: HashMap::new(),
             panes_scroll_held: HashSet::new(),
+            observers_resized: HashMap::new(),
             pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,

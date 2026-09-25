@@ -2570,10 +2570,12 @@ impl Runtime {
                     // An observer cannot resize and Herdr keeps drawing it at
                     // the grid it attached with; an idle pane sends no frame
                     // that would show the change, so the view would keep the
-                    // old frame reflowed. It attaches again at the new grid.
+                    // old frame reflowed. It attaches again at the new grid
+                    // once the size settles (`reattach_resized_observers`).
                     TerminalSessionMode::Observe if previous != Some(size) => {
-                        self.reattach_observer(&payload.pane_id, "resize");
-                        true
+                        self.observers_resized
+                            .insert(payload.pane_id, unix_milliseconds());
+                        false
                     }
                     TerminalSessionMode::Observe => false,
                 }

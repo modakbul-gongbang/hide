@@ -155,10 +155,12 @@ fn resize_event(pane_id: &str, cols: u16, rows: u16) -> Vec<u8> {
 
 /// B2, B8. An idle observed pane sends no frame after its view changes size
 /// (the View region leaving widens it), so waiting for one left the old
-/// frame reflowed at the new width. The settled size attaches the observer
-/// again at once; the size it already has attaches nothing.
+/// frame reflowed at the new width. Once the view's size has held for a
+/// moment the tick attaches the observer again at it; a drag's intermediate
+/// sizes and the frames drawn at the old grid meanwhile attach nothing, and
+/// the size it already has attaches nothing either.
 #[test]
-fn an_observed_view_that_changes_size_reattaches_without_waiting_for_a_frame() {
+fn an_observed_view_that_changes_size_reattaches_once_the_size_settles() {
     let mut runtime = runtime();
     runtime.suppress_terminal_session_workers = true;
     let pane = "w-observed:p1";
@@ -166,17 +168,42 @@ fn an_observed_view_that_changes_size_reattaches_without_waiting_for_a_frame() {
     runtime.start_terminal_session(pane, TerminalSessionMode::Observe, 1, "initial", None);
     let first = runtime.terminal_session_generations[pane];
     runtime.dispatch_json(&resize_event(pane, 143, 33));
+    runtime.tick_async_operations(unix_milliseconds() + 1_000);
     assert_eq!(runtime.terminal_session_generations[pane], first);
 
-    runtime.terminal_view_sizes.insert(pane.into(), (33, 200));
-    runtime.dispatch_json(&resize_event(pane, 200, 33));
+    for cols in [160, 180, 200] {
+        runtime.terminal_view_sizes.insert(pane.into(), (33, cols));
+        runtime.dispatch_json(&resize_event(pane, cols, 33));
+    }
+    let old_grid = crate::model::TerminalFrame {
+        width: 143,
+        height: 33,
+        full: false,
+    };
+    assert_eq!(
+        runtime.ingest_terminal_session_frame(
+            pane,
+            first,
+            TerminalSessionMode::Observe,
+            b"old",
+            old_grid
+        ),
+        Some(false),
+        "a frame at the old grid is held while the size settles"
+    );
+    runtime.tick_async_operations(unix_milliseconds());
+    assert_eq!(runtime.terminal_session_generations[pane], first);
+
+    runtime.tick_async_operations(unix_milliseconds() + 1_000);
     let second = runtime.terminal_session_generations[pane];
-    assert_ne!(second, first, "the observer attaches again");
+    assert_eq!(second, first + 1, "one new observer for the whole drag");
     assert_eq!(runtime.terminal_sizes[pane], (33, 200));
     assert_eq!(
         runtime.terminal_sessions[pane].mode,
         TerminalSessionMode::Observe
     );
+    runtime.tick_async_operations(unix_milliseconds() + 2_000);
+    assert_eq!(runtime.terminal_session_generations[pane], second);
     assert!(runtime.snapshot.status.last_error.is_none());
 }
 

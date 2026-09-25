@@ -1,5 +1,10 @@
 use super::*;
 
+/// How long an observed view's size has to hold before its observer is
+/// attached again at it: longer than the gap between a window drag's
+/// resizes, short beside the 250 ms tick that acts on it.
+const OBSERVER_RESIZE_QUIET_MS: u64 = 150;
+
 impl Runtime {
     pub(super) fn reconcile_remote_terminal_panes(
         &mut self,
@@ -109,6 +114,7 @@ impl Runtime {
         self.wheel_before_attach.retain(|pane_id, _| keep(pane_id));
         self.viewport_scrolls.retain(|pane_id, _| keep(pane_id));
         self.panes_scroll_held.retain(|pane_id| keep(pane_id));
+        self.observers_resized.retain(|pane_id, _| keep(pane_id));
         before != self.terminal_state_len()
     }
     /// Every pane-keyed terminal map, counted together so a retain pass can
@@ -126,6 +132,7 @@ impl Runtime {
             + self.wheel_before_attach.len()
             + self.viewport_scrolls.len()
             + self.panes_scroll_held.len()
+            + self.observers_resized.len()
             + self.panes_closing.len()
     }
     pub(super) fn reconcile_remote_terminal_selection(&mut self) -> bool {
@@ -799,12 +806,36 @@ impl Runtime {
             .or_else(|| self.terminal_sizes.get(pane_id))
             .copied()
     }
+    /// Attaches again every observed pane whose view resizes have been quiet
+    /// for `OBSERVER_RESIZE_QUIET_MS`, from the async-operation tick. A pane
+    /// whose attach is still in flight has no session; its first frame's grid
+    /// check covers the change.
+    pub(super) fn reattach_resized_observers(&mut self, now_unix_ms: u64) -> bool {
+        let settled = self
+            .observers_resized
+            .iter()
+            .filter(|(_, at)| now_unix_ms.saturating_sub(**at) >= OBSERVER_RESIZE_QUIET_MS)
+            .map(|(pane_id, _)| pane_id.clone())
+            .collect::<Vec<_>>();
+        for pane_id in &settled {
+            self.observers_resized.remove(pane_id);
+            if self
+                .terminal_sessions
+                .get(pane_id)
+                .is_some_and(|session| session.mode == TerminalSessionMode::Observe)
+            {
+                self.reattach_observer(pane_id, "resize");
+            }
+        }
+        !settled.is_empty()
+    }
+
     /// Starts the pane's observer again at the view's grid. Herdr draws an
     /// observer at the grid it attached with, so this is how an observed
     /// view changes size. One attach is in flight at a time: the pane has no
     /// session until the attach lands, so a resize meanwhile only records the
     /// grid, and the check on the new session's first frame catches it.
-    pub(super) fn reattach_observer(&mut self, pane_id: &str, cause: &'static str) {
+    fn reattach_observer(&mut self, pane_id: &str, cause: &'static str) {
         let lifecycle = self
             .terminal_session_lifecycles
             .get(pane_id)
@@ -852,6 +883,11 @@ impl Runtime {
             // since would hold every frame from now on. It attaches again at
             // the view's grid; this generation's reader retires.
             if mode == TerminalSessionMode::Observe && expected.is_some() {
+                // While the view is still being resized the tick attaches
+                // it once the size settles; until then the frame is held.
+                if self.observers_resized.contains_key(pane_id) {
+                    return Some(false);
+                }
                 self.reattach_observer(pane_id, "frame_grid");
                 return None;
             }
@@ -1529,6 +1565,7 @@ impl Runtime {
         message: Option<String>,
     ) {
         self.terminal_frames_need_full.insert(pane_id.to_owned());
+        self.observers_resized.remove(pane_id);
         self.next_terminal_session_generation =
             self.next_terminal_session_generation.saturating_add(1);
         let generation = self.next_terminal_session_generation;
