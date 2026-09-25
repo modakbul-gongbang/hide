@@ -105,7 +105,10 @@ export function ViewAreas({ checkout, actions }: { checkout: Checkout; actions: 
   if (areasOf(layout.root).every((area) => area.displays.length === 0)) {
     return <ViewsEmpty opening={opening} explorerShown={shownTools(view, placement).explorer} actions={actions} />;
   }
-  return <ViewTree layout={layout} deviceId={view.device_id} path={view.path} actions={actions} />;
+  // One tree per Workspace: a front that moves to another Workspace ends a
+  // drag, a divider drag or a menu begun on this one, whose ids (a1, d2, s1)
+  // name other views there (contract 4.1, B8).
+  return <ViewTree key={workspaceKey({ device_id: view.device_id, path: view.path })} layout={layout} deviceId={view.device_id} path={view.path} actions={actions} />;
 }
 
 /** Nothing open in any area: the mode stays, and the way to a file is offered. */

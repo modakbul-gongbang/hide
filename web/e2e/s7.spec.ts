@@ -78,7 +78,7 @@ async function startStack(
   page: Page,
   label: string,
   files: Record<string, string>,
-  options: { beforeOpen?: () => Promise<void>; prepare?: (checkout: string) => void } = {},
+  options: { beforeOpen?: () => Promise<void>; prepare?: (checkout: string, herdr: HerdrFixture) => void } = {},
 ): Promise<Stack> {
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -87,7 +87,7 @@ async function startStack(
       fs.mkdirSync(path.dirname(path.join(herdr.root, "fixture", name)), { recursive: true });
       fs.writeFileSync(path.join(herdr.root, "fixture", name), contents);
     }
-    options.prepare?.(path.join(herdr.root, "fixture"));
+    options.prepare?.(path.join(herdr.root, "fixture"), herdr);
     daemon = await startHided(herdr, label);
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
@@ -622,6 +622,69 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
 });
 
 /** Runs one palette (⌘K) command by typing its name and committing the row with Enter. */
+test("a drag or a tab menu begun on one Workspace ends when another client moves the front to another Workspace", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const stack = await startStack(page, "s7-front-moves", { "a.txt": "a\n", "c.txt": "c\n" }, {
+    prepare: (checkout, herdr) => {
+      const beta = path.join(path.dirname(checkout), "beta");
+      fs.mkdirSync(beta, { recursive: true });
+      for (const name of ["b1.txt", "b2.txt"]) fs.writeFileSync(path.join(beta, name), `${name}\n`);
+      herdr.run(["workspace", "create", "--cwd", beta, "--label", "beta", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
+    },
+  });
+  const other = await page.context().newPage();
+  try {
+    const betaRoot = path.join(path.dirname(stack.root), "beta");
+    const choose = async (target: Page, project: string) => {
+      await target.locator('[data-sidebar-mode="projects"]').click();
+      await target.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first().click();
+    };
+    // Each Workspace numbers its own views, so both hold a1 with d2 and d3.
+    for (const name of ["a.txt", "c.txt"]) await explorerRow(page, stack, name).dblclick();
+    await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
+    await choose(page, "beta");
+    for (const name of ["b1.txt", "b2.txt"]) await page.locator(`[data-explorer-row="${path.join(betaRoot, name)}"]`).dblclick();
+    await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
+    await choose(page, "fixture");
+    await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
+    const betaLayout = () => JSON.stringify(storedWorkspace(stack.daemon, betaRoot)?.layout ?? null);
+    await expect.poll(betaLayout).toContain("b2.txt");
+    const stored = betaLayout();
+    const changes = () => viewEvents(stack).filter((event) => event.payload.action !== "focus" && event.payload.action !== "focus_area").length;
+    const before = changes();
+    await open(other, stack.daemon);
+    await expect(other.locator("[data-main-screen]").or(other.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
+
+    // A drag toward fixture's right edge while the other client moves the
+    // front to beta: the drag ends with the tree it began on, and its release
+    // sends nothing that would split beta's d3 (contract 4.1, B8).
+    const target = await boxOf(area(page, 0));
+    await dragTab(page, tab(page, "c.txt"), { x: target.x + target.width - 12, y: target.y + target.height / 2 }, async () => {
+      await expect(page.locator('[data-view-drop="right"]')).toBeVisible();
+      await choose(other, "beta");
+      await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
+      await expect(page.locator("[data-view-drop]")).toHaveCount(0);
+    });
+    await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
+    expect(changes()).toBe(before);
+    expect(betaLayout()).toBe(stored);
+
+    // A tab menu open on fixture's c.txt closes when the front moves the same way.
+    await choose(other, "fixture");
+    await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
+    await tab(page, "c.txt").click({ button: "right" });
+    await expect(page.locator('[role="menu"]')).toBeVisible();
+    await choose(other, "beta");
+    await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
+    await expect(page.locator('[role="menu"]')).toHaveCount(0);
+    expect(changes()).toBe(before);
+    expect(betaLayout()).toBe(stored);
+  } finally {
+    await other.close();
+    stopStack(stack);
+  }
+});
+
 async function paletteCommand(page: Page, query: string, rowId: string): Promise<void> {
   await page.keyboard.press("Meta+KeyK");
   await expect(page.locator("[data-palette-input]")).toBeFocused();
