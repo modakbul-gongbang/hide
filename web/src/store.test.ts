@@ -41,6 +41,19 @@ describe("snapshot merge", () => {
     expect(useShellStore.getState().rest?.workspace_view).toBeUndefined();
   });
 
+  it("keeps the named Project's sessions across a delta that does not carry them", () => {
+    const store = useShellStore.getState();
+    const sessions = { device_id: "local", workspace_id: "workspace:a", unavailable_reason: null, loading: false, failure: null, rows: [], detail: null };
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+    expect(useShellStore.getState().projectSessions).toBeNull();
+    store.applyFrame({ type: "delta", payload: { revision: 2, project_sessions: sessions } });
+    store.applyFrame({ type: "delta", payload: { revision: 3, rest: { focused: { pane_id: "p2" } } } });
+    expect(useShellStore.getState().projectSessions).toBe(sessions);
+    // A daemon that restarted names no Project.
+    store.applyFrame({ type: "snapshot", payload: { revision: 1, rest: {} } });
+    expect(useShellStore.getState().projectSessions).toBeNull();
+  });
+
   it("keeps the newest diagnostics under the cap and counts the rest", () => {
     const store = useShellStore.getState();
     for (let i = 0; i < DIAGNOSTIC_CAP + 5; i += 1) store.noteDiagnostic(`d${i}`);

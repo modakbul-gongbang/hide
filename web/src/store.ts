@@ -8,6 +8,7 @@ import {
   type ChangesSnapshot,
   type EditorSnapshot,
   type PaneFind,
+  type ProjectSessions,
   type SnapshotRest,
 } from "./snapshot";
 
@@ -61,6 +62,7 @@ export type Frame = {
     rest?: SnapshotRest;
     editor?: EditorSnapshot | null;
     changes?: ChangesSnapshot | null;
+    project_sessions?: ProjectSessions;
     find?: PaneFind;
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
@@ -104,6 +106,12 @@ type Store = {
   editor: EditorSnapshot | null;
   /** The core's changes section, read the same way and for the same reason. */
   changes: ChangesSnapshot | null;
+  /**
+   * The named Project's Sessions, the fourth section the core revisions on
+   * its own. The core leaves it out until a Project is named, so a snapshot
+   * without it has none; a delta without it keeps what the store holds.
+   */
+  projectSessions: ProjectSessions | null;
   agents: AgentRow[];
   /**
    * The keyboard-focus pane of the context on screen: the core's
@@ -194,6 +202,7 @@ export const useShellStore = create<Store>((set, get) => ({
   rest: null,
   editor: null,
   changes: null,
+  projectSessions: null,
   agents: [],
   focusedPaneId: null,
   herdrState: null,
@@ -258,16 +267,18 @@ export const useShellStore = create<Store>((set, get) => ({
   },
   applyFrame: (frame) => {
     const payload = frame.payload ?? {};
-    // The core revisions `editor` and `changes` on their own, beside `rest`:
-    // a snapshot carries every section, a delta only the ones that changed
+    // The core revisions `editor`, `changes` and the named Project's
+    // `project_sessions` on their own, beside `rest`: a snapshot carries
+    // every section it has, a delta only the ones that changed
     // since the client's revision. Both land before the routing below, which
     // answers a listing or a refusal with an early return.
     if (frame.type === "snapshot") {
-      set({ editor: payload.editor ?? null, changes: payload.changes ?? null });
-    } else if (payload.editor !== undefined || payload.changes !== undefined) {
+      set({ editor: payload.editor ?? null, changes: payload.changes ?? null, projectSessions: payload.project_sessions ?? null });
+    } else if (payload.editor !== undefined || payload.changes !== undefined || payload.project_sessions !== undefined) {
       set({
         editor: payload.editor ?? get().editor,
         changes: payload.changes ?? get().changes,
+        projectSessions: payload.project_sessions ?? get().projectSessions,
       });
     }
     if (frame.type === "directory_list") {
