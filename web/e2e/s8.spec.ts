@@ -186,6 +186,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(page.locator('[data-session-row="claude-path"]')).toBeFocused();
     await page.keyboard.press("Home");
     await expect(page.locator('[data-session-row="claude-broken"]')).toBeFocused();
+    await screenshot(page, "s8-keyboard-focus");
     await page.locator('[data-provider-choice="all"]').focus();
     await page.keyboard.press("ArrowRight");
     await expect(page.locator("[data-sessions-provider]")).toHaveAttribute("data-sessions-provider", "codex");
