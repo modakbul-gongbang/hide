@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
+import { Hint } from "./components/ui/tooltip";
 import { changesFor, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
 import { useShellStore } from "./store";
 import { drawnViews } from "./viewFocus";
@@ -50,12 +51,12 @@ function ChangeRow({ entry, committed, selected, actions }: {
       className="block"
       data-history-menu={entry.relative_path}
     >
+      <Hint label={title} reveals>
       <button
         type="button"
         className={`flex h-[var(--size-pane-child-row)] w-full min-w-0 items-center gap-xs px-sm text-left text-caption hover:bg-accent ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
         aria-label={title}
         aria-current={selected ? "true" : undefined}
-        title={title}
         data-history-path={entry.relative_path}
         data-history-group={committed ? "committed" : "working"}
         onClick={() => actions.selectChange(entry.path, committed, true)}
@@ -70,6 +71,7 @@ function ChangeRow({ entry, committed, selected, actions }: {
         {entry.removed_lines !== null ? <span className="shrink-0 text-destructive" aria-label={`${entry.removed_lines} lines removed`}>-{entry.removed_lines}</span> : null}
         <span className={`shrink-0 ${status.color}`} aria-hidden="true">{status.mark}</span>
       </button>
+      </Hint>
     </EntryContextMenu>
   );
 }

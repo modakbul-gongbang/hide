@@ -68,14 +68,13 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
         const pending = state?.phase === "pending" && relation?.targetPaneId === chip.pane_id;
         const title = chipTitle(chip);
         return (
+          <Hint key={chip.pane_id} label={title} reveals>
           <button
-            key={chip.pane_id}
             type="button"
             className={`flex max-w-[var(--size-pane-child-chip-max)] shrink-0 items-center gap-xxs rounded-xs border border-border px-xxs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring ${
               chip.delegated ? "text-subtle-foreground" : "text-foreground"
             }`}
             aria-label={`Open child ${title}`}
-            title={title}
             aria-busy={pending}
             data-child-chip={chip.pane_id}
             data-pending={pending ? "true" : "false"}
@@ -89,6 +88,7 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
             <AgentMark kind={chip.agent_kind} />
             <span className="truncate">{chip.label}</span>
           </button>
+          </Hint>
         );
       })}
     </div>
@@ -120,9 +120,11 @@ export function RelationStatus({ actions }: { actions: Actions }) {
   }
   return (
     <div className="flex shrink-0 items-center gap-sm bg-card px-sm py-xxs text-caption" role="alert" data-relation-status="failed">
-      <span className="min-w-0 flex-1 truncate text-destructive" title={state.message}>
+      <Hint label={state.message} reveals>
+      <span className="min-w-0 flex-1 truncate text-destructive">
         {state.message}
       </span>
+      </Hint>
       {state.retryable ? (
         <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground" data-relation-retry="true" onClick={() => actions.retryRelation()}>
           Retry

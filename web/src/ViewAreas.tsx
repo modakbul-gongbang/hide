@@ -592,11 +592,11 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
   const unavailable = display.state === "unavailable";
   const identity = displayIdentity(display);
   return (
+    <Hint label={identity} reveals>
     <div
       role="tab"
       aria-selected={selected}
       aria-label={identity}
-      title={identity}
       tabIndex={0}
       data-tab={display.tab_id ?? ""}
       data-display={display.id}
@@ -644,6 +644,7 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
       </Hint>
       {selected && areaActive ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
     </div>
+    </Hint>
   );
 }
 

@@ -158,13 +158,13 @@ const AgentRowView = memo(function AgentRowView({
   const tone = agent.delegated ? "text-muted-foreground" : agent.emphasized || attention ? "text-foreground" : "text-subtle-foreground";
   return (
     <li>
+      <Hint label={device ? `${agent.identity_label} · ${device}` : agent.identity_label}>
       <button
         type="button"
         onClick={() => onOpen(agent.pane_id)}
         data-pane={agent.pane_id}
         data-attention={attention ? "true" : "false"}
         data-delegated={agent.delegated ? "true" : "false"}
-        title={device ? `${agent.identity_label} · ${device}` : agent.identity_label}
         data-agent-device={device ?? "local"}
         className={`flex w-full flex-col items-start py-xs pr-md text-left outline-none focus-visible:bg-accent ${
           agent.delegated ? "pl-[calc(var(--spacing-md)+var(--size-lineage-indent))]" : "pl-md"
@@ -176,14 +176,15 @@ const AgentRowView = memo(function AgentRowView({
           </span>
           <span className="flex-1 truncate">{agent.identity_label}</span>
           {descendants > 0 ? (
+            <Hint label={descendantDetail(agent, descendants)} reveals>
             <span
               className="shrink-0 rounded-xs bg-secondary px-xxs text-micro text-subtle-foreground"
-              title={descendantDetail(agent, descendants)}
               aria-label={descendantDetail(agent, descendants)}
               data-descendant-badge={descendants}
             >
               ↳{descendants}
             </span>
+            </Hint>
           ) : null}
           <span className="text-micro text-muted-foreground">{agent.elapsed}</span>
         </span>
@@ -192,6 +193,7 @@ const AgentRowView = memo(function AgentRowView({
           {agent.unknown ? "unknown" : `${agent.agent_kind}${agent.detail ? ` / ${agent.detail}` : ""}`}
         </span>
       </button>
+      </Hint>
     </li>
   );
 });

@@ -169,11 +169,11 @@ const TabButton = memo(function TabButton({
   onPointerUp: () => void;
 }) {
   return (
+    <Hint label={identity} reveals>
     <div
       role="tab"
       aria-selected={active}
       aria-label={identity}
-      title={identity}
       tabIndex={0}
       data-tab={entry.source_id}
       data-tab-kind={entry.kind}
@@ -218,5 +218,6 @@ const TabButton = memo(function TabButton({
       </Hint>
       {active ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
     </div>
+    </Hint>
   );
 });

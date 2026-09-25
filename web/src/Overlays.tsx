@@ -98,9 +98,11 @@ export function NoticeBar({ actions }: { actions: Actions }) {
   const dontSave = notice.dontSave;
   return (
     <div role="status" data-notice="true" className="flex items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-subtle-foreground">
-      <span className="min-w-0 flex-1 truncate" title={notice.text}>
+      <Hint label={notice.text} reveals>
+      <span className="min-w-0 flex-1 truncate">
         {notice.text}
       </span>
+      </Hint>
       {notice.refreshable ? (
         <Button variant="link" size="sm" className="h-auto px-none" onClick={() => actions.refreshStatus()}>
           Check status

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { Button } from "./components/ui/button";
+import { Hint } from "./components/ui/tooltip";
 import { AGENT_GROUPS, agentSections, checkoutAgents, groupCounts, mainSections, overviewProject, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { pullRequestBadge } from "./projects";
 import type { AgentRow, Checkout, Device, Workspace } from "./snapshot";
@@ -118,10 +119,10 @@ function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
   const reachable = project.workspace !== null;
   return (
     <li>
+      <Hint label={reachable ? `${project.label} · ${project.path}` : `${project.label} · ${project.path} · its device has not answered`}>
       <button
         type="button"
         disabled={!reachable}
-        title={reachable ? `${project.label} · ${project.path}` : `${project.label} · ${project.path} · its device has not answered`}
         data-main-project={project.id}
         className="flex w-full items-center gap-md rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
         onClick={() => setScreen({ kind: "overview", projectId: project.id })}
@@ -138,6 +139,7 @@ function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
         </span>
         <Counts counts={project.counts} />
       </button>
+      </Hint>
     </li>
   );
 }
@@ -150,9 +152,11 @@ function Counts({ counts }: { counts: GroupCounts | null }) {
     <span className="flex w-[var(--size-recent-location-max)] shrink-0 justify-end gap-sm text-caption" data-agent-counts={shown.map(({ group }) => `${group}:${counts[group]}`).join(" ")}>
       {shown.length === 0 ? <span className="text-muted-foreground">No agents</span> : null}
       {shown.map(({ group, label }) => (
-        <span key={group} className={group === "needs_you" ? "text-warning" : group === "done" ? "text-success" : group === "working" ? "text-agent-working" : "text-muted-foreground"} title={`${counts[group]} ${label}`}>
+        <Hint key={group} label={`${counts[group]} ${label}`} reveals>
+        <span className={group === "needs_you" ? "text-warning" : group === "done" ? "text-success" : group === "working" ? "text-agent-working" : "text-muted-foreground"}>
           {counts[group]} {label}
         </span>
+        </Hint>
       ))}
     </span>
   );
@@ -179,9 +183,11 @@ export function OverviewScreen({ projectId, actions }: { projectId: string; acti
           Main
         </button>
         <span aria-hidden="true" className="text-muted-foreground">/</span>
-        <h1 className="min-w-0 truncate text-subhead font-semibold text-foreground" title={workspace.path} aria-current="page">
+        <Hint label={workspace.path}>
+        <h1 className="min-w-0 truncate text-subhead font-semibold text-foreground" aria-current="page">
           {workspace.label}
         </h1>
+        </Hint>
         {device ? <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro text-subtle-foreground">{device.label}</span> : null}
         <span className="flex-1" />
         <Button variant="ghost" onClick={() => setScreen({ kind: "sessions", projectId: workspace.id })} data-overview-sessions="true">
@@ -235,9 +241,9 @@ function WorkspaceRow({ workspace, checkout, counts, actions }: { workspace: Wor
   const badge = checkout.pull_request ? pullRequestBadge(checkout.pull_request) : null;
   return (
     <li>
+      <Hint label={`${name} · ${checkout.path}${checkout.purpose?.text ? ` · ${checkout.purpose.text}` : ""}`}>
       <button
         type="button"
-        title={`${name} · ${checkout.path}${checkout.purpose?.text ? ` · ${checkout.purpose.text}` : ""}`}
         data-overview-workspace={checkout.id}
         className="flex w-full items-center gap-md rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:bg-accent"
         onClick={() => actions.openWorkspace(workspace.device_id, workspace.id, checkout.id)}
@@ -259,6 +265,7 @@ function WorkspaceRow({ workspace, checkout, counts, actions }: { workspace: Wor
         </span>
         <Counts counts={counts} />
       </button>
+      </Hint>
     </li>
   );
 }
@@ -291,9 +298,9 @@ function ProjectAgents({ agents, workspace, actions }: { agents: AgentRow[] | nu
                   const checkout = byPane.get(agent.pane_id);
                   return (
                     <li key={agent.id}>
+                      <Hint label={`${agent.identity_label} · ${agent.agent_kind} · ${agent.status_label}${agent.detail ? ` · ${agent.detail}` : ""}`}>
                       <button
                         type="button"
-                        title={`${agent.identity_label} · ${agent.agent_kind} · ${agent.status_label}${agent.detail ? ` · ${agent.detail}` : ""}`}
                         data-overview-agent={agent.pane_id}
                         className={`flex w-full items-center gap-xs rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:bg-accent ${agent.emphasized ? "text-foreground" : "text-subtle-foreground"}`}
                         onClick={() => actions.openAgent(agent.pane_id)}
@@ -303,6 +310,7 @@ function ProjectAgents({ agents, workspace, actions }: { agents: AgentRow[] | nu
                         <span className="min-w-0 flex-1 truncate text-body">{agent.identity_label}</span>
                         <span className="max-w-[var(--size-recent-location-max)] shrink-0 truncate text-caption text-muted-foreground">{checkout ? (checkout.branch ?? checkout.label) : ""}</span>
                       </button>
+                      </Hint>
                     </li>
                   );
                 })}

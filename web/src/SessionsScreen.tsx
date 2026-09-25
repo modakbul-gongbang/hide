@@ -96,15 +96,16 @@ function ProjectSessions({ workspace, deviceLabel, actions }: { workspace: Works
           Main
         </button>
         <span aria-hidden="true" className="text-muted-foreground">/</span>
+        <Hint label={workspace.path}>
         <button
           type="button"
-          title={workspace.path}
           className="min-w-0 truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
           data-go-overview={workspace.id}
           onClick={() => setScreen({ kind: "overview", projectId: workspace.id })}
         >
           {workspace.label}
         </button>
+        </Hint>
         <span aria-hidden="true" className="text-muted-foreground">/</span>
         <h1 className="shrink-0 text-subhead font-semibold text-foreground" aria-current="page">
           Sessions
@@ -363,12 +364,12 @@ function SessionRowItem({
   const unavailable = row.unavailable_reason;
   return (
     <li className={`rounded-sm ${selected ? "bg-secondary" : ""}`} data-session={row.id} data-session-available={unavailable ? "false" : "true"}>
+      <Hint label={`${title ?? "Untitled session"} · ${checkout.path}`} reveals>
       <button
         type="button"
         tabIndex={focusable ? 0 : -1}
         aria-current={selected ? "true" : undefined}
         aria-label={sessionAccessibleName(row, checkout.label, time)}
-        title={`${title ?? "Untitled session"}\n${checkout.path}`}
         data-session-row={row.id}
         className="flex w-full flex-col gap-xxs rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
         onClick={() => onOpen(row)}
@@ -383,6 +384,7 @@ function SessionRowItem({
         <span className={`line-clamp-2 break-words break-keep text-body ${unavailable ? "text-muted-foreground" : title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? "Untitled session"}</span>
         <span className={`truncate text-micro ${unavailable ? "text-muted-foreground" : "text-subtle-foreground"}`}>{checkout.label}</span>
       </button>
+      </Hint>
       {unavailable ? (
         <div className="flex flex-col gap-xs px-sm pb-xs">
           <p className="break-words text-caption text-warning" data-session-reason={row.id}>
@@ -511,9 +513,11 @@ function DetailHeader({ detail, row, workspace, reading = false }: { detail: Pro
       <div className="flex items-center gap-xs text-micro text-subtle-foreground">
         <AgentMark kind={row.provider} />
         <span>{row.provider_label}</span>
-        <span className="truncate text-muted-foreground" title={checkout.path}>
+        <Hint label={checkout.path}>
+        <span className="truncate text-muted-foreground">
           {checkout.label}
         </span>
+        </Hint>
         {time ? <span className="shrink-0 text-muted-foreground">{time}</span> : null}
         {reading ? (
           <span role="status" className="shrink-0 text-muted-foreground">

@@ -277,9 +277,11 @@ function EditorHeader({
   const group = display.committed ? "Committed on branch" : "Uncommitted";
   return (
     <div className="flex shrink-0 items-center gap-sm border-b border-border px-md py-xs text-caption text-subtle-foreground">
-      <span className="min-w-0 flex-1 truncate" title={file ? display.path : `${group}: ${display.path}`} data-editor-path="true">
+      <Hint label={file ? display.path : `${group}: ${display.path}`} reveals>
+      <span className="min-w-0 flex-1 truncate" data-editor-path="true">
         {file ? "" : `${display.committed ? "Branch diff" : "Working diff"} · `}{display.path}
       </span>
+      </Hint>
       {document?.dirty ? (
         <span className="text-warning" data-editor-dirty="true">
           Unsaved

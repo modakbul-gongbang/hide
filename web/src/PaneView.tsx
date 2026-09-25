@@ -153,9 +153,11 @@ export const PaneView = memo(function PaneView({
         }}
       >
         <ReturnToParent pane={pane} actions={actions} />
-        <span className="min-w-0 flex-1 truncate" title={title}>
+        <Hint label={title} reveals>
+        <span className="min-w-0 flex-1 truncate">
           {title}
         </span>
+        </Hint>
         {caption ? (
           <span className="truncate text-muted-foreground">{caption.text}</span>
         ) : (

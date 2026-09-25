@@ -123,24 +123,29 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
           </button>
           <span aria-hidden="true" className="text-muted-foreground">/</span>
           {project ? (
-            <button
-              type="button"
-              className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-              title={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}
-              data-go-overview={project.id}
-              onClick={() => setScreen({ kind: "overview", projectId: project.id })}
-            >
-              {project.label}
-            </button>
+            <Hint label={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}>
+              <button
+                type="button"
+                className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+                data-go-overview={project.id}
+                onClick={() => setScreen({ kind: "overview", projectId: project.id })}
+              >
+                {project.label}
+              </button>
+            </Hint>
           ) : null}
           <span aria-hidden="true" className="text-muted-foreground">/</span>
-          <span className="min-w-0 truncate text-foreground" title={`${name} · ${checkout.path}`} aria-current="page">
-            {name}
-          </span>
-          {device ? (
-            <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro text-subtle-foreground" title={`On ${device.label}`} data-workspace-device={device.id}>
-              {device.label}
+          <Hint label={`${name} · ${checkout.path}`}>
+            <span className="min-w-0 truncate text-foreground" aria-current="page">
+              {name}
             </span>
+          </Hint>
+          {device ? (
+            <Hint label={`On ${device.label}`}>
+              <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro text-subtle-foreground" data-workspace-device={device.id}>
+                {device.label}
+              </span>
+            </Hint>
           ) : null}
         </nav>
         {singleRegion ? <RegionSwitch /> : null}
@@ -423,9 +428,17 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
         // A lost connection keeps the last session on screen, but the host
         // takes no command until it is back (`remote.control.not_connected`).
         <div role="status" className="flex items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-warning" data-remote-stale={device.id}>
-          <span className="min-w-0 flex-1 truncate" title={status?.message ?? undefined}>
-            {device.label} is not connected{status?.message ? `: ${status.message}` : ""}. Showing the last state it reported; nothing is sent until it reconnects.
-          </span>
+          {status?.message ? (
+            <Hint label={status.message} reveals>
+              <span className="min-w-0 flex-1 truncate">
+                {device.label} is not connected: {status.message}. Showing the last state it reported; nothing is sent until it reconnects.
+              </span>
+            </Hint>
+          ) : (
+            <span className="min-w-0 flex-1 truncate">
+              {device.label} is not connected. Showing the last state it reported; nothing is sent until it reconnects.
+            </span>
+          )}
           {canRetryDevice(device, status ?? undefined) ? (
             <Button variant="secondary" onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
               Retry

@@ -330,9 +330,11 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-explorer={rootPath}>
       <div className="flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground">
-        <span className="min-w-0 flex-1 truncate" title={rootPath} data-explorer-root="true">
+        <Hint label={rootPath} reveals>
+        <span className="min-w-0 flex-1 truncate" data-explorer-root="true">
           {baseName(rootPath)}
         </span>
+        </Hint>
         <Hint label="Refresh">
           <Button
             variant="ghost"
@@ -609,13 +611,13 @@ function ExplorerRowView({
 }) {
   const [over, setOver] = useState(false);
   return (
+    <Hint label={rowTitle(row, rootPath)} reveals>
     <div
       role="treeitem"
       aria-selected={selected}
       aria-level={row.depth + 1}
       aria-expanded={row.isDirectory ? row.expanded : undefined}
       aria-label={rowAccessibilityLabel(row)}
-      title={rowTitle(row, rootPath)}
       draggable
       data-explorer-row={row.path}
       data-selected={selected ? "true" : "false"}
@@ -688,10 +690,13 @@ function ExplorerRowView({
         </Hint>
       ) : null}
       {row.decoration ? (
-        <span className={`shrink-0 text-caption ${gitBadgeColor(row.decoration.status)}`} title={row.decoration.title}>
-          {row.decoration.badge}
-        </span>
+        <Hint label={row.decoration.title}>
+          <span className={`shrink-0 text-caption ${gitBadgeColor(row.decoration.status)}`}>
+            {row.decoration.badge}
+          </span>
+        </Hint>
       ) : null}
     </div>
+    </Hint>
   );
 }
