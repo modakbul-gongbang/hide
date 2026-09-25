@@ -635,7 +635,10 @@ impl Layout {
     /// display, the area becomes the one in use, and an area it leaves empty
     /// collapses. A display that changes place is kept open (a drag keeps a
     /// preview, D-02). The index is the display's place after the move, so
-    /// the same move twice changes nothing the second time.
+    /// the same move twice changes nothing the second time. A display moved
+    /// into an area that already shows its document takes the place of that
+    /// twin, which goes: only Open to the side makes a second view of a
+    /// document, and never within one area (D-03, B6).
     pub fn move_display(
         &mut self,
         display_id: &str,
@@ -670,8 +673,20 @@ impl Layout {
         }
         display.last_focused_unix_ms = stamp;
         let area = self.root.area_mut(area_id).expect("found above");
+        let mut to = to;
+        if source_id != area_id
+            && let Some(twin) = area
+                .displays
+                .iter()
+                .position(|other| other.shows(&display.path, display.kind, display.committed))
+        {
+            area.displays.remove(twin);
+            if twin < to {
+                to -= 1;
+            }
+        }
         area.active = Some(display_id.to_owned());
-        area.displays.insert(to, display);
+        area.displays.insert(to.min(area.displays.len()), display);
         self.active_area = area_id.to_owned();
         if source_id != area_id {
             self.collapse_if_empty(&source_id);

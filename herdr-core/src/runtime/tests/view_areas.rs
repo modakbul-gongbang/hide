@@ -1729,3 +1729,56 @@ fn open_to_the_side_with_no_view_open_opens_in_the_empty_area() {
     );
     assert_eq!(labels(&mut runtime), vec![vec!["a.md"], vec!["b.md"]]);
 }
+
+/// B6, D-03: a view dragged into an area that already shows its document
+/// takes its twin's place there instead of standing beside it, so no area
+/// ever holds one document twice; the document itself stays open.
+#[test]
+fn a_view_moved_onto_its_documents_twin_replaces_it() {
+    let (mut runtime, checkout_id, directory) = views_runtime("view-move-twin");
+    files(&directory, &["a.md", "b.md"]);
+    for name in ["a.md", "b.md"] {
+        open(
+            &mut runtime,
+            &checkout_id,
+            &directory.join(name),
+            false,
+            false,
+        );
+    }
+    let a = display(&mut runtime, 0, "a.md");
+    act(
+        &mut runtime,
+        serde_json::json!({"action": "focus", "display_id": a}),
+    );
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("a.md"),
+        false,
+        true,
+    );
+    assert_eq!(
+        labels(&mut runtime),
+        vec![vec!["a.md", "b.md"], vec!["a.md"]]
+    );
+
+    let twin = display(&mut runtime, 1, "a.md");
+    let first = area_id(&mut runtime, 0);
+    assert!(act(
+        &mut runtime,
+        serde_json::json!({"action": "move", "display_id": twin, "area_id": first, "index": 2}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(labels(&mut runtime), vec![vec!["b.md", "a.md"]]);
+    assert_eq!(display(&mut runtime, 0, "a.md"), twin);
+    assert_eq!(active_label(&runtime).as_deref(), Some("a.md"));
+    assert!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.label == "a.md")
+    );
+}
