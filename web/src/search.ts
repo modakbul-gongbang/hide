@@ -5,7 +5,7 @@
 
 import { contextAgents, contextWorkspaces } from "./remote";
 import type { SnapshotRest } from "./snapshot";
-import { shownTools, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
+import { besideUnavailable, shownTools, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
 import { LAYOUTS, workspaceViewOf, type ViewMode } from "./workspace";
 
 export type SearchEntry = {
@@ -94,7 +94,14 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
       unavailable: command.unavailable,
     });
   }
-  entries.push({ id: "command:open_beside", title: "Open file to the side", subtitle: "View areas", kind: "command", command: { openBeside: true } });
+  entries.push({
+    id: "command:open_beside",
+    title: "Open file to the side",
+    subtitle: "View areas",
+    kind: "command",
+    command: { openBeside: true },
+    unavailable: besideUnavailable(view.layout, screen.drawn),
+  });
   return entries;
 }
 

@@ -19,7 +19,10 @@ import {
 import { changesFor, explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type ExplorerDraft } from "./ui";
+import { drawnViews } from "./viewFocus";
+import { besideUnavailable } from "./viewLayout";
 import { expandedUnderRoot, watchedFolders } from "./watch";
+import { workspaceViewOf } from "./workspace";
 
 // The Explorer tree (PRD B1, B3, B9, B10): a lazy tree over the focused
 // checkout. The core owns which folders are expanded (`ui_state.expanded_paths`)
@@ -536,6 +539,8 @@ function ContextMenu({
     };
   }, [onDismiss]);
   const row = rowFor(menu.path);
+  // Read as the menu opens: the room beside the only View area (S7 B9, D-06).
+  const besideReason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());
   return (
     <div
       role="menu"
@@ -550,7 +555,7 @@ function ContextMenu({
           <MenuItem label="New Folder" testId="new-folder" onClick={() => onNewFile(menu.path, "folder")} />
         </>
       ) : row ? (
-        <MenuItem label="Open to the side" testId="open-beside" onClick={() => onOpenBeside(row.path)} />
+        <MenuItem label="Open to the side" testId="open-beside" unavailable={besideReason} onClick={() => onOpenBeside(row.path)} />
       ) : null}
       {row ? <MenuItem label="Rename" testId="rename" onClick={() => onRename(row)} /> : null}
       {row ? <MenuItem label="Move to Trash" testId="trash" danger onClick={() => onTrash(row)} /> : null}
@@ -558,16 +563,26 @@ function ContextMenu({
   );
 }
 
-function MenuItem({ label, testId, danger, onClick }: { label: string; testId: string; danger?: boolean; onClick: () => void }) {
+function MenuItem({ label, testId, danger, unavailable = null, onClick }: {
+  label: string;
+  testId: string;
+  danger?: boolean;
+  /** Why the item cannot run now; drawn disabled with the reason under it, as every web menu does. */
+  unavailable?: string | null;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       role="menuitem"
       data-menu-item={testId}
-      className={`block w-full px-md py-xs text-left hover:bg-elevated ${danger ? "text-danger" : "text-primary"}`}
+      disabled={unavailable !== null}
+      title={unavailable ?? undefined}
+      className={`flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated disabled:text-muted disabled:hover:bg-transparent ${danger ? "text-danger" : "text-primary"}`}
       onClick={onClick}
     >
-      {label}
+      <span>{label}</span>
+      {unavailable ? <span className="text-caption text-muted">{unavailable}</span> : null}
     </button>
   );
 }

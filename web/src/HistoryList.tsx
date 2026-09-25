@@ -5,6 +5,9 @@ import { fileIcon } from "./fileIcons";
 import { ContextMenu, type MenuEntry } from "./Menu";
 import { changesFor, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
 import { useShellStore } from "./store";
+import { drawnViews } from "./viewFocus";
+import { besideUnavailable } from "./viewLayout";
+import { workspaceViewOf } from "./workspace";
 
 const STATUS: Record<ChangedFileStatus, { mark: string; label: string; color: string }> = {
   modified: { mark: "M", label: "Modified", color: "text-warning" },
@@ -36,7 +39,9 @@ function ChangeRow({ entry, committed, selected, actions }: {
   const title = identity(entry, committed);
   // The row's diff beside the active View area (S7 B4, contract 4.2), as a
   // click would open it in the active area; a deleted file has a diff too.
-  const menu = (): MenuEntry<"open_beside">[] => [{ id: "open_beside", label: "Open to the side", unavailable: null }];
+  const menu = (): MenuEntry<"open_beside">[] => [
+    { id: "open_beside", label: "Open to the side", unavailable: besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews()) },
+  ];
   return (
     <ContextMenu
       label={`${name} actions`}

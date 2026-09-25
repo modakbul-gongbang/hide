@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ViewDisplaySnapshot, ViewLayoutSnapshot, ViewNode } from "./snapshot";
 import {
   RATIO_MIN,
+  besideUnavailable,
   displayIdentity,
   displayMenu,
   dropTarget,
@@ -147,6 +148,17 @@ describe("split eligibility", () => {
     const tree = split("s1", "row", 0.5, area("a1", ["d1", "d2"]), area("a2", ["d3"]));
     const g = viewGeometry(tree, body(449), SIZES);
     expect(splitEligibility(layout(tree), g, SIZES, "d1", "a1", "down")).toEqual({ ok: false, reason: "The window is too small to show more view areas." });
+  });
+
+  it("lets Open to the side split the only area only where Split right could, and never blocks it with a neighbour", () => {
+    const one = area("a1", ["d1"]);
+    const drawnAt = (width: number) => ({ geometry: viewGeometry(one, body(width), SIZES), sizes: SIZES });
+    expect(besideUnavailable(layout(one), drawnAt(450))).toBeNull();
+    expect(besideUnavailable(layout(one), drawnAt(449))).toBe("This view area is too narrow to open a second view beside it.");
+    expect(besideUnavailable(layout(one, { areas: 1 }), drawnAt(1200))).toEqual(expect.stringContaining("1 view area,"));
+    const tree = split("s1", "row", 0.5, area("a1", ["d1"]), area("a2", ["d2"]));
+    expect(besideUnavailable(layout(tree), { geometry: viewGeometry(tree, body(449), SIZES), sizes: SIZES })).toBeNull();
+    expect(besideUnavailable(layout(one), null)).toBeNull();
   });
 });
 

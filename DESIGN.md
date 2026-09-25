@@ -937,6 +937,7 @@ Diffs are placed by the same rules.
 
 Open to the side, from the Explorer's file menu, a History row's menu or the palette, is the only way to show one file twice.
 It puts a pinned second view in the area beside the active one, trying right, then left, then below, then above, or in a new area on the right when there is only one area; when that area already shows the file, its view is focused instead.
+From the only area, Open to the side is a split, so it is offered only where Split right would be and otherwise stays listed, disabled, with its reason, in the Explorer's menu, History's menu and the palette alike.
 Both views show one document: an edit in either appears in the other at once, and each keeps its own scroll position, cursor and selection.
 Korean input composes in either view, and neither view's composition or echo breaks the other's.
 Closing one of them leaves the document, its text and its unsaved state in the other; closing the last one goes through the save and conflict protection every document close has, and a save whose outcome is unknown is never shown as saved.

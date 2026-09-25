@@ -330,6 +330,34 @@ export function splitEligibility(
   const target = findArea(layout.root, areaId);
   if (!target) return refuse("That view area is gone.");
   if (located.area.id === areaId && located.area.displays.length === 1) return refuse("This is the only view in its area.");
+  return roomToSplit(layout, geometry, sizes, areaId, edge);
+}
+
+/**
+ * Why Open to the side cannot land now, or null (B4, B9, D-06). With two
+ * or more areas it goes to a neighbour and splits nothing; from the only
+ * area it makes a new area on the right, so that area has to hold two
+ * minimums side by side, exactly as Split right does. While the View areas
+ * are not drawn (Agents only) their room is unknown, and the core's caps
+ * decide.
+ */
+export function besideUnavailable(
+  layout: ViewLayoutSnapshot | null | undefined,
+  drawn: { geometry: Geometry; sizes: LayoutSizes } | null,
+): string | null {
+  if (!layout || !drawn) return null;
+  const areas = areasOf(layout.root);
+  const only = areas.length === 1 ? areas[0] : undefined;
+  if (!only) return null;
+  const room = roomToSplit(layout, drawn.geometry, drawn.sizes, only.id, "right");
+  if (room.ok) return null;
+  return room.reason === NARROW ? "This view area is too narrow to open a second view beside it." : room.reason;
+}
+
+const NARROW = "This view area is too narrow to split.";
+
+/** The caps, the depth and the pixel room a new area at `edge` of `areaId` needs. */
+function roomToSplit(layout: ViewLayoutSnapshot, geometry: Geometry, sizes: LayoutSizes, areaId: string, edge: Edge): Eligibility {
   if (areasOf(layout.root).length >= layout.limits.areas) return refuse(`This Workspace already shows ${count(layout.limits.areas, "view area")}, the most it can.`);
   if ((areaDepth(layout.root, areaId) ?? 0) >= layout.limits.depth) return refuse(`View areas can be split only ${count(layout.limits.depth, "level")} deep.`);
   if (!geometry.fits) return refuse("The window is too small to show more view areas.");
@@ -338,7 +366,7 @@ export function splitEligibility(
   const across = edge === "left" || edge === "right";
   const needed = across ? 2 * sizes.areaMinWidth + sizes.divider : 2 * sizes.areaMinHeight + sizes.divider;
   if ((across ? box.rect.width : box.rect.height) < needed) {
-    return refuse(across ? "This view area is too narrow to split." : "This view area is too short to split.");
+    return refuse(across ? NARROW : "This view area is too short to split.");
   }
   return { ok: true };
 }
