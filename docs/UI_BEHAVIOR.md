@@ -116,7 +116,18 @@ A child pane has a compact Return mark in its identity row, named with the paren
 The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name and Close pane; opening it moves no focus and marks nothing read.
 
 The Agents explorer groups every current agent, this machine's and each connected device's, under Needs You, Done, Working, and Seen, and leaves an empty group out; a device's row names its device before the agent kind, and a device that is not connected lists nothing it only last reported.
-A delegated row is indented and muted, and a row with live descendants carries a badge whose tooltip counts them by state.
+Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
+Descendants start folded; the parent's chevron folds and unfolds them, and the choice is the core's `expanded_agent_pane_ids`, so it survives a restart.
+A folded parent with live descendants carries a badge after its title: one mark and count per state (error, approval, question, working, done), summed over every live descendant, or `↳N` when all of them are merely ready.
+The badge is a button: a click, Enter or Space opens a list of the direct children with their status mark, name, status word, branch when it differs, and elapsed time; the arrow keys move the highlight, Enter or the highlighted row's arrow opens that child's pane, the last item unfolds the children in the list, and Escape closes it and returns focus to the parent row.
+The list has no Stop action, drops a child the moment it leaves the projection, and closes when no child is left.
+
+A root whose own turn is over while a descendant still works or asks is waiting on its children (docs/status-model.md): it stays in Working with its ring in the working color, and its badge, not its own sentence, says what is going on.
+
+An agent row's first line is always its status mark, provider mark, stable task name, a branch chip only when a delegated row's checkout differs from its parent's, a device chip for a row on an SSH device, the badge, and the elapsed time.
+A second line appears only when the row has something to say: a question, approval or error keeps its request in the warning color (red for an error) until it is resolved, however often the row is read; a row that changed since the operator last looked shows its sentence bright until it is read; and the selected or hovered row reveals its full sentence over up to two lines, with the whole of it in the row's tooltip.
+Every other row is one line, and no row draws a progress number or step the agent did not report.
+Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/src/components/agent-row.tsx`, `web/src/components/agent-children-popover.tsx`.
 
 ## Web Project Sessions
 
