@@ -1254,6 +1254,93 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
 }
 
+/// A restarted runtime whose stored Views hold one diff display of `x.md`,
+/// stored with the Changes group `committed`.
+fn restored_diff(name: &str, committed: Option<bool>) -> (Runtime, PathBuf) {
+    let (runtime, _checkout_id, directory) = strip_checkout(name);
+    let state = views_path(name);
+    let mut views = crate::workspace_views::WorkspaceViews::default();
+    let layout = &mut views
+        .entry(workspace::LOCAL_DEVICE_ID, &directory.to_string_lossy())
+        .layout;
+    let mut diff = layout.new_display(
+        &directory.join("x.md").to_string_lossy(),
+        crate::view_layout::DisplayKind::Diff,
+        Some(false),
+        false,
+    );
+    diff.committed = committed;
+    layout.insert("a1", diff, 1).unwrap();
+    crate::workspace_views::save(&state, &views).unwrap();
+    (with_views(runtime, &state), directory)
+}
+
+fn display_states(runtime: &mut Runtime) -> Vec<(String, ViewDisplayState, Option<String>)> {
+    areas(&tree(runtime))
+        .into_iter()
+        .flat_map(|(_, _, displays)| displays)
+        .map(|display| (display.label, display.state, display.reason))
+        .collect()
+}
+
+/// B16: a diff view stored without its Changes group, as a hand-edited file
+/// can hold it, comes back as the working diff it defaults to, once, rather
+/// than as a view that never finds its tab beside a second one that does.
+#[test]
+fn a_diff_view_stored_without_its_group_comes_back_open_once() {
+    let (mut runtime, _directory) = restored_diff("view-diff-no-group", None);
+    assert_eq!(
+        display_states(&mut runtime),
+        vec![(
+            "x.md (working diff)".to_owned(),
+            ViewDisplayState::Open,
+            None
+        )]
+    );
+}
+
+/// B16: Retry on a diff view that has lost its tab opens the diff again,
+/// where it used to do nothing while the view offered it.
+#[test]
+fn retry_on_a_diff_view_without_its_tab_opens_the_diff_again() {
+    let (mut runtime, directory) = restored_diff("view-diff-retry", Some(false));
+    // The diff's tab goes away without the reconcile seeing it close.
+    let tab = tab_of(&runtime, "x.md (working diff)");
+    runtime.snapshot.editor.tabs.retain(|held| held.id != tab);
+    let store = runtime.workspace_views.as_mut().unwrap();
+    for display in store
+        .views
+        .entry(workspace::LOCAL_DEVICE_ID, &directory.to_string_lossy())
+        .layout
+        .displays_mut()
+    {
+        display.tab_id = None;
+    }
+    assert_eq!(
+        display_states(&mut runtime),
+        vec![(
+            "x.md (working diff)".to_owned(),
+            ViewDisplayState::Unavailable,
+            Some("This view's diff is not open; Retry opens it again".to_owned())
+        )]
+    );
+
+    let lost = display(&mut runtime, 0, "x.md (working diff)");
+    assert!(act(
+        &mut runtime,
+        serde_json::json!({"action": "retry", "display_id": lost}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        display_states(&mut runtime),
+        vec![(
+            "x.md (working diff)".to_owned(),
+            ViewDisplayState::Open,
+            None
+        )]
+    );
+}
+
 /// Contract 1: an S6 file's View tabs come back as one area, in their saved
 /// order, with the active tab and the preview, and the next save writes the
 /// new schema.

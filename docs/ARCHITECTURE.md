@@ -363,7 +363,8 @@ The wait is `view_root_ready`: on this machine a read waits until hided has open
 A restore opens into the Workspace in front, so it runs only while that is still the Workspace the last sync recorded; a front that moved since waits for the sync rather than filling one Workspace with another's files.
 The reads land in any order and each fills its own display in place, because the order lives in the stored tree rather than in the order the documents arrive; S6's recording of tabs in strip order, and the reordering once the last read landed, are gone.
 A Workspace records nothing into the file until its restore has landed, so a Workspace whose files cannot be reached, or a quit before the reads land, keeps the layout it saved.
-An unavailable display keeps its place with Close view and Retry, `retry` reads it again, and every other display and area is untouched; nothing is started in Herdr, no split or zoom is replayed, and a terminal layout another client changed meanwhile wins.
+An unavailable display keeps its place with Close view and Retry, `retry` reads its file again or, for a diff, opens its diff tab again, and every other display and area is untouched; nothing is started in Herdr, no split or zoom is replayed, and a terminal layout another client changed meanwhile wins.
+A diff display stored without its Changes group is repaired on load to the working group, so it binds to the diff tab its restore opens instead of standing beside a second display of it.
 Unsaved text returns through the web's per-document draft reconcile in IndexedDB (S5.5), never through this file.
 Removing a device forgets its Workspaces' entries, and a pending save is joined when the core is dropped, so a change made just before quitting is on disk.
 

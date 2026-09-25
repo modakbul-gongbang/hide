@@ -859,6 +859,7 @@ impl Layout {
         let mut seen = HashSet::new();
         let mut renamed = 0usize;
         let mut ratios = 0usize;
+        let mut groups = 0usize;
         let Layout { root, next_id, .. } = self;
         let mut claim = |id: &mut String, prefix: char| {
             if !seen.insert(id.clone()) {
@@ -873,6 +874,17 @@ impl Layout {
                 claim(&mut area.id, 'a');
                 for display in &mut area.displays {
                     claim(&mut display.id, 'd');
+                    // A diff shows one Changes group, the working one unless
+                    // stored otherwise, and a file none: a diff stored
+                    // without its group would never find its tab again.
+                    let group = match display.kind {
+                        DisplayKind::Diff => Some(display.committed.unwrap_or(false)),
+                        DisplayKind::File => None,
+                    };
+                    if display.committed != group {
+                        display.committed = group;
+                        groups += 1;
+                    }
                 }
             }
             Node::Split(split) => {
@@ -889,6 +901,11 @@ impl Layout {
         }
         if ratios > 0 {
             notes.push(format!("{ratios} split ratios were brought into bounds"));
+        }
+        if groups > 0 {
+            notes.push(format!(
+                "{groups} views had a Changes group that did not fit their kind"
+            ));
         }
 
         let mut kept = 0usize;

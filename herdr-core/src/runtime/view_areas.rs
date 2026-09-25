@@ -1087,8 +1087,17 @@ impl Runtime {
                 let Some((workspace_id, checkout_id)) = front else {
                     return false;
                 };
-                if display.kind != DisplayKind::File {
-                    return false;
+                // A diff is taken by the Changes read; its view needs only
+                // its tab back, which the reconcile binds it to.
+                if display.kind == DisplayKind::Diff {
+                    self.insert_diff_tab(
+                        &workspace_id,
+                        &checkout_id,
+                        &display.path,
+                        display.committed.unwrap_or(false),
+                        display.preview,
+                    );
+                    return true;
                 }
                 match self.document_source(&workspace_id, &checkout_id) {
                     Ok((root, channel)) => self.start_document_open(
@@ -1493,10 +1502,11 @@ impl Runtime {
         {
             return (ViewDisplayState::Opening, None);
         }
-        (
-            ViewDisplayState::Unavailable,
-            Some("This view's file is not open; Retry reads it again".to_owned()),
-        )
+        let reason = match display.kind {
+            DisplayKind::File => "This view's file is not open; Retry reads it again",
+            DisplayKind::Diff => "This view's diff is not open; Retry opens it again",
+        };
+        (ViewDisplayState::Unavailable, Some(reason.to_owned()))
     }
 
     /// The front Workspace's tree as the snapshot carries it. It runs on
