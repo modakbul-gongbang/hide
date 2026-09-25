@@ -421,7 +421,7 @@ const BESIDE_TOO_NARROW = "This view area is too narrow to open a second view be
 test("Open to the side from the only area is refused with its reason until that area has room to split", async ({ page }) => {
   test.skip(!builtPageHas(BESIDE_TOO_NARROW), "needs a web/dist built with the Open to the side room rule");
   await page.setViewportSize({ width: 1280, height: 720 });
-  const stack = await startStack(page, "s7-beside-room", { "a.txt": "a\n" });
+  const stack = await startStack(page, "s7-beside-room", { "a.txt": "a\n" }, { prepare: gitCheckout });
   try {
     const row = explorerRow(page, stack, "a.txt");
     await row.click();
@@ -442,7 +442,30 @@ test("Open to the side from the only area is refused with its reason until that 
     await expect(command).toHaveAttribute("aria-disabled", "true");
     await expect(command).toContainText(BESIDE_TOO_NARROW);
     await page.keyboard.press("Escape");
+
+    // History's row menu opens at the pointer, whole, with the same item
+    // disabled and its reason: a menu drawn inside the list's positioned
+    // rows landed off the pointer and was clipped out of sight (B4, B9).
+    await page.locator('[data-tool-toggle="changes"]').click();
+    const historyRow = page.locator('[data-history-group="working"][data-history-path="a.txt"]');
+    const rowBox = await boxOf(historyRow);
+    const pointer = { x: Math.round(rowBox.x + 16), y: Math.round(rowBox.y + rowBox.height / 2) };
+    await page.mouse.click(pointer.x, pointer.y, { button: "right" });
+    const besideDiff = page.locator('[data-history-menu="a.txt"] [data-menu-item="open_beside"]');
+    await expect(besideDiff).toBeDisabled();
+    await expect(besideDiff).toContainText(BESIDE_TOO_NARROW);
+    const menuBox = await boxOf(page.locator('[data-history-menu="a.txt"] [role="menu"]'));
+    expect(Math.abs(menuBox.x - pointer.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(menuBox.y - pointer.y)).toBeLessThanOrEqual(2);
+    const itemBox = await boxOf(besideDiff);
+    const drawn = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-menu-item]")?.getAttribute("data-menu-item") ?? null, {
+      x: itemBox.x + itemBox.width / 2,
+      y: itemBox.y + itemBox.height / 2,
+    });
+    expect(drawn).toBe("open_beside");
+    await page.keyboard.press("Escape");
     expect(stack.events.filter((event) => event.kind === "file_open" && event.payload.beside === true)).toHaveLength(0);
+    expect(stack.events.filter((event) => event.kind === "changes_select" && event.payload.beside === true)).toHaveLength(0);
 
     // With room (Views only), the same item opens the second view to the right.
     await page.locator('[data-layout-choice="views"]').click();

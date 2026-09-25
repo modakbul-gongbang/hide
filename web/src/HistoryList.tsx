@@ -129,7 +129,10 @@ export function HistoryList({ actions }: { actions: Actions }) {
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const item = items[virtualRow.index];
           if (!item) return null;
-          return <div key={item.kind === "group" ? `group:${item.committed}` : `${item.committed}:${item.entry.path}`} className="absolute inset-x-0 top-0" style={{ transform: `translateY(${virtualRow.start}px)` }}>
+          // Placed by `top`, not a transform: a transformed row would hold its
+          // row menu's fixed position, drawing the menu away from the pointer
+          // and clipping it inside this list (S7 B4, B9).
+          return <div key={item.kind === "group" ? `group:${item.committed}` : `${item.committed}:${item.entry.path}`} className="absolute inset-x-0" style={{ top: virtualRow.start }}>
             {item.kind === "group" ? <button
               type="button"
               className="flex h-[var(--size-pane-child-row)] w-full items-center gap-xs px-sm text-left text-caption text-secondary hover:bg-elevated"
