@@ -59,6 +59,9 @@ pub fn embedded_file(path: &str) -> Option<(&'static str, &'static [u8])> {
 pub struct AppState {
     pub core: Arc<CoreHandle>,
     pub boundary: Arc<Boundary>,
+    /// Follows the core's checkout roots into `boundary`; a refused event
+    /// catches it up before it is answered.
+    pub roots: Arc<crate::RootFollower>,
     /// The daemon's one watch service; every client subscribes to its frames.
     pub watch: Arc<WatchService>,
     /// The ⌘P index cache, one lazy index per registered checkout.
@@ -379,7 +382,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                                     {
                                         break;
                                     }
-                                } else if send_file_bytes(&mut socket, &state.boundary, &event).await.is_err() {
+                                } else if send_file_bytes(&mut socket, &state.boundary, &state.roots, &event).await.is_err() {
                                     break;
                                 }
                             }
@@ -478,6 +481,7 @@ fn start_device_read(
         frames,
         Arc::clone(&state.core),
         Arc::clone(&state.boundary),
+        Arc::clone(&state.roots),
         device,
         event,
     ));
@@ -601,7 +605,7 @@ fn handle_client_text(
             .dispatch(bytes)
             .map(|()| ClientAction::Replies(Vec::new()));
     }
-    if let Some(reply) = apply_boundary(&state.boundary, &mut event) {
+    if let Some(reply) = admit_event(&state.boundary, &mut event, || roots_current(&state.roots)) {
         return Ok(ClientAction::Replies(vec![Message::Text(
             reply.to_string().into(),
         )]));
@@ -618,8 +622,9 @@ fn handle_client_text(
 fn spawn_device_listing(state: &AppState, event: Value, frames: tokio::sync::mpsc::Sender<String>) {
     let core = Arc::clone(&state.core);
     let boundary = Arc::clone(&state.boundary);
+    let roots = Arc::clone(&state.roots);
     tokio::spawn(async move {
-        let frame = tokio::task::spawn_blocking(move || device_listing(&core, &boundary, &event))
+        let frame = tokio::task::spawn_blocking(move || device_listing(&core, &boundary, &roots, &event))
             .await
             .unwrap_or_else(|error| {
                 json!({"type": "error", "payload": {}, "message": format!("device listing failed: {error}")})
@@ -631,11 +636,16 @@ fn spawn_device_listing(state: &AppState, event: Value, frames: tokio::sync::mps
 /// One folder of a checkout on an SSH device. The root has to be a checkout
 /// the core's catalog carries for that device; the folder is spelled under it
 /// and the helper refuses anything that leaves it.
-fn device_listing(core: &CoreHandle, boundary: &Boundary, event: &Value) -> Value {
+fn device_listing(
+    core: &CoreHandle,
+    boundary: &Boundary,
+    roots: &crate::RootFollower,
+    event: &Value,
+) -> Value {
     let device = payload_str(event, "device_id");
     let root = payload_str(event, "root");
     let raw = payload_str(event, "path");
-    if !boundary.is_device_root(&device, &root) {
+    if !device_root_known(boundary, roots, &device, &root) {
         return refused("file_list", &root, Refusal::OutsideCheckout);
     }
     let folder = if raw.is_empty() { root.clone() } else { raw };
@@ -1120,7 +1130,13 @@ fn handle_file_index(state: &AppState, event: &Value) -> Vec<Message> {
                 .into(),
         )];
     }
-    let Ok((known, opened)) = state.boundary.open_directory(Path::new(&root), &root) else {
+    let found = match state.boundary.open_directory(Path::new(&root), &root) {
+        Err(_) if roots_current(&state.roots) => {
+            state.boundary.open_directory(Path::new(&root), &root)
+        }
+        found => found,
+    };
+    let Ok((known, opened)) = found else {
         return vec![Message::Text(
             refused("file_index", &root, Refusal::OutsideCheckout)
                 .to_string()
@@ -1195,7 +1211,7 @@ fn index_result(
 /// one the core's catalog carries for that device; the walk is the device's
 /// helper's, reached on the index worker, and its paths are that device's.
 fn device_file_index(state: &AppState, device: &str, root: &str, query: &str) -> Value {
-    if !state.boundary.is_device_root(device, root) {
+    if !device_root_known(&state.boundary, &state.roots, device, root) {
         return refused("file_index", root, Refusal::OutsideCheckout);
     }
     let core = Arc::clone(&state.core);
@@ -1275,6 +1291,7 @@ async fn stream_device_file_bytes(
     frames: tokio::sync::mpsc::Sender<Message>,
     core: Arc<CoreHandle>,
     boundary: Arc<Boundary>,
+    roots: Arc<crate::RootFollower>,
     device: String,
     event: Value,
 ) -> Result<(), ()> {
@@ -1292,7 +1309,8 @@ async fn stream_device_file_bytes(
         .and_then(|rest| rest.strip_prefix('/'))
         .filter(|rest| hide_host::relative_path(rest).is_ok())
         .map(str::to_owned);
-    let Some(relative) = relative.filter(|_| boundary.is_device_root(device, &root)) else {
+    let Some(relative) = relative.filter(|_| device_root_known(&boundary, &roots, device, &root))
+    else {
         return frames
             .send(Message::Text(
                 refused("file_bytes", &path, Refusal::OutsideCheckout)
@@ -1443,6 +1461,7 @@ impl AskedRange {
 async fn send_file_bytes(
     socket: &mut WebSocket,
     boundary: &Boundary,
+    roots: &crate::RootFollower,
     event: &Value,
 ) -> Result<(), ()> {
     let request_id = payload_str(event, "request_id");
@@ -1452,7 +1471,11 @@ async fn send_file_bytes(
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let length = event.pointer("/payload/length").and_then(Value::as_u64);
-    let (real, file, total) = match boundary.open_file(&path) {
+    let opened = match boundary.open_file(&path) {
+        Err(Refusal::OutsideCheckout) if roots_current(roots) => boundary.open_file(&path),
+        opened => opened,
+    };
+    let (real, file, total) = match opened {
         Ok(source) => source,
         Err(refusal) => {
             return socket
@@ -1566,6 +1589,69 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+/// Runs the boundary on a client event. The roots follow the core on their own
+/// reads, so an event can name a checkout this client read in a snapshot the
+/// boundary has not applied yet: after a launch, a checkout the core learns
+/// from Herdr's first sync reaches both on separate reads. A refusal as
+/// outside every checkout therefore brings the roots current (`catch_up`) and
+/// runs the check once more before it is answered. The first check's
+/// `path.refused` line stays in the log, followed by `boundary.roots_caught_up`
+/// when the second one let the event through.
+fn admit_event(
+    boundary: &Boundary,
+    event: &mut Value,
+    catch_up: impl FnOnce() -> bool,
+) -> Option<Value> {
+    let reply = apply_boundary(boundary, event);
+    if !reply.as_ref().is_some_and(refused_outside_checkout) || !catch_up() {
+        return reply;
+    }
+    let again = apply_boundary(boundary, event);
+    if !again.as_ref().is_some_and(refused_outside_checkout) {
+        eprintln!(
+            "{}",
+            json!({
+                "component": "hided",
+                "kind": "boundary.roots_caught_up",
+                "event": event.get("kind").and_then(Value::as_str).unwrap_or(""),
+            })
+        );
+    }
+    again
+}
+
+/// Whether a boundary answer refused a path as outside every checkout.
+fn refused_outside_checkout(frame: &Value) -> bool {
+    frame.get("type").and_then(Value::as_str) == Some("path_refused")
+        && frame.pointer("/payload/reason").and_then(Value::as_str)
+            == Some(Refusal::OutsideCheckout.code())
+}
+
+/// Brings the roots current with the core for a check that found no root:
+/// true once they are, whether this read or one it waited for applied them,
+/// so the check is worth running again. False only when the core is gone.
+fn roots_current(roots: &crate::RootFollower) -> bool {
+    match roots.catch_up() {
+        Ok(_) => true,
+        Err(error) => {
+            crate::roots_failed(&error);
+            false
+        }
+    }
+}
+
+/// Whether `root` is a checkout the core's catalog carries for `device`,
+/// bringing the roots current once before saying no (see `admit_event`).
+fn device_root_known(
+    boundary: &Boundary,
+    roots: &crate::RootFollower,
+    device: &str,
+    root: &str,
+) -> bool {
+    boundary.is_device_root(device, root)
+        || (roots_current(roots) && boundary.is_device_root(device, root))
 }
 
 /// The path a client sent, as written; a field the event omits reads as empty
@@ -2175,5 +2261,62 @@ mod tests {
         assert!(!token_matches("ab", "abc"));
         assert!(!token_matches("abd", "abc"));
         assert!(!token_matches("", "abc"));
+    }
+
+    /// After a launch, a checkout the core learns from Herdr's first sync
+    /// reaches a client's snapshot and the boundary on separate reads. A
+    /// listing that names it before the boundary applied it is answered once
+    /// the roots are current, instead of leaving the Explorer empty on
+    /// `outside_checkout`; a root the core does not carry is still refused,
+    /// and a refusal for any other reason reads nothing.
+    #[test]
+    fn an_event_naming_a_root_the_boundary_has_not_applied_yet_is_checked_again_once_the_roots_are_current()
+     {
+        let home = tempfile::tempdir().unwrap();
+        let checkout = home.path().join("checkout");
+        std::fs::create_dir(&checkout).unwrap();
+        std::fs::write(checkout.join("f65.txt"), "file 65\n").unwrap();
+        let boundary = Boundary::new(home.path()).unwrap();
+        let root = checkout.display().to_string();
+
+        let mut reads = 0;
+        let mut event = json!({"schema_version": 2, "kind": "file_list", "payload": {"root": root, "path": root}});
+        let answer = admit_event(&boundary, &mut event, || {
+            reads += 1;
+            boundary.set_roots(vec![crate::boundary::Root {
+                workspace_id: "w1".to_owned(),
+                checkout_id: "c1".to_owned(),
+                path: checkout.clone(),
+            }]);
+            true
+        })
+        .expect("a listing is answered here");
+        assert_eq!(reads, 1);
+        assert_eq!(answer["type"], "directory_list", "{answer}");
+        assert!(answer.to_string().contains("f65.txt"), "{answer}");
+
+        // A root the core does not carry either is refused after one read.
+        let other = home.path().join("elsewhere");
+        std::fs::create_dir(&other).unwrap();
+        let other = other.display().to_string();
+        let mut reads = 0;
+        let mut event = json!({"schema_version": 2, "kind": "file_list", "payload": {"root": other, "path": other}});
+        let answer = admit_event(&boundary, &mut event, || {
+            reads += 1;
+            true
+        })
+        .expect("refused");
+        assert_eq!(reads, 1);
+        assert!(refused_outside_checkout(&answer), "{answer}");
+
+        // A name the boundary refuses for itself never waits on the core.
+        let mut event = json!({"schema_version": 2, "kind": "file_create", "payload": {"root": root, "parent": root, "name": "../out"}});
+        let answer =
+            admit_event(&boundary, &mut event, || panic!("no root was missing")).expect("refused");
+        assert_eq!(
+            answer["payload"]["reason"],
+            Refusal::InvalidPath.code(),
+            "{answer}"
+        );
     }
 }
