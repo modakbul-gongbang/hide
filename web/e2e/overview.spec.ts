@@ -206,6 +206,15 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect(page.locator("[data-new-worktree]")).toHaveCount(0);
     await expect(overview).toBeVisible();
+
+    // While hided is down the board keeps the last snapshot and only the
+    // connection line says so; nothing on the board turns into a banner (B11).
+    const restarting = daemon.restart();
+    await expect(page.locator("[data-connection]")).toBeVisible({ timeout: 10_000 });
+    await expect(overview).toHaveAttribute("data-overview-state", "board");
+    await expect(column("working").locator("[data-overview-card]")).toHaveCount(2);
+    await expect(overview.locator('[role="alert"]')).toHaveCount(0);
+    daemon = await restarting;
   } finally {
     daemon?.stop();
     herdr.stop();
