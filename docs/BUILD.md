@@ -5,7 +5,7 @@ The scripts named here are the executable authority; `scripts/tests/test_toolcha
 
 ## One rule: build output lives in the worktree
 
-Cargo writes to `target/`, SwiftPM to `macos/.build/`, and the web shell to `web/node_modules/` and `web/dist/`, all at their default locations inside the checkout and all ignored by Git.
+Cargo writes to `target/`, SwiftPM to `macos/.build/`, the web shell to `web/node_modules/` and `web/dist/`, and the desktop app to `desktop/node_modules/`, `desktop/dist/` and `desktop/out/`, all at their default locations inside the checkout and all ignored by Git.
 Nothing a checkout builds is written anywhere else, so `git worktree remove` is the whole cleanup, and no cache can outlive the work that produced it.
 
 Two facts make the default location the only correct one.
@@ -67,3 +67,19 @@ A failing Cargo prerequisite stops Swift, and each compiler or test process's fa
 The build regression tests in `test_verification_builds.py` use tiny real Cargo and SwiftPM packages, not compiler mocks.
 They check that a caller's `CARGO_TARGET_DIR` cannot move the archive, that output stays in the checkout, warm archive reuse, Rust and Swift value changes, changed failing tests, and compiler and prerequisite failure propagation.
 They require macOS with Cargo and Swift.
+
+## The desktop app
+
+`desktop/` is a pnpm workspace member; `pnpm install` at the root installs it with the web shell.
+Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the first launch rather than at install, so a lane that only typechecks never fetches it.
+
+| Command | Does |
+| --- | --- |
+| `pnpm --dir desktop dev` | Bundles `desktop/dist/` with esbuild and launches the app unpackaged; it finds this worktree's `target/{debug,release}/hide` itself |
+| `pnpm --dir desktop typecheck`, `lint`, `test` | The desktop CI lane |
+| `pnpm --dir desktop e2e` | Playwright `_electron` against a private hided and pinned Herdr; needs `web/dist`, `target/debug/hide` and `hided`, and the pinned `herdr` as the web e2e does |
+| `pnpm --dir desktop package` | An unsigned local `desktop/out/hide-darwin-<arch>/hide.app` (bundle id `me.grab.hide.desktop`); nothing is signed, notarized or installed |
+
+The app attaches to whatever daemon the environment names: without `HIDE_STATE_DIR` it is the operator's own at `~/.local/state/hide`.
+For QA, set `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR` to private paths, as `desktop/e2e/fixture.ts` does and refuses to launch without.
+A packaged app launched from Finder finds `hide` through `HIDE_CLI_PATH` or the login shell's PATH; macOS may refuse the unsigned app's first launch until it is opened once with Open from the context menu.

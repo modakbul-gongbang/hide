@@ -11,6 +11,7 @@ Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host 
 - `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`. It coexists with the web shell until S6.
 - `hided/` - the product daemon and `hide` CLI. It links `herdr-core` on an owner thread, serves loopback HTTP (`/`, `/assets`, `/health`) and a token-gated WebSocket for dispatch and snapshot deltas.
 - `web/` - the React web shell (Vite, zustand, xterm.js). Build output is `web/dist/` inside this worktree and is gitignored.
+- `desktop/` - the Electron desktop host: the web shell hided serves, in its own macOS window, attached through `hide connect`; it embeds no daemon and never stops one. Build output is `desktop/dist/` and the unsigned local app `desktop/out/`, both gitignored; see `docs/ARCHITECTURE.md`, The desktop host.
 - `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against, plus the pub Rust API `hided` uses. It projects Herdr-owned pane topology and owns Hide's UI state; the shell owns neither.
 - `hide-agent-hooks/` - the only code that writes a configuration file the operator owns (each agent runtime's hook file). A separate crate because a `settings.json` write must never sit behind the render lock; see `docs/agent-hooks.md`.
 - `hide-ai/` - the provider boundary for background AI features, backed by the user's own logged-in CLIs; see `docs/AI_PROVIDERS.md`.
