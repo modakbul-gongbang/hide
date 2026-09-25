@@ -696,6 +696,26 @@ pub(crate) fn tab_target_params(id: &str) -> Result<Value, String> {
 pub(crate) fn pane_target_params(id: &str) -> Result<Value, String> {
     params(req::PaneTarget { pane_id: id.into() })
 }
+pub(crate) fn pane_scroll_params(pane_id: &str, offset_from_bottom: u64) -> Result<Value, String> {
+    params(req::PaneScrollParams {
+        pane_id: pane_id.into(),
+        offset_from_bottom,
+    })
+}
+/// The scroll metrics a `pane.get` or `pane.scroll` answer carries; `None`
+/// when Herdr reports none for the pane.
+pub(crate) fn pane_scroll(value: Value) -> Result<Option<crate::live::PaneScroll>, String> {
+    let missing = "pane response is missing pane";
+    match response(value, missing)? {
+        res::ResponseResult::PaneInfo { pane } => {
+            Ok(pane.scroll.map(|scroll| crate::live::PaneScroll {
+                offset_from_bottom: scroll.offset_from_bottom,
+                max_offset_from_bottom: scroll.max_offset_from_bottom,
+            }))
+        }
+        _ => Err(missing.into()),
+    }
+}
 pub(crate) fn pane_send_text_params(pane_id: &str, text: &str) -> Result<Value, String> {
     params(req::PaneSendTextParams {
         pane_id: pane_id.into(),

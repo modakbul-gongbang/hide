@@ -372,7 +372,8 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     fs.chmodSync(shared, 0o644);
     await tab(page, "shared.txt").hover();
     await tab(page, "shared.txt").getByRole("button", { name: /Close view/ }).click();
-    await expect(page.locator('[data-area-empty="no-view"]')).toBeVisible({ timeout: 10_000 });
+    // The last view gone, the View region leaves and the agents take its space.
+    await expect(page.locator("[data-view-area]")).toHaveCount(0, { timeout: 10_000 });
     await expect.poll(() => fs.readFileSync(shared, "utf8").split("\n")[0]).toBe("line 001-B 한글안녕-C-D");
 
     // Unsaved text this page never loaded (a background view after a reload)
@@ -820,8 +821,8 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await expect(divider).toHaveCount(0);
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
-    // Closing the last view leaves the empty area with the way to a file,
-    // and the layout stays what it was (B10).
+    // Closing the last view leaves the agents in the View areas' place, and
+    // the layout stays what it was (web-pane-scroll-find-areas B10).
     await paletteCommand(page, "Hide Explorer", "command:tool:explorer");
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const layoutsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "mode" in event.payload).length;
@@ -830,13 +831,12 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     await tabTo(page, tab(page, "a.txt"), "Shift+Tab");
     await menuByKeyboard(page, "close_view");
-    await expect(page.locator('[data-area-empty="no-view"]')).toBeVisible();
-    await expect(page.locator("[data-empty-open-explorer]")).toBeVisible();
-    await expect(page.locator("[data-empty-open-file]")).toBeVisible();
+    await expect(page.locator("[data-view-area]")).toHaveCount(0);
+    await expect(page.locator("[data-agent-area]")).toBeVisible();
     await expect(workspace).toHaveAttribute("data-layout", "views");
     expect(stack.events.filter((event) => event.kind === "workspace_view" && "mode" in event.payload).length).toBe(layoutsBefore);
     await screenshot(page, "s7-keys-empty");
-    await page.locator("[data-empty-open-explorer]").click();
+    await paletteCommand(page, "Show Explorer", "command:tool:explorer");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
@@ -1361,12 +1361,17 @@ test("S6's layouts, tools, kind marks and the open from Agents only keep working
     expect(await choices.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")))).toEqual(["Agents only", "Agents and Views", "Views only"]);
     await expect(page.locator('[data-layout-choice="agents"]')).toHaveAttribute("aria-checked", "true");
 
-    // Choosing Views only never splits: one empty View area, then one area for a file (B22).
+    // Choosing Views only never splits. With nothing open the agents stay in
+    // its place, and the first file brings one View area (B22,
+    // web-pane-scroll-find-areas B10).
     await page.locator('[data-layout-choice="views"]').click();
     await expect(workspace).toHaveAttribute("data-layout", "views");
-    await expect(page.locator('[data-area-empty="no-view"]')).toBeVisible();
-    await expect(page.locator("[data-view-divider]")).toHaveCount(0);
+    await expect(page.locator("[data-view-area]")).toHaveCount(0);
+    await expect(page.locator("[data-agent-area]")).toBeVisible();
     await explorerRow(page, stack, "a.txt").dblclick();
+    await expect(page.locator("[data-view-area]")).toBeVisible();
+    await expect(page.locator("[data-agent-area]")).toHaveCount(0);
+    await expect(page.locator("[data-view-divider]")).toHaveCount(0);
     await page.locator('[data-layout-choice="together"]').click();
     await expect(workspace).toHaveAttribute("data-layout", "together");
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");

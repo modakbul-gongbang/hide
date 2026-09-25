@@ -1110,13 +1110,10 @@ export function createActions(dispatch: DispatchFn) {
       ui().openOverlay(ui().overlay === "shortcuts" ? "none" : "shortcuts");
     },
 
+    /** The focused pane's find bar; the core searches a device pane through that device's Herdr. */
     openFind() {
-      // The core searches a pane's history through this machine's Herdr
-      // only, so with an SSH device selected Find is refused with a notice
-      // rather than run on this machine (PRD S5 B19).
-      const context = remoteContext(rest());
-      if (context) {
-        ui().setNotice({ text: `Find in pane is not available for ${context.device.label} from the web shell; nothing was sent.`, refreshable: false });
+      if (ui().overlay === "find") {
+        document.querySelector<HTMLInputElement>("[data-find-bar] input")?.focus();
         return;
       }
       ui().openOverlay("find");

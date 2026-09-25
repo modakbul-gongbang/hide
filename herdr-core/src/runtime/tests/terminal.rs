@@ -6,7 +6,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
     let pane = "w-grid:p1";
     runtime.terminal_sessions.insert(
         pane.to_owned(),
-        TerminalSession::test_stub(pane, 1, TerminalSessionMode::Observe),
+        TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control),
     );
     runtime
         .terminal_session_generations
@@ -20,7 +20,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
             runtime.ingest_terminal_session_frame(
                 pane,
                 1,
-                TerminalSessionMode::Observe,
+                TerminalSessionMode::Control,
                 b"foreign",
                 crate::model::TerminalFrame {
                     width,
@@ -36,7 +36,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
         runtime.ingest_terminal_session_frame(
             pane,
             1,
-            TerminalSessionMode::Observe,
+            TerminalSessionMode::Control,
             b"partial",
             crate::model::TerminalFrame {
                 width: 115,
@@ -50,7 +50,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
         runtime.ingest_terminal_session_frame(
             pane,
             1,
-            TerminalSessionMode::Observe,
+            TerminalSessionMode::Control,
             b"matching",
             crate::model::TerminalFrame {
                 width: 115,
@@ -74,6 +74,137 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
             .width,
         115
     );
+}
+
+/// B2. Herdr draws an observer at the grid it attached with and an observer
+/// cannot resize, so a view that changed size after the attach (the web
+/// pane beside a Swift window that holds control) held every frame and the
+/// pane froze. The observer attaches again at the view's grid instead.
+#[test]
+fn an_observed_frame_at_an_old_grid_reattaches_the_observer_at_the_views_grid() {
+    let mut runtime = runtime();
+    runtime.suppress_terminal_session_workers = true;
+    let pane = "w-observed:p1";
+    runtime.terminal_sessions.insert(
+        pane.to_owned(),
+        TerminalSession::test_stub(pane, 7, TerminalSessionMode::Observe),
+    );
+    runtime
+        .terminal_session_generations
+        .insert(pane.to_owned(), 7);
+    runtime.terminal_session_lifecycles.insert(
+        pane.to_owned(),
+        TerminalSessionLifecycle {
+            state: "observing",
+            attempt: 5,
+            mode: Some(TerminalSessionMode::Observe),
+            ..TerminalSessionLifecycle::default()
+        },
+    );
+    runtime
+        .terminal_view_sizes
+        .insert(pane.to_owned(), (33, 143));
+    let frame = |width| crate::model::TerminalFrame {
+        width,
+        height: 33,
+        full: false,
+    };
+    assert_eq!(
+        runtime.ingest_terminal_session_frame(
+            pane,
+            7,
+            TerminalSessionMode::Observe,
+            b"old",
+            frame(186)
+        ),
+        None,
+        "the old observer retires"
+    );
+    let generation = runtime.terminal_session_generations[pane];
+    assert_ne!(generation, 7);
+    assert_eq!(runtime.terminal_sizes[pane], (33, 143));
+    assert_eq!(
+        runtime.terminal_sessions[pane].mode,
+        TerminalSessionMode::Observe
+    );
+    assert_eq!(runtime.terminal_session_lifecycles[pane].attempt, 5);
+    assert_eq!(
+        runtime.ingest_terminal_session_frame(
+            pane,
+            generation,
+            TerminalSessionMode::Observe,
+            b"new",
+            crate::model::TerminalFrame {
+                width: 143,
+                height: 33,
+                full: true
+            }
+        ),
+        Some(true)
+    );
+}
+
+fn resize_event(pane_id: &str, cols: u16, rows: u16) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "terminal_resize",
+        "payload": {"pane_id": pane_id, "cols": cols, "rows": rows}
+    }))
+    .expect("resize event")
+}
+
+/// B2, B8. An idle observed pane sends no frame after its view changes size
+/// (the View region leaving widens it), so waiting for one left the old
+/// frame reflowed at the new width. Once the view's size has held for a
+/// moment the tick attaches the observer again at it; a drag's intermediate
+/// sizes and the frames drawn at the old grid meanwhile attach nothing, and
+/// the size it already has attaches nothing either.
+#[test]
+fn an_observed_view_that_changes_size_reattaches_once_the_size_settles() {
+    let mut runtime = runtime();
+    runtime.suppress_terminal_session_workers = true;
+    let pane = "w-observed:p1";
+    runtime.terminal_view_sizes.insert(pane.into(), (33, 143));
+    runtime.start_terminal_session(pane, TerminalSessionMode::Observe, 1, "initial", None);
+    let first = runtime.terminal_session_generations[pane];
+    runtime.dispatch_json(&resize_event(pane, 143, 33));
+    runtime.tick_async_operations(unix_milliseconds() + 1_000);
+    assert_eq!(runtime.terminal_session_generations[pane], first);
+
+    for cols in [160, 180, 200] {
+        runtime.terminal_view_sizes.insert(pane.into(), (33, cols));
+        runtime.dispatch_json(&resize_event(pane, cols, 33));
+    }
+    let old_grid = crate::model::TerminalFrame {
+        width: 143,
+        height: 33,
+        full: false,
+    };
+    assert_eq!(
+        runtime.ingest_terminal_session_frame(
+            pane,
+            first,
+            TerminalSessionMode::Observe,
+            b"old",
+            old_grid
+        ),
+        Some(false),
+        "a frame at the old grid is held while the size settles"
+    );
+    runtime.tick_async_operations(unix_milliseconds());
+    assert_eq!(runtime.terminal_session_generations[pane], first);
+
+    runtime.tick_async_operations(unix_milliseconds() + 1_000);
+    let second = runtime.terminal_session_generations[pane];
+    assert_eq!(second, first + 1, "one new observer for the whole drag");
+    assert_eq!(runtime.terminal_sizes[pane], (33, 200));
+    assert_eq!(
+        runtime.terminal_sessions[pane].mode,
+        TerminalSessionMode::Observe
+    );
+    runtime.tick_async_operations(unix_milliseconds() + 2_000);
+    assert_eq!(runtime.terminal_session_generations[pane], second);
+    assert!(runtime.snapshot.status.last_error.is_none());
 }
 
 /// A view that reported 41x18 while the settled size still said 50x25
@@ -454,22 +585,28 @@ fn one_launch_holds_an_attach_until_the_view_reports_a_size() {
     );
 }
 
-#[test]
-fn a_wheel_on_a_pane_with_no_reported_size_writes_nothing_and_says_so_once() {
-    let mut runtime = runtime();
-    let scroll = |lines: u16| {
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": SCHEMA_VERSION,
-            "kind": "terminal_scroll",
-            "payload": {"pane_id": "w1:p1", "direction": "up", "lines": lines}
-        }))
-        .expect("scroll event")
-    };
-    assert!(runtime.dispatch_json(&scroll(3)));
-    for _ in 0..20 {
-        runtime.dispatch_json(&scroll(3));
-    }
+fn wheel_event(pane_id: &str, direction: &str, lines: u16) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "terminal_scroll",
+        "payload": {"pane_id": pane_id, "direction": direction, "lines": lines}
+    }))
+    .expect("scroll event")
+}
 
+/// B2. A wheel that arrives before the pane has a session (its view has not
+/// reported a size, or the attach is still starting after a tab switch) is
+/// kept, said once, and sent with the pane's first frame through the mode it
+/// attached in; a burst is one summed scroll, not one per wheel.
+#[test]
+fn a_wheel_before_the_attach_is_sent_with_the_first_frame() {
+    let mut runtime = runtime();
+    let pane = "w1:p1";
+    assert!(runtime.dispatch_json(&wheel_event(pane, "up", 3)));
+    for _ in 0..20 {
+        runtime.dispatch_json(&wheel_event(pane, "up", 3));
+    }
+    runtime.dispatch_json(&wheel_event(pane, "down", 3));
     let deferred = runtime
         .snapshot()
         .status
@@ -478,18 +615,300 @@ fn a_wheel_on_a_pane_with_no_reported_size_writes_nothing_and_says_so_once() {
         .filter(|diagnostic| diagnostic.kind == "terminal.scroll_deferred")
         .count();
     assert_eq!(deferred, 1, "a wheel burst filled the diagnostics list");
-    assert!(!runtime.terminal_sizes.contains_key("w1:p1"));
 
-    // Once the view reports, the wait is over and a later wheel is
-    // ordinary again.
-    let resize = serde_json::to_vec(&serde_json::json!({
+    runtime.terminal_sessions.insert(
+        pane.to_owned(),
+        TerminalSession::test_stub(pane, 1, TerminalSessionMode::Control),
+    );
+    runtime
+        .terminal_session_generations
+        .insert(pane.to_owned(), 1);
+    runtime.terminal_view_sizes.insert(pane.to_owned(), (9, 40));
+    assert_eq!(
+        runtime.ingest_terminal_session_frame(
+            pane,
+            1,
+            TerminalSessionMode::Control,
+            b"frame",
+            crate::model::TerminalFrame {
+                width: 40,
+                height: 9,
+                full: true
+            }
+        ),
+        Some(true)
+    );
+    let written = runtime.terminal_sessions[pane].test_written_lines();
+    let scrolls = written
+        .iter()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("a protocol line"))
+        .filter(|line| line["type"] == "terminal.scroll")
+        .map(|line| (line["direction"].clone(), line["lines"].clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scrolls,
+        vec![(serde_json::json!("up"), serde_json::json!(60))]
+    );
+    assert!(runtime.wheel_before_attach.is_empty());
+}
+
+/// A fake Herdr holding one pane's scroll position, answering `pane.get` and
+/// `pane.scroll` the way the pinned server does: an overshoot at the top is
+/// clamped, and the answer carries the metrics after the move.
+fn scrolling_herdr(name: &str, max: Arc<Mutex<u64>>) -> FakeHerdr {
+    let offset = Arc::new(Mutex::new(0_u64));
+    FakeHerdr::start(name, move |method, params| {
+        let max = *max.lock().unwrap();
+        let mut offset = offset.lock().unwrap();
+        match method {
+            "pane.get" => {}
+            "pane.scroll" => {
+                *offset = params["offset_from_bottom"].as_u64().unwrap().min(max);
+            }
+            other => panic!("unexpected {other}"),
+        }
+        serde_json::json!({"type": "pane_info", "pane": {
+            "pane_id": params["pane_id"], "terminal_id": "t", "workspace_id": "w1",
+            "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1,
+            "scroll": {"offset_from_bottom": *offset, "max_offset_from_bottom": max, "viewport_rows": 20}
+        }})
+    })
+}
+
+fn observed_runtime(herdr: &FakeHerdr, pane: &str) -> Arc<Mutex<Runtime>> {
+    let shared = Arc::new(Mutex::new(runtime()));
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.live = Some(live::LiveContext {
+            socket_path: herdr.socket_path().to_path_buf(),
+            herdr_bin: None,
+            runtime: Arc::downgrade(&shared),
+            notifier: crate::ffi::ChangeNotifier::noop(),
+            api_connector: Arc::new(herdr.connector()),
+        });
+        runtime.terminal_sessions.insert(
+            pane.to_owned(),
+            TerminalSession::test_stub(pane, 1, TerminalSessionMode::Observe),
+        );
+        runtime.terminal_session_lifecycles.insert(
+            pane.to_owned(),
+            TerminalSessionLifecycle {
+                state: "observing",
+                mode: Some(TerminalSessionMode::Observe),
+                ..TerminalSessionLifecycle::default()
+            },
+        );
+        runtime.ensure_terminal_pane(pane);
+    }
+    shared
+}
+
+fn settle(shared: &Arc<Mutex<Runtime>>) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !shared.lock().unwrap().viewport_scrolls.is_empty() {
+        assert!(Instant::now() < deadline, "a viewport scroll never landed");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn scroll_offsets(herdr: &FakeHerdr) -> Vec<u64> {
+    herdr
+        .calls()
+        .into_iter()
+        .filter(|(method, _)| method == "pane.scroll")
+        .map(|(_, params)| params["offset_from_bottom"].as_u64().unwrap())
+        .collect()
+}
+
+/// B1, B2. A pane another client controls (the Swift shell on the same
+/// server) is observed, and an observer has no terminal writer; its wheel
+/// moves Herdr's viewport with `pane.scroll` instead of being dropped. One
+/// request is in flight per pane, and the wheels that arrive meanwhile go
+/// out as one summed request when it lands.
+#[test]
+fn a_wheel_on_an_observed_pane_moves_herdrs_viewport() {
+    let max = Arc::new(Mutex::new(300));
+    let herdr = scrolling_herdr("observed-wheel", Arc::clone(&max));
+    let pane = "w1:p1";
+    let shared = observed_runtime(&herdr, pane);
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.dispatch_json(&wheel_event(pane, "up", 3));
+        runtime.dispatch_json(&wheel_event(pane, "up", 2));
+        runtime.dispatch_json(&wheel_event(pane, "down", 1));
+    }
+    settle(&shared);
+    assert_eq!(scroll_offsets(&herdr), vec![3, 4]);
+    shared
+        .lock()
+        .unwrap()
+        .dispatch_json(&wheel_event(pane, "down", 10));
+    settle(&shared);
+    assert_eq!(scroll_offsets(&herdr), vec![3, 4, 0]);
+    let runtime = shared.lock().unwrap();
+    assert!(!runtime.terminal_pane_snapshot(pane).scroll_held_elsewhere);
+    assert!(runtime.snapshot.status.last_error.is_none());
+}
+
+/// B3. When Herdr moves nothing for an observer (an alternate-screen program
+/// has no history in the viewport, and only the controlling client's wheel
+/// reaches the program), the pane says another client holds its scrolling
+/// rather than dropping the wheel silently; a later wheel that moves clears
+/// it.
+#[test]
+fn an_observed_wheel_herdr_cannot_move_shows_the_hold_until_one_moves() {
+    let max = Arc::new(Mutex::new(0));
+    let herdr = scrolling_herdr("observed-held", Arc::clone(&max));
+    let pane = "w1:p1";
+    let shared = observed_runtime(&herdr, pane);
+    shared
+        .lock()
+        .unwrap()
+        .dispatch_json(&wheel_event(pane, "up", 3));
+    settle(&shared);
+    {
+        let runtime = shared.lock().unwrap();
+        let projected = runtime
+            .snapshot
+            .terminal
+            .panes
+            .iter()
+            .find(|row| row.pane_id == pane)
+            .expect("the pane is projected");
+        assert!(projected.scroll_held_elsewhere);
+        let wire = serde_json::to_value(projected).unwrap();
+        assert_eq!(wire["scroll_held_elsewhere"], true);
+    }
+    *max.lock().unwrap() = 300;
+    shared
+        .lock()
+        .unwrap()
+        .dispatch_json(&wheel_event(pane, "up", 3));
+    settle(&shared);
+    let runtime = shared.lock().unwrap();
+    let projected = runtime
+        .snapshot
+        .terminal
+        .panes
+        .iter()
+        .find(|row| row.pane_id == pane)
+        .unwrap();
+    assert!(!projected.scroll_held_elsewhere);
+    assert!(
+        serde_json::to_value(projected)
+            .unwrap()
+            .get("scroll_held_elsewhere")
+            .is_none(),
+        "the field stays off the wire while false"
+    );
+}
+
+/// B3's marker says another client holds the pane's scrolling, so only
+/// Herdr's own answer may raise it. A pane with no route to its Herdr, or a
+/// Herdr that cannot be reached, logs the failed wheel and leaves the pane's
+/// transport state to say why; it never claims another client holds it.
+#[test]
+fn an_observed_wheel_that_cannot_reach_herdr_is_logged_not_held() {
+    let pane = "w1:p1";
+    let herdr = scrolling_herdr("observed-unreachable", Arc::new(Mutex::new(300)));
+    let shared = observed_runtime(&herdr, pane);
+    drop(herdr);
+    shared
+        .lock()
+        .unwrap()
+        .dispatch_json(&wheel_event(pane, "up", 3));
+    settle(&shared);
+    {
+        let mut runtime = shared.lock().unwrap();
+        assert!(!runtime.terminal_pane_snapshot(pane).scroll_held_elsewhere);
+        runtime.live = None;
+        runtime.dispatch_json(&wheel_event(pane, "up", 3));
+        assert!(runtime.viewport_scrolls.is_empty());
+        assert!(!runtime.terminal_pane_snapshot(pane).scroll_held_elsewhere);
+        let failed = runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == "terminal.scroll_failed")
+            .count();
+        assert_eq!(failed, 2, "each unreachable wheel is logged");
+    }
+}
+
+/// B6. A device pane is searched through that device's Herdr under the id
+/// that Herdr knows it by; a device that is not connected answers the reason
+/// in the find bar instead of searching this machine.
+#[test]
+fn a_device_pane_is_searched_on_its_own_herdr() {
+    let herdr = FakeHerdr::start("device-find", |method, params| {
+        assert_eq!(method, "pane.read");
+        assert_eq!(params["pane_id"], "w1:p2");
+        serde_json::json!({"type": "pane_read", "read": {
+            "pane_id": "w1:p2", "workspace_id": "w1", "tab_id": "w1:t1",
+            "source": params["source"], "format": "text",
+            "text": "alpha\nneedle\nomega\n", "revision": 1, "truncated": false
+        }})
+    });
+    let shared = Arc::new(Mutex::new(runtime()));
+    let pane = "remote:mini:pane:w1:p2";
+    let find = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
-        "kind": "terminal_resize",
-        "payload": {"pane_id": "w1:p1", "rows": 30, "cols": 100}
+        "kind": "pane_find",
+        "payload": {"pane_id": pane, "term": "needle", "case_sensitive": false,
+                    "whole_word": false, "regex": false, "step": 1}
     }))
-    .expect("resize event");
-    runtime.dispatch_json(&resize);
-    assert!(!runtime.panes_scrolled_before_size.contains("w1:p1"));
+    .unwrap();
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .push(crate::model::DeviceRegistration {
+                id: "mini".to_owned(),
+                label: "Mini".to_owned(),
+                ssh_alias: Some("mini".to_owned()),
+                herdr_socket_path: None,
+                host_consent: None,
+            });
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: "mini".to_owned(),
+            state: "reconnecting".to_owned(),
+            message: None,
+            herdr_version: Some("0.9.1".to_owned()),
+            session: None,
+            files: RemoteFileListSnapshot::idle(),
+            catalog: Default::default(),
+        });
+        runtime.install_remote_control(live::RemoteControlContext::new(
+            "mini",
+            Arc::new(herdr.connector()),
+            Arc::downgrade(&shared),
+            crate::ffi::ChangeNotifier::noop(),
+        ));
+        runtime.dispatch_json(&find);
+        assert_eq!(
+            runtime.snapshot.find.unavailable_reason.as_deref(),
+            Some("Mini is not connected")
+        );
+        assert!(herdr.requests().is_empty());
+        runtime.snapshot.status.remote[0].state = "connected".to_owned();
+        runtime.dispatch_json(&find);
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let runtime = shared.lock().unwrap();
+        if runtime.snapshot.find.total == 1 {
+            assert_eq!(runtime.snapshot.find.index, 1);
+            assert_eq!(runtime.snapshot.find.pane_id.as_deref(), Some(pane));
+            assert!(runtime.snapshot.find.unavailable_reason.is_none());
+            break;
+        }
+        drop(runtime);
+        assert!(Instant::now() < deadline, "the device search never landed");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 #[test]
@@ -511,7 +930,9 @@ fn retiring_a_pane_clears_every_pane_keyed_terminal_state() {
         .terminal_foreign_frame_sizes
         .insert(pane.into(), (9, 84));
     runtime.panes_awaiting_size.insert(pane.into());
-    runtime.panes_scrolled_before_size.insert(pane.into());
+    runtime.wheel_before_attach.insert(pane.into(), 3);
+    runtime.viewport_scrolls.insert(pane.into(), 0);
+    runtime.panes_scroll_held.insert(pane.into());
     runtime.panes_closing.insert(pane.into());
 
     assert!(runtime.retain_terminal_pane_state(|known| known != pane));
@@ -523,7 +944,9 @@ fn retiring_a_pane_clears_every_pane_keyed_terminal_state() {
     assert!(!runtime.terminal_frames_need_full.contains(pane));
     assert!(!runtime.terminal_foreign_frame_sizes.contains_key(pane));
     assert!(!runtime.panes_awaiting_size.contains(pane));
-    assert!(!runtime.panes_scrolled_before_size.contains(pane));
+    assert!(!runtime.wheel_before_attach.contains_key(pane));
+    assert!(!runtime.viewport_scrolls.contains_key(pane));
+    assert!(!runtime.panes_scroll_held.contains(pane));
     assert!(!runtime.panes_closing.contains(pane));
 }
 

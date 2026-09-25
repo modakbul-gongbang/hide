@@ -5,7 +5,7 @@ import { Button } from "./components/ui/controls";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
 import { ContextMenu, MenuList, type MenuEntry } from "./Menu";
-import { editorTabFor, type Checkout, type ViewAreaSnapshot, type ViewDisplaySnapshot, type ViewLayoutSnapshot, type ViewNode, type ViewSplitSnapshot } from "./snapshot";
+import { editorTabFor, type ViewAreaSnapshot, type ViewDisplaySnapshot, type ViewLayoutSnapshot, type ViewNode, type ViewSplitSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { IDLE, movePointer, pressTab, relayout, releasePointer, type DragSession } from "./viewDrag";
@@ -26,7 +26,6 @@ import {
   revealedScroll,
   sameTarget,
   shownDisplays,
-  shownTools,
   singleAreaGeometry,
   steppedRatio,
   viewGeometry,
@@ -92,40 +91,23 @@ function useTree(): Tree {
   return tree;
 }
 
-/** The front Workspace's View areas, or S6's empty state while no display is open (B10). */
-export function ViewAreas({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
+/**
+ * The front Workspace's View areas. With no display they are drawn only while
+ * a file of this checkout is opening; otherwise the Workspace body leaves
+ * them out (`drawnMode`).
+ */
+export function ViewAreas({ actions }: { actions: Actions }) {
   const view = useShellStore((s) => workspaceViewOf(s.rest));
-  const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout.id));
-  const placement = useUiStore((s) => s.toolsPlacement);
   if (!view) return null;
   const layout = view.layout;
   if (!layout) {
     return <AreaEmpty state="view-layout-missing" text="This Hide core publishes no View areas, so no file or diff can be shown here." />;
   }
-  if (areasOf(layout.root).every((area) => area.displays.length === 0)) {
-    return <ViewsEmpty opening={opening} explorerShown={shownTools(view, placement).explorer} actions={actions} />;
-  }
+  if (layout.display_count === 0) return <AreaEmpty state="view-opening" text="Opening…" />;
   // One tree per Workspace: a front that moves to another Workspace ends a
   // drag, a divider drag or a menu begun on this one, whose ids (a1, d2, s1)
   // name other views there (contract 4.1, B8).
   return <ViewTree key={workspaceKey({ device_id: view.device_id, path: view.path })} layout={layout} deviceId={view.device_id} path={view.path} actions={actions} />;
-}
-
-/** Nothing open in any area: the mode stays, and the way to a file is offered. */
-function ViewsEmpty({ opening, explorerShown, actions }: { opening: boolean; explorerShown: boolean; actions: Actions }) {
-  if (opening) return <AreaEmpty state="view-opening" text="Opening…" />;
-  return (
-    <AreaEmpty state="no-view" text="No file or diff is open in this Workspace.">
-      {explorerShown ? null : (
-        <Button onClick={() => actions.setTool("explorer", true)} data-empty-open-explorer="true">
-          Show Explorer
-        </Button>
-      )}
-      <Button appearance="quiet" onClick={() => useUiStore.getState().openOverlay("file_palette")} data-empty-open-file="true">
-        Open file <span className="text-muted">⌘P</span>
-      </Button>
-    </AreaEmpty>
-  );
 }
 
 function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; actions: Actions }) {
