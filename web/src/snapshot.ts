@@ -522,6 +522,69 @@ export type WorktreeRemoval = {
   message: string | null;
 };
 
+/** One session of a Project's history (`project_sessions.rows`), newest first. */
+export type SessionRow = {
+  id: string;
+  /** `claude` or `codex`. */
+  provider: string;
+  provider_label: string;
+  /** The provider file the session was read from; Copy source location copies it. */
+  locator: string;
+  checkout_path: string;
+  first_human_request: string | null;
+  started_at_unix_ms: number | null;
+  /** 0 when neither the session nor its file carries a time. */
+  updated_at_unix_ms: number;
+  title: string | null;
+  /** Why the session's file cannot be read, in the core's words; null when it can. */
+  unavailable_reason: string | null;
+};
+
+/** One recorded turn of a session: `role` is `user` or `assistant`, `kind` `human`, `assistant`, `interrupted` or `injected`. */
+export type ArchiveEvent = {
+  role: string;
+  kind: string;
+  at_unix_ms: number;
+  text: string;
+};
+
+export type ArchiveDetail = {
+  id: string;
+  kind: string;
+  title: string;
+  provider: string | null;
+  unavailable_reason: string | null;
+  events: ArchiveEvent[];
+};
+
+/** The session opened beside a Project's Sessions (`archive_open` with a `workspace_id`). */
+export type ProjectSessionDetail = {
+  session_id: string;
+  /** Empty when the history no longer lists the session. */
+  locator: string;
+  loading: boolean;
+  failure: string | null;
+  archive: ArchiveDetail | null;
+};
+
+/**
+ * The Sessions of the Project a screen named with `sessions_refresh` (PRD S8
+ * D-03): its whole history, the one session open beside it, and why either
+ * cannot be read. It rides its own section of the wire and is absent until a
+ * Project is named; the core holds one named Project at a time.
+ */
+export type ProjectSessions = {
+  device_id: string;
+  workspace_id: string;
+  /** Why this Project's sessions are not read here at all (another device, gone from the catalog); no Retry. */
+  unavailable_reason: string | null;
+  loading: boolean;
+  /** Why reading the history failed; Retry reads it again. */
+  failure: string | null;
+  rows: SessionRow[];
+  detail: ProjectSessionDetail | null;
+};
+
 export type SnapshotRest = {
   navigator?: {
     focused_workspace_id?: string | null;

@@ -60,6 +60,21 @@ The core owns the fourth right-panel section, each Project's Sessions/Memory mod
 Opening Memory for a turn is one typed event that makes the panel visible, selects Sessions, enters Memory mode, and applies the exact provided-item filter in one frame.
 The Swift shell renders those snapshot values and dispatches typed actions; it does not discover sessions, rank memories, infer counts, or classify failures.
 
+The web shell reads a Project's Sessions through the same catalog, but for a Project it names rather than the focused checkout (PRD S8 D-03, `herdr-core/src/runtime/project_sessions.rs`).
+`sessions_refresh` with `{workspace_id, device_id}` names one Project for every window of the daemon and reads its history on a worker, and `archive_open` with `workspace_id` reads one of that Project's sessions beside it; without those fields both keep the Swift meaning above.
+The named Project stays named while the focus moves, a read that finishes after another Project was named is dropped by the same generation fence the Swift path uses, and naming another Project closes the open session.
+A device Project reads no local session: the section carries the device's reason, because the provider files live on the device and there is no contract yet for reading them there.
+The section rides the snapshot delta on its own revision, `project_sessions`, beside `rest`, `editor` and `changes`, so an agent or navigator change never resends a history; it is compared by value under the lock, the open transcript behind a shared pointer that compares in O(1), and it is absent from the wire until a Project is named, so the Swift snapshot keeps its keys.
+The core words each reason for the operator (a missing, unparsable, oversized or unreadable file, a session or Project folder it could not read) and records a read failure as a diagnostic; the Swift path keeps its raw codes.
+A session a Project's history listed and a later read no longer finds stays listed as unavailable, with its last location, when its file is gone, for as long as the daemon runs, so a moved or deleted file reads differently from one that never existed (B5); one whose file is still there no longer belongs to the Project (its checkout was removed, say) and leaves the list as the catalog decides.
+The core keeps each Project's last rows for that, and the read's worker checks their files off the lock; a kept row stays until its file is found again, so what is kept grows only with the sessions deleted while the daemon runs.
+A failed history read leaves the open session's conversation on screen, or says why it was not read, rather than leaving it reading.
+Provider filtering and search run in the page over the rows the section carries, with the core's own rule (`apply_session_filters`), so typing costs no round trip.
+The history read is the Swift list's own `load_sessions`, which opens the Memory store read-only and also lists the Project's Memory items; this path keeps only the recorded sessions whose files have gone, writes nothing, schedules no analysis, cancels none, and leaves the due-work poll alone.
+
+Project Memory in the web shell is a deferred TODO (PRD S8 D-17): the web has no Memory entry point, disabled control or placeholder, and Memory is managed in the macOS app until then.
+That stage inherits the Project-scope-only management contract and the provenance, disclosure and retention rules above, and has to settle first that `hided` opens `<state_dir>/project-memory.sqlite3` while the hooks read `~/Library/Application Support/hide/project-memory.sqlite3`, that the Memory commands follow the focused checkout, and that the disclosure copy lives only in the Swift shell.
+
 The agent-context-labels plugin is a separate headless consumer of the same Herdr socket contract.
 It opens one long-lived `events.subscribe` stream for pane lifecycle events, bootstraps pane state with `agent.list`, and reports metadata only after a display transition.
 Its event loop also receives hook and refresh wakes through a short-lived Unix socket in the plugin state directory.
@@ -307,7 +322,7 @@ Registering or removing a device refreshes only the device rows (`rebuild_device
 
 ### Workspaces in the web shell
 
-The web shell has three screens (PRD S6 D-02): Main lists every registered Project on every device, a Project's Overview lists its Workspaces and agents, and a Workspace is one checkout's working space (`web/src/{MainScreen,WorkspaceScreen}.tsx`, rules in `web/src/navigation.ts`).
+The web shell has four screens (PRD S6 D-02, S8 D-08): Main lists every registered Project on every device, a Project's Overview lists its Workspaces and agents, a Project's Sessions reads its session history (see Project sessions and Memory above), and a Workspace is one checkout's working space (`web/src/{MainScreen,SessionsScreen,WorkspaceScreen}.tsx`, rules in `web/src/navigation.ts` and `web/src/sessions.ts`).
 Which screen is showing is the shell's own location (`ui.ts`), not core state: the page starts on the Workspace the core has in front only when the core marks it `resumed`, the Workspace the operator last chose, in this process or before a restart (D-11): a `focus_checkout`, `focus_pane` or `focus_tab` the core accepted, or a device `remote_control` focus or Workspace open once the device's front lands there, so a refusal chooses nothing and a front only Herdr's own focus moved is not resumed; a first run, a last Workspace that is gone, or any other front starts on Main once the device in front has settled (`startupScreen` in `navigation.ts`), and moving between screens creates or ends nothing.
 A device Workspace is known only when that device's session arrives, so the first screen waits for the device in front rather than for this machine's Herdr.
 Main and Overview read only the catalog, the device sessions and the agent rows the snapshot already carries; a device that is connecting or cannot answer shows why and leaves its counts unknown rather than zero.

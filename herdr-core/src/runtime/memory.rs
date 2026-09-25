@@ -24,12 +24,12 @@ const MEMORY_QUIESCENCE_MS: u64 = 60_000;
 const MEMORY_POLL_INTERVAL_MS: u64 = 5_000;
 const RELATION_CONTEXT_INPUT_LIMIT_BYTES: usize = 16 * 1024;
 
-struct SessionsLoad {
-    project_id: String,
-    checkout_path: String,
-    rows: Vec<SessionRowSnapshot>,
-    memories: Vec<MemoryRowSnapshot>,
-    state: Option<hide_memory::ProjectMemoryState>,
+pub(super) struct SessionsLoad {
+    pub(super) project_id: String,
+    pub(super) checkout_path: String,
+    pub(super) rows: Vec<SessionRowSnapshot>,
+    pub(super) memories: Vec<MemoryRowSnapshot>,
+    pub(super) state: Option<hide_memory::ProjectMemoryState>,
 }
 
 fn sessions_load_matches_scope(
@@ -52,7 +52,7 @@ fn archive_load_matches_scope(
 }
 
 impl Runtime {
-    fn memory_database_path(&self) -> PathBuf {
+    pub(super) fn memory_database_path(&self) -> PathBuf {
         self.state_path.with_file_name("project-memory.sqlite3")
     }
 
@@ -2048,7 +2048,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn load_sessions(
+pub(super) fn load_sessions(
     home: &Path,
     database: &Path,
     checkout_path: &str,
@@ -2170,7 +2170,7 @@ fn lifecycle_name(value: hide_memory::MemoryLifecycle) -> String {
     format!("{value:?}").to_ascii_lowercase()
 }
 
-fn load_session_detail(
+pub(super) fn load_session_detail(
     database: &Path,
     project_id: &str,
     row: SessionRowSnapshot,

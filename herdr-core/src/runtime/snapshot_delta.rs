@@ -22,6 +22,7 @@ pub(super) struct DeltaState {
     rest_revision: u64,
     editor_revision: u64,
     changes_revision: u64,
+    project_sessions_revision: u64,
     /// Reference-counted so a delta can carry the section out of the lock
     /// without copying it. The runtime never mutates one in place: a changed
     /// section becomes a new `Arc`, which leaves any payload already handed
@@ -29,6 +30,9 @@ pub(super) struct DeltaState {
     last_rest: Option<Arc<crate::model::RestSections>>,
     last_editor: Option<Arc<crate::model::EditorSnapshot>>,
     last_changes: Option<Arc<crate::model::ChangesSnapshot>>,
+    /// `None` until a shell names a Project; a named Project is never
+    /// unnamed, so the section never has to be sent as cleared.
+    last_project_sessions: Option<Arc<crate::model::ProjectSessionsSnapshot>>,
 }
 
 impl Runtime {
@@ -73,6 +77,13 @@ impl Runtime {
             self.delta.revision += 1;
             self.delta.changes_revision = self.delta.revision;
             self.delta.last_changes = Some(Arc::new(self.snapshot.changes.clone()));
+        }
+        if let Some(project_sessions) = &self.snapshot.project_sessions
+            && self.delta.last_project_sessions.as_deref() != Some(project_sessions)
+        {
+            self.delta.revision += 1;
+            self.delta.project_sessions_revision = self.delta.revision;
+            self.delta.last_project_sessions = Some(Arc::new(project_sessions.clone()));
         }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
@@ -129,6 +140,14 @@ impl Runtime {
                         .expect("the changes section is stamped before a delta is taken"),
                 )
             }),
+            // Absent until a shell names a Project: an unnamed section has no
+            // revision and nothing to send.
+            project_sessions: self
+                .delta
+                .last_project_sessions
+                .as_ref()
+                .filter(|_| self.delta.project_sessions_revision > have_revision)
+                .map(Arc::clone),
             find: self.snapshot.find.clone(),
             input_generation: self.snapshot.input_generation,
             terminal_sequence: self.snapshot.terminal.sequence,

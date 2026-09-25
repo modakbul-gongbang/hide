@@ -184,6 +184,9 @@ export function OverviewScreen({ projectId, actions }: { projectId: string; acti
         </h1>
         {device ? <span className="shrink-0 rounded-xs bg-elevated px-xs text-micro text-secondary">{device.label}</span> : null}
         <span className="flex-1" />
+        <Button appearance="quiet" onClick={() => setScreen({ kind: "sessions", projectId: workspace.id })} data-overview-sessions="true">
+          Sessions
+        </Button>
         {workspace.is_git ? (
           <Button appearance="quiet" onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id })} data-overview-new-worktree="true">
             New worktree
