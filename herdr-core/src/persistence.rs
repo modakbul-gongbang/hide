@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{
     DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, SessionsMode,
-    UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
+    ThemePreference, UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
     default_pane_text_scale, default_panel_visible,
 };
 
@@ -70,6 +70,11 @@ struct StoredUiState {
     device_registrations: Vec<DeviceRegistration>,
     #[serde(default = "default_accent_hex")]
     accent_hex: String,
+    /// Kept as text so a value this build does not know loads as Dark with a
+    /// diagnostic instead of making the whole store unreadable. Absent in a
+    /// store written before the web theme existed, which loads as Dark.
+    #[serde(default)]
+    theme: Option<String>,
     #[serde(default = "default_font_size")]
     font_size: f32,
     #[serde(default)]
@@ -103,6 +108,8 @@ fn default_pet_visible() -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LoadDisposition {
     Loaded,
+    /// Loaded, but the stored theme was not one this build knows; Dark was used.
+    UnknownTheme,
     Missing,
     Corrupt,
 }
@@ -143,6 +150,13 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             LoadDisposition::Corrupt,
         );
     }
+    let (theme, disposition) = match stored.theme.as_deref() {
+        None => (ThemePreference::Dark, LoadDisposition::Loaded),
+        Some(value) => match ThemePreference::parse(value) {
+            Some(theme) => (theme, LoadDisposition::Loaded),
+            None => (ThemePreference::Dark, LoadDisposition::UnknownTheme),
+        },
+    };
     (
         UiStateSnapshot {
             left_sidebar_visible: stored.left_sidebar_visible,
@@ -170,6 +184,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             workspace_registrations: stored.workspace_registrations,
             device_registrations: stored.device_registrations,
             accent_hex: stored.accent_hex,
+            theme,
             font_size: stored.font_size,
             pane_text_scales: stored.pane_text_scales,
             editor_text_scale: stored.editor_text_scale,
@@ -177,7 +192,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             pane_read_records: stored.pane_read_records,
         },
         stored.pane_terminal_sizes,
-        LoadDisposition::Loaded,
+        disposition,
     )
 }
 
@@ -220,6 +235,7 @@ pub fn save(
         workspace_registrations: state.workspace_registrations.clone(),
         device_registrations: state.device_registrations.clone(),
         accent_hex: state.accent_hex.clone(),
+        theme: Some(state.theme.as_str().to_owned()),
         font_size: state.font_size,
         pane_text_scales: state.pane_text_scales.clone(),
         editor_text_scale: state.editor_text_scale,
