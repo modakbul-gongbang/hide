@@ -359,6 +359,7 @@ impl Runtime {
                     None
                 }
                 Some(_) => display_limit(layout, pending),
+                None if base.displays.is_empty() => display_limit(layout, pending),
                 None => match layout.can_split(&base.id, Edge::Right) {
                     Err(error) => Some(error.into()),
                     Ok(()) => display_limit(layout, pending),
@@ -688,6 +689,16 @@ impl Runtime {
             let Some(target) = neighbour else {
                 let mut display = layout.new_display(path, kind, committed, false);
                 display.tab_id = Some(tab_id.to_owned());
+                // An empty area is only ever the root of a Workspace with no
+                // view yet: there is nothing to stand beside, and a split
+                // would leave that empty area on screen next to the new one.
+                if layout
+                    .area(base)
+                    .is_some_and(|area| area.displays.is_empty())
+                {
+                    layout.insert(base, display, stamp)?;
+                    return Ok(((), true));
+                }
                 if let Err(error) = layout.split_new(base, Edge::Right, display, stamp) {
                     // The tree changed while the file was read: a display
                     // that shows the document already is focused, and with

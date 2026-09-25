@@ -335,11 +335,11 @@ export function splitEligibility(
 
 /**
  * Why Open to the side cannot land now, or null (B4, B9, D-06). With two
- * or more areas it goes to a neighbour and splits nothing; from the only
- * area it makes a new area on the right, so that area has to hold two
- * minimums side by side, exactly as Split right does. While the View areas
- * are not drawn (Agents only) their room is unknown, and the core's caps
- * decide.
+ * or more areas it goes to a neighbour and splits nothing, and into an
+ * empty Views it opens in the empty area; from the only area with a view
+ * it makes a new area on the right, so that area has to hold two minimums
+ * side by side, exactly as Split right does. While the View areas are not
+ * drawn (Agents only) their room is unknown, and the core's caps decide.
  */
 export function besideUnavailable(
   layout: ViewLayoutSnapshot | null | undefined,
@@ -348,7 +348,7 @@ export function besideUnavailable(
   if (!layout || !drawn) return null;
   const areas = areasOf(layout.root);
   const only = areas.length === 1 ? areas[0] : undefined;
-  if (!only) return null;
+  if (!only || only.displays.length === 0) return null;
   const room = roomToSplit(layout, drawn.geometry, drawn.sizes, only.id, "right");
   if (room.ok) return null;
   return room.reason === NARROW ? "This view area is too narrow to open a second view beside it." : room.reason;

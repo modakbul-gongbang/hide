@@ -159,6 +159,8 @@ describe("split eligibility", () => {
     const tree = split("s1", "row", 0.5, area("a1", ["d1"]), area("a2", ["d2"]));
     expect(besideUnavailable(layout(tree), { geometry: viewGeometry(tree, body(449), SIZES), sizes: SIZES })).toBeNull();
     expect(besideUnavailable(layout(one), null)).toBeNull();
+    const empty = area("a1", []);
+    expect(besideUnavailable(layout(empty), { geometry: viewGeometry(empty, body(300), SIZES), sizes: SIZES })).toBeNull();
   });
 });
 

@@ -1702,3 +1702,30 @@ fn the_changes_read_takes_every_diff_on_screen() {
     layout(&mut runtime, serde_json::json!({"mode": "agents"}));
     assert!(diffs(&mut runtime).is_empty());
 }
+
+/// B4, B10: Open to the side with no view open has nothing to stand beside,
+/// so it opens in the empty area rather than splitting next to it; an empty
+/// area is only ever the root.
+#[test]
+fn open_to_the_side_with_no_view_open_opens_in_the_empty_area() {
+    let (mut runtime, checkout_id, directory) = views_runtime("view-beside-empty");
+    files(&directory, &["a.md", "b.md"]);
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("a.md"),
+        false,
+        true,
+    );
+    assert_eq!(labels(&mut runtime), vec![vec!["a.md"]]);
+    assert_eq!(active_label(&runtime).as_deref(), Some("a.md"));
+
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("b.md"),
+        false,
+        true,
+    );
+    assert_eq!(labels(&mut runtime), vec![vec!["a.md"], vec!["b.md"]]);
+}
