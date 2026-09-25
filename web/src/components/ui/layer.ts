@@ -57,6 +57,11 @@ export function useReturnFocus(open: boolean) {
     const target = previous.current;
     if (!target) return;
     event.preventDefault();
+    // Radix hands focus back a tick after the layer closed; an item that
+    // moved the keyboard on purpose in the meantime (Rename's inline field)
+    // keeps it, since taking it back would blur and commit that field.
+    const now = document.activeElement;
+    if (now instanceof HTMLElement && now !== document.body && now.isConnected) return;
     restoreFocus(target);
   }, []);
 }
