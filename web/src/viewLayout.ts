@@ -93,6 +93,11 @@ export function locateDisplay(root: ViewNode, displayId: string): LocatedDisplay
   return null;
 }
 
+/** Whether two displays show one document: its path and kind, and a diff's History group (the core's `Display::shows`). */
+export function showsSameDocument(a: ViewDisplaySnapshot, b: ViewDisplaySnapshot): boolean {
+  return a.path === b.path && a.kind === b.kind && (a.kind === "file" || a.committed === b.committed);
+}
+
 /** Every display that shows one document (editor tab), in tree order. */
 export function displaysOfDocument(root: ViewNode, tabId: string): ViewDisplaySnapshot[] {
   return areasOf(root).flatMap((area) => area.displays.filter((display) => display.tab_id === tabId));
@@ -528,7 +533,7 @@ export function dropTarget(input: {
   const located = locateDisplay(layout.root, displayId);
   if (!located) return { kind: "none", reason: "This view is no longer open." };
   for (const box of geometry.areas) {
-    if (contains(box.bar, point)) return barTarget(box, tabs[box.id] ?? [], located, point);
+    if (contains(box.bar, point)) return barTarget(box, findArea(layout.root, box.id), tabs[box.id] ?? [], located, point);
   }
   for (const box of geometry.areas) {
     if (!contains(box.content, point)) continue;
@@ -541,13 +546,19 @@ export function dropTarget(input: {
   return { kind: "none", reason: NOWHERE };
 }
 
-function barTarget(box: AreaBox, slots: TabSlot[], located: LocatedDisplay, point: Point): DropTarget {
+function barTarget(box: AreaBox, area: ViewAreaSnapshot | null, slots: TabSlot[], located: LocatedDisplay, point: Point): DropTarget {
   const slot = slots.filter((tab) => tab.rect.x + tab.rect.width / 2 < point.x).length;
   const at = slots[slot]?.rect;
   const last = slots.at(-1)?.rect;
   const x = at ? at.x : last ? last.x + last.width : box.bar.x;
   const line = { x, y: box.bar.y, height: box.bar.height };
-  if (located.area.id !== box.id) return { kind: "bar", areaId: box.id, index: slot, line };
+  if (located.area.id !== box.id) {
+    // A view of this document already in that area gives way to the moved
+    // one, so one left of the line leaves the final place a slot earlier.
+    const twin = area?.displays.find((other) => showsSameDocument(other, located.display));
+    const twinSlot = twin ? slots.findIndex((tab) => tab.displayId === twin.id) : -1;
+    return { kind: "bar", areaId: box.id, index: twinSlot !== -1 && twinSlot < slot ? slot - 1 : slot, line };
+  }
   const from = slots.findIndex((tab) => tab.displayId === located.display.id);
   const index = from !== -1 && slot > from ? slot - 1 : slot;
   if (from === -1 || index === from) return { kind: "none", reason: null };

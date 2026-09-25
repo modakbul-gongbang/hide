@@ -947,7 +947,7 @@ Dragging a tab moves its view and never copies it.
 ### Dragging a view
 
 A View tab dragged past `--size-tab-drag-activation` lifts a floating copy on `{colors.elevated}` with a hairline `{colors.divider}` border that follows the pointer, while the tab keeps its place and nothing on screen resizes.
-Over a tab bar, a thin insertion line (`--size-tab-indicator` in `{colors.accent}`) marks where the tab will land: in its own bar the drop reorders, and in another area's bar it moves the view there with no split and no copy; when that area already shows the same document, the moved view takes that view's place, so no area holds one document twice.
+Over a tab bar, a thin insertion line (`--size-tab-indicator` in `{colors.accent}`) marks where the tab will land: in its own bar the drop reorders, and in another area's bar it moves the view there with no split and no copy; when that area already shows the same document, the moved view lands at the line and that area's view of the document gives way, so no area holds one document twice.
 Over the left, right, top or bottom edge of an area's content, the half of that area the drop would create is washed at `--opacity-selected-fill` inside a hairline `{colors.accent}` boundary, with one short label such as `Split right`, and the drop creates that area and moves the view into it.
 Only one destination is highlighted at a time, and moving to another edge or bar replaces it.
 Where the view cannot go, because it is the only view of the area whose edge it is over, the area cannot be halved at its minimum size, the Workspace is at its area or depth limit, or the target is not a View area, no overlay appears and the pointer shows the forbidden cursor.

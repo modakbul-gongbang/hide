@@ -261,6 +261,22 @@ describe("a dragged tab's target", () => {
     expect(at("d1", 540, 10)).toMatchObject({ kind: "bar", areaId: "a2", index: 0 });
   });
 
+  it("names the final position when the other area's view of the same document gives way", () => {
+    // a2 [d4 t1 d5], where t1 is a second view of d1's document (Open to the side).
+    const twin = display("t1", { path: "/repo/d1.md", tab_id: "file:d1", label: "d1.md" });
+    const root = split("s1", "row", 0.5, area("a1", ["d1", "d2", "d3"]), area("a2", ["d4", twin, "d5"]));
+    const slots = { ...tabs, a2: [tab("d4", 502), tab("t1", 602), tab("d5", 702)] };
+    const drop = (x: number) => dropTarget({ layout: layout(root), geometry: g, sizes: SIZES, tabs: slots, displayId: "d1", point: { x, y: 10 } });
+    expect(drop(540)).toMatchObject({ kind: "bar", areaId: "a2", index: 0, line: { x: 502 } });
+    expect(drop(600)).toMatchObject({ kind: "bar", areaId: "a2", index: 1, line: { x: 602 } });
+    expect(drop(700)).toMatchObject({ kind: "bar", areaId: "a2", index: 1, line: { x: 702 } });
+    expect(drop(800)).toMatchObject({ kind: "bar", areaId: "a2", index: 2, line: { x: 802 } });
+    // A diff of the same path in the other History group is another document.
+    const branch = display("t1", { path: "/repo/d1.md", kind: "diff", committed: true, tab_id: "diff:d1" });
+    const mixed = split("s1", "row", 0.5, area("a1", ["d1", "d2", "d3"]), area("a2", ["d4", branch, "d5"]));
+    expect(dropTarget({ layout: layout(mixed), geometry: g, sizes: SIZES, tabs: slots, displayId: "d1", point: { x: 700, y: 10 } })).toMatchObject({ index: 2 });
+  });
+
   it("splits at an edge only inside its zone, previewing the half the new area takes", () => {
     // a2's content is 500 wide: the right zone starts past 1002 - 0.3 * 500 = 852.
     expect(at("d1", 853, 300)).toEqual({ kind: "edge", areaId: "a2", edge: "right", preview: { x: 752, y: 0, width: 250, height: 600 }, label: "Split right" });

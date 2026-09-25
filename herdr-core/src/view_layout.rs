@@ -636,9 +636,10 @@ impl Layout {
     /// collapses. A display that changes place is kept open (a drag keeps a
     /// preview, D-02). The index is the display's place after the move, so
     /// the same move twice changes nothing the second time. A display moved
-    /// into an area that already shows its document takes the place of that
-    /// twin, which goes: only Open to the side makes a second view of a
-    /// document, and never within one area (D-03, B6).
+    /// into an area that already shows its document replaces that twin,
+    /// which goes: only Open to the side makes a second view of a document,
+    /// and never within one area (D-03, B6). The index still counts the
+    /// area without the twin, so the sender names the final place.
     pub fn move_display(
         &mut self,
         display_id: &str,
@@ -673,7 +674,6 @@ impl Layout {
         }
         display.last_focused_unix_ms = stamp;
         let area = self.root.area_mut(area_id).expect("found above");
-        let mut to = to;
         if source_id != area_id
             && let Some(twin) = area
                 .displays
@@ -681,9 +681,6 @@ impl Layout {
                 .position(|other| other.shows(&display.path, display.kind, display.committed))
         {
             area.displays.remove(twin);
-            if twin < to {
-                to -= 1;
-            }
         }
         area.active = Some(display_id.to_owned());
         area.displays.insert(to.min(area.displays.len()), display);
@@ -1270,6 +1267,39 @@ mod tests {
             !layout.move_display(&b, "a1", 0, 3).unwrap(),
             "the same move again is the state already reached"
         );
+    }
+
+    #[test]
+    fn a_view_moved_onto_its_twin_lands_at_the_index_and_the_same_move_again_changes_nothing() {
+        // [left of the twin, right of the twin, the twin first in its area]
+        for (files, index, expected) in [
+            (["x", "a", "y"], 1, 1),
+            (["x", "y", "a"], 0, 0),
+            (["a", "x", "y"], 1, 1),
+        ] {
+            let mut layout = with_files(&files);
+            let kept = id(&layout, "a");
+            let second = layout.new_display("/repo/a", DisplayKind::File, None, false);
+            let moved = second.id.clone();
+            layout.split_new("a1", Edge::Right, second, 1).unwrap();
+
+            assert!(layout.move_display(&moved, "a1", index, 2).unwrap());
+            let area = layout.area("a1").unwrap();
+            let ids: Vec<&str> = area
+                .displays
+                .iter()
+                .map(|display| display.id.as_str())
+                .collect();
+            assert_eq!(ids.len(), 3, "{files:?}: the twin gives way");
+            assert_eq!(ids[expected], moved, "{files:?}: the view lands at {index}");
+            assert!(!ids.contains(&kept.as_str()), "{files:?}");
+            let after = layout.clone();
+            assert!(
+                !layout.move_display(&moved, "a1", index, 3).unwrap(),
+                "{files:?}: the same move again is the state already reached"
+            );
+            assert_eq!(layout, after, "{files:?}");
+        }
     }
 
     #[test]
