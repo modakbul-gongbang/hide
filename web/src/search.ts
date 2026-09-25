@@ -5,6 +5,7 @@
 
 import { contextAgents, contextWorkspaces } from "./remote";
 import type { SnapshotRest } from "./snapshot";
+import { viewCommands, type Geometry, type LayoutSizes, type ViewCommandId } from "./viewLayout";
 import { LAYOUTS, workspaceViewOf, type ViewMode } from "./workspace";
 
 export type SearchEntry = {
@@ -17,7 +18,9 @@ export type SearchEntry = {
   workspaceId?: string;
   checkoutId?: string;
   /** What a command entry changes on the Workspace in front. */
-  command?: { layout: ViewMode } | { tool: "explorer" | "changes"; visible: boolean };
+  command?: { layout: ViewMode } | { tool: "explorer" | "changes"; visible: boolean } | { view: ViewCommandId } | { openBeside: true };
+  /** Why a command cannot run now; the palette shows it and runs nothing. */
+  unavailable?: string | null;
 };
 
 /** The fuzzy score of `query` against `candidate`, mirroring the Swift scorer
@@ -44,10 +47,12 @@ export function fuzzyScore(candidate: string, query: string): number | null {
 
 /**
  * The Workspace commands ⌘K offers while a Workspace is on screen: the three
- * layouts by the names the layout menu uses (S6 B5), and each tool shown or
- * hidden by what it would do.
+ * layouts by the names the layout menu uses (S6 B5), each tool shown or
+ * hidden by what it would do, and the View area commands (S7 B20) with the
+ * reason any of them cannot run now. `drawn` is what the page last drew of
+ * the View areas, which a split's room is judged on.
  */
-export function workspaceCommands(rest: SnapshotRest | null): SearchEntry[] {
+export function workspaceCommands(rest: SnapshotRest | null, drawn: { geometry: Geometry; sizes: LayoutSizes } | null = null): SearchEntry[] {
   const view = workspaceViewOf(rest);
   if (!view) return [];
   const entries: SearchEntry[] = LAYOUTS.filter((layout) => layout.mode !== view.mode).map((layout) => ({
@@ -71,6 +76,18 @@ export function workspaceCommands(rest: SnapshotRest | null): SearchEntry[] {
     kind: "command",
     command: { tool: "changes", visible: !view.changes },
   });
+  if (!view.layout) return entries;
+  for (const command of viewCommands(view.layout, drawn)) {
+    entries.push({
+      id: `command:view:${command.id}`,
+      title: command.title,
+      subtitle: "View areas",
+      kind: "command",
+      command: { view: command.id },
+      unavailable: command.unavailable,
+    });
+  }
+  entries.push({ id: "command:open_beside", title: "Open file to the side", subtitle: "View areas", kind: "command", command: { openBeside: true } });
   return entries;
 }
 
@@ -80,9 +97,9 @@ export function workspaceCommands(rest: SnapshotRest | null): SearchEntry[] {
  * pick on a selected SSH device focuses that host's row rather than one on
  * this machine behind it.
  */
-export function searchEntries(rest: SnapshotRest | null, workspaceOnScreen = false): SearchEntry[] {
+export function searchEntries(rest: SnapshotRest | null, workspaceOnScreen = false, drawn: { geometry: Geometry; sizes: LayoutSizes } | null = null): SearchEntry[] {
   if (!rest) return [];
-  const entries: SearchEntry[] = workspaceOnScreen ? workspaceCommands(rest) : [];
+  const entries: SearchEntry[] = workspaceOnScreen ? workspaceCommands(rest, drawn) : [];
   for (const agent of contextAgents(rest, rest.navigator?.agents ?? [])) {
     entries.push({
       id: `agent:${agent.pane_id}`,

@@ -212,8 +212,15 @@ export function ratioAtOffset(divider: DividerBox, offset: number): number {
 /** The ratio one keyboard step moves a divider to, or null when it cannot move that way. */
 export function steppedRatio(divider: DividerBox, delta: number): number | null {
   const available = along(divider.span, divider.axis === "row") - along(divider.rect, divider.axis === "row");
-  const next = ratioForFirst(divider, (divider.ratio + delta) * available);
-  return Math.abs(next - divider.ratio) < 1e-6 ? null : next;
+  return moved(divider.ratio, ratioForFirst(divider, (divider.ratio + delta) * available));
+}
+
+/**
+ * The geometry of one area filling the body, for a window too narrow for the
+ * whole tree (B13, A7): only the active area shows, and no split fits.
+ */
+export function singleAreaGeometry(area: ViewAreaSnapshot, body: Rect, sizes: LayoutSizes): Geometry {
+  return { ...viewGeometry({ area }, body, sizes), fits: false };
 }
 
 // --- directions --------------------------------------------------------------
@@ -464,6 +471,63 @@ export function sameTarget(a: DropTarget, b: DropTarget): boolean {
   if (a.kind === "bar" && b.kind === "bar") return a.areaId === b.areaId && a.index === b.index;
   if (a.kind === "edge" && b.kind === "edge") return a.areaId === b.areaId && a.edge === b.edge;
   return false;
+}
+
+// --- palette commands --------------------------------------------------------
+
+export type ViewCommandId = "split_right" | "split_down" | "move_next" | "focus_next" | "focus_previous" | "close_view" | "grow" | "shrink";
+
+export type ViewCommand = { id: ViewCommandId; title: string; unavailable: string | null };
+
+/**
+ * The View commands the palette offers (B20, D-13), each acting on the
+ * active area's active display or on the active area, with the reason one
+ * cannot run now. `drawn` is what the page last drew of the areas; without
+ * it a split's room cannot be judged, so a split is not offered.
+ */
+export function viewCommands(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry; sizes: LayoutSizes } | null): ViewCommand[] {
+  const active = activeDisplay(layout);
+  const alone = areasOf(layout.root).length < 2 ? "There is only one view area." : null;
+  const noView = active ? null : "No view is open in the active view area.";
+  const split = (edge: Edge): string | null => {
+    if (!active) return noView;
+    if (!drawn) return "The View areas are not on screen.";
+    const eligibility = splitEligibility(layout, drawn.geometry, drawn.sizes, active.display.id, active.area.id, edge);
+    return eligibility.ok ? null : eligibility.reason;
+  };
+  const resize = (grow: boolean): string | null => {
+    const target = resizeTarget(layout, drawn?.geometry ?? null, grow);
+    return "reason" in target ? target.reason : null;
+  };
+  return [
+    { id: "split_right", title: "Split right", unavailable: split("right") },
+    { id: "split_down", title: "Split down", unavailable: split("down") },
+    { id: "move_next", title: "Move to the next area", unavailable: noView ?? alone },
+    { id: "focus_next", title: "Focus next view area", unavailable: alone },
+    { id: "focus_previous", title: "Focus previous view area", unavailable: alone },
+    { id: "close_view", title: "Close view", unavailable: noView },
+    { id: "grow", title: "Grow view area", unavailable: resize(true) },
+    { id: "shrink", title: "Shrink view area", unavailable: resize(false) },
+  ];
+}
+
+/**
+ * Where Grow or Shrink moves the split the active area sits in: one step,
+ * within the core's range and, when the areas are drawn, both sides'
+ * minimums; or why it cannot move that way.
+ */
+export function resizeTarget(layout: ViewLayoutSnapshot, geometry: Geometry | null, grow: boolean): { splitId: string; ratio: number } | { reason: string } {
+  const parent = parentSplit(layout.root, layout.active_area);
+  if (!parent) return { reason: "There is only one view area." };
+  const delta = (grow ? 1 : -1) * (parent.side === "first" ? RESIZE_STEP : -RESIZE_STEP);
+  const divider = geometry?.dividers.find((box) => box.id === parent.split.id);
+  const ratio = divider ? steppedRatio(divider, delta) : moved(parent.split.ratio, clamp(parent.split.ratio + delta, RATIO_MIN, RATIO_MAX));
+  if (ratio === null) return { reason: grow ? "This view area cannot grow any further." : "This view area cannot shrink any further." };
+  return { splitId: parent.split.id, ratio };
+}
+
+function moved(before: number, after: number): number | null {
+  return Math.abs(after - before) < 1e-6 ? null : after;
 }
 
 // --- narrow windows ----------------------------------------------------------

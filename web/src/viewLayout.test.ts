@@ -8,8 +8,10 @@ import {
   narrowWorkspace,
   neighbourArea,
   ratioForFirst,
+  resizeTarget,
   splitEligibility,
   steppedRatio,
+  viewCommands,
   viewGeometry,
   type LayoutSizes,
   type Rect,
@@ -201,6 +203,49 @@ describe("a dragged tab's target", () => {
   it("targets nothing outside the Views or for a view that is gone", () => {
     expect(at("d1", 1100, 300)).toMatchObject({ kind: "none", reason: expect.any(String) });
     expect(at("gone", 700, 10)).toEqual({ kind: "none", reason: "This view is no longer open." });
+  });
+});
+
+describe("palette commands", () => {
+  const reasons = (root: ViewNode, drawn = true, activeArea = "a1") => {
+    const views = layout(root);
+    views.active_area = activeArea;
+    const commands = viewCommands(views, drawn ? { geometry: viewGeometry(root, body(2000), SIZES), sizes: SIZES } : null);
+    return Object.fromEntries(commands.map((command) => [command.id, command.unavailable]));
+  };
+
+  it("offers what one area allows and says why the rest cannot run", () => {
+    expect(reasons(area("a1", ["d1"]))).toEqual({
+      split_right: "This is the only view in its area.",
+      split_down: "This is the only view in its area.",
+      move_next: "There is only one view area.",
+      focus_next: "There is only one view area.",
+      focus_previous: "There is only one view area.",
+      close_view: null,
+      grow: "There is only one view area.",
+      shrink: "There is only one view area.",
+    });
+    expect(reasons(area("a1", ["d1", "d2"])).split_right).toBeNull();
+  });
+
+  it("judges no split before the areas are drawn, and acts on nothing without an active view", () => {
+    expect(reasons(area("a1", ["d1", "d2"]), false).split_right).toBe("The View areas are not on screen.");
+    const empty: ViewNode = { area: { id: "a1", active: null, displays: [] } };
+    expect(reasons(empty)).toMatchObject({ split_right: "No view is open in the active view area.", close_view: "No view is open in the active view area." });
+  });
+
+  it("grows the active area toward its sibling by one step and stops at the core's range", () => {
+    const tree = (ratio: number) => split("s1", "row", ratio, area("a1", ["d1"]), area("a2", ["d2"]));
+    const at = (ratio: number, activeArea: string, grow: boolean) => {
+      const views = layout(tree(ratio));
+      views.active_area = activeArea;
+      return resizeTarget(views, null, grow);
+    };
+    expect(at(0.5, "a1", true)).toEqual({ splitId: "s1", ratio: 0.55 });
+    expect(at(0.5, "a2", true)).toEqual({ splitId: "s1", ratio: 0.45 });
+    expect(at(0.85, "a1", true)).toEqual({ reason: "This view area cannot grow any further." });
+    expect(at(0.84, "a1", true)).toEqual({ splitId: "s1", ratio: 0.85 });
+    expect(at(0.15, "a1", false)).toEqual({ reason: "This view area cannot shrink any further." });
   });
 });
 

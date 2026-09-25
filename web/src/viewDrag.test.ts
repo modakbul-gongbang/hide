@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IDLE, movePointer, pressTab, releasePointer } from "./viewDrag";
+import { IDLE, movePointer, pressTab, relayout, releasePointer } from "./viewDrag";
 import type { DropTarget, Point } from "./viewLayout";
 
 const reorder: DropTarget = { kind: "bar", areaId: "a1", index: 2, line: { x: 200, y: 0, height: 32 } };
@@ -31,6 +31,15 @@ describe("a View tab drag", () => {
     expect(releasePointer(onEdge, 1, { x: 900, y: 300 }, always({ ...splitRight, edge: "down" })).drop).toBeNull();
     const onNothing = movePointer(pressTab("d1", 1, origin), 1, { x: 900, y: 300 }, 6, always(refused));
     expect(releasePointer(onNothing, 1, { x: 900, y: 300 }, always(refused))).toEqual({ session: IDLE, dragged: true, drop: null });
+  });
+
+  it("drops a preview the layout moved or removed under a still pointer, so a release in place lands nothing", () => {
+    const onEdge = movePointer(pressTab("d1", 1, origin), 1, { x: 900, y: 300 }, 6, always(splitRight));
+    const moved = { ...splitRight, preview: { x: 0, y: 0, width: 2, height: 2 } };
+    expect(relayout(onEdge, always(moved))).toMatchObject({ phase: "dragging", target: moved });
+    const gone = relayout(onEdge, always({ ...splitRight, areaId: "a1" }));
+    expect(gone).toMatchObject({ phase: "dragging", target: { kind: "none", reason: null } });
+    expect(releasePointer(gone, 1, { x: 900, y: 300 }, always({ ...splitRight, areaId: "a1" })).drop).toBeNull();
   });
 
   it("ignores another pointer", () => {

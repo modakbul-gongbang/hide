@@ -84,12 +84,12 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-patch-view] .cm-content')).not.toContainText("second <script>");
     await expect(page.locator('[data-tab-kind="file"]')).toHaveAttribute("data-preview", "false"); // edited preview remains open
     const diffTab = page.locator('[data-tab-kind="diff"]');
-    const diffTabId = await diffTab.getAttribute("data-tab");
+    const diffDisplayId = await diffTab.getAttribute("data-display");
     await page.locator('[data-tab-kind="file"]').click();
     await expect(diffTab).toHaveAttribute("aria-selected", "false");
     await diffTab.dblclick();
     await expect(diffTab).toHaveAttribute("data-preview", "false");
-    expect(lastSent.get("file_keep_open")).toMatchObject({ tab_id: diffTabId });
+    expect(lastSent.get("view_layout.keep_open")).toMatchObject({ action: "keep_open", display_id: diffDisplayId });
     expect(sent.get("file_draft")).toBeGreaterThanOrEqual(1);
     expect(sent.get("file_save")).toBeGreaterThanOrEqual(1);
     await screenshot(page, "s4-updated-diff");

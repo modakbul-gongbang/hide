@@ -1,20 +1,18 @@
 import { memo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
-import { fileIcon } from "./fileIcons";
 import { ContextMenu, type MenuEntry } from "./Menu";
-import type { AgentRow, AsyncOperation, Checkout, EditorSnapshot, EditorTabSnapshot, StripTab } from "./snapshot";
+import type { AgentRow, AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
-import { activeViewTab, agentEntries, tabAgent, tabIdentity, viewEntries } from "./workspace";
+import { agentEntries, tabAgent, tabIdentity } from "./workspace";
 
-// The two tab strips of a Workspace (PRD S6 D-04, B17): the Agent area's
-// Herdr tabs and the View area's files and diffs. Both draw what the core put
-// in the checkout's strip, in its order; the web joins no lists of its own. A
-// preview View tab is titled in italic and a dirty one carries a dot. A drag
-// that lands sends one `reorder_tab` with the strip index of the tab it
-// landed on, and the bar redraws in the core's order; nothing moves until the
-// snapshot says so. Every tab carries its kind's mark and its full identity
-// in the tooltip and the accessible name.
+// The Agent area's tab strip (PRD S6 D-04, B17): the checkout's Herdr tabs,
+// in the order the core put them in its strip; the web joins no lists of its
+// own. A drag that lands sends one `reorder_tab` with the strip index of the
+// tab it landed on, and the bar redraws in the core's order; nothing moves
+// until the snapshot says so. Every tab carries its agent's mark and its full
+// identity in the tooltip and the accessible name. The View areas' tab bars
+// are `ViewAreas.tsx`'s.
 
 const NONE: AsyncOperation[] = [];
 const NO_AGENTS: AgentRow[] = [];
@@ -81,7 +79,7 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
       {entries.map((entry) => {
         const tab = checkout.tabs.find((row) => row.id === entry.source_id);
         const agent = tabAgent(tab, agents ?? NO_AGENTS, focusedPaneId);
-        const identity = tabIdentity(entry, agent, null);
+        const identity = tabIdentity(entry, agent);
         return (
           <ContextMenu
             key={entry.id}
@@ -96,13 +94,9 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
               identity={identity}
               mark={<AgentMark kind={agent?.agent_kind} />}
               active={entry.source_id === activeTabId}
-              dirty={false}
-              saving={false}
-              tabOnly={false}
               closing={closingSuffix(entry.source_id, "tab.close", operations)}
               closeLabel={`Close tab ${entry.label}`}
               onSelect={() => actions.focusTab(entry.source_id)}
-              onDoubleClick={() => {}}
               onClose={() => actions.closeTab(entry.source_id)}
               {...drag(entry)}
             />
@@ -139,106 +133,16 @@ function runAgentTabItem(id: AgentTabItem, entry: StripTab, actions: Actions) {
   if (id === "close_tab") actions.closeTab(entry.source_id);
 }
 
-/** The View area's strip: the checkout's files and diffs, with the View tab the core shows marked. */
-export function ViewTabBar({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
-  const editor = useShellStore((s) => s.editor);
-  const savingTabs = useShellStore((s) => s.savingTabs);
-  const bufferWarnings = useShellStore((s) => s.bufferWarnings);
-  const drag = useTabDrag(actions, checkout.strip);
-  const entries = viewEntries(checkout);
-  const active = activeViewTab(editor, checkout);
-  if (entries.length === 0) return null;
-  return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-panel" role="tablist" aria-label="View tabs" data-view-tab-bar={checkout.id}>
-      {entries.map((entry) => {
-        const editorTab = editorTabOf(editor, entry);
-        return (
-          <ContextMenu
-            key={entry.id}
-            label={`${entry.label} view actions`}
-            items={() => viewTabMenu(entry, editorTab)}
-            onSelect={(id) => runViewTabItem(id, entry, editorTab, actions)}
-            className="flex shrink-0"
-            data-tab-menu={entry.source_id}
-          >
-            <TabButton
-              entry={entry}
-              identity={tabIdentity(entry, null, editorTab)}
-              mark={viewMark(entry)}
-              active={entry.source_id === active?.id}
-              dirty={editorTab?.dirty ?? false}
-              saving={savingTabs.has(entry.source_id)}
-              tabOnly={bufferWarnings.has(entry.source_id)}
-              unavailable={Boolean(editorTab?.unavailable_reason)}
-              closing={false}
-              closeLabel={`Close view ${entry.label}`}
-              onSelect={() => actions.focusFileTab(entry.source_id)}
-              onDoubleClick={() => actions.keepOpenFile(entry.source_id)}
-              onClose={() => actions.closeFileTab(entry.source_id)}
-              {...drag(entry)}
-            />
-          </ContextMenu>
-        );
-      })}
-    </div>
-  );
-}
-
-function editorTabOf(editor: EditorSnapshot | null, entry: StripTab): EditorTabSnapshot | null {
-  return editor?.tabs.find((tab) => tab.id === entry.source_id) ?? null;
-}
-
-function viewMark(entry: StripTab) {
-  if (entry.kind === "diff") {
-    return (
-      <span aria-hidden="true" data-view-mark="diff" className="shrink-0 font-mono text-warning">
-        ±
-      </span>
-    );
-  }
-  const icon = fileIcon(entry.label);
-  return (
-    <span aria-hidden="true" data-view-mark="file" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>
-      {icon.glyph}
-    </span>
-  );
-}
-
-type ViewTabItem = "keep_open" | "reveal" | "copy_path" | "close_view";
-
-function viewTabMenu(entry: StripTab, tab: EditorTabSnapshot | null): MenuEntry<ViewTabItem>[] {
-  return [
-    { id: "keep_open", label: "Keep open", unavailable: entry.preview ? null : "This view is already kept open" },
-    { id: "reveal", label: "Reveal in Explorer", unavailable: tab?.unavailable_reason ? "The file is unavailable" : null },
-    { id: "copy_path", label: "Copy path", unavailable: tab ? null : "The view has no path" },
-    // Closing a view closes the document, never the file on disk; a dirty
-    // document goes through the same save-on-close as the tab's ×.
-    { id: "close_view", label: "Close view", unavailable: null, separated: true },
-  ];
-}
-
-function runViewTabItem(id: ViewTabItem, entry: StripTab, tab: EditorTabSnapshot | null, actions: Actions) {
-  if (id === "keep_open") actions.keepOpenFile(entry.source_id);
-  if (id === "reveal" && tab) actions.revealInExplorer(tab.path);
-  if (id === "copy_path" && tab) void navigator.clipboard?.writeText(tab.path);
-  if (id === "close_view") actions.closeFileTab(entry.source_id);
-}
-
-export const TabButton = memo(function TabButton({
+const TabButton = memo(function TabButton({
   entry,
   identity,
   mark,
   active,
-  dirty,
-  saving,
-  tabOnly,
-  unavailable = false,
   closing,
   closeLabel,
   dragging,
   over,
   onSelect,
-  onDoubleClick,
   onClose,
   onPointerDown,
   onPointerMove,
@@ -249,16 +153,11 @@ export const TabButton = memo(function TabButton({
   identity: string;
   mark: React.ReactNode;
   active: boolean;
-  dirty: boolean;
-  saving: boolean;
-  tabOnly: boolean;
-  unavailable?: boolean;
   closing: boolean;
   closeLabel: string;
   dragging: boolean;
   over: boolean;
   onSelect: () => void;
-  onDoubleClick: () => void;
   onClose: () => void;
   onPointerDown: (x: number) => void;
   onPointerMove: (x: number) => void;
@@ -274,11 +173,7 @@ export const TabButton = memo(function TabButton({
       tabIndex={0}
       data-tab={entry.source_id}
       data-tab-kind={entry.kind}
-      data-preview={entry.preview ? "true" : "false"}
-      data-saving={saving ? "true" : "false"}
-      data-tab-only={tabOnly ? "true" : "false"}
       data-closing={closing ? "true" : "false"}
-      data-unavailable={unavailable ? "true" : "false"}
       className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
         active ? "bg-background text-primary" : "text-secondary hover:bg-elevated"
       } ${dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
@@ -290,7 +185,6 @@ export const TabButton = memo(function TabButton({
       onPointerEnter={onPointerEnter}
       onPointerUp={onPointerUp}
       onClick={onSelect}
-      onDoubleClick={onDoubleClick}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -300,10 +194,8 @@ export const TabButton = memo(function TabButton({
     >
       {over ? <span className="absolute inset-y-0 left-0 w-[var(--size-tab-indicator)] bg-accent" /> : null}
       {mark}
-      <span className={`min-w-0 flex-1 truncate ${entry.preview ? "italic" : ""} ${unavailable ? "text-muted line-through" : ""}`}>
+      <span className="min-w-0 flex-1 truncate">
         {entry.label}
-        {saving ? <span className="text-muted"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
-        {tabOnly ? <span className="text-muted"> kept in this tab only</span> : null}
         {closing ? <span className="text-muted"> closing…</span> : null}
       </span>
       <button

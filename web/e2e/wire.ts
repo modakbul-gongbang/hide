@@ -8,6 +8,8 @@ import path from "node:path";
 /**
  * Counts client events by kind as the page sends them; one action must be
  * one event. `last` keeps the newest payload per kind for shape assertions.
+ * An event whose payload names an `action` (`view_layout`) is counted and
+ * kept under `kind.action` as well, so one action can be told from another.
  */
 export function countSent(page: Page, last: Map<string, Record<string, unknown>> = new Map()): Map<string, number> {
   const counts = new Map<string, number>();
@@ -29,8 +31,11 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
         const event = JSON.parse(String(frame.payload)) as { kind?: string; payload?: Record<string, unknown> };
         if (event.kind) {
           trace?.(`sent ${event.kind} ${JSON.stringify(event.payload ?? {}).slice(0, 100)}`);
-          counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
-          last.set(event.kind, event.payload ?? {});
+          const action = typeof event.payload?.action === "string" ? `${event.kind}.${event.payload.action}` : null;
+          for (const key of action ? [event.kind, action] : [event.kind]) {
+            counts.set(key, (counts.get(key) ?? 0) + 1);
+            last.set(key, event.payload ?? {});
+          }
         }
       } catch {
         /* the handshake is not an event */

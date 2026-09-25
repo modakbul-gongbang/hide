@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { filterEntries, fuzzyScore, searchEntries, type SearchEntry } from "./search";
-import type { SnapshotRest } from "./snapshot";
+import type { SnapshotRest, ViewNode } from "./snapshot";
+import { viewGeometry } from "./viewLayout";
 
 describe("fuzzy score", () => {
   it("needs the query's characters in order", () => {
@@ -62,5 +63,27 @@ describe("workspace commands", () => {
 
   it("offers no Workspace command when no Workspace is on screen", () => {
     expect(searchEntries(rest, false)).toEqual([]);
+  });
+
+  it("offers the View area commands with the reason one cannot run now", () => {
+    const display = { id: "d1", tab_id: "file:a", path: "/repo/a.md", label: "a.md", kind: "file", committed: null, preview: false, state: "open", reason: null };
+    const layout = { root: { area: { id: "a1", active: "d1", displays: [display] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: 1 };
+    const withViews = { workspace_view: { ...(rest.workspace_view as object), layout } } as unknown as SnapshotRest;
+    const sizes = { areaMinWidth: 224, areaMinHeight: 144, divider: 2, tabStrip: 32 };
+    const drawn = { geometry: viewGeometry(layout.root as ViewNode, { x: 0, y: 0, width: 1000, height: 600 }, sizes), sizes };
+    const commands = searchEntries(withViews, true, drawn).filter((entry) => entry.subtitle === "View areas");
+    expect(commands.map((entry) => entry.title)).toEqual([
+      "Split right",
+      "Split down",
+      "Move to the next area",
+      "Focus next view area",
+      "Focus previous view area",
+      "Close view",
+      "Grow view area",
+      "Shrink view area",
+      "Open file to the side",
+    ]);
+    expect(commands.find((entry) => entry.title === "Split right")?.unavailable).toBe("This is the only view in its area.");
+    expect(commands.find((entry) => entry.title === "Close view")?.unavailable).toBeNull();
   });
 });

@@ -299,14 +299,19 @@ export type EditorDocumentSnapshot = {
   save: EditorSaveSnapshot | null;
 };
 
-/** The core's editor section: its tabs, which one shows, and that tab's document. */
 /** A file a device is still reading; its tab shows when the answer arrives. */
 export type EditorOpeningSnapshot = { workspace_id: string; checkout_id: string; path: string };
 
+/**
+ * The core's editor section: every open document (one buffer per device,
+ * checkout and document, S5.5) and the document of the active View area's
+ * active display. The web shell reads documents from the `documents` section
+ * instead (`DocumentsSection`); the wire's `document` field is the Swift
+ * shell's and is always null here.
+ */
 export type EditorSnapshot = {
   tabs: EditorTabSnapshot[];
   active_tab_id: string | null;
-  document: EditorDocumentSnapshot | null;
   opening?: EditorOpeningSnapshot[];
 };
 
@@ -701,33 +706,17 @@ export function layoutForTab(rest: SnapshotRest | null, tabId: string | null): P
 }
 
 /**
- * The core's editor section when it holds a showing tab, else null. The canvas
- * reads null as "the terminal owns the surface": the core keeps the editor's
- * tabs while a terminal tab shows, so the tabs alone do not say what is drawn.
+ * The core's editor section when the active View area shows an open
+ * document, else null: a chord that could mean the document or the pane
+ * (⌘F, text size) reads null as "the terminal owns it".
  */
 export function editorFor(editor: EditorSnapshot | null): EditorSnapshot | null {
   return editor?.active_tab_id ? editor : null;
 }
 
-/**
- * The device file or diff the editor shows in `checkout`, or null when the host's
- * terminal tab does. The core keeps one active editor tab across devices, so
- * a tab of another checkout is not this surface's.
- */
-export function remoteEditorTab(editor: EditorSnapshot | null, checkout: Checkout): EditorTabSnapshot | null {
-  const tab = activeEditorTab(editor);
-  return tab && (tab.kind === "file" || tab.kind === "diff") && tab.workspace_id === checkout.workspace_id && tab.checkout_id === checkout.id ? tab : null;
-}
-
-/** The editor tab the core says is showing, or null when the terminal does. */
-export function activeEditorTab(editor: EditorSnapshot | null): EditorTabSnapshot | null {
-  const active = editorFor(editor);
-  if (!active) return null;
-  return active.tabs.find((tab) => tab.id === active.active_tab_id) ?? null;
-}
-
-/** The editor tab a strip entry stands behind, or null for a Herdr entry. */
-export function editorTabFor(editor: EditorSnapshot | null, tabId: string): EditorTabSnapshot | null {
+/** The editor tab (document) with this id, or null once the core closed it. */
+export function editorTabFor(editor: EditorSnapshot | null, tabId: string | null): EditorTabSnapshot | null {
+  if (!tabId) return null;
   return editor?.tabs.find((tab) => tab.id === tabId) ?? null;
 }
 

@@ -434,7 +434,21 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           </div>
         </div>
       )}
-      {menu ? <ContextMenu menu={menu} onDismiss={() => setMenu(null)} onNewFile={beginCreate} onRename={beginRename} onTrash={requestTrash} rowFor={(path) => rowForPath(rows, path)} /> : null}
+      {menu ? (
+        <ContextMenu
+          menu={menu}
+          onDismiss={() => setMenu(null)}
+          onOpenBeside={(path) => {
+            setMenu(null);
+            setSelection(path);
+            actions.openFileBeside(path);
+          }}
+          onNewFile={beginCreate}
+          onRename={beginRename}
+          onTrash={requestTrash}
+          rowFor={(path) => rowForPath(rows, path)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -497,6 +511,7 @@ function DraftRowView({
 function ContextMenu({
   menu,
   onDismiss,
+  onOpenBeside,
   onNewFile,
   onRename,
   onTrash,
@@ -504,6 +519,8 @@ function ContextMenu({
 }: {
   menu: { path: string; isDirectory: boolean; x: number; y: number };
   onDismiss: () => void;
+  /** A second, pinned display of the file beside the active View area (S7 B4). */
+  onOpenBeside: (path: string) => void;
   onNewFile: (parent: string, kind: "file" | "folder") => void;
   onRename: (row: ExplorerRow) => void;
   onTrash: (row: ExplorerRow) => void;
@@ -532,6 +549,8 @@ function ContextMenu({
           <MenuItem label="New File" testId="new-file" onClick={() => onNewFile(menu.path, "file")} />
           <MenuItem label="New Folder" testId="new-folder" onClick={() => onNewFile(menu.path, "folder")} />
         </>
+      ) : row ? (
+        <MenuItem label="Open to the side" testId="open-beside" onClick={() => onOpenBeside(row.path)} />
       ) : null}
       {row ? <MenuItem label="Rename" testId="rename" onClick={() => onRename(row)} /> : null}
       {row ? <MenuItem label="Move to Trash" testId="trash" danger onClick={() => onTrash(row)} /> : null}

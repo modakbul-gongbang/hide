@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
+import { ContextMenu, type MenuEntry } from "./Menu";
 import { changesFor, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
 import { useShellStore } from "./store";
 
@@ -33,27 +34,34 @@ function ChangeRow({ entry, committed, selected, actions }: {
   const icon = fileIcon(name);
   const status = STATUS[entry.status];
   const title = identity(entry, committed);
+  // The row's file beside the active View area (S7 B4): the working copy,
+  // which a deleted file no longer has.
+  const menu = (): MenuEntry<"open_beside">[] => [
+    { id: "open_beside", label: "Open to the side", unavailable: entry.status === "deleted" ? "The file was deleted" : null },
+  ];
   return (
-    <button
-      type="button"
-      className={`flex h-[var(--size-pane-child-row)] w-full min-w-0 items-center gap-xs px-sm text-left text-caption hover:bg-elevated ${selected ? "bg-elevated text-primary" : "text-secondary"}`}
-      aria-label={title}
-      aria-current={selected ? "true" : undefined}
-      title={title}
-      data-history-path={entry.relative_path}
-      data-history-group={committed ? "committed" : "working"}
-      onClick={() => actions.selectChange(entry.path, committed, true)}
-      onDoubleClick={() => actions.selectChange(entry.path, committed, false)}
-    >
-      <span aria-hidden="true" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>{icon.glyph}</span>
-      <span className="flex min-w-0 flex-1 items-baseline gap-xs overflow-hidden">
-        <span className="shrink-0 truncate">{name}</span>
-        {parent ? <span className="min-w-0 truncate text-muted">{parent}</span> : null}
-      </span>
-      {entry.added_lines !== null ? <span className="shrink-0 text-success" aria-label={`${entry.added_lines} lines added`}>+{entry.added_lines}</span> : null}
-      {entry.removed_lines !== null ? <span className="shrink-0 text-danger" aria-label={`${entry.removed_lines} lines removed`}>-{entry.removed_lines}</span> : null}
-      <span className={`shrink-0 ${status.color}`} aria-hidden="true">{status.mark}</span>
-    </button>
+    <ContextMenu label={`${name} actions`} items={menu} onSelect={() => actions.openFileBeside(entry.path)} className="block" data-history-menu={entry.relative_path}>
+      <button
+        type="button"
+        className={`flex h-[var(--size-pane-child-row)] w-full min-w-0 items-center gap-xs px-sm text-left text-caption hover:bg-elevated ${selected ? "bg-elevated text-primary" : "text-secondary"}`}
+        aria-label={title}
+        aria-current={selected ? "true" : undefined}
+        title={title}
+        data-history-path={entry.relative_path}
+        data-history-group={committed ? "committed" : "working"}
+        onClick={() => actions.selectChange(entry.path, committed, true)}
+        onDoubleClick={() => actions.selectChange(entry.path, committed, false)}
+      >
+        <span aria-hidden="true" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>{icon.glyph}</span>
+        <span className="flex min-w-0 flex-1 items-baseline gap-xs overflow-hidden">
+          <span className="shrink-0 truncate">{name}</span>
+          {parent ? <span className="min-w-0 truncate text-muted">{parent}</span> : null}
+        </span>
+        {entry.added_lines !== null ? <span className="shrink-0 text-success" aria-label={`${entry.added_lines} lines added`}>+{entry.added_lines}</span> : null}
+        {entry.removed_lines !== null ? <span className="shrink-0 text-danger" aria-label={`${entry.removed_lines} lines removed`}>-{entry.removed_lines}</span> : null}
+        <span className={`shrink-0 ${status.color}`} aria-hidden="true">{status.mark}</span>
+      </button>
+    </ContextMenu>
   );
 }
 

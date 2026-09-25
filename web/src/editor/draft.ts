@@ -7,6 +7,19 @@
 
 const drafts = new Map<string, string>();
 const sent = new Map<string, string>();
+// Documents whose close is carrying their draft as its own save (S7 B5): the
+// display goes at once while the document waits for that save, and neither
+// autosave nor the save on leaving sends the draft a second time meanwhile.
+const closing = new Set<string>();
+
+export function noteClosing(tabId: string, inFlight: boolean): void {
+  if (inFlight) closing.add(tabId);
+  else closing.delete(tabId);
+}
+
+export function closingWithSave(tabId: string): boolean {
+  return closing.has(tabId);
+}
 
 export function noteDraft(tabId: string, contents: string): void {
   drafts.set(tabId, contents);
@@ -41,10 +54,11 @@ export function clearDraft(tabId: string): void {
  * an edit that outlived its tab would otherwise be applied to the next
  * document opened there (B5, D-14). */
 export function pruneDrafts(openTabIds: Set<string>): void {
-  for (const tabId of [...drafts.keys(), ...sent.keys()]) {
+  for (const tabId of [...drafts.keys(), ...sent.keys(), ...closing]) {
     if (!openTabIds.has(tabId)) {
       drafts.delete(tabId);
       sent.delete(tabId);
+      closing.delete(tabId);
     }
   }
 }

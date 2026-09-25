@@ -53,3 +53,16 @@ export function releasePointer(
   const lands = now.kind !== "none" && sameTarget(now, session.target);
   return { session: IDLE, dragged: true, drop: lands ? now : null };
 }
+
+/**
+ * The session after the layout changed under a still pointer (the core
+ * closed a view, another device moved one). A previewed target that is the
+ * same place in the new layout is redrawn where it now is; one that moved or
+ * went away is not what the operator aimed at, so its preview goes until the
+ * pointer moves again, and a release in place lands nothing (B8).
+ */
+export function relayout(session: DragSession, resolve: (point: Point) => DropTarget): DragSession {
+  if (session.phase !== "dragging" || session.target.kind === "none") return session;
+  const now = resolve(session.point);
+  return { ...session, target: sameTarget(now, session.target) ? now : { kind: "none", reason: null } };
+}

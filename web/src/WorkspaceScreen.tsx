@@ -1,7 +1,7 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { AreaEmpty } from "./AreaEmpty";
 import { Button } from "./components/ui/controls";
-import { EditorSurface } from "./Editor";
 import { LayoutIcon, ToolIcon } from "./icons";
 import { ContextMenu, MenuList, type MenuEntry } from "./Menu";
 import { FindBar } from "./Overlays";
@@ -11,35 +11,74 @@ import { remoteView } from "./remote";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
-import { AgentTabBar, ViewTabBar } from "./TabBar";
+import { AgentTabBar } from "./TabBar";
 import { Tools } from "./Tools";
-import { useUiStore } from "./ui";
-import { LAYOUTS, activeViewTab, agentEntries, agentWidth, layoutLabel, shareAt, workspaceViewOf, type ViewMode } from "./workspace";
+import { useUiStore, type WorkingRegion } from "./ui";
+import { ViewAreas } from "./ViewAreas";
+import { narrowWorkspace } from "./viewLayout";
+import { LAYOUTS, agentEntries, agentWidth, layoutLabel, shareAt, workspaceViewOf, type ViewMode } from "./workspace";
 
-// A Workspace (PRD S6 D-01..D-05, B4-B11): one checkout's Agent area (its
-// Herdr tabs and their panes) and View area (its files and diffs), side by
-// side or one at a time, with its tools beside them. The layout, the tools
-// and the boundary are the core's, per Workspace; this draws them and sends
-// one event per operator choice. A hidden area is unmounted, never closed:
-// its terminals park and stay fed, and its tabs stay in the core.
+// A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13): one checkout's Agent
+// area (its Herdr tabs and their panes) and View areas (its files and diffs),
+// side by side or one at a time, with its tools beside them. The layout, the
+// tools and the boundary are the core's, per Workspace; this draws them and
+// sends one event per operator choice. A hidden area is unmounted, never
+// closed: its terminals park and stay fed, and its tabs stay in the core.
+//
+// A window too narrow for what the core stored is drawn narrower without
+// changing it: the tools float over the work area and can be dismissed, and
+// Together shows one working region at a time with a switch to the other.
+// None of that is sent or stored, so widening shows the stored layout again.
+
+const WIDE = { toolsOverlay: false, singleRegion: false };
 
 export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => frontCheckout(s.rest));
   const view = useShellStore((s) => workspaceViewOf(s.rest));
+  const dismissed = useUiStore((s) => s.toolsDismissed);
+  const [body, setBody] = useState<HTMLDivElement | null>(null);
+  const width = useWidth(body);
+  const sizes = useMemo(() => ({ areaMin: tokenPx("--size-workspace-area-min"), panelMin: tokenPx("--size-panel-min"), divider: tokenPx("--size-resize-handle") }), []);
+  const narrow = view ? narrowWorkspace({ bodyWidth: width, mode: view.mode, ...sizes }) : WIDE;
+  // The tools the operator dismissed from over a narrow window come back as
+  // the column once there is room for it.
+  useEffect(() => {
+    if (!narrow.toolsOverlay && dismissed) useUiStore.getState().setToolsDismissed(false);
+  }, [narrow.toolsOverlay, dismissed]);
   if (!checkout || !view) return null;
+  const hidden = narrow.toolsOverlay && dismissed;
+  const explorer = view.explorer && !hidden;
+  const changes = view.changes && !hidden;
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Workspace ${checkout.branch ?? checkout.label}`} data-workspace-screen={checkout.id} data-layout={view.mode}>
-      <WorkspaceToolbar checkout={checkout} mode={view.mode} explorer={view.explorer} changes={view.changes} actions={actions} />
-      <div className="flex min-h-0 flex-1">
-        <Areas checkout={checkout} mode={view.mode} share={view.agent_share} actions={actions} />
-        <Tools actions={actions} />
+      <WorkspaceToolbar checkout={checkout} mode={view.mode} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
+      <div ref={setBody} className="relative flex min-h-0 flex-1" data-workspace-body={narrow.toolsOverlay ? "narrow" : "wide"}>
+        <Areas checkout={checkout} mode={view.mode} share={view.agent_share} single={narrow.singleRegion} actions={actions} />
+        <Tools explorer={explorer} changes={changes} overlay={narrow.toolsOverlay} actions={actions} />
       </div>
     </section>
   );
 }
 
-/** The path back (B4), the layout choice (B5) and the tools (B10). */
-function WorkspaceToolbar({ checkout, mode, explorer, changes, actions }: { checkout: Checkout; mode: ViewMode; explorer: boolean; changes: boolean; actions: Actions }) {
+function tokenPx(name: string): number {
+  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || 0;
+}
+
+/** An element's width, followed as it changes; 0 until it is measured. */
+function useWidth(element: HTMLElement | null): number {
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    if (!element) return undefined;
+    setWidth(element.clientWidth);
+    const observer = new ResizeObserver(() => setWidth(element.clientWidth));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [element]);
+  return width;
+}
+
+/** The path back (B4), the layout choice (B5), the tools (B10), and the working region of a narrow Together (S7 B13). */
+function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, actions }: { checkout: Checkout; mode: ViewMode; explorer: boolean; changes: boolean; singleRegion: boolean; actions: Actions }) {
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
   const setScreen = useUiStore((s) => s.setScreen);
@@ -89,6 +128,7 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, actions }: { chec
             </span>
           ) : null}
         </nav>
+        {singleRegion ? <RegionSwitch /> : null}
         <LayoutSwitch mode={mode} actions={actions} />
         <div className="flex items-center gap-xxs" role="group" aria-label="Workspace tools">
           <ToolToggle tool="explorer" label="Explorer" on={explorer} actions={actions} />
@@ -149,6 +189,40 @@ function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
   );
 }
 
+const REGIONS: readonly { region: WorkingRegion; label: string }[] = [
+  { region: "agents", label: "Agents" },
+  { region: "views", label: "Views" },
+];
+
+/**
+ * The explicit way between the two working regions while a Together window
+ * is too narrow to show both (S7 B13). It is this page's presentation only:
+ * choosing a region sends nothing.
+ */
+function RegionSwitch() {
+  const region = useUiStore((s) => s.workingRegion);
+  return (
+    <div role="radiogroup" aria-label="Working region, one at a time in this narrow window" className="flex items-center rounded-sm bg-panel p-xxs" data-region-switch={region}>
+      {REGIONS.map((choice) => (
+        <button
+          key={choice.region}
+          type="button"
+          role="radio"
+          aria-checked={choice.region === region}
+          title={`Show ${choice.label}`}
+          data-region-choice={choice.region}
+          className={`rounded-xs px-xs text-caption outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+            choice.region === region ? "bg-elevated text-primary" : "text-muted hover:text-secondary"
+          }`}
+          onClick={() => useUiStore.getState().setWorkingRegion(choice.region)}
+        >
+          {choice.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ToolToggle({ tool, label, on, actions }: { tool: "explorer" | "changes"; label: string; on: boolean; actions: Actions }) {
   return (
     <button
@@ -169,15 +243,18 @@ function ToolToggle({ tool, label, on, actions }: { tool: "explorer" | "changes"
 
 /** The minimum width either area keeps while both show (B6), read from its token. */
 function areaMinimum(): number {
-  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-workspace-area-min")) || 320;
+  return tokenPx("--size-workspace-area-min");
 }
 
 /**
  * The areas the layout shows. While both show, a boundary between them moves
  * a guide line as it is dragged and sends one `workspace_view` share on
  * release, so a drag never resizes the terminals on every pointer event.
+ * `single` is a Together window too narrow for both: it shows the working
+ * region the operator was last in (S7 B13).
  */
-function Areas({ checkout, mode, share, actions }: { checkout: Checkout; mode: ViewMode; share: number; actions: Actions }) {
+function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout; mode: ViewMode; share: number; single: boolean; actions: Actions }) {
+  const region = useUiStore((s) => s.workingRegion);
   const body = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [guide, setGuide] = useState<number | null>(null);
@@ -190,8 +267,10 @@ function Areas({ checkout, mode, share, actions }: { checkout: Checkout; mode: V
     return () => observer.disconnect();
   }, []);
   const minimum = useMemo(() => areaMinimum(), []);
-  const agents = mode !== "views";
-  const views = mode !== "agents";
+  const agents = mode !== "views" && (!single || region === "agents");
+  const views = mode !== "agents" && (!single || region === "views");
+  // The region the operator works in is the one a narrow Together keeps.
+  const workIn = (next: WorkingRegion) => () => useUiStore.getState().setWorkingRegion(next);
   const agentPx = agents && views && width > 0 ? agentWidth(share, width, minimum) : null;
   const drag = (event: React.PointerEvent<HTMLDivElement>) => {
     const element = body.current;
@@ -230,7 +309,13 @@ function Areas({ checkout, mode, share, actions }: { checkout: Checkout; mode: V
       data-areas={mode}
     >
       {agents ? (
-        <div className={`flex min-h-0 min-w-0 flex-col ${agentPx === null ? "flex-1" : "shrink-0"}`} style={agentPx === null ? undefined : { width: agentPx }} data-agent-area="true">
+        <div
+          className={`flex min-h-0 min-w-0 flex-col ${agentPx === null ? "flex-1" : "shrink-0"}`}
+          style={agentPx === null ? undefined : { width: agentPx }}
+          data-agent-area="true"
+          onPointerDownCapture={workIn("agents")}
+          onFocusCapture={workIn("agents")}
+        >
           <AgentArea checkout={checkout} actions={actions} />
         </div>
       ) : null}
@@ -256,8 +341,8 @@ function Areas({ checkout, mode, share, actions }: { checkout: Checkout; mode: V
         />
       ) : null}
       {views ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-view-area="true">
-          <ViewArea checkout={checkout} actions={actions} />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-view-area="true" onPointerDownCapture={workIn("views")} onFocusCapture={workIn("views")}>
+          <ViewAreas checkout={checkout} actions={actions} />
         </div>
       ) : null}
       {guide !== null ? <div className="pointer-events-none absolute inset-y-0 w-[var(--size-resize-handle)] bg-accent" style={{ left: guide }} data-area-guide="true" /> : null}
@@ -347,48 +432,5 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
       <RelationStatus actions={actions} />
       <RemotePaneCanvas view={view} connected={connected} actions={actions} />
     </>
-  );
-}
-
-/** The Workspace's files and diffs (B9, B11, B20). */
-function ViewArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
-  const tab = useShellStore((s) => activeViewTab(s.editor, checkout));
-  const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout.id));
-  const explorer = useShellStore((s) => workspaceViewOf(s.rest)?.explorer ?? false);
-  return (
-    <>
-      <ViewTabBar checkout={checkout} actions={actions} />
-      {tab?.unavailable_reason ? (
-        <AreaEmpty state="view-unavailable" text={`${tab.path} is unavailable: ${tab.unavailable_reason}`}>
-          <Button onClick={() => actions.closeFileTab(tab.id)} data-close-unavailable={tab.id}>
-            Close view
-          </Button>
-        </AreaEmpty>
-      ) : tab ? (
-        <EditorSurface actions={actions} />
-      ) : opening ? (
-        <AreaEmpty state="view-opening" text="Opening…" />
-      ) : (
-        <AreaEmpty state="no-view" text="No file or diff is open in this Workspace.">
-          {explorer ? null : (
-            <Button onClick={() => actions.setTool("explorer", true)} data-empty-open-explorer="true">
-              Show Explorer
-            </Button>
-          )}
-          <Button appearance="quiet" onClick={() => useUiStore.getState().openOverlay("file_palette")} data-empty-open-file="true">
-            Open file <span className="text-muted">⌘P</span>
-          </Button>
-        </AreaEmpty>
-      )}
-    </>
-  );
-}
-
-function AreaEmpty({ state, text, children }: { state: string; text: string; children?: React.ReactNode }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-sm bg-background p-lg text-center text-caption text-muted" data-area-empty={state}>
-      <p className="max-w-full break-words">{text}</p>
-      {children ? <div className="flex flex-wrap justify-center gap-sm">{children}</div> : null}
-    </div>
   );
 }

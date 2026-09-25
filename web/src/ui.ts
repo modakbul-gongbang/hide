@@ -31,7 +31,18 @@ export type PendingClose = {
  */
 export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "workspace" };
 
-export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "search" | "settings";
+/** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
+export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "search" | "settings";
+
+/**
+ * Where the keyboard goes once the core has moved there (S7 B20): a display
+ * that a menu, the palette or a drop moved or split, or an area a focus
+ * command chose. The View areas focus it when the snapshot shows it active.
+ */
+export type ViewFocusRequest = { displayId: string } | { areaId: string };
+
+/** The two working regions of a Workspace, for a Together window too narrow for both (S7 B13). */
+export type WorkingRegion = "agents" | "views";
 
 /** A project or checkout management dialog, named by the row that opened it. */
 export type WorkspaceDialog =
@@ -81,8 +92,24 @@ type UiStore = {
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
   explorerSelection: string | null;
-  /** Bumped by ⌘F while a document shows; the editor opens its find panel. */
+  /** Bumped by ⌘F while a document shows; the editor of `editorFindDisplay` opens its find panel. */
   editorFindRequest: number;
+  /** The display the latest ⌘F is for; one display answers it, whichever else shows the document. */
+  editorFindDisplay: string | null;
+  viewFocusRequest: ViewFocusRequest | null;
+  /**
+   * The working region the operator last worked in, and the one a Together
+   * window too narrow for both shows (S7 B13). This page's presentation
+   * only: it is never sent or stored, so widening shows both again.
+   */
+  workingRegion: WorkingRegion;
+  /**
+   * Whether the operator dismissed the Workspace tools drawn over a narrow
+   * window (S7 B12). Only that overlay reads it, and it resets once the
+   * window is wide enough for the tool column; the stored tools stay as they
+   * are, so widening brings the column back.
+   */
+  toolsDismissed: boolean;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
@@ -118,7 +145,10 @@ type UiStore = {
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
-  requestEditorFind: () => void;
+  requestEditorFind: (displayId: string | null) => void;
+  setViewFocusRequest: (request: ViewFocusRequest | null) => void;
+  setWorkingRegion: (region: WorkingRegion) => void;
+  setToolsDismissed: (dismissed: boolean) => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
@@ -142,6 +172,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   sidebarMode: "agents",
   explorerSelection: null,
   editorFindRequest: 0,
+  editorFindDisplay: null,
+  viewFocusRequest: null,
+  workingRegion: "agents",
+  toolsDismissed: false,
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
@@ -165,7 +199,14 @@ export const useUiStore = create<UiStore>((set, get) => ({
     set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });
   },
   setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
-  requestEditorFind: () => set({ editorFindRequest: get().editorFindRequest + 1 }),
+  requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),
+  setViewFocusRequest: (viewFocusRequest) => set({ viewFocusRequest }),
+  setWorkingRegion: (workingRegion) => {
+    if (get().workingRegion !== workingRegion) set({ workingRegion });
+  },
+  setToolsDismissed: (toolsDismissed) => {
+    if (get().toolsDismissed !== toolsDismissed) set({ toolsDismissed });
+  },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),
   openOverlay: (overlay) => set({ overlay }),
