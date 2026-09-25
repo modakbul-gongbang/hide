@@ -2,8 +2,12 @@
 
 This file covers conventions already established under `macos/`.
 Read the repository `AGENTS.md` for core versus shell ownership and runtime integration.
-Read `DESIGN.md` for visual decisions and `CONTRIBUTING.md` for required gates.
+Read `docs/UI_BEHAVIOR.md` for UI behavior and `CONTRIBUTING.md` for required gates.
 Do not restate those contracts here.
+
+The Swift shell is frozen for the web design system reset: `HideTheme.swift` is not regenerated or hand-edited, and its own design-contract tests (`HideDesignContractTests.swift` and the Swift-only `check-hide-design*`/`check-hide-theme-literals`/`check-hide-components`/`check-design-controls` checkers) are gone.
+Visual and numeric design authority moved to the Pen library and `design/tokens.json`, which no longer feed `HideTheme`; see `docs/DESIGN_WORKFLOW.md`.
+Use the command tooltip modifier and its identical accessibility help for every shell tooltip, preserving the Pet exception, per `docs/UI_BEHAVIOR.md`.
 
 ## Placement and ownership
 
@@ -26,8 +30,8 @@ Do not restate those contracts here.
 - Keep a presentation type beside its feature owner, whether that owner is a focused `*Presentation.swift` file or the view or model that alone consumes it.
 - Keep `View.body` focused on composition and event dispatch; move branching decisions into the presentation owner when they need direct tests.
 - Reuse the shared shell controls named in the root `AGENTS.md` before adding a new control shape.
-- Take chrome colors, typography, spacing, radii, and shadows from `HideTheme` as directed by `DESIGN.md`.
-- Add a missing token to `HideTheme` and `DESIGN.md`; do not settle it with an inline chrome value.
+- Take chrome colors, typography, spacing, radii, and shadows from `HideTheme` as directed by `docs/UI_BEHAVIOR.md`.
+- `HideTheme` is frozen: do not add a token to it for this change. A visual gap in the frozen Swift shell is a decision for a future native-shell PRD, not a reason to hand-write an inline chrome value.
 
 ## Errors and diagnostics
 

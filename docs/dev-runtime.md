@@ -91,7 +91,7 @@ The app bundles `macos/Resources/hide.icns`; `macos/scripts/generate_app_icon.sh
 Other icon candidates are reference artwork, not runtime alternatives.
 Provider artwork lives in `macos/Sources/HerdrMacOS/Resources/` as `agent-claude.png` and `agent-codex.png`.
 Keep packaging aligned with `macos/Resources/THIRD_PARTY_NOTICES/`; bundled artwork is not a grant of trademark permission.
-Use [theme-contract.md](theme-contract.md) for pet artwork and [DESIGN.md](../DESIGN.md) for shell appearance.
+Use [theme-contract.md](theme-contract.md) for pet artwork and [UI_BEHAVIOR.md](UI_BEHAVIOR.md) for shell behavior.
 
 ## Driving pet states without real agents
 
