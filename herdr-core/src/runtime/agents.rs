@@ -1750,6 +1750,8 @@ impl Runtime {
                 .unwrap_or(0)
                 != generation
             {
+                // An answer from a connection that is gone is a lost answer.
+                self.drop_pending_choice(target_id, request_id);
                 self.push_diagnostic(
                     "remote.control.stale_result",
                     format!(
@@ -1763,6 +1765,7 @@ impl Runtime {
                 .get(&remote_operation_key)
                 .is_some_and(|operation| operation.connection_generation != generation)
             {
+                self.drop_pending_choice(target_id, request_id);
                 return false;
             }
         }

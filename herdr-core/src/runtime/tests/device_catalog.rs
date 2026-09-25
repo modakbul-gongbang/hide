@@ -1069,6 +1069,50 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
     );
     moved(&mut runtime, "w2");
     assert_eq!(resumed(&mut runtime), (t.linked.clone(), false));
+
+    // So does one whose answer comes back on a connection that is gone.
+    moved(&mut runtime, "w1");
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "lost".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w2"),
+            checkout_id: Some(format!("remote:{TARGET}:checkout:w2")),
+        },
+    });
+    runtime.ingest_remote_control_result_with_generation(
+        TARGET,
+        "lost",
+        RemoteControlAction::FocusWorkspace {
+            workspace_id: "w2".to_owned(),
+        },
+        Err("the connection closed".to_owned()),
+        3,
+        Some(u64::MAX),
+    );
+    moved(&mut runtime, "w2");
+    assert_eq!(resumed(&mut runtime), (t.linked.clone(), false));
+
+    // Removing the device forgets a choice still waiting for it.
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "removed".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w1"),
+            checkout_id: Some(format!("remote:{TARGET}:checkout:w1")),
+        },
+    });
+    runtime.forget_device_views(TARGET);
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .is_some_and(|store| store.views.get(TARGET, &t.main).is_none())
+    );
 }
 
 /// S6 B21: a device request refused before it is sent leaves the device
