@@ -8,8 +8,10 @@
 const drafts = new Map<string, string>();
 const sent = new Map<string, string>();
 // Documents whose close is carrying their draft as its own save (S7 B5): the
-// display goes at once while the document waits for that save, and neither
-// autosave nor the save on leaving sends the draft a second time meanwhile.
+// view stays until the document closes once that save lands (a refused save
+// keeps both), and meanwhile neither autosave nor the save on leaving sends
+// the draft a second time; an edit in the still-shown view ends the close
+// watch (`closeWithSaveOutcome`).
 const closing = new Set<string>();
 
 export function noteClosing(tabId: string, inFlight: boolean): void {

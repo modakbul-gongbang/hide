@@ -410,16 +410,9 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
   }
 });
 
-/** Whether the page hided serves (`web/dist`) was built with `text` in it. */
-function builtPageHas(text: string): boolean {
-  const assets = path.resolve("dist", "assets");
-  return fs.readdirSync(assets).some((name) => name.endsWith(".js") && fs.readFileSync(path.join(assets, name), "utf8").includes(text));
-}
-
 const BESIDE_TOO_NARROW = "This view area is too narrow to open a second view beside it.";
 
 test("Open to the side from the only area is refused with its reason until that area has room to split", async ({ page }) => {
-  test.skip(!builtPageHas(BESIDE_TOO_NARROW), "needs a web/dist built with the Open to the side room rule");
   await page.setViewportSize({ width: 1280, height: 720 });
   const stack = await startStack(page, "s7-beside-room", { "a.txt": "a\n" }, { prepare: gitCheckout });
   try {
