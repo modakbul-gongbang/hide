@@ -1,5 +1,5 @@
 import { Tooltip as TooltipPrimitive } from "radix-ui";
-import type { ComponentProps, ReactNode } from "react";
+import { useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 // A hint for a control whose meaning is its icon or its shortcut. The label a
@@ -55,9 +55,27 @@ function Hint({
   reveals?: boolean;
   children: ReactNode;
 }) {
+  // A press on the trigger (a click that opens a menu or a dialog, or a
+  // right-click that opens a context menu) ends the hint until the pointer
+  // leaves: the hover delay that started before the press would otherwise
+  // open it over whatever the press opened.
+  const [open, setOpen] = useState(false);
+  const pressed = useRef(false);
+  const press = () => {
+    pressed.current = true;
+    setOpen(false);
+  };
   return (
-    <Tooltip>
-      <TooltipTrigger asChild aria-label={reveals ? undefined : label}>
+    <Tooltip open={open} onOpenChange={(next) => setOpen(next && !pressed.current)}>
+      <TooltipTrigger
+        asChild
+        aria-label={reveals ? undefined : label}
+        onPointerDown={press}
+        onContextMenu={press}
+        onPointerLeave={() => {
+          pressed.current = false;
+        }}
+      >
         {children}
       </TooltipTrigger>
       <TooltipContent side={side}>
