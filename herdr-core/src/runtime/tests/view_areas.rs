@@ -643,6 +643,150 @@ fn a_draft_in_one_display_keeps_every_display_of_its_document_open() {
     assert!(!runtime.snapshot.editor.tabs[0].preview);
 }
 
+/// B5, contract 4.2: a save keeps every display of its document open while
+/// it runs and after it lands, though no draft came before it.
+#[test]
+fn a_save_without_a_draft_keeps_every_display_of_its_document_open() {
+    let (runtime, checkout_id, directory) = views_runtime("view-save-pins");
+    let path = directory.join("notes.md");
+    let shared = Arc::new(Mutex::new(runtime));
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(Arc::downgrade(&shared), crate::ffi::ChangeNotifier::noop());
+    let wait = |what: &str, ready: &dyn Fn(&Runtime) -> bool| {
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while !ready(&shared.lock().unwrap()) {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    open(
+        &mut shared.lock().unwrap(),
+        &checkout_id,
+        &path,
+        true,
+        false,
+    );
+    wait("the file to be read", &|runtime| {
+        !runtime.editor_documents.is_empty()
+    });
+    let tab_id = {
+        let mut runtime = shared.lock().unwrap();
+        open(&mut runtime, &checkout_id, &path, false, true);
+        assert_eq!(
+            labels(&mut runtime),
+            vec![vec!["notes.md*"], vec!["notes.md"]]
+        );
+        let tab_id = tab_of(&runtime, "notes.md");
+        runtime.dispatch_json(&explorer_event(
+            "file_save",
+            serde_json::json!({"tab_id": tab_id, "path": path, "contents_utf8": "notes\n"}),
+        ));
+        assert_eq!(runtime.snapshot.status.last_error, None);
+        assert_eq!(
+            labels(&mut runtime),
+            vec![vec!["notes.md"], vec!["notes.md"]],
+            "a document being saved is never a preview"
+        );
+        tab_id
+    };
+    wait("the save to land", &|runtime| {
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.id == tab_id && !tab.dirty)
+    });
+    let mut runtime = shared.lock().unwrap();
+    assert_eq!(
+        labels(&mut runtime),
+        vec![vec!["notes.md"], vec!["notes.md"]]
+    );
+    assert!(!runtime.snapshot.editor.tabs[0].preview);
+}
+
+/// Contract 4.2: a draft or a conflict choice names its document. One that
+/// names a document no longer open is refused with the reason and never
+/// lands in the document in use, where a stray draft would overwrite the
+/// operator's edit and a stray reload would discard it.
+#[test]
+fn a_draft_or_conflict_choice_for_a_closed_document_is_refused_and_changes_nothing() {
+    let (mut runtime, checkout_id, directory) = views_runtime("view-closed-draft");
+    files(&directory, &["closed.md"]);
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("closed.md"),
+        false,
+        false,
+    );
+    let closed = tab_of(&runtime, "closed.md");
+    assert!(runtime.dispatch_json(&explorer_event(
+        "file_close",
+        serde_json::json!({"tab_id": closed}),
+    )));
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("notes.md"),
+        false,
+        false,
+    );
+    let notes = tab_of(&runtime, "notes.md");
+    draft(&mut runtime, &notes, "draft\n");
+    let in_use = |runtime: &mut Runtime| {
+        let documents = runtime
+            .snapshot_delta_payload(0, 0)
+            .documents
+            .expect("a fresh reader gets the section");
+        let (_, document) = documents
+            .changed
+            .iter()
+            .find(|(tab_id, _)| *tab_id == notes)
+            .expect("the document in use is on screen");
+        (
+            labels(runtime),
+            document.contents_utf8.clone(),
+            document.dirty,
+        )
+    };
+    let before = in_use(&mut runtime);
+    assert_eq!(
+        before,
+        (
+            vec![vec!["notes.md".to_owned()]],
+            Some("draft\n".to_owned()),
+            true
+        )
+    );
+
+    for (kind, payload, refusal) in [
+        (
+            "file_draft",
+            serde_json::json!({"tab_id": closed, "contents_utf8": "stray\n"}),
+            "file.draft_rejected",
+        ),
+        (
+            "file_conflict",
+            serde_json::json!({"tab_id": closed, "action": "reload"}),
+            "file.conflict_without_tab",
+        ),
+    ] {
+        runtime.dispatch_json(&explorer_event(kind, payload));
+        let error = runtime
+            .snapshot
+            .status
+            .last_error
+            .clone()
+            .unwrap_or_else(|| panic!("{kind} naming a closed document is refused"));
+        assert_eq!(error.kind, refusal);
+        assert!(error.message.contains(&closed), "{}", error.message);
+        assert_eq!(in_use(&mut runtime), before, "{kind} changed nothing");
+    }
+}
+
 /// S5.5 B9: a renamed file keeps its display, which shows the new name.
 #[test]
 fn a_renamed_file_keeps_its_display() {

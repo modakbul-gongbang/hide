@@ -9,6 +9,8 @@
 
 use super::*;
 use crate::host_access::{HostAnswer, HostCallError, HostChannel, InProcessHost};
+use crate::model::{ViewDisplayState, ViewNodeSnapshot};
+use crate::view_layout::{DisplayKind, Edge};
 use hide_host::protocol::Call;
 use serde_json::Value;
 use std::sync::Condvar;
@@ -1193,6 +1195,69 @@ fn a_closed_device_file_reopens_only_on_its_device_and_leaves_this_machines_clos
     assert_eq!(runtime.recent_closed[0].label(), "local.txt");
 }
 
+/// The front Workspace's displays in tree order, as the shell's next read
+/// shows them: what each shows, whether it can, and why not.
+fn view_displays(runtime: &mut Runtime) -> Vec<(DisplayKind, ViewDisplayState, Option<String>)> {
+    runtime.sync_workspace_view();
+    let mut shown = Vec::new();
+    let mut nodes = vec![
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .expect("the device Workspace is in front")
+            .layout
+            .root
+            .clone(),
+    ];
+    while let Some(node) = nodes.pop() {
+        match node {
+            ViewNodeSnapshot::Area(area) => shown.extend(
+                area.displays
+                    .into_iter()
+                    .map(|display| (display.kind, display.state, display.reason)),
+            ),
+            ViewNodeSnapshot::Split(split) => nodes.extend([*split.second, *split.first]),
+        }
+    }
+    shown
+}
+
+/// The device as a restart finds it: registered as "studio", its catalog
+/// listed, its helper still connecting.
+fn studio_connecting(runtime: &mut Runtime) {
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: DEVICE.to_owned(),
+            label: "studio".to_owned(),
+            ..Default::default()
+        });
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: DEVICE.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: crate::model::DeviceCatalogSnapshot {
+            state: "ready".to_owned(),
+            ..Default::default()
+        },
+    });
+    runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
+}
+
+fn helper_ready(runtime: &mut Runtime, device: &Arc<FakeDevice>) {
+    runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
+        host: device.clone(),
+        platform: "macos aarch64".to_owned(),
+        helper_path: "/fake/hide-host-helper".to_owned(),
+    };
+}
+
 /// S6 B20, B21, S7 contract 5: after a restart a device Workspace's displays
 /// wait for its helper and then its catalog, saying which, rather than coming
 /// back unavailable while it connects, and Retry on one says what it waits
@@ -1200,61 +1265,13 @@ fn a_closed_device_file_reopens_only_on_its_device_and_leaves_this_machines_clos
 /// Removing the device removes its displays with its tabs.
 #[test]
 fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
-    use crate::model::{ViewDisplayState, ViewNodeSnapshot};
-    use crate::view_layout::{DisplayKind, Edge};
     let f = Fixture::new();
     let root = f.root.to_string_lossy().into_owned();
     let views_dir = tempfile::tempdir().unwrap();
-    let displays = |runtime: &mut Runtime| {
-        runtime.sync_workspace_view();
-        let mut shown = Vec::new();
-        let mut nodes = vec![
-            runtime
-                .snapshot
-                .workspace_view
-                .as_ref()
-                .expect("the device Workspace is in front")
-                .layout
-                .root
-                .clone(),
-        ];
-        while let Some(node) = nodes.pop() {
-            match node {
-                ViewNodeSnapshot::Area(area) => shown.extend(
-                    area.displays
-                        .into_iter()
-                        .map(|display| (display.kind, display.state, display.reason)),
-                ),
-                ViewNodeSnapshot::Split(split) => nodes.extend([*split.second, *split.first]),
-            }
-        }
-        shown
-    };
     let file_display;
     {
         let mut runtime = f.shared.lock().unwrap();
-        runtime
-            .snapshot
-            .ui_state
-            .device_registrations
-            .push(crate::model::DeviceRegistration {
-                id: DEVICE.to_owned(),
-                label: "studio".to_owned(),
-                ..Default::default()
-            });
-        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
-            target_id: DEVICE.to_owned(),
-            state: "connected".to_owned(),
-            message: None,
-            herdr_version: None,
-            session: None,
-            files: RemoteFileListSnapshot::idle(),
-            catalog: crate::model::DeviceCatalogSnapshot {
-                state: "ready".to_owned(),
-                ..Default::default()
-            },
-        });
-        runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
+        studio_connecting(&mut runtime);
         let mut store =
             WorkspaceViewStore::open(views_dir.path().join("views.json"), Default::default()).0;
         // The file's diff, and the file beside it in use.
@@ -1267,7 +1284,7 @@ fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
         runtime.workspace_views = Some(store);
         let connecting = Some("Waiting for studio to connect".to_owned());
         assert_eq!(
-            displays(&mut runtime),
+            view_displays(&mut runtime),
             vec![
                 (
                     DisplayKind::Diff,
@@ -1297,23 +1314,19 @@ fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
             ("view_layout.waiting", connecting)
         );
 
-        runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
-            host: f.device.clone(),
-            platform: "macos aarch64".to_owned(),
-            helper_path: "/fake/hide-host-helper".to_owned(),
-        };
+        helper_ready(&mut runtime, &f.device);
         runtime.snapshot.status.remote[0].catalog.state = "resolving".to_owned();
         assert!(
             !runtime.restore_front_when_ready(),
             "the device's checkouts are not in their Projects yet"
         );
         let listing = Some("Waiting for studio to list its projects".to_owned());
-        assert_eq!(displays(&mut runtime)[1].2, listing);
+        assert_eq!(view_displays(&mut runtime)[1].2, listing);
         runtime.snapshot.status.remote[0].catalog.state = "ready".to_owned();
         f.device.hold();
         assert!(runtime.restore_front_when_ready());
         assert_eq!(
-            displays(&mut runtime),
+            view_displays(&mut runtime),
             vec![
                 (DisplayKind::Diff, ViewDisplayState::Open, None),
                 (DisplayKind::File, ViewDisplayState::Opening, None),
@@ -1325,7 +1338,7 @@ fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
     f.wait_for_document("a.txt", "the restored device file", |_| true);
     let mut runtime = f.shared.lock().unwrap();
     assert_eq!(
-        displays(&mut runtime),
+        view_displays(&mut runtime),
         vec![
             (DisplayKind::Diff, ViewDisplayState::Open, None),
             (DisplayKind::File, ViewDisplayState::Open, None),
@@ -1355,4 +1368,89 @@ fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
             .is_none_or(|view| view.layout.display_count == 0),
         "no display of the removed device is left on screen"
     );
+}
+
+/// S7 contract 5, the S6 rule: a Workspace writes nothing into the views
+/// file until its restore has landed, so quitting while its displays wait
+/// for the device, or while their files are still being read, leaves the
+/// stored layout as it was, byte for byte.
+#[test]
+fn a_quit_mid_restore_keeps_the_stored_layout_byte_for_byte() {
+    let f = Fixture::new();
+    std::fs::write(f.root.join("b.txt"), "b\n").unwrap();
+    let views_dir = tempfile::tempdir().unwrap();
+    let file = views_dir.path().join("workspace-views.json");
+    // The last session: a.txt's diff and a preview of b.txt in one area,
+    // and a.txt in the area beside it, which was in use.
+    let mut views = crate::workspace_views::WorkspaceViews::default();
+    let entry = views.entry(DEVICE, &f.root.to_string_lossy());
+    entry.mode = crate::workspace_views::ViewMode::Together;
+    let layout = &mut entry.layout;
+    let diff = layout.new_display(&f.path("a.txt"), DisplayKind::Diff, Some(false), false);
+    layout.insert("a1", diff, 1).unwrap();
+    let preview = layout.new_display(&f.path("b.txt"), DisplayKind::File, None, true);
+    layout.insert("a1", preview, 2).unwrap();
+    let in_use = layout.new_display(&f.path("a.txt"), DisplayKind::File, None, false);
+    layout.split_new("a1", Edge::Right, in_use, 3).unwrap();
+    if let crate::view_layout::Node::Split(split) = &mut layout.root {
+        split.ratio = 0.3;
+    }
+    crate::workspace_views::save(&file, &views).unwrap();
+    let stored = std::fs::read_to_string(&file).unwrap();
+    // Quitting joins the file's writer, as dropping the core does.
+    let quit = || {
+        let writer = f.shared.lock().unwrap().take_workspace_views_save_worker();
+        if let Some(writer) = writer {
+            writer.join().unwrap();
+        }
+        std::fs::read_to_string(&file).unwrap()
+    };
+
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        studio_connecting(&mut runtime);
+        runtime.workspace_views =
+            Some(WorkspaceViewStore::open(file.clone(), Default::default()).0);
+        let connecting = Some("Waiting for studio to connect".to_owned());
+        assert_eq!(
+            view_displays(&mut runtime),
+            vec![
+                (
+                    DisplayKind::Diff,
+                    ViewDisplayState::Waiting,
+                    connecting.clone()
+                ),
+                (
+                    DisplayKind::File,
+                    ViewDisplayState::Waiting,
+                    connecting.clone()
+                ),
+                (DisplayKind::File, ViewDisplayState::Waiting, connecting),
+            ]
+        );
+    }
+    assert_eq!(quit(), stored, "nothing is written while the displays wait");
+
+    f.device.hold();
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        helper_ready(&mut runtime, &f.device);
+        assert_eq!(
+            view_displays(&mut runtime),
+            vec![
+                (DisplayKind::Diff, ViewDisplayState::Open, None),
+                (DisplayKind::File, ViewDisplayState::Opening, None),
+                (DisplayKind::File, ViewDisplayState::Opening, None),
+            ],
+            "the diff shows at once and both files are being read"
+        );
+    }
+    assert_eq!(
+        quit(),
+        stored,
+        "nothing is written while the files are read"
+    );
+    f.device.release();
+    f.wait_for_document("a.txt", "the restored file in use", |_| true);
+    f.wait_for_document("b.txt", "the restored preview", |_| true);
 }
